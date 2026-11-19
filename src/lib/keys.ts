@@ -559,6 +559,12 @@ export function matches(id: BoundCommand, event: KeyboardEvent): boolean {
   if (binding.ctrl ? (!event.ctrlKey || event.metaKey) : accel !== (binding.accel ?? false)) return false;
   if (event.shiftKey !== (binding.shift ?? false)) return false;
   if (event.altKey !== (binding.alt ?? false)) return false;
+  // AltGr on a Windows layout arrives as Ctrl and Alt together, so a reader
+  // typing `©` or `@` with it would otherwise run an accel+Alt chord, from
+  // inside a text field too. The browser names the key itself as `AltGraph`;
+  // a held ⌘ is never AltGr, so the macOS Option chords the same table serves
+  // are left alone whatever the browser reports for Option.
+  if (binding.alt && event.ctrlKey && !event.metaKey && event.getModifierState?.("AltGraph") === true) return false;
   // Position *or* character --- see `Binding.code`. The character alone leaves
   // ⌘\ untypable on a German keyboard; the position alone would move the chord
   // for everyone whose layout is not the one it was written on.

@@ -1,23 +1,21 @@
-//! Redaction: what a plan would remove, and the two commands that remove it.
+//! Redaction: what a plan would remove, and the three commands that remove it.
 //!
-//! The read-back is what makes this a group of its own. Both commands write a
-//! file and both then have to answer `docs/PLAN.md` 6's question about it, so
-//! the ask, the gate and the scan are stated once (`redaction_steps.rs`) and
-//! called twice --- `docs/TRAPS.md` records more than one defect that was a
-//! second copy of a rule drifting from the first.
+//! The read-back is what makes this a group of its own. Each command writes a
+//! file and then has to answer `docs/PLAN.md` 6's question about it, so the ask
+//! and the readers with the verdict they come to are stated once
+//! (`redaction_steps.rs`: `ask_redactions` and `read_back`) and called by each
+//! --- `docs/TRAPS.md` records more than one defect that was a second copy of a
+//! rule drifting from the first.
 
 use std::path::Path;
 
 use super::{await_reply, outside_of, password_for, reply_channel};
 use crate::redaction_steps::{
-    ask_redactions, codes_written_file, finish_redaction_fill, gate_written_file,
-    redact_copy_asked, scan_written_file, Stopped,
+    ask_redactions, finish_redaction_fill, read_back, redact_copy_asked, scan_written_file,
+    Stopped, Written,
 };
 use crate::render::RenderService;
-use crate::{
-    edits, ocr_gate, pdfium_library_dir, redact, save, verify, webopen, with_close_note,
-    SaveFailure,
-};
+use crate::{edits, pdfium_library_dir, redact, save, webopen, with_close_note, SaveFailure};
 
 /// What removing each of one page's marked regions would take, and what it would miss.
 ///
@@ -36,8 +34,9 @@ use crate::{
 /// for.
 ///
 /// **Nothing is removed by asking.** The answer is a count, some sentences and
-/// the text those operations draw; the document is not touched, and there is no
-/// command that applies one of these yet.
+/// the text those operations draw; the document is not touched. The commands
+/// below apply a redaction, and they ask again for themselves rather than take
+/// this answer back from the window.
 #[tauri::command]
 pub async fn redaction_plans(
     service: tauri::State<'_, RenderService>,
@@ -50,7 +49,13 @@ pub async fn redaction_plans(
     await_reply("redaction_plans", rx).await
 }
 
-/// Creates a fresh image-only copy; verification finishes before publication.
+/// Creates a fresh image-only copy, and verifies it.
+///
+/// The marked areas are proved painted over before the file is published
+/// (`save::write_raster_copy`); what that cannot see is a picture elsewhere on
+/// the page that still carries what was marked, such as a QR code beside the
+/// name, and [`read_back`] reads those. [`Written::Pictures`] says which of the
+/// readers the other two commands run apply to a file made of pictures.
 #[tauri::command]
 pub async fn redact_raster_copy(
     app: tauri::AppHandle,
@@ -63,31 +68,35 @@ pub async fn redact_raster_copy(
 ) -> Result<redact::Applied, String> {
     let asked = ask_redactions(&edits, &service, doc).await?;
     let password = password_for(&service, doc, "redact_raster_copy").await;
+    // Kept for the code reader, which reopens the written file: a copy of an
+    // encrypted document is written encrypted.
+    let key = password.clone();
     let fill = fill.unwrap_or_default();
     let writing = outside_of(&app, service.backend());
     let from = std::path::PathBuf::from(source);
-    let out = std::path::PathBuf::from(path);
-    let regions = asked.regions;
+    let out = std::path::PathBuf::from(&path);
+    let plan = asked.plan.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        save::write_raster_copy(
-            &from,
-            &asked.plan,
-            &out,
-            password.as_deref(),
-            &*writing,
-            fill,
-        )
+        save::write_raster_copy(&from, &plan, &out, password.as_deref(), &*writing, fill)
     })
     .await
     .map_err(|e| said!("The image-only copy did not run: {e}"))?
     .map_err(|why| why.message)?;
+    let judged = read_back(
+        service.inner().clone(),
+        path,
+        key,
+        &asked,
+        Written::Pictures,
+    )
+    .await;
     Ok(redact::Applied {
-        regions,
+        regions: asked.regions,
         shows: 0,
         changed: false,
-        verified: true,
-        why: Vec::new(),
-        notes: Vec::new(),
+        verified: judged.why.is_empty(),
+        notes: judged.notes,
+        why: judged.why,
     })
 }
 
@@ -200,8 +209,9 @@ pub async fn redact_document(
     let staging = source.clone();
     let plan = asked.plan.clone();
     let password = password_for(&service, doc, "redact_document").await;
-    // Kept past the close for the two readers after the write --- `redact_copy`
-    // says why, and here it is also the only copy of the document left. Taken
+    // Kept past the close for the readers after the write ---
+    // `redaction_steps::redact_copy_asked` says why, and here it is also the
+    // only copy of the document left. Taken
     // now rather than later because the service is closed a few lines below and
     // there is nothing to ask by then.
     let key = password.clone();
@@ -244,7 +254,8 @@ pub async fn redact_document(
     let committing = source.clone();
     let needles = asked.needles.clone();
     let verifying = key.clone();
-    // A second `Outside` --- `redact_copy` says why, and here there is one more
+    // A second `Outside` --- `redaction_steps::redact_copy_asked` says why, and
+    // here there is one more
     // reason: the service is closed above, so there is no worker left to ask and
     // this one is spawned for the scan and dropped after it.
     let scanning = outside_of(&app, service.backend());
@@ -271,46 +282,20 @@ pub async fn redact_document(
 
     let (report, fingerprint) = landed.map_err(|why| with_close_note(why, closed))?;
 
-    // The objects the removal could not take come first, because they are the
-    // finding a reader can act on --- see `redact_copy`, which orders them the
-    // same way and for the same reason.
-    let mut why = asked.concerns.clone();
-    if let verify::Verdict::NotVerified(reasons) = report.verdict() {
-        why.extend(reasons);
-    }
-    // Under them for `redact_copy`'s reason, and sharper here: this is the only
-    // copy of the document left, so a reader deciding whether to act on a hit
-    // has nothing else to compare it against.
-    why.extend(redact::short_needle_note(&report));
-    why.extend(redact::marked_pages_note(&report, &asked.marked));
-    why.extend(redact::inserted_pages_note(
-        asked.inserted,
-        &report.found,
-        report.placed(),
-    ));
-    // Then §6 step 4, against the reader's own file --- which is now the only
-    // copy, so this is the sharper of the two places it runs.
-    let mut notes = ocr_gate::sizing_notes(&asked.gate);
-    let taken_here = asked.notes;
-    why.extend(
-        gate_written_file(
-            service.inner().clone(),
-            source.clone(),
-            asked.gate,
-            key.clone(),
-        )
-        .await,
-    );
-    // The codes in the file, as `redaction_steps::redact_copy_asked` reads them.
-    let codes = codes_written_file(
+    // The verdict the copy comes to, by the same function, against the
+    // reader's own file --- which is now the only copy of it, so a reader
+    // deciding whether to act on a finding has nothing else to compare it with.
+    let judged = read_back(
         service.inner().clone(),
         source.clone(),
         key.clone(),
-        asked.needles.clone(),
+        &asked,
+        Written::Rewritten {
+            report,
+            also: Vec::new(),
+        },
     )
     .await;
-    why.extend(codes.why);
-    notes.extend(codes.note);
     finish_redaction_fill(
         pdfium_library_dir(&app),
         service.backend(),
@@ -330,8 +315,8 @@ pub async fn redact_document(
         // by `stage_in_place`, which refuses rather than reporting. Reaching here
         // means it had not.
         changed: false,
-        verified: why.is_empty(),
-        notes: redact::notes_for(why.is_empty(), notes, taken_here),
-        why,
+        verified: judged.why.is_empty(),
+        notes: judged.notes,
+        why: judged.why,
     })
 }

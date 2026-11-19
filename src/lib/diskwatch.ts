@@ -41,6 +41,13 @@ export const DEFAULT_DISK_CHANGE_MODE: DiskChangeMode = "ask";
 /** Where the choice lives. */
 export const MODE_KEY = "tpdf.onDiskChange";
 
+/**
+ * How often the window looks at the open file, in milliseconds. Once a second
+ * is a `stat` and nothing else until one differs. Exported so the window check
+ * that waits on the watch waits long enough for this interval, not for a copy.
+ */
+export const WATCH_INTERVAL_MS = 1000;
+
 type Store = Pick<Storage, "getItem" | "setItem">;
 
 /**

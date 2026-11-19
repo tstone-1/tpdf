@@ -212,9 +212,10 @@ impl Fingerprint {
     ) -> Result<(), String> {
         self.len_matches(meta, path)?;
         let now = modified_ns(meta);
-        // Both sides unknown is *not* agreement: see `modified_ns`. A platform
-        // that cannot report the time gives no evidence either way, and the
-        // digest comparison is what carries the answer there.
+        // A time unknown on either side is no evidence either way, so it does
+        // not refuse: a platform that cannot report one would otherwise refuse
+        // every save. What answers there is the length above and the content
+        // comparison [`Self::agrees_with`] made before anything was staged.
         if now.is_some() && self.modified_ns.is_some() && now != self.modified_ns {
             return Err(changed(path, &said!("it was modified")));
         }
@@ -445,11 +446,6 @@ fn way_out(fact: &str) -> String {
     )
 }
 
-/// A file's modification time as nanoseconds since the epoch.
-///
-/// `None` for a platform or filesystem with no modification time, and also for
-/// the pre-1970 case, which is unreachable in practice and would otherwise need
-/// a signed representation for no benefit.
 /// Reads at an offset without moving the handle's own position.
 ///
 /// Two spellings of one operation, because the platforms name it differently and
@@ -542,6 +538,11 @@ pub fn stamp(meta: &std::fs::Metadata) -> String {
     }
 }
 
+/// A file's modification time as nanoseconds since the epoch.
+///
+/// `None` for a platform or filesystem with no modification time, and also for
+/// the pre-1970 case, which is unreachable in practice and would otherwise need
+/// a signed representation for no benefit.
 fn modified_ns(meta: &std::fs::Metadata) -> Option<u128> {
     meta.modified()
         .ok()

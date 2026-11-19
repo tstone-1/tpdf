@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 import { quarterTurns } from "./pages";
-import { usableRuns } from "./reading";
+import { readingTextOf, textOfRanges, usableRuns } from "./reading";
 import {
   caretAt,
   lineAt,
@@ -29,6 +29,31 @@ import {
   wordAt,
   type PageText,
 } from "./text";
+
+describe("a code no character has", () => {
+  // A worker's codes are numbers, and `String.fromCodePoint` throws for any
+  // outside 0..0x10FFFF or not whole. One of them took the copy, the
+  // double-click and the reading order down with it.
+  const bad = (code: number): PageText => ({
+    codes: [104, code, 105],
+    boxes: [0, 0, 10, 10, 10, 0, 20, 10, 20, 0, 30, 10],
+    width_pt: 100,
+    height_pt: 100,
+    quarter_turns: 0,
+    extract_ms: 0,
+  });
+
+  it("reads as the replacement character, in a copy and in a double-click", () => {
+    for (const code of [0x110000, -1, 65.5, Number.NaN]) {
+      expect(textOf(bad(code), 0, 3), String(code)).toBe("h�i");
+      expect(() => wordAt(bad(code), 1), String(code)).not.toThrow();
+      expect(readingTextOf(bad(code), 0, 3), String(code)).toBe("h�i");
+      expect(textOfRanges(bad(code), [{ from: 0, to: 3 }]), String(code)).toBe("h�i");
+    }
+    // The control: a real code is itself.
+    expect(textOf(bad(0x10ffff), 0, 3)).toBe("h\u{10ffff}i");
+  });
+});
 
 /** Builds a page from `(character, [left, top, right, bottom])` pairs. */
 function page(

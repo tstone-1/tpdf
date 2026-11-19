@@ -237,6 +237,14 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "the update checks would start the old copy again on an answer that is a finding",
         ),
         (
+            # The disk-change window phase asks this side to change the open
+            # copy, since the webview cannot. An unanswered request reads as a
+            # window that never noticed; that half runs nowhere but a screen.
+            "diskrequests",
+            [sys.executable, str(ROOT / "scripts" / "test_tabs_check.py")],
+            "tabs_check.py no longer answers the disk-change phase's requests once each",
+        ),
+        (
             # Beside parity rather than folded into it, because parity is
             # structurally blind to this: it compares the two workflows against
             # each other, so four identical wrong fixture paths are perfect
@@ -370,6 +378,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "views",
             [sys.executable, str(ROOT / "scripts" / "check_view_after_await.py")],
             "App.svelte reads a document's variable after an await, or has a variable nobody classified",
+        ),
+        (
+            "appstate",
+            [sys.executable, str(ROOT / "scripts" / "check_app_state.py")],
+            "App.svelte holds a new top-level Map or Set instead of a src/lib module",
         ),
         (
             "docs",

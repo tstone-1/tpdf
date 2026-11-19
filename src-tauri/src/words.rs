@@ -509,8 +509,8 @@ pub fn timestamp_sentence(
     }
 }
 
-/// The timestamp authority's row: `integrity.ts`'s
-/// `padesRow(level).value`: the PAdES level a signature has the parts of.
+/// The PAdES row's value: `integrity.ts`'s `padesRow(level).value`, the PAdES
+/// level a signature has the parts of.
 ///
 /// Every answer ends by saying what was not done. The level is read from the
 /// parts the document carries; a validator's conformance test is a different
@@ -540,6 +540,7 @@ pub fn pades_sentence(level: crate::pades::Level) -> String {
     )
 }
 
+/// The timestamp authority's row: `integrity.ts`'s
 /// `authorityRow(trust, from, until).value`. `from` and `until` are the
 /// authority's certificate's dates, empty when unknown.
 #[must_use]

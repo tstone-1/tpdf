@@ -58,7 +58,9 @@ impl IThumbnailProvider_Impl for Thumbnail_Impl {
             .ok_or(windows::core::Error::from(E_UNEXPECTED))?;
         let made = crate::guarded(|| {
             let cli = crate::cli_path().ok_or(windows::core::Error::from(E_FAIL))?;
-            let png = render::page(&cli, document, fit, 1, plan::THUMBNAIL_TIME)
+            // Nothing ends a thumbnail early: Explorer waits for this call.
+            let cancel = render::Cancel::default();
+            let png = render::page(&cli, document, fit, 1, plan::THUMBNAIL_TIME, &cancel)
                 .map_err(|_| windows::core::Error::from(E_FAIL))?;
             png::bitmap(&png::decode(&png, fit)?)
         })?;

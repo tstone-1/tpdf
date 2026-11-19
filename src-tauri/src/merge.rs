@@ -429,6 +429,20 @@ fn detached_widget(from: &Document, annot: &Dictionary) -> Option<Dictionary> {
 /// is the walk it always was, which is what makes the existing merge tests the
 /// control for it.
 ///
+/// **Form objects are a second wall.** An action names fields by reference: a
+/// `/ResetForm` or `/SubmitForm` in `/Fields`, a `/Hide` in `/T`, and any of
+/// them may sit on an imported widget or link. Following one reaches a field
+/// whose `/Kids` lists every widget of it, or a widget on a page left behind
+/// with its answer drawn in its appearance, which is the reach
+/// [`detached_widgets`] cuts at `/Parent`. So a widget or a field is walked
+/// only when it is a substitute in `detached` or an entry of a taken page's
+/// `/Annots`; anywhere else it is stepped over like a page in `left`, and the
+/// action that named it names nothing in the result.
+///
+/// Stepped over rather than stripped from the action: an action with no
+/// `/Fields` resets or submits **every** field, so removing the names would
+/// widen what it does to the destination's form.
+///
 /// # Errors
 ///
 /// As [`sweep::references`]: an object nesting deeper than
@@ -438,6 +452,7 @@ fn needed(
     detached: &BTreeMap<ObjectId, Dictionary>,
     left: &HashSet<ObjectId>,
 ) -> Result<HashSet<ObjectId>, String> {
+    let annotated = annotations_of(from, detached);
     let mut seen: HashSet<ObjectId> = detached.keys().copied().collect();
     let mut queue: Vec<ObjectId> = seen.iter().copied().collect();
     while let Some(id) = queue.pop() {
@@ -463,12 +478,58 @@ fn needed(
             if left.contains(&id) {
                 continue;
             }
+            if !detached.contains_key(&id)
+                && !annotated.contains(&id)
+                && from
+                    .objects
+                    .get(&id)
+                    .and_then(|object| object.as_dict().ok())
+                    .is_some_and(is_form_object)
+            {
+                continue;
+            }
             if seen.insert(id) {
                 queue.push(id);
             }
         }
     }
     Ok(seen)
+}
+
+/// Every annotation a taken page lists by reference in its `/Annots`, directly
+/// or through an array held as its own object.
+fn annotations_of(from: &Document, detached: &BTreeMap<ObjectId, Dictionary>) -> HashSet<ObjectId> {
+    let mut ids = HashSet::new();
+    for page in detached.values() {
+        let annots = match page.get(b"Annots") {
+            Ok(Object::Array(items)) => items,
+            Ok(Object::Reference(id)) => match from.get_object(*id) {
+                Ok(Object::Array(items)) => items,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        ids.extend(annots.iter().filter_map(|entry| entry.as_reference().ok()));
+    }
+    ids
+}
+
+/// Whether `dictionary` is a widget annotation or an interactive form field.
+///
+/// A field is known by `/FT`, which a terminal field carries or inherits, or by
+/// a `/T` beside `/Kids` or `/Parent` on a dictionary with no `/Type` and no
+/// `/Subtype`: a non-terminal field that only names its children. A name or
+/// number tree node has `/Kids` and no `/T`, and a markup annotation's `/T` is
+/// its author beside a `/Subtype`, so neither is mistaken for one.
+fn is_form_object(dictionary: &Dictionary) -> bool {
+    let subtype = dictionary.get(b"Subtype").and_then(Object::as_name).ok();
+    if subtype == Some(b"Widget".as_slice()) || dictionary.has(b"FT") {
+        return true;
+    }
+    subtype.is_none()
+        && !dictionary.has(b"Type")
+        && dictionary.has(b"T")
+        && (dictionary.has(b"Kids") || dictionary.has(b"Parent"))
 }
 
 /// An object number moved past everything the destination holds.
@@ -1202,13 +1263,19 @@ mod tests {
     ///
     /// `inline` writes page 1's widget directly into its `/Annots` rather than
     /// as an object of its own, which is the second place a widget can be.
-    fn form_across_pages(inline: bool) -> Document {
+    ///
+    /// `actions` gives page 1's widget a `/ResetForm` naming field `b` and the
+    /// root field, and page 1 a link whose `/Hide` names page 2's widget: the
+    /// three ways an action reaches a field or a widget by reference.
+    fn form_across_pages(inline: bool, actions: bool) -> Document {
         let mut doc = Document::with_version("1.7");
         let pages_id = doc.new_object_id();
         let root_field = doc.new_object_id();
+        let field_ids = [doc.new_object_id(), doc.new_object_id()];
+        let second_widget = doc.new_object_id();
         let mut pages = Vec::new();
         let mut fields = Vec::new();
-        for (name, answer) in [("a", "ALPHA"), ("b", "BRAVO")] {
+        for ((name, answer), field) in [("a", "ALPHA"), ("b", "BRAVO")].into_iter().zip(field_ids) {
             let content = doc.add_object(Stream::new(dictionary! {}, b"page".to_vec()));
             let page = doc.add_object(dictionary! {
                 "Type" => "Page",
@@ -1216,12 +1283,11 @@ mod tests {
                 "Contents" => content,
                 "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
             });
-            let field = doc.new_object_id();
             let look = doc.add_object(Stream::new(
                 dictionary! { "Subtype" => "Form", "BBox" => vec![0.into(), 0.into(), 100.into(), 20.into()] },
                 format!("BT ({answer}) Tj ET").into_bytes(),
             ));
-            let widget = dictionary! {
+            let mut widget = dictionary! {
                 "Type" => "Annot",
                 "Subtype" => "Widget",
                 "Rect" => vec![0.into(), 0.into(), 100.into(), 20.into()],
@@ -1229,11 +1295,36 @@ mod tests {
                 "P" => page,
                 "AP" => dictionary! { "N" => look },
             };
+            if actions && name == "a" {
+                widget.set(
+                    "A",
+                    dictionary! {
+                        "S" => "ResetForm",
+                        "Fields" => vec![field_ids[1].into(), root_field.into()],
+                    },
+                );
+            }
             let entry: Object = if inline && name == "a" {
                 Object::Dictionary(widget)
+            } else if name == "b" {
+                doc.objects
+                    .insert(second_widget, Object::Dictionary(widget));
+                second_widget.into()
             } else {
                 doc.add_object(widget).into()
             };
+            let mut annots = vec![entry.clone()];
+            if actions && name == "a" {
+                annots.push(
+                    doc.add_object(dictionary! {
+                        "Type" => "Annot",
+                        "Subtype" => "Link",
+                        "Rect" => vec![0.into(), 30.into(), 100.into(), 50.into()],
+                        "A" => dictionary! { "S" => "Hide", "T" => second_widget },
+                    })
+                    .into(),
+                );
+            }
             let kids: Vec<Object> = match &entry {
                 Object::Reference(id) => vec![(*id).into()],
                 _ => Vec::new(),
@@ -1251,7 +1342,7 @@ mod tests {
             doc.get_object_mut(page)
                 .and_then(Object::as_dict_mut)
                 .expect("the page")
-                .set("Annots", vec![entry]);
+                .set("Annots", annots);
             pages.push(page);
             fields.push(field);
         }
@@ -1307,18 +1398,25 @@ mod tests {
 
     #[test]
     fn importing_one_page_of_a_form_does_not_bring_the_other_pages_answers() {
-        for inline in [false, true] {
+        for (inline, actions) in [(false, false), (true, false), (false, true), (true, true)] {
             let mut into = flat("first");
-            let from = form_across_pages(inline);
+            let from = form_across_pages(inline, actions);
             let ids = import(&mut into, &from, &[0]).expect("the import");
             assert!(
                 !holds(&mut into, b"BRAVO"),
-                "page 2's answer is in no object of the result (inline: {inline})"
+                "page 2's answer is in no object of the result (inline: {inline}, actions: \
+                 {actions})"
             );
             // The control: the page that was asked for keeps its own answer,
             // drawn and stated, so the assertion above is not satisfied by a
             // walk that dropped the form altogether.
             assert!(holds(&mut into, b"ALPHA"), "inline: {inline}");
+            if actions {
+                // And the actions came with it, naming what they named, so the
+                // answer above is not kept out by dropping the actions.
+                assert!(holds(&mut into, b"/ResetForm"), "inline: {inline}");
+                assert!(holds(&mut into, b"/Hide"), "inline: {inline}");
+            }
             let widget = widget_on(&into, ids[0]);
             assert!(!widget.has(b"Parent"), "cut off its field");
             assert_eq!(
@@ -1339,12 +1437,60 @@ mod tests {
         }
     }
 
+    /// A field that is its own widget, listed in the taken page's `/Annots`,
+    /// comes with the page.
+    ///
+    /// The control for the wall the actions above run into: a widget the page
+    /// itself lists is the page's, whether or not it carries `/FT`, and a wall
+    /// that stopped at every form object would leave the page an empty field.
+    #[test]
+    fn a_field_that_is_its_own_widget_comes_with_its_page() {
+        let mut from = Document::with_version("1.7");
+        let pages_id = from.new_object_id();
+        let look = from.add_object(Stream::new(
+            dictionary! { "Subtype" => "Form", "BBox" => vec![0.into(), 0.into(), 100.into(), 20.into()] },
+            b"BT (CHARLIE) Tj ET".to_vec(),
+        ));
+        let widget = from.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Widget",
+            "FT" => "Tx",
+            "T" => Object::string_literal("c"),
+            "V" => Object::string_literal("CHARLIE"),
+            "Rect" => vec![0.into(), 0.into(), 100.into(), 20.into()],
+            "AP" => dictionary! { "N" => look },
+        });
+        let content = from.add_object(Stream::new(dictionary! {}, b"page".to_vec()));
+        let page = from.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Annots" => vec![widget.into()],
+        });
+        from.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog = from.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        from.trailer.set("Root", catalog);
+        let mut into = flat("first");
+
+        import(&mut into, &from, &[0]).expect("the import");
+
+        assert!(holds(&mut into, b"BT (CHARLIE) Tj ET"));
+    }
+
     #[test]
     fn importing_the_other_page_of_a_form_brings_its_answer() {
         // The mirror, so that the test above cannot pass by an import that
         // carries no form answer at all.
         let mut into = flat("first");
-        let from = form_across_pages(false);
+        let from = form_across_pages(false, false);
         import(&mut into, &from, &[1]).expect("the import");
         assert!(holds(&mut into, b"BRAVO"));
         assert!(!holds(&mut into, b"ALPHA"));

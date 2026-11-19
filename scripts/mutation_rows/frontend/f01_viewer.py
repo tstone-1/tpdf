@@ -664,7 +664,7 @@ ROWS += [
     Mutation("form wiring: a control is placed by whichever document is focused", "src/App.svelte", "      const rect = asDocument(view, () => controlRect(widget, formEditing, edits?.state ?? null)) ?? null;", "      const rect = controlRect(widget, formEditing, edits?.state ?? null);", "places a form control, runs what it says and a press on a place for a signature, as the form's own document"),
     # The buttons a message is shown with are markup, read as text: an offer a
     # rule returns has an arm and a button in the block that draws them.
-    Mutation("offers wiring: an offer a rule returns has no button of its own", "src/App.svelte", "              <button data-testid=\"offer-reload\" disabled={copyTaskBusy}", "              <button data-testid=\"reload-offer\" disabled={copyTaskBusy}", "is the set App.svelte draws a button for"),
+    Mutation("offers wiring: an offer a rule returns has no button of its own", "src/App.svelte", "              <button data-testid=\"offer-reload\" disabled={busyNow}", "              <button data-testid=\"reload-offer\" disabled={busyNow}", "is the set App.svelte draws a button for"),
     Mutation("form wiring: a control's message goes to whichever document is focused", "src/App.svelte", "      (message) => { asDocument(view, () => say(message)); },", "      say,", "places a form control, runs what it says and a press on a place for a signature, as the form's own document"),
     Mutation("form wiring: a signature is started whichever document the reader is in", "src/App.svelte", "        if (!readerIsIn(view, openView, () => focusSide(panes.sideOf(view)))) {", "        if (false) {", "places a form control, runs what it says and a press on a place for a signature, as the form's own document"),
     Mutation("reader: start for a document the reader cannot be taken to", "src/lib/documentopen.ts", "  return view === focused || take();", "  return true;", "starts for another document only when the reader can be taken there"),
@@ -1383,9 +1383,10 @@ ROWS += [
         # It was aimed at the wrong check first and the harness said so.
         "viewer: follow the pointer onto another page mid-drag",
         "src/lib/viewer.ts",
-        # Disambiguated by the line after it: the crop's drag has the identical
-        # two lines and then wakes, where the box's goes on to sample for ink.
-        "        const { x, y } = this.pageAndPoint(at);\n        live.to = { x, y };\n"
+        # The box's move, measured on its own page and clamped to it; the line
+        # after it, which samples for ink, keeps the anchor the box's own.
+        "        const { x, y } = keepOnPage(this.pointOn(live.slot, at), this.laidSize(live.slot));\n"
+        "        live.to = { x, y };\n"
         "        // **Sampled, not every event.**",
         # **`x` and `y` are destructured here and read below**, by the ink
         # sampler that arrived after this mutation was written. An earlier

@@ -213,6 +213,7 @@ impl Subcommand for Text {
         };
         match &self.output {
             None => {
+                // A failed write is kept by `cli::run`, which ends the run 3.
                 let _ = out.write_all(written.as_bytes());
                 let _ = out.flush();
             }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import app from "../App.svelte?raw";
-import { withoutComments } from "./sourcetext";
+import { functionIn, missingFrom, withoutComments } from "./sourcetext";
 import {
   plainly,
   afterCopy,
@@ -378,11 +378,40 @@ describe("what to say after an image-only redaction", () => {
     expect(
       afterRasterRedaction({
         regions: 2,
+        verified: true,
+        why: [],
       }, "report redacted image-only.pdf"),
-    ).toBe(
-      "Saved report redacted image-only.pdf. Created an image-only PDF with 2 masked " +
+    ).toEqual({
+      message:
+        "Saved report redacted image-only.pdf. Created an image-only PDF with 2 masked " +
         "regions. The original is unchanged.",
-    );
+      success: true,
+    });
+  });
+
+  it("says a code that still holds the name, and is not a success", () => {
+    const made = afterRasterRedaction({
+      regions: 1,
+      verified: false,
+      why: ["the QR code on page 1 still holds 4711-0815"],
+      notes: [],
+    }, "a.pdf");
+    expect(made.success).toBe(false);
+    expect(made.message).toContain("Saved a.pdf.");
+    expect(made.message).toContain("not verified");
+    expect(made.message).toContain("the QR code on page 1 still holds 4711-0815");
+    expect(made.message).toContain("Treat it as unredacted");
+  });
+
+  it("says what qualifies a clean verdict beside it", () => {
+    const made = afterRasterRedaction({
+      regions: 1,
+      verified: true,
+      why: [],
+      notes: ["1 code was read"],
+    }, "a.pdf");
+    expect(made.message).toContain("Note: 1 code was read.");
+    expect(made.success).toBe(false);
   });
 });
 
@@ -440,5 +469,60 @@ describe("a failure as a reader is shown it", () => {
     // number to look up belongs.
     expect(markup.split("{error}</p>").length - 1).toBe(1);
     expect(markup).toContain('<summary>{TEXT().technicalDetails}</summary><p class="error">{error}</p>');
+  });
+});
+
+// What arrives on its own (`unasked.ts`) and what was typed in a box and
+// refused (`edithold.ts`) are both said in the message bar this suite reads,
+// so their wiring is held here. Rows: `f10_app_wiring.py`.
+describe("App.svelte sends what arrives on its own through `whereUnasked`", () => {
+  it("decides from the message on screen", () => {
+    expect(missingFrom(functionIn(app, "function sayUnasked("), [
+      'if (whereUnasked(error) === "message") say(text);',
+      "else tell(spoken(text));",
+    ])).toEqual([]);
+  });
+
+  it("says the links notice, a form that would not read and a shortened file through it", () => {
+    const links = functionIn(app, "function readLinks(");
+    expect(missingFrom(links, ["if (said) sayUnasked(said);"])).toEqual([]);
+    expect(links).not.toMatch(/\bsay\(/);
+    const form = functionIn(app, "function readForm(");
+    expect(missingFrom(form, ["if (viewer === mounted) sayUnasked(String(error));"])).toEqual([]);
+    expect(form).not.toMatch(/\bsay\(/);
+    expect(missingFrom(app, ["onGone: (message) => { sayUnasked(message); },"])).toEqual([]);
+  });
+
+  it("holds the disk watch's prompt and its unasked reload back while a message is on screen", () => {
+    expect(missingFrom(app, [
+      "if (!current() || !promptUnaskedNow(error)) return false;",
+    ])).toEqual([]);
+  });
+
+  it("says the tabs a launch could not open through it", () => {
+    expect(missingFrom(app, [
+      "const said = afterLaunch(unopened, basename); if (said) sayUnasked(said);",
+    ])).toEqual([]);
+  });
+});
+
+describe("App.svelte sends the edits that lost something when refused through `ranOr`", () => {
+  it("says what a note, a comment rewritten or a reply would have added", () => {
+    expect(missingFrom(functionIn(app, "function typedEdit("), [
+      "return ranOr((edit) => applyEdit(edit, view), run, () => { asDocument(view, () => say(typedNotTaken(words))); });",
+    ])).toEqual([]);
+    expect(missingFrom(app, [
+      "if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, note), note);",
+      "return to ? typedEdit((e) => e.refield([to]), note) : undefined;",
+      "if (to) void typedEdit((e) => e.rewrite(to.object, to.page, body), body);",
+      "if (to) void typedEdit((e) => e.reply(to.page, to.object, comment.rect, body), body);",
+    ])).toEqual([]);
+  });
+
+  it("releases an insert's file when its edit never ran", () => {
+    expect(missingFrom(functionIn(app, "async function insertChosenPages("), [
+      "await ranOr(applyEdit, (e) => {",
+      "}, release);",
+    ])).toEqual([]);
   });
 });

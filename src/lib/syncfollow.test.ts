@@ -76,6 +76,20 @@ describe("SyncFollow", () => {
     expect(right.zooms).toEqual([2]);
   });
 
+  it("sends nothing back from the partner's next frame after a zoom", () => {
+    // A partner that draws no frame inside the move: its next own frame shows
+    // the zoom and place it was given, and that is not the reader's doing.
+    // Without the partner's new state being recorded after the move, that
+    // frame read as a zoom and a scroll and was sent back to the leader.
+    const { left, right, follow } = pair();
+    left.currentZoom = 2;
+    follow.step(1, left, false);
+    expect(right.zooms).toEqual([2]);
+    follow.step(2, right, false);
+    expect(left.zooms).toEqual([]);
+    expect(left.moves).toEqual([]);
+  });
+
   it("scrolls one side alone for a moment after a wheel with Alt", () => {
     // Mutation: `aloneFor` not setting the clock, or `<` turned to `>` -> red.
     let clock = 1_000;

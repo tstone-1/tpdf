@@ -964,6 +964,7 @@ fn file(signatures: Vec<report::Signature>, error: Option<ErrorKind>) -> report:
             message: "why".into(),
         }),
         signatures,
+        signatures_complete: error.is_none(),
     }
 }
 
@@ -1040,6 +1041,68 @@ fn strict_passes_only_intact_and_trusted_signatures_in_every_document() {
         // Without --strict, a verdict is an answer and not a failure.
         assert_eq!(verify_exit(&report, false), Exit::Ok);
     }
+}
+
+/// A list of signatures cut at the scan's bound, or past a form field that
+/// could not be read, may be missing the one that is not intact: `--strict`
+/// fails it however good the listed ones are, and the plain output says so.
+#[test]
+fn strict_fails_a_document_whose_list_of_signatures_was_cut() {
+    use crate::docinfo::Limits;
+    let good = || signature(Verdict::Intact, Some(Standing::Trusted));
+    let cut = report::File {
+        signatures_complete: false,
+        ..file(vec![good(), good()], None)
+    };
+    let report = verified(vec![file(vec![good()], None), cut]);
+    assert!(!report.strict_passed, "{report:?}");
+    assert_eq!(verify_exit(&report, true), Exit::Strict);
+    assert_eq!(verify_exit(&report, false), Exit::Ok);
+    let plain = super::verify::verify_text(&report);
+    assert_eq!(
+        plain.matches("the list may not be complete").count(),
+        1,
+        "{plain}"
+    );
+    // And stderr says so once, of the cut document only.
+    let said = super::verify::file_complaints("tpdf", &report);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].starts_with("tpdf: ") && said[0].contains("may not be"),
+        "{said:?}"
+    );
+    // The two counts the scan keeps are what decides it, each on its own.
+    use super::verify::signatures_complete;
+    assert!(signatures_complete(&Limits::default()));
+    assert!(!signatures_complete(&Limits {
+        signatures_dropped: 1,
+        ..Limits::default()
+    }));
+    assert!(!signatures_complete(&Limits {
+        unreadable: 1,
+        ..Limits::default()
+    }));
+    // Other limits do not cut the list of signatures.
+    assert!(signatures_complete(&Limits {
+        fields_dropped: 3,
+        timestamps_unread: 1,
+        ..Limits::default()
+    }));
+    // And the entry a document read by a worker gets carries the answer.
+    let read = |limits: Limits| crate::docinfo::Properties {
+        limits,
+        ..crate::docinfo::Properties::default()
+    };
+    let entry = super::verify::file_report("a.pdf".into(), &read(Limits::default()));
+    assert!(entry.signatures_complete);
+    let entry = super::verify::file_report(
+        "a.pdf".into(),
+        &read(Limits {
+            signatures_dropped: 2,
+            ..Limits::default()
+        }),
+    );
+    assert!(!entry.signatures_complete);
 }
 
 #[test]
@@ -1421,6 +1484,84 @@ fn a_malformed_line_exits_2_with_the_reason_on_stderr_and_nothing_on_stdout() {
     assert_eq!(code, 2);
     assert!(out.is_empty(), "{out}");
     assert!(err.contains("-o <out.pdf>"), "{err}");
+}
+
+/// Standard output that takes `room` bytes and then fails every write with
+/// `kind`: a disk that fills under `> out.txt`, or a reader that went away.
+struct Refusing {
+    room: usize,
+    kind: std::io::ErrorKind,
+}
+
+impl std::io::Write for Refusing {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.room == 0 {
+            return Err(std::io::Error::from(self.kind));
+        }
+        let n = bytes.len().min(self.room);
+        self.room -= n;
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A line run in-process against [`Refusing`]: the code and stderr.
+fn ran_into(line: &[String], room: usize, kind: std::io::ErrorKind) -> (i32, String) {
+    let store = Soft256(Vec::new());
+    let env = Env {
+        store: &store,
+        library_dir: PathBuf::from("/nonexistent/no-workers-here"),
+        now: NOW,
+        program: "tpdf".into(),
+        anchors: crate::trust::Anchors::Only(&[]),
+    };
+    let mut out = Refusing { room, kind };
+    let mut err = Vec::new();
+    let code = run(line, &env, &mut out, &mut err);
+    (code, String::from_utf8(err).expect("utf-8"))
+}
+
+/// A report that did not reach standard output is not an answer: exit 3 and
+/// one sentence, for a write through `say`, through `json`, cut half way, and
+/// through a command that writes to `out` itself (`completions`).
+#[test]
+fn a_report_that_could_not_be_written_exits_3_with_one_line() {
+    use std::io::ErrorKind::Other;
+    for (words, room) in [
+        (&["--version"][..], 0),
+        (&["help", "--json"][..], 0),
+        (&["help"][..], 40),
+        (&["completions", "bash"][..], 0),
+    ] {
+        let (code, err) = ran_into(&line(words), room, Other);
+        assert_eq!(code, 3, "{words:?}: {err}");
+        assert_eq!(err.lines().count(), 1, "{words:?}: {err}");
+        assert!(
+            err.contains("could not be written to standard output"),
+            "{words:?}: {err}"
+        );
+    }
+    // The control: with room for everything, the same lines exit 0, silent.
+    let (code, err) = ran_into(&line(&["--version"]), usize::MAX, Other);
+    assert_eq!((code, err.as_str()), (0, ""));
+}
+
+/// `tpdf ... | head`: a reader that stopped reading ends the run quietly with
+/// the command's own code, so a pipeline that works as written stays clean.
+#[test]
+fn a_closed_pipe_ends_the_run_quietly_with_its_own_code() {
+    let (code, err) = ran_into(&line(&["help"]), 40, std::io::ErrorKind::BrokenPipe);
+    assert_eq!((code, err.as_str()), (0, ""));
+    // A run that failed keeps its code and its own sentence, the pipe aside.
+    let (code, err) = ran_into(
+        &line(&["sign", "a.pdf", "--json"]),
+        0,
+        std::io::ErrorKind::Other,
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(!err.contains("standard output"), "{err}");
 }
 
 #[test]
@@ -2432,6 +2573,7 @@ fn samples() -> Vec<(&'static str, String)> {
             path: "contract.pdf".into(),
             error: None,
             signatures: vec![full_signature(), bare_signature()],
+            signatures_complete: true,
         },
         report::File {
             path: "locked.pdf".into(),
@@ -2442,6 +2584,7 @@ fn samples() -> Vec<(&'static str, String)> {
                     .into(),
             }),
             signatures: Vec::new(),
+            signatures_complete: false,
         },
     ]);
     let summary = words::after_signing(
@@ -4348,6 +4491,16 @@ fn search_reads_its_line_and_refuses_one_with_nothing_to_find() {
         ),
         (
             "search a.pdf --text x --annotate highlight --color 1,0",
+            "from 0 to 1",
+        ),
+        // A part that does not parse, or is out of range, refuses the value:
+        // the three that remain are not taken for it.
+        (
+            "search a.pdf --text x --annotate highlight --color 1,x,0,0.5",
+            "from 0 to 1",
+        ),
+        (
+            "search a.pdf --text x --annotate highlight --color 2,1,0,0.5",
             "from 0 to 1",
         ),
         ("search --text x", "needs a document"),

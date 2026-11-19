@@ -1160,7 +1160,7 @@ ROWS += [
     Mutation('compress: do the work when none was asked for', 'src/compress.rs', '        Compress::No => return done,', '        Compress::No => {}', 'without_a_preset_no_picture_is_touched_and_plain_streams_are_deflated'),
     Mutation('compress: sample the first window, not the one that differs most', 'src/compress.rs', '                if best.is_none_or(|(most, ..)| sum > most) {', '                if best.is_none() {', 'a_sample_is_the_part_of_the_page_that_differs_most'),
     Mutation('compress: sample a page that did not change', 'src/compress.rs', '        if most == 0 {', '        if false {', 'a_sample_is_the_part_of_the_page_that_differs_most'),
-    Mutation('compress: look at the page that lost least', 'src/compress.rs', '        .max_by_key(|(_, _, old, new)| (old.0 * old.1 - new.0 * new.1, old.0 * old.1))?;', '        .min_by_key(|(_, _, old, new)| (old.0 * old.1 - new.0 * new.1, old.0 * old.1))?;', 'an_estimate_writes_nothing_and_names_the_page_that_loses_most'),
+    Mutation('compress: look at the page that lost least', 'src/compress.rs', '        .max_by_key(|(_, _, old, new)| {', '        .min_by_key(|(_, _, old, new)| {', 'an_estimate_writes_nothing_and_names_the_page_that_loses_most'),
     Mutation('compress: the rewrite never makes the copy smaller', 'src/save.rs', '    let _ = crate::compress::apply(&mut doc, plan.compress);', '    let _ = crate::compress::apply(&mut doc, crate::compress::Compress::No);', 'a_smaller_copy_is_packed_shrinks_its_pictures_and_keeps_every_page'),
     Mutation('compress: write a smaller copy without object streams', 'src/save.rs', '        serialise_packed(&mut doc, &said!("the document"))?', '        serialise(&mut doc, &said!("the document"))?', 'a_smaller_copy_is_packed_shrinks_its_pictures_and_keeps_every_page'),
     Mutation('compress: call a plan for a smaller copy the file itself', 'src/edits.rs', '        if self.compress != crate::compress::Compress::No {\n            return false;\n        }\n', '', 'a_plan_that_asks_for_a_smaller_copy_is_neither_the_file_nor_an_append'),
@@ -1841,8 +1841,8 @@ ROWS += [
         # paragraph's own line is refused for landing on it.
         "carried: read-only text that moves is still in the way",
         "src/textedit/layout.rs",
-        "                                    (rect.map(f64::from), moves.contains(&id))\n",
-        "                                    (rect.map(f64::from), false && moves.contains(&id))\n",
+        "                    Around::Kept(id, rect) => (rect.map(f64::from), moves.contains(&id)),",
+        "                    Around::Kept(id, rect) => (rect.map(f64::from), false && moves.contains(&id)),",
         "a_read_only_block_below_moves_down_with_the_wrap",
     ),
     Mutation(
@@ -1859,8 +1859,8 @@ ROWS += [
         # Lowered and never checked: it is drawn off the page.
         "carried: a read-only line that moves is checked against nothing",
         "src/textedit/layout.rs",
-        "                            .chain(&page.preserved)\n                            .find(|other| {",
-        "                            .find(|other| {",
+        "                .chain(&page.preserved)\n                .find(|other| other.operator == operator",
+        "                .find(|other| other.operator == operator",
         "a_read_only_line_of_the_paragraph_moves_and_is_held_to_the_page",
     ),
     Mutation(
@@ -1975,8 +1975,8 @@ ROWS += [
         # because the block now offered moves and has nowhere to go.
         "carried: a wrap is not tried again without the read-only blocks",
         "src/textedit/layout.rs",
-        "                    Err(first) if plain != plan.beneath => attempt",
-        "                    Err(first) if false => attempt",
+        "                    Err(first) if plain != plan.beneath => edit",
+        "                    Err(first) if false => edit",
         "a_wrap_a_read_only_block_cannot_follow_is_made_without_it",
     ),
     Mutation(
@@ -2320,14 +2320,14 @@ ROWS += [
     Mutation(
         'bookmarks: do not look a name up',
         'src/outline_repair.rs',
-        '        Object::Name(name) => named(doc, name),',
+        '        Object::Name(name) => named(doc, names, name),',
         '        Object::Name(_) => Aim::Other,',
         'deleting_a_page_removes_only_the_entries_that_led_to_it',
     ),
     Mutation(
         'bookmarks: do not look a string up',
         'src/outline_repair.rs',
-        '        Object::String(bytes, _) => named(doc, bytes),',
+        '        Object::String(bytes, _) => named(doc, names, bytes),',
         '        Object::String(..) => Aim::Other,',
         'a_name_in_the_name_tree_is_followed_to_its_page',
     ),

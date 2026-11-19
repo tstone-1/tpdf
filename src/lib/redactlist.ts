@@ -345,6 +345,41 @@ export async function fillRedactionRegions(walk: RedactionWalk): Promise<void> {
   }
 }
 
+/**
+ * What one document's region walk keeps: the words each pending region
+ * covers, what a removal would take from it, and whether a walk is running.
+ *
+ * Both maps are by redaction id. `null` words are a region whose page could
+ * not be read, which is a different thing to tell a reader than an empty
+ * string (see {@link rowLineFor}); a region with no entry has not been looked
+ * at yet. The two answer different questions and come from different places:
+ * the words are geometry this process already holds, the plan a reading of the
+ * page's content stream that only a worker can do.
+ *
+ * One per mounted document (`LiveDocument.redactionWords`), so that a change of
+ * side swaps the maps and the flag together, and a walk that waits holds the
+ * one it began with.
+ */
+export class RegionWords {
+  /** The words each region covers; see {@link nextUnreadRegion}. */
+  readonly words = new Map<number, string | null>();
+  /** What a removal would take from each region. */
+  readonly plans = new Map<number, RegionPlan>();
+  /** Whether {@link fill} is walking, so a second call stands down. */
+  filling = false;
+
+  /** Runs {@link fillRedactionRegions} over these maps, unless a walk already is. */
+  async fill(walk: Omit<RedactionWalk, "words" | "planned">): Promise<void> {
+    if (this.filling) return;
+    this.filling = true;
+    try {
+      await fillRedactionRegions({ ...walk, words: this.words, planned: this.plans });
+    } finally {
+      this.filling = false;
+    }
+  }
+}
+
 /** What a redaction row needs from whoever owns the document. */
 export interface RedactListOptions {
   /** Called when a row is activated, with the redaction's id. */

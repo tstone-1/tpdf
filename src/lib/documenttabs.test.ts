@@ -13,8 +13,16 @@ import { PLAIN_SEARCH } from "./search";
 import { handleWindowKey, registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
 import { matches } from "./keys";
+import { CoveredWords } from "./coveredwords";
 
-const tab = (id: number, path = `/fixture/${id}.pdf`) => ({ view: id, doc: { id }, path, edits: [id], page: id });
+/** Covered words holding one entry. */
+function coveredWith(id: number, words: string): CoveredWords {
+  const covered = new CoveredWords();
+  covered.note(id, words);
+  return covered;
+}
+
+const tab =(id: number, path = `/fixture/${id}.pdf`) => ({ view: id, doc: { id }, path, edits: [id], page: id });
 
 describe("document tabs", () => {
   it("keeps independent edit journals and positions across switches", () => {
@@ -271,6 +279,25 @@ describe("document tasks", () => {
     release();
     expect(states).toEqual([true, false]);
   });
+
+  it("stays busy when a hold is released while a task still runs", async () => {
+    // The mirror of the test above, for the release's own `!this.busy` test:
+    // a hold let go of under a running save must not light the edit commands
+    // up while the save is still writing.
+    const states: boolean[] = [];
+    const tasks = new DocumentTasks((busy) => states.push(busy));
+    let finish!: () => void;
+    const task = tasks.run(() => new Promise<void>((r) => { finish = r; }));
+    const release = tasks.hold();
+    release();
+    expect(tasks.busy).toBe(true);
+    expect(states).toEqual([true]);
+    await Promise.resolve();
+    finish();
+    await task;
+    expect(tasks.busy).toBe(false);
+    expect(states).toEqual([true, false]);
+  });
 });
 
 describe("a close whose drafts cannot be committed", () => {
@@ -364,7 +391,7 @@ describe("what a tab keeps across a switch", () => {
   const touched = (): TabState => ({
     edits: { journal: "edited" } as unknown as TabState["edits"],
     place: { path: "/fixture/1.pdf", page: 4 } as unknown as TabState["place"],
-    covered: new Map([[3, "kept words"]]),
+    covered: coveredWith(3, "kept words"),
     query: "needle",
     findShown: true,
     searchOptions: { ...PLAIN_SEARCH, matchCase: true },

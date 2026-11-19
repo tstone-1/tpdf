@@ -369,6 +369,41 @@ fn a_match_with_no_position_on_the_page_is_a_reason_and_a_placed_one_is_not() {
     assert_eq!(match_regions(&found)[&0].len(), 1);
 }
 
+/// A match whose last characters have no box gets a region over the rest,
+/// which removes what it covers and leaves the others: that is a reason too,
+/// and a match every character of which is covered is not.
+#[test]
+fn a_match_with_only_some_characters_placed_is_a_reason() {
+    let mut partly = page(&["Secret here"]);
+    // "ret" of "Secret" unplaced, as PDFium reports a character it did not
+    // place; "Sec" keeps its boxes and so becomes a region.
+    for value in &mut partly.boxes[3 * 4..6 * 4] {
+        *value = 0.0;
+    }
+    let found = walk(&[query(SearchKind::Text, "Secret")], &[1], &[partly]);
+    assert_eq!(found.counts, vec![1]);
+    assert_eq!(
+        match_regions(&found)[&0].len(),
+        1,
+        "the placed part is marked"
+    );
+    assert_eq!(
+        unmarked(&found),
+        vec![
+            "page 1: \"Secret\" matched, but 3 of its characters have no position on the page \
+             that a region holds, so it could be marked only in part"
+                .to_string()
+        ]
+    );
+    // The control: the same page with every box in place is marked whole.
+    let whole = walk(
+        &[query(SearchKind::Text, "Secret")],
+        &[1],
+        &[page(&["Secret here"])],
+    );
+    assert!(unmarked(&whole).is_empty(), "{:?}", unmarked(&whole));
+}
+
 #[test]
 fn a_copy_is_verified_and_exits_0_only_when_no_list_has_a_reason() {
     assert_eq!(
@@ -413,6 +448,39 @@ fn nothing_matched_says_so_and_a_dry_run_says_nothing_was_written() {
     dry.removals = 1;
     let said = plain(&dry);
     assert!(said.contains("Dry run: 2 regions would take 1 removal. Nothing was written."));
+}
+
+/// Nothing matched and `--force` names a file that is there: the file is an
+/// earlier run's, and the run is refused with that sentence. Without
+/// `--force`, for a dry run, and for an output that is not there, there is
+/// nothing to refuse.
+#[test]
+fn nothing_matched_over_an_existing_forced_output_says_the_file_is_not_this_runs() {
+    let dir = std::env::temp_dir().join(format!("tpdf-kept-output-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch");
+    let there = dir.join("old.pdf");
+    std::fs::write(&there, b"%PDF- an earlier run").expect("earlier copy");
+    let absent = dir.join("absent.pdf");
+    // Built word by word, so a temporary folder with a space in it stays one.
+    let line = |output: &std::path::Path, extra: &str| {
+        let mut words = vec![
+            "in.pdf".to_string(),
+            "-o".into(),
+            output.display().to_string(),
+        ];
+        words.extend(argv(&format!("--text x {extra}")));
+        parse(&words).expect("parses")
+    };
+    let said = super::redact::kept_output(&line(&there, "--force")).expect("said");
+    assert!(said.contains("is not this run's copy"), "{said}");
+    assert!(said.contains(&there.display().to_string()), "{said}");
+    assert_eq!(super::redact::kept_output(&line(&there, "")), None);
+    assert_eq!(super::redact::kept_output(&line(&absent, "--force")), None);
+    assert_eq!(
+        super::redact::kept_output(&line(&there, "--force --dry-run")),
+        None
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

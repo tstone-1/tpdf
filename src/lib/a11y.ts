@@ -123,6 +123,8 @@ export class AccessibleText {
   private readonly host: HTMLElement;
   private readonly announcer: HTMLElement;
   private readonly speak: (text: string) => void;
+  /** Lets go of the window's focus, which {@link speak} listens to. */
+  private readonly stopHearing: () => void;
   private readonly pages = new Map<number, HTMLElement>();
   /**
    * What each built page was built from, so it can be built again.
@@ -186,10 +188,15 @@ export class AccessibleText {
     this.announcer.style.cssText = SR_ONLY;
     root.appendChild(this.announcer);
     const write = (text: string) => { this.announcer.textContent = text; };
-    this.speak = clock ? whenHeard(write, clock) : write;
+    const heard = clock ? whenHeard(write, clock) : null;
+    this.speak = heard ?? write;
+    this.stopHearing = heard ? heard.stop : () => {};
   }
 
   destroy(): void {
+    // The focus listener first: it holds this object, and with it the
+    // announcer, for as long as the window lives.
+    this.stopHearing();
     this.host.remove();
     this.announcer.remove();
   }

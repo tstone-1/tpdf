@@ -156,6 +156,30 @@ fn a_page_stays_within_what_a_page_may_be() {
     assert_eq!(tiny.page, (3.0, 6.0));
 }
 
+/// A picture too long for its shape to fit both bounds gets a page within
+/// both, and the picture is fitted onto it, never past it.
+///
+/// Scaled to fit the longest side, a strip 4,801 times as long as it is wide
+/// has a short side under three points; grown to the shortest side, one
+/// 10,000 long and one wide has a long side past the format's limit.
+#[test]
+fn a_page_for_a_picture_too_long_for_its_shape_is_still_within_bounds() {
+    for (width, height) in [(48_010, 10), (10, 48_010), (10_000, 1), (1, 10_000)] {
+        let at = placement(width, height, 1, None, own());
+        let (w, h) = at.page;
+        assert!(
+            (3.0..=14_400.0).contains(&w) && (3.0..=14_400.0).contains(&h),
+            "{width} by {height}: {w} by {h}"
+        );
+        let (right, top) = lands(&at, 1.0, 1.0);
+        let (left, bottom) = lands(&at, 0.0, 0.0);
+        assert!(
+            left >= -1e-9 && bottom >= -1e-9 && right <= w + 1e-9 && top <= h + 1e-9,
+            "{width} by {height}: the picture is on its page"
+        );
+    }
+}
+
 #[test]
 fn paper_is_turned_to_the_picture_and_the_picture_is_never_enlarged() {
     let a4 = Options {

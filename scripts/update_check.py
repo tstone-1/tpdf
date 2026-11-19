@@ -150,7 +150,14 @@ def offered() -> str:
     return str(manifest["version"])
 
 
-def close(pids: list[int]) -> None:
+def close(pids: list[int]) -> list[int]:
+    """Asks each copy's window to close; the copies that had to be killed after 20 s.
+
+    A copy that is still there after the request was asked something, or
+    hung, and is killed so the run can go on. The answer says which, because
+    a caller that checks only that the copy is gone afterwards cannot tell a
+    copy that closed from one that was killed with a question on screen.
+    """
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     for pid in pids:
         for hwnd, title in window_titles(pid):
@@ -159,8 +166,41 @@ def close(pids: list[int]) -> None:
     gone_by = time.monotonic() + 20
     while time.monotonic() < gone_by and {p for p, _, _ in processes()} & set(pids):
         time.sleep(0.2)
-    for pid in {p for p, _, _ in processes()} & set(pids):
+    killed = sorted({p for p, _, _ in processes()} & set(pids))
+    for pid in killed:
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
+    return killed
+
+
+def set_session_aside(real: Path, kept: Path) -> None:
+    """Moves the reader's own session out of the way, if there is one.
+
+    Copied under another name, renamed, and only then deleted, so `kept`
+    existing means a whole copy, and a failure at any step leaves the
+    original where it was rather than in neither place.
+    """
+    if not real.is_file():
+        return
+    part = kept.with_name(kept.name + ".part")
+    shutil.copy2(real, part)
+    part.replace(kept)
+    real.unlink()
+
+
+def restore_session(real: Path, kept: Path, set_aside: bool) -> None:
+    """Puts the reader's own session back, or removes the one a run left.
+
+    Call it first in a `finally`, before the uninstall or anything else that
+    can raise: `kept` lives in the run's temporary folder, so a restore
+    skipped by an earlier exception is a session deleted with that folder.
+    `set_aside` says `set_session_aside` returned; before that, a
+    session in place is still the reader's own and is left alone.
+    """
+    if kept.is_file():
+        real.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(kept, real)
+    elif set_aside and real.is_file():
+        real.unlink()
 
 
 def start(folder: Path, pdf: Path, env: dict[str, str], scratch: Path, old: str,
@@ -369,13 +409,14 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="tpdf-update-check-") as temporary:
         scratch = Path(temporary)
         kept = scratch / "session-as-it-was.json"
-        if real_session.is_file():
-            shutil.move(str(real_session), str(kept))
-        spaced = scratch / "a folder with a space"
-        spaced.mkdir()
-        document = spaced / pdf.name
-        shutil.copyfile(pdf, document)
+        set_aside = False
         try:
+            set_session_aside(real_session, kept)
+            set_aside = True
+            spaced = scratch / "a folder with a space"
+            spaced.mkdir()
+            document = spaced / pdf.name
+            shutil.copyfile(pdf, document)
             print(f"--- latest.json offers {new}; installing {old} into {folder} ---")
             code = bounded(f'"{installer}" /S /D={folder}', "the installer", 300)
             checks.note(code == 0, "the installer ends with exit code 0", f"exit {code}")
@@ -386,12 +427,10 @@ def main() -> int:
         except (RanOut, RuntimeError, OSError) as e:
             checks.note(False, "every step ends, and within its time limit", str(e))
         finally:
-            uninstall(checks, folder, before, run_it=True)
-            if real_session.is_file():
-                real_session.unlink()
-            if kept.is_file():
-                real_session.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(kept), str(real_session))
+            try:
+                restore_session(real_session, kept, set_aside)
+            finally:
+                uninstall(checks, folder, before, run_it=True)
 
     print()
     answer = attempt["answer"]

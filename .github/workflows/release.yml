@@ -567,13 +567,36 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
-          **Redacted with 26.11.5 or earlier? Redact the originals again.**
+          **Redacted with 26.11.9 or earlier? Redact the originals again.**
           A redacted file from those versions can still hold a copy of what
           was removed, even where tpdf said verified. Updating tpdf does not
           change files it has already written: redo the redaction from the
-          original with 26.11.6 or later and use the new file. If the older
+          original with 26.11.10 or later and use the new file. If the older
           file was already sent, assume it can still hold what was redacted.
-          Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-26115-or-earlier
+          Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-26119-or-earlier
+
+          **New in 26.11.10.** A redaction is checked more strictly. A
+          picture stored losslessly, a stream the check could not decode
+          as a viewer does, and the image-only copy of a document with a
+          QR code were reported as verified without having been read;
+          they are now reported as not verified, with the reason. A
+          document that holds a figure or a logo on any page therefore
+          reads not verified for a redaction anywhere in it, because
+          pictures are not read. A redaction also reads the QR codes on
+          every page of the file it wrote, removes more copies of the
+          removed words (inside forms, in the file's trailer, in inline
+          form fields and replies), and its verdict is no longer replaced
+          by a later message about links or a file changed on disk. A
+          redaction or drawing dragged onto the next page stays on the
+          page it started on. Print and the copy commands include a form
+          answer still being typed. Saving over a read-only or locked file
+          is refused before the document is closed. The signature panel
+          says which timestamps and revocation data it could not read.
+          In the command-line tool, verify --strict fails a document whose
+          list of signatures may be incomplete, and redact --force refuses
+          to leave an earlier output in place when nothing matched.
+          Explorer's preview pane ends a page it no longer shows.
+          Dependency updates.
 
           **New in 26.11.9.** A screen reader now hears the command
           palette: NVDA and VoiceOver say what a command asks for, the

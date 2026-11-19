@@ -300,6 +300,149 @@ describe("a cropped page", () => {
     });
     viewer.destroy();
   });
+
+  it("asks nothing again, and redraws nothing, for an edit that leaves the crop alone", async () => {
+    // A state reply follows every command, so a crop re-measured on each one
+    // costs a round trip and a re-render of every cropped page per edit.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(true));
+    await settle();
+    const geometry = () => core.invoke.mock.calls.filter(([command]) => command === "page_geometry").length;
+    const inner = viewer as unknown as { scroller: { invalidatePage(slot: number): void } };
+    const invalidated = vi.spyOn(inner.scroller, "invalidatePage");
+    const asked = geometry();
+    expect(asked).toBe(1);
+
+    // A fresh array with the same crop, as the next state reply carries.
+    viewer.setPages(pages(true));
+    await settle();
+    expect(geometry()).toBe(asked);
+    expect(invalidated).not.toHaveBeenCalled();
+    expect((viewer as unknown as Placing).cropAt(0).left).toBe(GEOMETRY.left);
+
+    // The control: a different box is asked about and redrawn.
+    viewer.setPages([{ ...pages(true)[0]!, crop: [110, 150, 500, 650] }, pages(true)[1]!]);
+    await settle();
+    expect(geometry()).toBe(asked + 1);
+    expect(invalidated).toHaveBeenCalledWith(0);
+    viewer.destroy();
+  });
+
+  it("scrolls a form field to where it is on the cropped page, as a region is", async () => {
+    // A field's rectangle is the file's displayed one. Its raw top is the
+    // crop's own top further down than the field is on the cropped page.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(true));
+    await settle();
+    const rect: [number, number, number, number] = [200, 600, 300, 620];
+    viewer.showRegion(0, rect);
+    const region = viewer.position;
+    viewer.goToDestination(1, 0);
+    viewer.showForm({ page: 0, display_rect: rect } as unknown as import("./forms").FormWidget);
+    expect(viewer.position).toEqual(region);
+    // And the region is not at the raw top, so the equality says something.
+    expect(region.top).toBeLessThan(rect[1] - 1);
+    viewer.destroy();
+  });
+
+  it("marks a forward search's boxes on the file's page, wherever an edit moved it", async () => {
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+    const boxes = [{ x: 100, top: 200, width: 50, height: 10 }];
+
+    viewer.showSourceBoxes(1, boxes);
+    expect(viewer.sourceMarks?.page).toBe(1);
+
+    // The file's first page deleted: its second page is now in slot 0, and the
+    // boxes follow it there.
+    viewer.setPages([pages(false)[1]!]);
+    await settle();
+    expect(viewer.sourceMarks?.page).toBe(0);
+    viewer.showSourceBoxes(1, boxes);
+    expect(viewer.sourceMarks?.page).toBe(0);
+    // And a page the edit removed marks nothing, rather than the page that
+    // took its slot.
+    viewer.showSourceBoxes(0, boxes);
+    expect(viewer.sourceMarks).toBeNull();
+    viewer.destroy();
+  });
+
+  it("lands a forward search under the crop, as its boxes are painted", async () => {
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(true));
+    await settle();
+    const box = { x: 200, top: 600, width: 50, height: 10 };
+    viewer.showSourceBoxes(0, [box]);
+    const landed = viewer.position;
+    viewer.goToDestination(1, 0);
+    // A region at the same rectangle, less the forward search's margin.
+    viewer.showRegion(0, [box.x, box.top, box.x + box.width, box.top + box.height]);
+    expect(landed.page).toBe(0);
+    expect(landed.top).toBeLessThan(viewer.position.top);
+    expect(landed.top).toBeLessThan(box.top - GEOMETRY.top);
+    viewer.destroy();
+  });
+});
+
+describe("a page edited away under a drag", () => {
+  it("commits nothing, for a redaction or a box", async () => {
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    viewer.armRedact();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 }, false);
+    expect(viewer.cropPreview).not.toBe(null);
+    // The page the drag is on is deleted while the button is down; the page
+    // after it moves into the slot the drag is measured against.
+    viewer.setPages([pages(false)[1]!]);
+    await settle();
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: 320, clientY: 340 });
+    expect(redacted).toEqual([]);
+    expect(viewer.cropPreview).toBe(null);
+    viewer.destroy();
+  });
+
+  it("forgets Back and Forward, which name slots the edit renumbered", async () => {
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+    viewer.goToDestination(1, 0);
+    expect(viewer.historyDepths.back).toBe(1);
+    viewer.setPages([pages(false)[1]!]);
+    await settle();
+    expect(viewer.historyDepths).toEqual({ back: 0, forward: 0 });
+    viewer.destroy();
+  });
+});
+
+describe("a crop's geometry answered after the viewer closed", () => {
+  it("is dropped, and redraws nothing", async () => {
+    let answer: (geometry: CropGeometry) => void = () => {};
+    core.invoke.mockImplementation((command: string) =>
+      command === "page_geometry"
+        ? new Promise<CropGeometry>((resolve) => { answer = resolve; })
+        : Promise.resolve(null),
+    );
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(true));
+    await settle();
+    const inner = viewer as unknown as { scroller: { invalidatePage(slot: number): void } };
+    const invalidated = vi.spyOn(inner.scroller, "invalidatePage");
+    viewer.destroy();
+    answer(GEOMETRY);
+    await settle();
+    expect(invalidated).not.toHaveBeenCalled();
+    expect((viewer as unknown as Placing).cropAt(0).left).toBe(0);
+  });
 });
 
 describe("cropping by dragging", () => {
@@ -554,6 +697,38 @@ describe("the redaction tool shares the crop's drag and nothing else", () => {
     expect(viewer.redactArmed).toBe(false);
     drag({ x: 140, y: 160 }, { x: 340, y: 360 });
     expect(redacted).toHaveLength(2);
+    viewer.destroy();
+  });
+
+  it("keeps a region that ends inside the next page at the first page's bottom", async () => {
+    // A drag ending *past the document's end* cannot tell the two ways of
+    // measuring the moving end apart; one ending a little way into the next
+    // page can. Measured in that page's space, 30 points into it is 30 points
+    // down the first, and the region silently becomes most of the first page
+    // above where the drag started.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    const inner = viewer as unknown as {
+      scroller: { pageOrigin(slot: number): { left: number; top: number } };
+      zoom: number;
+      scrollTop: number;
+    };
+    const on = (slot: number, x: number, y: number) => {
+      const origin = inner.scroller.pageOrigin(slot);
+      return { x: origin.left + x * inner.zoom, y: origin.top + y * inner.zoom - inner.scrollTop };
+    };
+    viewer.armRedact();
+    drag(on(0, 100, 700), on(1, 300, 30));
+
+    expect(redacted).toHaveLength(1);
+    expect(redacted[0]?.page).toBe(1);
+    const [, top, , bottom] = redacted[0]!.rect;
+    // From where the drag began down to the page's own bottom edge.
+    expect(Math.min(top, bottom)).toBeCloseTo(700, 3);
+    expect(Math.max(top, bottom)).toBeCloseTo(800, 3);
     viewer.destroy();
   });
 

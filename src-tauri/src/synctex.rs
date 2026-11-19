@@ -238,15 +238,47 @@ fn lexical(path: &Path) -> PathBuf {
     out
 }
 
-/// Whether `input`, a path the SyncTeX file chose, is the reader's `source`.
+/// Whether `input`, a path the SyncTeX file chose, is the reader's `source`:
+/// [`Source::is`], for one input.
+#[cfg(all(test, unix))]
+fn same_file(input: &Path, source: &Path) -> bool {
+    Source::new(source).is(input)
+}
+
+/// The reader's source, as every input is compared with it: its lexical form,
+/// and its real path, asked of the disk once and only when a lexical
+/// comparison has not already answered. A SyncTeX file can name thousands of
+/// inputs, and asking per input repeated the same work each time.
 ///
 /// **The disk is asked about `source` alone.** `canonicalize` opens the path, and on
 /// Windows `\\host\share\x` opens a connection to a host the file chose, in the
 /// reader's name and from the unsandboxed app process. An input reached through a
 /// link is then not found by path, and the file name in [`source_tags`] finds it.
-fn same_file(input: &Path, source: &Path) -> bool {
-    let input = lexical(input);
-    input == lexical(source) || source.canonicalize().is_ok_and(|real| input == real)
+struct Source<'a> {
+    path: &'a Path,
+    lexical: PathBuf,
+    real: std::cell::OnceCell<Option<PathBuf>>,
+}
+
+impl<'a> Source<'a> {
+    fn new(path: &'a Path) -> Self {
+        Source {
+            path,
+            lexical: lexical(path),
+            real: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// Whether `input`, a path the SyncTeX file chose, is this source.
+    fn is(&self, input: &Path) -> bool {
+        let input = lexical(input);
+        input == self.lexical
+            || self
+                .real
+                .get_or_init(|| self.path.canonicalize().ok())
+                .as_ref()
+                .is_some_and(|real| input == *real)
+    }
 }
 
 /// The tags that are `source`: by path, or by file name when exactly one
@@ -264,9 +296,10 @@ fn source_tags(
             folder.join(path)
         }
     };
+    let wanted = Source::new(source);
     let by_path: BTreeSet<u32> = inputs
         .iter()
-        .filter(|(_, path)| same_file(&resolved(path), source))
+        .filter(|(_, path)| wanted.is(&resolved(path)))
         .map(|(tag, _)| *tag)
         .collect();
     if !by_path.is_empty() {

@@ -2216,6 +2216,31 @@ pub(super) fn removes_what_it_finds(report: &mut Report) {
             && !none.exists(),
         &format!("exit {code}: {stderr}{json}"),
     );
+    // The same over an earlier file with --force is refused: exit 0 there would
+    // let `redact ... --force && send out.pdf` send the earlier run's file.
+    // Nothing is written, and stderr says the file is not this run's.
+    std::fs::write(&none, b"an earlier run").expect("earlier copy");
+    let (code, json, stderr) = run(
+        &[
+            "redact".into(),
+            s(&input),
+            "-o".into(),
+            s(&none),
+            "--text".into(),
+            "Zanzibar".into(),
+            "--force".into(),
+            "--json".into(),
+        ],
+        &[],
+    );
+    report.check(
+        "nothing matched over an existing output with --force is refused, leaves it and says it is not this run's",
+        code == 3
+            && std::fs::read(&none).ok().as_deref() == Some(&b"an earlier run"[..])
+            && stderr.contains("is not this run's copy"),
+        &format!("exit {code}: {stderr}{json}"),
+    );
+    let _ = std::fs::remove_file(&none);
 
     // `--pages` limits the search: page 2's copy of the word stays.
     let first = dir.join("first-page.pdf");

@@ -229,6 +229,7 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String
         .take(page_count)
         .map(|page| page_geometry(document, *page))
         .collect();
+    let names = Destinations::of(document);
 
     for (index, page) in pages.values().take(page_count).enumerate() {
         if items.len() >= MAX_TOTAL {
@@ -244,6 +245,7 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String
             &mut items,
             &mut limits,
             &mut urls,
+            &names,
         );
     }
 
@@ -257,9 +259,10 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String
 
 /// Reads one page's `/Annots`, keeping the links.
 ///
-/// Eight arguments, and the allow is the same one `walk_outline` below carries
-/// for the same shape: six of them are the page and the two indexes built once
-/// in `scan_from`, and the other two are where the walk puts what it finds.
+/// Nine arguments, and the allow is the same one `walk_outline` below carries
+/// for the same shape: the document, the page, and the three things built once
+/// in `scan_from` (two indexes and the named destinations), and the rest are
+/// where the walk puts what it finds.
 /// Bundling the outputs into a struct is the usual answer and is not one here
 /// --- `target_of` takes two of the three, so one grouping cannot serve both
 /// and two groupings is more names than the problem has.
@@ -273,6 +276,7 @@ fn read_page(
     items: &mut Vec<Link>,
     limits: &mut Limits,
     urls: &mut Vec<String>,
+    names: &Destinations<'_>,
 ) {
     let Ok(dict) = document.get_dictionary(page) else {
         limits.unreadable += 1;
@@ -358,7 +362,7 @@ fn read_page(
             id: items.len() as u32,
             page: number,
             rect,
-            target: target_of(annot, document, numbers, geometry, limits, urls),
+            target: target_of(annot, document, numbers, geometry, limits, urls, names),
         });
         on_this_page += 1;
     }
@@ -381,6 +385,7 @@ fn target_of(
     geometry: &[PageBox],
     limits: &mut Limits,
     urls: &mut Vec<String>,
+    names: &Destinations<'_>,
 ) -> Target {
     if let Ok(action) = annot.get(b"A") {
         let Ok(action) = resolve(document, action).as_dict() else {
@@ -391,7 +396,7 @@ fn target_of(
         };
         return match kind {
             b"GoTo" => match action.get(b"D") {
-                Ok(dest) => destination(dest, document, numbers, geometry, limits),
+                Ok(dest) => destination(dest, document, numbers, geometry, limits, names),
                 Err(_) => Target::Broken,
             },
             b"GoToR" => refused("remote"),
@@ -407,7 +412,7 @@ fn target_of(
     }
 
     match annot.get(b"Dest") {
-        Ok(dest) => destination(dest, document, numbers, geometry, limits),
+        Ok(dest) => destination(dest, document, numbers, geometry, limits, names),
         // A link rectangle with no action and no destination is legal and inert
         // --- it is how a producer marks a region it decided not to link.
         Err(_) => Target::None,
@@ -428,11 +433,12 @@ fn destination(
     numbers: &HashMap<ObjectId, u32>,
     geometry: &[PageBox],
     limits: &mut Limits,
+    names: &Destinations<'_>,
 ) -> Target {
     match resolve(document, dest) {
         Object::Array(array) => place(array, document, numbers, geometry),
-        Object::Name(name) => named(name, document, numbers, geometry, limits),
-        Object::String(bytes, _) => named(bytes, document, numbers, geometry, limits),
+        Object::Name(name) => named(name, document, numbers, geometry, limits, names),
+        Object::String(bytes, _) => named(bytes, document, numbers, geometry, limits, names),
         _ => Target::Broken,
     }
 }
@@ -444,6 +450,7 @@ fn named(
     numbers: &HashMap<ObjectId, u32>,
     geometry: &[PageBox],
     limits: &mut Limits,
+    names: &Destinations<'_>,
 ) -> Target {
     let Ok(catalog) = document.catalog() else {
         return Target::Broken;
@@ -459,23 +466,13 @@ fn named(
         }
     }
 
-    // The 1.2 form: a name tree under `/Names`.
-    let tree = catalog
-        .get(b"Names")
-        .ok()
-        .and_then(|names| resolve(document, names).as_dict().ok())
-        .and_then(|names| names.get(b"Dests").ok());
-    let Some(tree) = tree else {
-        // No named destinations anywhere. Broken rather than unresolved: the
-        // document names a destination and then does not define the mechanism.
-        return Target::Broken;
-    };
-
-    let mut budget = MAX_TREE_NODES;
-    match walk_tree(tree, key, document, MAX_TREE_DEPTH, &mut budget) {
-        Found::Value(object) => follow(&object, document, numbers, geometry),
-        Found::Missing => Target::Broken,
-        Found::Exhausted => {
+    // The 1.2 form: a name tree under `/Names`. With none, no named
+    // destinations anywhere: broken rather than unresolved, since the document
+    // names a destination and then does not define the mechanism.
+    match names.tree().map_or(Ok(None), |tree| tree.get(key)) {
+        Ok(Some(object)) => follow(object, document, numbers, geometry),
+        Ok(None) => Target::Broken,
+        Err(GaveUp) => {
             limits.unresolved_names += 1;
             Target::Broken
         }
@@ -484,64 +481,111 @@ fn named(
 
 /// A name-tree walk that stopped at a bound before it found or ruled out the
 /// name.
+///
+/// Kept apart from "not there": they produce the same [`Target`] and they are
+/// not the same event. One is the document being wrong, the other is this scan
+/// declining to keep looking, and only the second belongs in [`Limits`];
+/// collapsing them would make a bound that fired look exactly like a broken
+/// link. `outline_repair` leaves an entry alone when its name does not exist,
+/// and must not when it merely could not find out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GaveUp;
 
-/// The value `key` has in a `/Names` tree, under the bounds every walk here
-/// has: `Ok(None)` for a name that is not there.
+/// A document's `/Names /Dests` tree, read the first time a name is looked up
+/// and kept for every later one.
 ///
-/// # Errors
-///
-/// [`GaveUp`] when the tree is deeper or wider than the walk goes. Kept apart
-/// from "not there" for the caller's sake: `outline_repair` leaves an entry
-/// alone when its name does not exist, and must not when it merely could not
-/// find out.
-pub(crate) fn find_named(
-    tree: &Object,
-    key: &[u8],
-    document: &Document,
-) -> Result<Option<Object>, GaveUp> {
-    let mut budget = MAX_TREE_NODES;
-    match walk_tree(tree, key, document, MAX_TREE_DEPTH, &mut budget) {
-        Found::Value(object) => Ok(Some(object)),
-        Found::Missing => Ok(None),
-        Found::Exhausted => Err(GaveUp),
+/// Read once rather than walked once per name: a document of 20,000 links
+/// into one leaf of a million names would otherwise scan that leaf 20,000
+/// times.
+pub(crate) struct Destinations<'a> {
+    document: &'a Document,
+    tree: std::cell::OnceCell<Option<NameTree<'a>>>,
+}
+
+impl<'a> Destinations<'a> {
+    pub(crate) fn of(document: &'a Document) -> Self {
+        Self {
+            document,
+            tree: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The tree, or `None` for a document that has none.
+    pub(crate) fn tree(&self) -> Option<&NameTree<'a>> {
+        self.tree
+            .get_or_init(|| {
+                let catalog = self.document.catalog().ok()?;
+                let tree = catalog
+                    .get(b"Names")
+                    .ok()
+                    .and_then(|names| resolve(self.document, names).as_dict().ok())
+                    .and_then(|names| names.get(b"Dests").ok())?;
+                Some(NameTree::read(tree, self.document))
+            })
+            .as_ref()
     }
 }
 
-/// What a name-tree walk found, keeping "not there" apart from "gave up".
+/// Every name a `/Names` tree holds, as far as the bounds every walk here has
+/// let it be read.
 ///
-/// They produce the same [`Target`] and they are not the same event: one is the
-/// document being wrong, the other is this scan declining to keep looking, and
-/// only the second belongs in [`Limits`]. Collapsing them would make a bound
-/// that fired look exactly like a broken link.
-enum Found {
-    Value(Object),
-    Missing,
-    Exhausted,
+/// The tree is sorted and the specification permits a binary search on
+/// `/Limits`; this reads it linearly instead, because `/Limits` is written by
+/// the producer and a hostile or merely buggy one that lies about a subtree's
+/// range would make a binary search skip entries that are really there. The
+/// bound on nodes is what keeps the linear walk from being the document's to
+/// schedule.
+///
+/// Read depth first, a node's own names before its kids, the first value a
+/// name is given kept, and stopped at the first bound: the answers are the
+/// ones a walk for each name alone gives under the same bounds, which stops
+/// at the name or at that same bound, whichever it meets first.
+pub(crate) struct NameTree<'a> {
+    values: HashMap<&'a [u8], &'a Object>,
+    /// Whether the walk read the whole tree. When it did not, a name it did not
+    /// find may be past where it stopped.
+    complete: bool,
 }
 
-/// Walks a `/Names` tree for `key`.
-///
-/// The tree is sorted and the specification permits a binary search on `/Limits`;
-/// this walks it linearly instead, because `/Limits` is written by the producer
-/// and a hostile or merely buggy one that lies about a subtree's range would
-/// make a binary search skip entries that are really there. The bound on nodes
-/// is what keeps the linear walk from being the document's to schedule.
-fn walk_tree(
-    node: &Object,
-    key: &[u8],
-    document: &Document,
+impl<'a> NameTree<'a> {
+    pub(crate) fn read(tree: &'a Object, document: &'a Document) -> Self {
+        let mut values = HashMap::new();
+        let mut budget = MAX_TREE_NODES;
+        let complete = gather(tree, document, MAX_TREE_DEPTH, &mut budget, &mut values);
+        Self { values, complete }
+    }
+
+    /// The value `key` has: `Ok(None)` for a name that is not there.
+    ///
+    /// # Errors
+    ///
+    /// [`GaveUp`] when the name was not found and the tree is deeper or wider
+    /// than the walk goes.
+    pub(crate) fn get(&self, key: &[u8]) -> Result<Option<&'a Object>, GaveUp> {
+        match self.values.get(key) {
+            Some(value) => Ok(Some(*value)),
+            None if self.complete => Ok(None),
+            None => Err(GaveUp),
+        }
+    }
+}
+
+/// Reads one node of a `/Names` tree and everything under it into `values`.
+/// `false` when a bound stopped it.
+fn gather<'a>(
+    node: &'a Object,
+    document: &'a Document,
     depth: usize,
     budget: &mut usize,
-) -> Found {
+    values: &mut HashMap<&'a [u8], &'a Object>,
+) -> bool {
     if depth == 0 || *budget == 0 {
-        return Found::Exhausted;
+        return false;
     }
     *budget -= 1;
 
     let Ok(dict) = resolve(document, node).as_dict() else {
-        return Found::Missing;
+        return true;
     };
 
     if let Ok(names) = dict.get(b"Names") {
@@ -550,14 +594,12 @@ fn walk_tree(
             // and `chunks_exact` drops the trailing key rather than pairing it
             // with whatever follows.
             for pair in pairs.chunks_exact(2) {
-                let matches = match resolve(document, &pair[0]) {
-                    Object::String(bytes, _) => bytes == key,
-                    Object::Name(name) => name == key,
-                    _ => false,
+                let key: &[u8] = match resolve(document, &pair[0]) {
+                    Object::String(bytes, _) => bytes,
+                    Object::Name(name) => name,
+                    _ => continue,
                 };
-                if matches {
-                    return Found::Value(pair[1].clone());
-                }
+                values.entry(key).or_insert(&pair[1]);
             }
         }
     }
@@ -565,16 +607,14 @@ fn walk_tree(
     if let Ok(kids) = dict.get(b"Kids") {
         if let Object::Array(kids) = resolve(document, kids) {
             for kid in kids {
-                match walk_tree(kid, key, document, depth - 1, budget) {
-                    Found::Value(value) => return Found::Value(value),
-                    Found::Exhausted => return Found::Exhausted,
-                    Found::Missing => {}
+                if !gather(kid, document, depth - 1, budget, values) {
+                    return false;
                 }
             }
         }
     }
 
-    Found::Missing
+    true
 }
 
 /// A named destination's value, which is either the array or a dictionary
@@ -757,6 +797,7 @@ pub fn outline_targets(bytes: &[u8], page_count: usize) -> Result<Vec<Target>, S
     // `links-probe --mode agree` compares web targets on their host and path
     // for exactly that reason.
     let mut urls: Vec<String> = Vec::new();
+    let names = Destinations::of(&document);
     walk_outline(
         &document,
         *first,
@@ -766,6 +807,7 @@ pub fn outline_targets(bytes: &[u8], page_count: usize) -> Result<Vec<Target>, S
         &mut out,
         &mut limits,
         &mut urls,
+        &names,
         MAX_TREE_DEPTH,
     );
     Ok(out)
@@ -782,6 +824,7 @@ fn walk_outline(
     out: &mut Vec<Target>,
     limits: &mut Limits,
     urls: &mut Vec<String>,
+    names: &Destinations<'_>,
     depth: usize,
 ) {
     if depth == 0 {
@@ -800,7 +843,9 @@ fn walk_outline(
         // §12.3.3 says `/Dest` shall not be present when `/A` is, and taking the
         // action is what refuses a `/GoToR` instead of resolving its `/D`
         // against this document.
-        out.push(target_of(dict, document, numbers, geometry, limits, urls));
+        out.push(target_of(
+            dict, document, numbers, geometry, limits, urls, names,
+        ));
 
         if let Ok(Object::Reference(child)) = dict.get(b"First") {
             walk_outline(
@@ -812,6 +857,7 @@ fn walk_outline(
                 out,
                 limits,
                 urls,
+                names,
                 depth - 1,
             );
         }
@@ -1594,6 +1640,96 @@ mod tests {
         assert!(!links.limits.any());
     }
 
+    /// The name tree is read once for every link, and the answers are the ones
+    /// a walk for each name alone gives: the first value a name is given, depth
+    /// first, wins; a name before the node budget runs out resolves; a name
+    /// past it is unresolved and counted once for every link to it; and a name
+    /// that is nowhere, in a tree read to its end, is broken without a charge.
+    #[test]
+    fn named_destinations_resolve_as_a_walk_for_each_name_would() {
+        let (mut document, ids) = build(2, &[]);
+        let to = |page: ObjectId| Object::Array(vec![Object::Reference(page), "Fit".into()]);
+        let dest = |name: &str| {
+            let mut annot = link(rect());
+            annot.set("Dest", Object::string_literal(name));
+            annot
+        };
+        let annots: Vec<Object> = ["twice", "early", "late", "late"]
+            .into_iter()
+            .map(|name| Object::Reference(document.add_object(dest(name))))
+            .collect();
+        document
+            .get_object_mut(ids[0])
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Annots", annots);
+
+        // Leaves in order: a name given twice, its first value on page 1; then
+        // more leaves than the budget, "early" in the tenth and "late" in the
+        // last.
+        let mut leaves = vec![
+            document.add_object(dictionary! {
+                "Names" => vec![Object::string_literal("twice"), to(ids[0])],
+            }),
+            document.add_object(dictionary! {
+                "Names" => vec![Object::string_literal("twice"), to(ids[1])],
+            }),
+        ];
+        for at in 0..MAX_TREE_NODES + 8 {
+            let name = match at {
+                10 => "early".to_string(),
+                _ if at == MAX_TREE_NODES + 7 => "late".to_string(),
+                _ => format!("filler {at}"),
+            };
+            leaves.push(document.add_object(dictionary! {
+                "Names" => vec![Object::string_literal(name), to(ids[1])],
+            }));
+        }
+        let root = document.add_object(dictionary! {
+            "Kids" => leaves.iter().map(|id| Object::Reference(*id)).collect::<Vec<_>>(),
+        });
+        let names = document.add_object(dictionary! { "Dests" => root });
+        let catalog_id = document
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        document
+            .get_object_mut(catalog_id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Names", names);
+
+        let links = scan_of(&mut document, 2);
+        let targets: Vec<&Target> = links.items.iter().map(|link| &link.target).collect();
+        let page = |page: u32| Target::Page { page, top_pt: None };
+        assert_eq!(
+            targets,
+            [&page(0), &page(1), &Target::Broken, &Target::Broken]
+        );
+        assert_eq!(links.limits.unresolved_names, 2, "once for each link");
+
+        // The same tree read for one name at a time says the same.
+        let tree = NameTree::read(document.get_object(root).unwrap(), &document);
+        let page_of = |found: Result<Option<&Object>, GaveUp>| {
+            found.map(|value| {
+                value.and_then(|value| value.as_array().ok()?.first()?.as_reference().ok())
+            })
+        };
+        assert_eq!(page_of(tree.get(b"twice")), Ok(Some(ids[0])));
+        assert_eq!(page_of(tree.get(b"early")), Ok(Some(ids[1])));
+        assert_eq!(page_of(tree.get(b"late")), Err(GaveUp));
+        assert_eq!(page_of(tree.get(b"nowhere")), Err(GaveUp));
+        let small = document.add_object(dictionary! {
+            "Kids" => vec![Object::Reference(leaves[0]), Object::Reference(leaves[1])],
+        });
+        let small = NameTree::read(document.get_object(small).unwrap(), &document);
+        assert_eq!(page_of(small.get(b"nowhere")), Ok(None));
+    }
+
     #[test]
     fn a_destination_past_the_last_page_is_broken() {
         let (mut document, ids) = build(2, &[]);
@@ -1787,7 +1923,7 @@ mod tests {
             "Rect" => shared.clone(),
             "Contents" => Object::string_literal("beside the link"),
         };
-        note.set("T", Object::string_literal("Timo"));
+        note.set("T", Object::string_literal("Jane Example"));
         let (mut document, ids) = build(1, &[(0, vec![note, link(shared)])]);
         document
             .get_object_mut(ids[0])

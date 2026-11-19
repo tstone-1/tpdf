@@ -63,6 +63,8 @@ import { quarterTurns } from "./pages";
 import {
   OBLIQUE_TURN,
   SHORT_MARK_HEIGHT,
+  charOf,
+  charsOf,
   charQuad,
   characterTurns,
   coveredIndices,
@@ -391,7 +393,7 @@ const COMBINING = /^[\p{Mn}\p{Me}]$/u;
  * about the *character* rather than about where the producer drew it.
  */
 function combining(code: number): boolean {
-  return COMBINING.test(String.fromCodePoint(code));
+  return COMBINING.test(charOf(code));
 }
 
 /**
@@ -982,7 +984,7 @@ export function usableRuns(text: PageText): TaggedRun[] | null {
 
 /** Whether a code is something a reader would see, rather than space. */
 function isVisible(code: number): boolean {
-  const char = String.fromCodePoint(code);
+  const char = charOf(code);
   return char.trim().length > 0;
 }
 
@@ -1135,9 +1137,8 @@ export function textOfRanges(text: PageText, ranges: readonly IndexRange[]): str
   let out = "";
   for (const range of ranges) {
     const end = Math.min(range.to, text.codes.length);
-    for (let at = Math.max(0, range.from); at < end; at += 4096) {
-      out += String.fromCodePoint(...text.codes.slice(at, Math.min(at + 4096, end)));
-    }
+    const start = Math.max(0, range.from);
+    if (start < end) out += charsOf(text.codes.slice(start, end));
   }
   return out;
 }
@@ -1161,13 +1162,7 @@ export function readingTextOf(text: PageText, from: number, to: number): string 
   const start = Math.max(0, from);
   const end = Math.min(to, text.codes.length);
   const wanted = readingOrder(text).filter((index) => index >= start && index < end);
-  let out = "";
-  for (let at = 0; at < wanted.length; at += 4096) {
-    out += String.fromCodePoint(
-      ...wanted.slice(at, at + 4096).map((index) => text.codes[index] ?? 0),
-    );
-  }
-  return out;
+  return charsOf(wanted.map((index) => text.codes[index] ?? 0));
 }
 
 /**
@@ -1216,21 +1211,15 @@ export function touchedText(text: PageText, quads: readonly number[]): string {
  * set is what makes the order the page's rather than the caller's, and a
  * caller's indices arrive in whatever sequence its own scan produced them.
  *
- * Chunked because `String.fromCodePoint` is spread into a call, and a page with
- * a hundred thousand characters in one rectangle is an argument list nothing
- * promises to accept.
+ * Through `charsOf`, which chunks because `String.fromCodePoint` is spread into
+ * a call, and a page with a hundred thousand characters in one rectangle is an
+ * argument list nothing promises to accept.
  */
 function inReadingOrder(text: PageText, indices: readonly number[]): string {
   const wanted = new Set(indices);
   if (wanted.size === 0) return "";
   const order = readingOrder(text).filter((index) => wanted.has(index));
-  let out = "";
-  for (let at = 0; at < order.length; at += 4096) {
-    out += String.fromCodePoint(
-      ...order.slice(at, at + 4096).map((index) => text.codes[index] ?? 0),
-    );
-  }
-  return out;
+  return charsOf(order.map((index) => text.codes[index] ?? 0));
 }
 
 /**

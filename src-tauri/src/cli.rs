@@ -55,9 +55,18 @@
 //! some uncompared, or `comments` could not read every annotation in full; 2
 //! the command line is malformed; 3 tpdf refused (the identity, the document,
 //! the output) or the OS did; 4 tpdf itself failed. Errors go to stderr, one
-//! sentence each; with `--json`, stdout carries exactly one JSON document
-//! whenever the exit code is 0 or 1, and for `verify` also when it is 3 or 4,
-//! since other documents in the same run may have been read.
+//! sentence each. With `--json`, stdout carries exactly one JSON document
+//! whatever the exit code: the command's report, or, when the command failed
+//! before writing one, a `report::Failed` naming the error (`verify` writes its
+//! report on 3 and 4 too, since other documents in the same run may have been
+//! read). Two refusals come before the command line is read and write no JSON:
+//! an argument that is not valid Unicode (exit 2) and an executable whose
+//! install location cannot be worked out (exit 4), both in [`main`].
+//!
+//! A report that could not be written to stdout is not a finished command: the
+//! process ends 3, as for any output the OS refused, with one line on stderr.
+//! A reader that closed the pipe early (`| head`) is the exception, and ends
+//! the run quietly with the command's own exit code ([`run`]).
 
 mod addtext;
 pub mod args;
@@ -125,8 +134,9 @@ pub enum Exit {
     Usage = 2,
     /// tpdf, or the OS, refused: an identity that is unknown, ambiguous or
     /// cannot sign; a document that cannot be signed or read; an output that
-    /// already exists; a key the OS would not use; for `compare`, a document
-    /// with no text on any page.
+    /// already exists; a key the OS would not use; a report the OS would not
+    /// let it write to standard output; for `compare`, a document with no
+    /// text on any page.
     Refused = 3,
     /// tpdf's own failure: a worker that died or did not answer, a store that
     /// could not be searched, a written file whose read-back disagreed.
@@ -369,8 +379,42 @@ pub fn run(args: &[String], env: &Env<'_>, out: &mut dyn Write, err: &mut dyn Wr
     let mut output = Counted {
         inner: out,
         bytes: 0,
+        failed: None,
     };
-    let out = &mut output;
+    let code = run_counted(args, env, &mut output, err, wants_json);
+    let _ = output.flush();
+    match output.failed {
+        None => code,
+        // The reader stopped reading (`tpdf text a.pdf | head`): what it took
+        // is what it asked for, and a line on stderr would only be noise in a
+        // pipeline that is working as written.
+        Some(e) if e.kind() == std::io::ErrorKind::BrokenPipe => code,
+        // A run that already failed keeps its own code and its own sentence.
+        Some(_) if code > Exit::Strict.code() => code,
+        // The report did not reach its reader: a full disk under `> out.txt`,
+        // a closed console. Exit 0 would say the file holds the answer, so it
+        // ends as any output the OS refused does.
+        Some(e) => {
+            say(
+                err,
+                &format!(
+                    "{}: the report could not be written to standard output: {e}",
+                    env.program
+                ),
+            );
+            Exit::Refused.code()
+        }
+    }
+}
+
+/// [`run`], writing through the [`Counted`] that remembers a failed write.
+fn run_counted(
+    args: &[String],
+    env: &Env<'_>,
+    out: &mut Counted<'_>,
+    err: &mut dyn Write,
+    wants_json: bool,
+) -> i32 {
     let line = match args::parse(args) {
         Ok(line) => line,
         Err(why) => {
@@ -452,20 +496,61 @@ pub fn run(args: &[String], env: &Env<'_>, out: &mut dyn Write, err: &mut dyn Wr
     }
 }
 
+/// Standard output as every command writes it: how much was written, and the
+/// first write that failed.
+///
+/// **The failure is kept here, not at each write.** A command writes its
+/// report through [`say`], [`json`] or straight to `out`, and a write that
+/// fails half way through a report leaves nothing more worth writing; what has
+/// to happen is that the run does not then end 0. Holding the first error where
+/// every write passes, rather than in each command, is what makes that true of
+/// a command added later too.
 struct Counted<'a> {
     inner: &'a mut dyn Write,
     bytes: usize,
+    failed: Option<std::io::Error>,
+}
+
+impl Counted<'_> {
+    /// `result`, with its error kept as the first failure if there was none.
+    fn noted<T>(&mut self, result: std::io::Result<T>) -> std::io::Result<T> {
+        if let Err(e) = &result {
+            // Interrupted is asked again by `write_all`, and is no failure.
+            if self.failed.is_none() && e.kind() != std::io::ErrorKind::Interrupted {
+                self.failed = Some(std::io::Error::new(e.kind(), e.to_string()));
+            }
+        }
+        result
+    }
 }
 
 impl Write for Counted<'_> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let n = self.inner.write(bytes)?;
+        let written = self.inner.write(bytes);
+        let n = self.noted(written)?;
         self.bytes += n;
         Ok(n)
     }
 
+    /// The standard loop, with a write that takes nothing kept as a failure
+    /// too: `Write::write_all` makes that error itself, past [`Counted::write`].
+    fn write_all(&mut self, mut bytes: &[u8]) -> std::io::Result<()> {
+        while !bytes.is_empty() {
+            match self.write(bytes) {
+                Ok(0) => {
+                    return self.noted(Err(std::io::Error::from(std::io::ErrorKind::WriteZero)));
+                }
+                Ok(n) => bytes = &bytes[n..],
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
     fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
+        let flushed = self.inner.flush();
+        self.noted(flushed)
     }
 }
 
@@ -568,6 +653,10 @@ impl Env<'_> {
 /// through here too and is not changed by it, since [`ascii_json`] leaves no
 /// character outside ASCII and `serde_json` escapes every control character
 /// inside a string.
+///
+/// The write's result is not returned: standard output is a [`Counted`], which
+/// keeps the first failure for [`run`] to end the run by, and a line to stderr
+/// that fails has nowhere left to say so.
 fn say(to: &mut dyn Write, line: &str) {
     let line = printable(line);
     let mut text = String::with_capacity(line.len() + 1);
@@ -725,8 +814,13 @@ fn spooled(from: &mut dyn std::io::Read) -> Result<(std::fs::File, usize), Strin
     Ok((file, len))
 }
 
-/// A read-write file in the temporary directory that no path leads to once
-/// this returns, and that the OS removes when the last handle closes.
+/// A read-write file in the temporary directory that the OS removes when the
+/// last handle closes.
+///
+/// On Unix no path leads to it once this returns: it is unlinked here. On
+/// Windows, which cannot unlink an open file, its name stays in the folder
+/// until the handle closes, and is then removed by the open's
+/// `FILE_FLAG_DELETE_ON_CLOSE`.
 fn unnamed_file() -> std::io::Result<std::fs::File> {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut options = std::fs::OpenOptions::new();

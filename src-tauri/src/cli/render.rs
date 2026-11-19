@@ -75,7 +75,8 @@ fn parse(args: &[String]) -> Result<Render, String> {
     let mut dpi_given = false;
     while let Some(arg) = rest.next() {
         if positional {
-            paths.push(PathBuf::from(arg));
+            // After `--` a `-` is a file of that name, not standard input.
+            paths.push(super::args::operand(true, arg));
             continue;
         }
         match arg.as_str() {
@@ -350,6 +351,10 @@ mod tests {
         let command = parse(&["-o", "a.png", "--", "-input.pdf"].map(str::to_owned)).unwrap();
         assert_eq!(command.input, PathBuf::from("-input.pdf"));
         assert_eq!((command.page, command.dpi), (1, 144));
+        // After `--` a `-` is the file called `-`, which is not standard input.
+        let named = parse(&["-o", "a.png", "--", "-"].map(str::to_owned)).unwrap();
+        assert_ne!(named.input, PathBuf::from("-"));
+        assert_eq!(named.input, std::path::Path::new(".").join("-"));
         let command = parse(&["-", "-o", "-", "--fit", "256X128"].map(str::to_owned)).unwrap();
         assert_eq!(command.input, PathBuf::from("-"));
         assert!(to_stdout(&command.output));

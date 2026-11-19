@@ -18,6 +18,10 @@ from . import (
     r08_reviews,
     r09_added_text,
     r10_boundaries,
+    r11_verifier_verdict,
+    r12_removal_save,
+    r13_compress_geometry,
+    r14_cli_boundary,
 )
 
 #: Every part, in the order its rows run.
@@ -32,6 +36,10 @@ PARTS = (
     r08_reviews,
     r09_added_text,
     r10_boundaries,
+    r11_verifier_verdict,
+    r12_removal_save,
+    r13_compress_geometry,
+    r14_cli_boundary,
 )
 
 ROWS = [row for part in PARTS for row in part.ROWS]

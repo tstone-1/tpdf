@@ -122,12 +122,14 @@ pub fn keep_for(doc: &mut Document, doomed: &HashSet<ObjectId>) -> Result<Kept, 
     // entries that move up into its place.
     let mut removed: HashSet<ObjectId> = HashSet::new();
     let mut under: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
+    // The name tree is read once for the whole outline, not once an entry.
+    let names = links::Destinations::of(doc);
     for &id in order.iter().rev() {
         let was = children.get(&id).map_or(&[][..], Vec::as_slice);
         let left = lifted(was, &removed, &under);
         let aim = doc
             .get_dictionary(id)
-            .map_or(Aim::Other, |item| aim_of(doc, item));
+            .map_or(Aim::Other, |item| aim_of(doc, &names, item));
         let goes = match aim {
             Aim::Unsafe => return whole(doc),
             Aim::Page(page) => doomed.contains(&page),
@@ -267,7 +269,7 @@ fn tree_of(doc: &Document, root: ObjectId) -> Option<Tree> {
 
 /// Where an entry leads. An action wins over a `/Dest` beside it, which is the
 /// order `links.rs` reads them in and records the reason for.
-fn aim_of(doc: &Document, item: &Dictionary) -> Aim {
+fn aim_of(doc: &Document, names: &links::Destinations<'_>, item: &Dictionary) -> Aim {
     if let Ok(action) = item.get(b"A") {
         let Ok(action) = resolve(doc, action).as_dict() else {
             return Aim::Other;
@@ -275,26 +277,26 @@ fn aim_of(doc: &Document, item: &Dictionary) -> Aim {
         return match action.get(b"S").and_then(Object::as_name) {
             Ok(b"GoTo") => action
                 .get(b"D")
-                .map_or(Aim::Other, |dest| destination(doc, dest)),
+                .map_or(Aim::Other, |dest| destination(doc, names, dest)),
             _ => Aim::Other,
         };
     }
     item.get(b"Dest")
-        .map_or(Aim::Nothing, |dest| destination(doc, dest))
+        .map_or(Aim::Nothing, |dest| destination(doc, names, dest))
 }
 
 /// A destination in any of its three written forms.
-fn destination(doc: &Document, dest: &Object) -> Aim {
+fn destination(doc: &Document, names: &links::Destinations<'_>, dest: &Object) -> Aim {
     match resolve(doc, dest) {
         Object::Array(array) => page_of(array),
-        Object::Name(name) => named(doc, name),
-        Object::String(bytes, _) => named(doc, bytes),
+        Object::Name(name) => named(doc, names, name),
+        Object::String(bytes, _) => named(doc, names, bytes),
         _ => Aim::Other,
     }
 }
 
 /// A named destination, from `/Dests` or from the `/Names` tree.
-fn named(doc: &Document, key: &[u8]) -> Aim {
+fn named(doc: &Document, names: &links::Destinations<'_>, key: &[u8]) -> Aim {
     let Ok(catalog) = doc.catalog() else {
         return Aim::Other;
     };
@@ -303,16 +305,8 @@ fn named(doc: &Document, key: &[u8]) -> Aim {
             return follow(doc, found);
         }
     }
-    let tree = catalog
-        .get(b"Names")
-        .ok()
-        .and_then(|names| resolve(doc, names).as_dict().ok())
-        .and_then(|names| names.get(b"Dests").ok());
-    let Some(tree) = tree else {
-        return Aim::Other;
-    };
-    match links::find_named(tree, key, doc) {
-        Ok(Some(value)) => follow(doc, &value),
+    match names.tree().map_or(Ok(None), |tree| tree.get(key)) {
+        Ok(Some(value)) => follow(doc, value),
         Ok(None) => Aim::Other,
         Err(links::GaveUp) => Aim::Unsafe,
     }

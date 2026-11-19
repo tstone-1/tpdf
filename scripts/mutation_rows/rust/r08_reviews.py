@@ -261,8 +261,8 @@ ROWS += [
     Mutation(
         "synctex: ask the disk about a path the file chose",
         "src/synctex.rs",
-        "    let input = lexical(input);\n    input == lexical(source) || source.canonicalize().is_ok_and(|real| input == real)",
-        "    input.canonicalize().is_ok_and(|a| source.canonicalize().is_ok_and(|b| a == b)) || lexical(input) == lexical(source)",
+        "        let input = lexical(input);\n        input == self.lexical",
+        "        let input = input.canonicalize().unwrap_or_else(|_| lexical(input));\n        input == self.lexical",
         "a_path_in_the_map_is_not_looked_up_on_the_disk",
         only_on="macos",
     ),

@@ -3091,9 +3091,9 @@ SOFTWARE.
 | block-padding | 0.4.2 | MIT OR Apache-2.0 |
 | block2 | 0.6.2 | MIT |
 | blocking | 1.7.0 | Apache-2.0 OR MIT |
-| brotli | 9.1.2 | BSD-3-Clause AND MIT |
+| brotli | 9.1.3 | BSD-3-Clause AND MIT |
 | brotli-decompressor | 5.0.3 | BSD-3-Clause/MIT |
-| brotli-decompressor | 6.3.1 | BSD-3-Clause/MIT |
+| brotli-decompressor | 6.3.2 | BSD-3-Clause/MIT |
 | bs58 | 0.5.1 | MIT/Apache-2.0 |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | byteorder | 1.5.0 | Unlicense OR MIT |
@@ -3188,7 +3188,7 @@ SOFTWARE.
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 |
 | ff | 0.14.0 | MIT/Apache-2.0 |
 | field-offset | 0.3.6 | MIT OR Apache-2.0 |
-| filetime | 0.2.29 | MIT/Apache-2.0 |
+| filetime | 0.2.30 | MIT/Apache-2.0 |
 | flagset | 0.4.7 | Apache-2.0 |
 | flate2 | 1.1.11 | MIT OR Apache-2.0 |
 | fnv | 1.0.7 | Apache-2.0 / MIT |
@@ -3267,8 +3267,8 @@ SOFTWARE.
 | itoa | 1.0.19 | MIT OR Apache-2.0 |
 | javascriptcore-rs | 1.1.2 | MIT |
 | javascriptcore-rs-sys | 1.1.1 | MIT |
-| jiff | 0.2.45 | Unlicense OR MIT |
-| jiff-core | 0.1.7 | Unlicense OR MIT |
+| jiff | 0.2.46 | Unlicense OR MIT |
+| jiff-core | 0.1.8 | Unlicense OR MIT |
 | jiff-tzdb | 0.1.10 | Unlicense OR MIT |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT |
 | json-patch | 4.2.0 | MIT/Apache-2.0 |
@@ -3360,7 +3360,7 @@ SOFTWARE.
 | pkcs5 | 0.7.1 | Apache-2.0 OR MIT |
 | pkcs8 | 0.10.2 | Apache-2.0 OR MIT |
 | pkcs8 | 0.11.0 | Apache-2.0 OR MIT |
-| plist | 1.10.3 | MIT |
+| plist | 1.10.4 | MIT |
 | png | 0.18.1 | MIT OR Apache-2.0 |
 | polling | 3.11.0 | Apache-2.0 OR MIT |
 | potential_utf | 0.1.6 | Unicode-3.0 |
@@ -3471,17 +3471,17 @@ SOFTWARE.
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
 | tao | 0.37.2 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
-| tauri | 2.12.5 | Apache-2.0 OR MIT |
-| tauri-codegen | 2.7.4 | Apache-2.0 OR MIT |
-| tauri-macros | 2.7.4 | Apache-2.0 OR MIT |
+| tauri | 2.12.6 | Apache-2.0 OR MIT |
+| tauri-codegen | 2.7.5 | Apache-2.0 OR MIT |
+| tauri-macros | 2.7.5 | Apache-2.0 OR MIT |
 | tauri-plugin-dialog | 2.8.4 | Apache-2.0 OR MIT |
 | tauri-plugin-fs | 2.7.1 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.4.0 | Apache-2.0 OR MIT |
 | tauri-plugin-single-instance | 2.5.5 | Apache-2.0 OR MIT |
 | tauri-plugin-updater | 2.14.1 | Apache-2.0 OR MIT |
-| tauri-runtime | 2.12.2 | Apache-2.0 OR MIT |
-| tauri-runtime-wry | 2.12.3 | Apache-2.0 OR MIT |
-| tauri-utils | 2.10.2 | Apache-2.0 OR MIT |
+| tauri-runtime | 2.12.3 | Apache-2.0 OR MIT |
+| tauri-runtime-wry | 2.12.4 | Apache-2.0 OR MIT |
+| tauri-utils | 2.10.3 | Apache-2.0 OR MIT |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | tendril | 0.5.1 | MIT OR Apache-2.0 |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 |
@@ -3582,7 +3582,7 @@ SOFTWARE.
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.9 | Unicode-3.0 |
 | zerovec-derive | 0.11.7 | Unicode-3.0 |
-| zip | 9.6.0 | MIT |
+| zip | 9.6.1 | MIT |
 | zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
@@ -13433,11 +13433,11 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 
 | Package | Version | Licence |
 |---|---|---|
-| @tauri-apps/api | 2.12.4 | Apache-2.0 OR MIT |
+| @tauri-apps/api | 2.12.5 | Apache-2.0 OR MIT |
 | @tauri-apps/plugin-dialog | 2.8.4 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-updater | 2.14.1 | MIT OR Apache-2.0 |
-| svelte | 5.57.3 | MIT |
+| svelte | 5.58.0 | MIT |
 
 ### Copyright notices
 

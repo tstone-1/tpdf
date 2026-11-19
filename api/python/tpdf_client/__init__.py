@@ -24,7 +24,6 @@ import json
 import math
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 from typing import Any, Mapping, Sequence
@@ -65,7 +64,45 @@ class CommandError(RuntimeError):
 
 
 class ProtocolError(RuntimeError):
-    """The executable did not return the supported JSON contract."""
+    """The executable did not return the supported JSON contract.
+
+    `stderr` keeps what the executable said, which is usually why: a tool
+    that could not start its engine writes its reason there and no report.
+    `exit_code` is its exit status. The message ends with that stderr too.
+    """
+
+    def __init__(self, message: str, *, stderr: str = '', exit_code: int | None = None):
+        self.stderr = stderr
+        self.exit_code = exit_code
+        detail = stderr.strip()
+        super().__init__(f'{message}: {detail}' if detail else message)
+
+
+def _on_path(name: str) -> str | None:
+    """`name` as the first executable file of that name in a PATH directory.
+
+    Not `shutil.which`, which on Windows looks in the current directory first:
+    a script started in a folder of received documents would run a
+    `tpdf-cli.bat` planted beside them. Python 3.12 lets an environment
+    variable turn that off, and this client supports 3.10. A PATH entry that
+    is not absolute names a folder relative to the current one, the same
+    place, and is passed over too.
+    """
+    suffixes = ['']
+    if os.name == 'nt':
+        listed = os.environ.get('PATHEXT', '.COM;.EXE;.BAT;.CMD').split(os.pathsep)
+        suffixes = [suffix for suffix in listed if suffix]
+        if any(name.lower().endswith(suffix.lower()) for suffix in suffixes):
+            suffixes = ['', *suffixes]
+    for entry in os.environ.get('PATH', os.defpath).split(os.pathsep):
+        folder = entry.strip().strip('"')
+        if not folder or not os.path.isabs(folder):
+            continue
+        for suffix in suffixes:
+            candidate = os.path.join(folder, name + suffix)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+    return None
 
 
 class CommandTimeout(TimeoutError):
@@ -106,12 +143,22 @@ class Tpdf:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError('timeout must be a finite positive number of seconds')
         found = os.fspath(executable) if executable is not None else (
-            shutil.which('tpdf-cli') or shutil.which('tpdf')
+            _on_path('tpdf-cli') or _on_path('tpdf')
         )
         if not found:
             raise FileNotFoundError('tpdf CLI not found; pass executable= or install it on PATH')
+        # A bare name given as executable= is looked up on PATH, never in the
+        # current directory; a path with a folder in it, `./tpdf-cli` among
+        # them, is the caller's choice.
+        if os.path.dirname(found) == '':
+            on_path = _on_path(found)
+            if on_path is None:
+                raise FileNotFoundError(
+                    f'{found} is not on PATH; give its path, such as ./{found}, to run one elsewhere'
+                )
+            found = on_path
         # Resolve a caller-supplied relative executable before changing the child cwd.
-        self.executable = str(Path(shutil.which(found) or found).resolve())
+        self.executable = str(Path(found).resolve())
         self.timeout = timeout
         self.cwd = os.fspath(cwd) if cwd is not None else None
 
@@ -178,17 +225,21 @@ class Tpdf:
             raise CommandTimeout(
                 f'tpdf {command} exceeded {self.timeout} seconds; outputs may already exist'
             ) from None
+        said = stderr.decode('utf-8', errors='replace')
         try:
             report = json.loads(stdout.decode('utf-8'))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ProtocolError(
-                f'tpdf {command} exited {process.returncode} without a valid JSON report'
+                f'tpdf {command} exited {process.returncode} without a valid JSON report',
+                stderr=said, exit_code=process.returncode,
             ) from error
         if not isinstance(report, dict) or type(report.get('schema')) is not int or report['schema'] != 1:
-            raise ProtocolError('unsupported or missing tpdf report schema; expected 1')
+            raise ProtocolError('unsupported or missing tpdf report schema; expected 1',
+                                stderr=said, exit_code=process.returncode)
         if report.get('command') != command:
-            raise ProtocolError(f'tpdf report command does not match {command}')
-        result = Result(report, process.returncode, stderr.decode('utf-8', errors='replace'))
+            raise ProtocolError(f'tpdf report command does not match {command}',
+                                stderr=said, exit_code=process.returncode)
+        result = Result(report, process.returncode, said)
         if check and result.exit_code != 0:
             raise CommandError(result)
         return result

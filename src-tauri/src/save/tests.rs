@@ -3059,6 +3059,55 @@ fn saving_in_place_through_a_symlink_edits_the_document_the_link_names() {
     );
 }
 
+/// The redaction's fill through a symlink lands on the document, as the
+/// removal pass before it did.
+///
+/// An in-place redaction is handed the path the reader opened, and nothing
+/// canonicalizes it. The removal pass commits through `commit_in_place`, which
+/// resolves the link; the fill used to stage beside the link and rename over
+/// it, which turned the link into a file holding the filled copy and left the
+/// document with no boxes over what was removed. The link and the document are
+/// in different directories for the reason the test above gives.
+#[test]
+#[cfg(unix)]
+fn the_redaction_fill_through_a_symlink_writes_the_document_the_link_names() {
+    let Some(path) = fixture("rotated.pdf") else {
+        crate::fixtures::missing("[SKIP] rotated.pdf not generated");
+        return;
+    };
+    let scratch = Scratch::new("fill-symlink");
+    let elsewhere = scratch.join("documents");
+    std::fs::create_dir_all(&elsewhere).expect("target directory");
+    let real = elsewhere.join("real.pdf");
+    let link = scratch.join("link.pdf");
+    std::fs::copy(&path, &real).expect("copy fixture");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    let expected = crate::fingerprint::Fingerprint::of(&real).expect("fingerprint");
+
+    fill_redactions(
+        &link,
+        &plan_of(&[0, 0, 0, 0]),
+        &expected,
+        None,
+        &Here,
+        crate::redaction_fill::Fill::Black,
+    )
+    .expect("fill");
+
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .expect("stat the link")
+            .file_type()
+            .is_symlink(),
+        "the fill replaced the link instead of the document it names"
+    );
+    assert_eq!(
+        std::fs::read(&link).expect("read through the link"),
+        std::fs::read(&real).expect("read the target"),
+        "the link still names the document"
+    );
+}
+
 /// A rewrite must not widen who can read the document.
 ///
 /// A staged file is created with the process umask --- usually `0644` --- and
@@ -8593,6 +8642,81 @@ fn a_copy_that_is_not_a_redaction_keeps_its_metadata() {
     );
 }
 
+/// An inline reply to a note the region takes goes with the note, though its
+/// own rectangle is elsewhere on the page.
+///
+/// The reply is known by its `/IRT`, and removing the note takes that key off
+/// every dictionary that names it, so the inline pass has to read it first.
+#[test]
+fn an_inline_reply_to_a_taken_note_goes_with_it() {
+    let (mut doc, page, _, _) = described_document();
+    let note = doc.add_object(lopdf::dictionary! {
+        "Type" => "Annot", "Subtype" => "Text",
+        "Rect" => vec![10.into(), 10.into(), 30.into(), 30.into()],
+        "Contents" => Object::string_literal("about the secret"),
+    });
+    let reply = lopdf::dictionary! {
+        "Type" => "Annot", "Subtype" => "Text",
+        "Rect" => vec![400.into(), 400.into(), 420.into(), 420.into()],
+        "IRT" => note,
+        "Contents" => Object::string_literal("REPLYING TO IT"),
+    };
+    doc.get_object_mut(page)
+        .and_then(Object::as_dict_mut)
+        .expect("the page")
+        .set("Annots", vec![note.into(), Object::Dictionary(reply)]);
+    let mut redaction = redaction_of(page);
+    redaction[0].areas = vec![[0.0, 0.0, 100.0, 100.0]];
+
+    let done = apply_redactions(&mut doc, &[page], &redaction).expect("applicable");
+
+    assert_eq!(done.annots, 2, "the note and the reply");
+    assert!(
+        doc.get_dictionary(page)
+            .expect("the page")
+            .get(b"Annots")
+            .and_then(Object::as_array)
+            .expect("the array")
+            .is_empty(),
+        "nothing is left in the array"
+    );
+}
+
+/// A form field written into `/AcroForm /Fields`, holding the line a
+/// redaction took, goes with the redaction.
+#[test]
+fn a_redaction_takes_an_inline_field_holding_what_it_removed() {
+    let (mut doc, page, _, _) = described_document();
+    let catalog = doc
+        .trailer
+        .get(b"Root")
+        .and_then(Object::as_reference)
+        .expect("the catalog");
+    doc.get_object_mut(catalog)
+        .and_then(Object::as_dict_mut)
+        .expect("the catalog")
+        .set(
+            "AcroForm",
+            lopdf::dictionary! {
+                "Fields" => vec![Object::Dictionary(lopdf::dictionary! {
+                    "T" => Object::string_literal("account"),
+                    "FT" => "Tx",
+                    "V" => Object::string_literal("secret"),
+                })],
+            },
+        );
+    let mut redaction = redaction_of(page);
+    redaction[0].taking = vec!["the secret line".to_string()];
+
+    let done = apply_redactions(&mut doc, &[page], &redaction).expect("applicable");
+
+    assert_eq!(done.fields, 1);
+    assert!(
+        !doc.catalog().expect("catalog").has(b"AcroForm"),
+        "the form had nothing else in it"
+    );
+}
+
 #[test]
 fn a_redacted_page_does_not_keep_its_thumbnail() {
     let (mut doc, page, _, _) = described_document();
@@ -8654,6 +8778,23 @@ fn a_document_with_no_metadata_at_all_reports_none() {
     crate::pagetree::forget(&mut doc, &[info, metadata].into_iter().collect()).expect("strip");
     let done = apply_redactions(&mut doc, &[page], &redaction_of(page)).expect("applicable");
     assert_eq!(done.metadata, 0);
+}
+
+/// An `/Info` written straight into the trailer goes as a referenced one does.
+///
+/// Legal in a classic trailer and shown by every reader, and it has no object
+/// id for `forget` to name, so the trailer key itself is what goes.
+#[test]
+fn an_info_written_into_the_trailer_is_removed() {
+    let (mut doc, page, info, _) = described_document();
+    let written = doc.get_dictionary(info).expect("the info").clone();
+    doc.objects.remove(&info);
+    doc.trailer.set("Info", Object::Dictionary(written));
+
+    let done = apply_redactions(&mut doc, &[page], &redaction_of(page)).expect("applicable");
+
+    assert!(!doc.trailer.has(b"Info"), "the trailer's description went");
+    assert_eq!(done.metadata, 2, "it and the catalog's packet");
 }
 
 /// A redaction takes the outline entry that names what went.
@@ -8817,6 +8958,99 @@ fn a_very_short_outline_title_is_not_matched() {
     let done = apply_redactions(&mut doc, &[page], &naming_the_secret(page)).expect("ok");
     assert_eq!(done.outline, 0, "nothing matched");
     assert!(doc.get_object(chain.carrier).is_ok());
+}
+
+/// A title held as an object of its own is compared like one written inline.
+#[test]
+fn an_outline_title_held_as_its_own_object_is_matched() {
+    let (mut doc, page, chain) = outlined_document();
+    let title = doc.add_object(Object::string_literal("the secret account"));
+    if let Ok(Object::Dictionary(item)) = doc.get_object_mut(chain.carrier) {
+        item.set("Title", title);
+    }
+    let done = apply_redactions(&mut doc, &[page], &naming_the_secret(page)).expect("ok");
+    assert_eq!(done.outline, 2, "the entry and the child under it");
+    assert!(doc.get_object(chain.carrier).is_err());
+}
+
+/// An `/Outlines` written into the catalog is matched, and a removal from the
+/// middle of it leaves the entry after it reachable.
+///
+/// A top-level entry's `/Parent` cannot name a dictionary with no object id,
+/// so the root's `/First` and `/Last` are spliced by being the outline's root
+/// rather than by being a parent.
+#[test]
+fn an_outline_written_into_the_catalog_keeps_the_entries_around_a_removed_one() {
+    let (mut doc, page, chain) = outlined_document();
+    let mut root = doc.get_dictionary(chain.root).expect("the root").clone();
+    // The first entry is the carrier, so the splice has to move `/First`.
+    root.set("First", chain.carrier);
+    doc.objects.remove(&chain.root);
+    for id in [chain.before, chain.carrier, chain.after] {
+        if let Ok(Object::Dictionary(item)) = doc.get_object_mut(id) {
+            item.remove(b"Parent");
+        }
+    }
+    if let Ok(Object::Dictionary(item)) = doc.get_object_mut(chain.carrier) {
+        item.remove(b"Prev");
+    }
+    if let Ok(Object::Dictionary(item)) = doc.get_object_mut(chain.before) {
+        item.remove(b"Next");
+    }
+    doc.catalog_mut()
+        .expect("catalog")
+        .set("Outlines", Object::Dictionary(root));
+
+    let done = apply_redactions(&mut doc, &[page], &naming_the_secret(page)).expect("ok");
+
+    assert_eq!(done.outline, 2);
+    let outlines = doc
+        .catalog()
+        .expect("catalog")
+        .get(b"Outlines")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_dict)
+        .expect("the outline is still there");
+    assert_eq!(
+        outlines.get(b"First").and_then(Object::as_reference).ok(),
+        Some(chain.after),
+        "the entry after the removed one is the first now"
+    );
+}
+
+/// An outline too large to read through is taken whole.
+///
+/// The walk stops at its bound, so entries past it were never compared and
+/// one of them may name what went. The carrier sits after the bound, which is
+/// the case: a removal entry by entry would leave it.
+#[test]
+fn an_outline_too_large_to_read_through_is_taken_whole() {
+    let (mut doc, page, chain) = outlined_document();
+    // Twenty thousand and one plain entries between `before` and the
+    // carrier, so the carrier is past the walk's bound.
+    let mut last = chain.before;
+    for n in 0..20_001 {
+        let id = doc.add_object(lopdf::dictionary! {
+            "Title" => Object::string_literal(format!("ENTRY {n}")),
+            "Parent" => chain.root,
+            "Prev" => last,
+        });
+        if let Ok(Object::Dictionary(item)) = doc.get_object_mut(last) {
+            item.set("Next", id);
+        }
+        last = id;
+    }
+    if let Ok(Object::Dictionary(item)) = doc.get_object_mut(last) {
+        item.set("Next", chain.carrier);
+    }
+
+    let done = apply_redactions(&mut doc, &[page], &naming_the_secret(page)).expect("ok");
+
+    assert!(done.outline_whole, "said");
+    assert!(
+        !doc.catalog().expect("catalog").has(b"Outlines"),
+        "and the outline went, its entries left to the sweep"
+    );
 }
 
 /// The object ids `outlined_document` hands back.

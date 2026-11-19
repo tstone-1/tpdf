@@ -58,6 +58,8 @@ CHECKS: list[tuple[str, str, str, list[str]]] = [
     ("import", "tabs_check.py", "testdata/text-base14.pdf",
      ["--phase", "import", "--other", "testdata/links.pdf"]),
     ("fit", "tabs_check.py", "testdata/comments.pdf", ["--phase", "fit"]),
+    # A change on disk waits for the message on screen, then is asked about.
+    ("disk change", "tabs_check.py", TEXT, ["--phase", "disk-change"]),
     ("compare", "tabs_check.py", "testdata/text-base14.pdf",
      ["--phase", "compare", "--other", "testdata/links.pdf"]),
     # Page numbers, a watermark and Greek page numbers, read back from disk.

@@ -49,7 +49,7 @@ use crate::text::PageText;
 pub const COMMAND: Registered = Registered {
     name: "redact",
     usage: "redact <in.pdf> -o <out.pdf> (--text STR | --pattern REGEX | --regions FILE|-)...\n        [--case-sensitive] [--pages 1-3,7] [--dry-run] [--invalidate-signatures]\n        [--fill black|white|red] [--password-env VAR] [--force] [--json]",
-    summary: "Removes every match of each --text and --pattern (found as the\n            viewer's search finds it) and every rectangle a --regions file\n            names, writes the result to -o, and reads it back. Exit 0 means\n            the copy was proved clean; 1 means it was written and could not be,\n            with every reason. --dry-run writes nothing and says what would go.\n            --fill is the colour of the boxes drawn over what went: black\n            unless you say white or red.\n            A signed document is refused unless --invalidate-signatures.",
+    summary: "Removes every match of each --text and --pattern (found as the\n            viewer's search finds it) and every rectangle a --regions file\n            names, writes the result to -o, and reads it back. Exit 0 with a\n            copy written means it was proved clean; 1 means it was written and\n            could not be, with every reason. When nothing matched, nothing is\n            written and the exit code is 0; with --force over an existing -o\n            file the run is refused (3) and the file is left as it was. --dry-run writes nothing and says what would go.\n            --fill is the colour of the boxes drawn over what went: black\n            unless you say white or red.\n            A signed document is refused unless --invalidate-signatures.",
     parse: boxed,
 };
 
@@ -483,29 +483,69 @@ pub fn match_regions(found: &Found) -> std::collections::BTreeMap<u32, Vec<[f32;
 /// removed, and the window's verification would not notice: it looks for what
 /// the removal *took*, and nothing was taken. Such a match withholds the
 /// verdict, and with nothing else marked it refuses the run.
+///
+/// **Some of its characters is enough.** A match whose last characters have
+/// no box still gets a region over the ones that have, and that region removes
+/// what it covers and nothing more; the read-back then finds what it took gone.
+/// So a match is marked only when every character of it that draws something
+/// lies in one of its regions ([`regions::uncovered`]).
 #[must_use]
 pub fn unmarked(found: &Found) -> Vec<String> {
-    found
-        .matches
-        .iter()
-        .filter(|hit| {
-            regions::halves(std::slice::from_ref(hit))
-                .iter()
-                .all(|half| {
-                    found.texts.get(&half.page).is_none_or(|text| {
-                        regions::regions_on(text, half.page, &[*half]).is_empty()
-                    })
-                })
-        })
-        .map(|hit| {
-            format!(
+    let mut out = Vec::new();
+    for hit in &found.matches {
+        let mut marked_any = false;
+        let mut left = 0;
+        for half in regions::halves(std::slice::from_ref(hit)) {
+            let Some(text) = found.texts.get(&half.page) else {
+                // A page whose text was not kept has no region for its half,
+                // and what the half holds cannot be counted: one at least.
+                left += 1;
+                continue;
+            };
+            let areas = regions::regions_on(text, half.page, &[half]);
+            marked_any |= !areas.is_empty();
+            left += regions::uncovered(text, half, &areas);
+        }
+        if !marked_any {
+            out.push(format!(
                 "page {}: {:?} matched, but its characters have no position on the page, so it \
                  could not be marked",
                 hit.page + 1,
                 hit.hit
-            )
-        })
-        .collect()
+            ));
+        } else if left > 0 {
+            out.push(format!(
+                "page {}: {:?} matched, but {left} of its characters have no position on the \
+                 page that a region holds, so it could be marked only in part",
+                hit.page + 1,
+                hit.hit
+            ));
+        }
+    }
+    out
+}
+
+/// Why the run is refused when nothing matched and `--force` names an output
+/// that is already there, or `None`.
+///
+/// Nothing is written when nothing matched, so that file is whatever an
+/// earlier run left. A rerun with a mistyped name and `--force` that exited 0
+/// would leave the older copy under the name, and `redact ... --force &&
+/// send out.pdf` would send a file this run never redacted. A line on stderr
+/// does not stop a script, so the run is refused: exit 3, with the file left
+/// as it was. Without `--force` an existing output is refused before anything
+/// is read, and with no file under the name there is nothing to mistake, so
+/// "nothing matched" stays exit 0 there.
+#[must_use]
+pub fn kept_output(command: &Redact) -> Option<String> {
+    let output = command.output.as_ref()?;
+    if command.dry_run || !command.force || std::fs::symlink_metadata(output).is_err() {
+        return None;
+    }
+    Some(format!(
+        "nothing matched, so nothing was written: {} is left as it was, and is not this run's copy --- remove it or name another output",
+        output.display()
+    ))
 }
 
 /// A refusal from opening the document, as this command's failure.
@@ -791,6 +831,7 @@ fn emit(command: &Redact, out: &mut dyn Write, report: &report::Redacted) {
         // Quoted words and file names are the document's, so they go through
         // the same filter `say` applies.
         let text = plain(report);
+        // A failed write is kept by `cli::run`, which ends the run 3.
         let _ = out.write_all(super::printable(&text).as_bytes());
         let _ = out.flush();
     }
@@ -990,6 +1031,9 @@ fn run_redact(
                     if unmarked.len() == 1 { "" } else { "es" }
                 ),
             ));
+        }
+        if let Some(why) = kept_output(command) {
+            return Err(Failure::new(Exit::Refused, why));
         }
         let report = draft.report(false, None, Vec::new(), None);
         emit(command, out, &report);

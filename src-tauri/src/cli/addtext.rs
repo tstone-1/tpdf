@@ -74,12 +74,7 @@ fn number(flag: &str, raw: &str) -> Result<f32, String> {
 
 /// `--color`'s value: `r,g,b`, each from 0 to 1.
 fn color(raw: &str) -> Result<[f32; 3], String> {
-    let parts: Vec<f32> = raw
-        .split(',')
-        .filter_map(|part| part.trim().parse::<f32>().ok())
-        .filter(|channel| (0. ..=1.).contains(channel))
-        .collect();
-    <[f32; 3]>::try_from(parts).map_err(|_| {
+    super::args::rgb(raw).ok_or_else(|| {
         format!("`--color {raw}` is not red, green and blue from 0 to 1 --- grey is `--color 0.5,0.5,0.5`")
     })
 }
@@ -409,6 +404,13 @@ mod tests {
                 "names the field {seite}",
             ),
             ("a.pdf -o b.pdf --color 2,0,0", false, "--color 2,0,0"),
+            // Every part is read: the three that parse are not the colour.
+            (
+                "a.pdf -o b.pdf --color 1,x,0,0.5",
+                false,
+                "--color 1,x,0,0.5",
+            ),
+            ("a.pdf -o b.pdf --color 0,0,1,2", true, "--color 0,0,1,2"),
         ] {
             let why = parse(&args(line), watermark).expect_err(line);
             assert!(why.contains(said), "{line}: {why}");

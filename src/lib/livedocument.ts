@@ -22,15 +22,17 @@
  */
 
 import type { Comments } from "./comments";
+import { CommentWords } from "./commentwalk";
+import { CoveredWords } from "./coveredwords";
 import { DegradedLabel } from "./degraded";
 import type { Edits } from "./edits";
 import type { Form, FormLayer } from "./forms";
 import { ImportedLinks } from "./importedlinks";
 import type { Link } from "./links";
 import type { Outline } from "./outline";
-import type { RegionPlan } from "./pages";
 import type { Properties } from "./properties";
 import type { Offer } from "./recovery";
+import { RegionWords } from "./redactlist";
 import type { MessageTone } from "./messagelines";
 import type { Sidebar } from "./sidebar";
 import type { TextEditor } from "./textedit";
@@ -91,14 +93,14 @@ export interface LiveDocument {
   scannedForm: Form | null;
   formEditing: boolean;
 
-  /** Lookups keyed by ids that mean nothing in another document. */
-  covered: Map<number, string>;
-  wordsAsked: Set<number>;
-  commentWords: Map<number, string>;
-  redactionWords: Map<number, string | null>;
-  redactionPlans: Map<number, RegionPlan>;
-  fillingWords: boolean;
-  fillingRedactionWords: boolean;
+  /**
+   * Lookups keyed by ids that mean nothing in another document, each with
+   * whatever fills it. One object each, so a change of side swaps a walk's
+   * set, its answers and its flag together.
+   */
+  covered: CoveredWords;
+  commentWords: CommentWords;
+  redactionWords: RegionWords;
 }
 
 /** What every field holds when no document is mounted. New collections each call. */
@@ -136,13 +138,9 @@ export function blankLive(): LiveDocument {
     formNames: [],
     scannedForm: null,
     formEditing: false,
-    covered: new Map(),
-    wordsAsked: new Set(),
-    commentWords: new Map(),
-    redactionWords: new Map(),
-    redactionPlans: new Map(),
-    fillingWords: false,
-    fillingRedactionWords: false,
+    covered: new CoveredWords(),
+    commentWords: new CommentWords(),
+    redactionWords: new RegionWords(),
   };
 }
 

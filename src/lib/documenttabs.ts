@@ -1,3 +1,4 @@
+import { CoveredWords } from "./coveredwords";
 import { Measurements } from "./measure";
 import type { DocumentInfo } from "./ipc";
 import type { Edits } from "./edits";
@@ -21,7 +22,7 @@ export interface DocumentTab {
   path: string;
   edits: Edits;
   place: Place | null;
-  covered: Map<number, string>;
+  covered: CoveredWords;
   query: string;
   findShown: boolean;
   searchOptions: SearchOptions;
@@ -100,10 +101,10 @@ export type TabState = Omit<DocumentTab, "view" | "doc" | "path">;
  */
 export type FreshState = Omit<TabState, "edits" | "place">;
 
-/** The state of a document nobody has touched yet. A new `Map` and array each call. */
+/** The state of a document nobody has touched yet. New containers each call. */
 export function freshState(): FreshState {
   return {
-    covered: new Map(),
+    covered: new CoveredWords(),
     query: "",
     findShown: false,
     searchOptions: PLAIN_SEARCH,

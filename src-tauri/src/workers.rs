@@ -622,6 +622,16 @@ const WITHDRAWALS_QUEUED: usize = 256;
 /// request's own token (`Workers::render`), which costs a render and nothing
 /// else. Waiting would cost the caller.
 ///
+/// **One thread for the whole pool, so one stuck worker stops withdrawals for
+/// all of them.** The thread writes in order, and a write to a worker whose
+/// pipe is full blocks it, holding that worker's stdin lock, until the worker
+/// reads or dies (an overdue render is killed). Meanwhile posts for every other worker,
+/// of every open document, wait behind it and are dropped once
+/// [`WITHDRAWALS_QUEUED`] are waiting. What that costs is the drop branch
+/// above, pool-wide and for as long as the one write blocks: tiles nobody
+/// wants any more are rendered and discarded, and nothing renders wrong. A
+/// thread per worker would confine it, at a thread per worker.
+///
 /// Generic over what is written, so the never-blocks property can be tested
 /// against a sink that blocks on purpose, without a worker.
 struct Withdrawer<T> {
@@ -1225,8 +1235,9 @@ impl Workers {
     /// on the strength of the flag set here rather than of the epitaph, which at
     /// that instant still reads "still running". See [`CallWatch::end`].
     ///
-    /// Collected under the lock and signalled outside it, as every other kill
-    /// here is. Returns how many were killed, for a caller that wants to say so.
+    /// Marked and signalled in one critical section of the in-flight table,
+    /// and noted outside it ([`Workers::kill_overdue_at`] says why). Returns
+    /// how many were killed, for a caller that wants to say so.
     fn kill_overdue(&self) -> usize {
         self.kill_overdue_at(Instant::now(), &kill_pid)
     }
@@ -2154,7 +2165,7 @@ impl Engine for Workers {
         }
     }
 
-    fn codes(&self, doc: u32, page: u32) -> Result<crate::codes::PageCodes, String> {
+    fn codes(&self, doc: u32, page: u32) -> Result<crate::codes::Page2dCodes, String> {
         match self.ask(doc, &Request::Codes { page })? {
             Reply::Codes(found) => Ok(*found),
             other => Err(mismatched("codes", &other)),

@@ -396,9 +396,10 @@ describe("Middle-button panning", () => {
     // is only ever compared against the reading before it.
     drag(1, { x: 400, y: 300 }, [{ x: 380, y: 280 }]);
     expect(counts()).toEqual(resting);
-    // The viewer never registered `pointercancel` outside a pan, so its resting
-    // count is zero -- which is what makes the comparison above a real one
-    // rather than two identical non-zero numbers.
+    // The viewer registers `pointercancel` on the root only while a gesture is
+    // under way, a selection drag included, so its resting count is zero -- which is
+    // what makes the comparison above a real one rather than two identical
+    // non-zero numbers.
     expect(resting[2]).toBe(0);
   });
 
@@ -427,5 +428,32 @@ describe("Middle-button panning", () => {
       clientY: 200,
     });
     expect(anchor(viewer).left).toBe(before.left);
+  });
+
+  it("lets a cancelled scrollbar drag go, so the thumb stops following", () => {
+    const viewer = build();
+    const tracks = (dom.root.children as FakeElement[]).filter((child) =>
+      (child.style.cssText ?? "").includes("bottom:0"),
+    );
+    expect(tracks).toHaveLength(1);
+    const track = tracks[0]!;
+    const resting = ["pointermove", "pointerup", "pointercancel"].map((name) => track.listeners.get(name)?.size ?? 0);
+
+    // The control first: a drag still held does scroll, so "nothing moved"
+    // below is about the cancel and not about a track that never scrolls.
+    track.dispatch("pointerdown", { button: 0, pointerId: 1, clientX: 890, clientY: 50 });
+    const pressed = anchor(viewer).top;
+    track.dispatch("pointermove", { pointerId: 1, clientX: 890, clientY: 300 });
+    expect(anchor(viewer).top).not.toBe(pressed);
+    track.dispatch("pointerup", { pointerId: 1, clientX: 890, clientY: 300 });
+
+    track.dispatch("pointerdown", { button: 0, pointerId: 1, clientX: 890, clientY: 50 });
+    const held = anchor(viewer).top;
+    track.dispatch("pointercancel", { pointerId: 1, clientX: 890, clientY: 50 });
+    track.dispatch("pointermove", { pointerId: 1, clientX: 890, clientY: 300 });
+    expect(anchor(viewer).top).toBe(held);
+    expect(["pointermove", "pointerup", "pointercancel"].map((name) => track.listeners.get(name)?.size ?? 0)).toEqual(
+      resting,
+    );
   });
 });

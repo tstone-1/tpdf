@@ -9,7 +9,13 @@ function fakeWindow(focused = true) {
   const clock: FocusClock = {
     hasFocus: () => focused,
     now: () => now,
-    onFocus: (listener) => listeners.push(listener),
+    onFocus: (listener) => {
+      listeners.push(listener);
+      return () => {
+        const at = listeners.indexOf(listener);
+        if (at >= 0) listeners.splice(at, 1);
+      };
+    },
     later: (run, ms) => void timers.push({ at: now + ms, run }),
   };
   const advance = (ms: number) => {
@@ -27,9 +33,9 @@ function fakeWindow(focused = true) {
   const blur = () => { focused = false; };
   const focus = () => {
     focused = true;
-    for (const listener of listeners) listener();
+    for (const listener of [...listeners]) listener();
   };
-  return { clock, advance, blur, focus };
+  return { clock, advance, blur, focus, listening: () => listeners.length };
 }
 
 function writer(focused = true) {
@@ -38,6 +44,52 @@ function writer(focused = true) {
   const say = whenHeard((text) => written.push(text), win.clock);
   return { ...win, written, say };
 }
+
+describe("stopping a writer", () => {
+  it("takes its focus listener away and writes nothing it was still holding", () => {
+    const { advance, blur, focus, listening, say, written } = writer();
+    expect(listening()).toBe(1);
+    blur();
+    say("Page 3 of 8");
+    say.stop();
+    expect(listening()).toBe(0);
+    focus();
+    advance(OPENING_MS + SETTLE_MS);
+    expect(written).toEqual([]);
+    // And a text written after it goes nowhere, in a window that would
+    // otherwise write it at once.
+    say("Page 4 of 8");
+    expect(written).toEqual([]);
+    // Stopping twice is stopping once.
+    say.stop();
+    expect(listening()).toBe(0);
+  });
+
+  it("drops a text already waiting on a timer", () => {
+    // Written as the window opens, so a timer is set for the end of the
+    // opening; the writer stopped before it fires.
+    const { advance, say, written } = writer();
+    say("Page 1 of 8");
+    say.stop();
+    advance(OPENING_MS + SETTLE_MS);
+    expect(written).toEqual([]);
+  });
+
+  it("is what destroying the screen-reader layer does", async () => {
+    const { AccessibleText } = await import("./a11y");
+    const { installFakeDom } = await import("./testdom");
+    const dom = installFakeDom();
+    try {
+      const win = fakeWindow();
+      const layer = new AccessibleText(dom.root as never, 1, () => null, win.clock);
+      expect(win.listening()).toBe(1);
+      layer.destroy();
+      expect(win.listening()).toBe(0);
+    } finally {
+      dom.restore();
+    }
+  });
+});
 
 describe("whenHeard", () => {
   it("writes at once in a window that opened a while ago", () => {

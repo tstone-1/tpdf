@@ -22,6 +22,7 @@ import {
   type Signed,
   type SigningShell,
 } from "./signing";
+import type { Verdict, Why } from "./integrity";
 import { CHOICE_KEY, LONG_TERM_KEY } from "./signtimestamp";
 import { LOCK_UNANSWERED } from "./signlock";
 import { LOCKED, NO_CERTIFICATE, WITHOUT_CERTIFICATE } from "./signing";
@@ -518,6 +519,48 @@ describe("the words", () => {
     const other = afterSigning(signed("range"));
     expect(other.startsWith("a-signed.pdf was written, but reading it back did not find")).toBe(true);
     expect(other).toContain("Do not rely on that copy.");
+  });
+
+  it("says a verdict or a reason this version has no words for is not known, never undefined", () => {
+    // What a backend one version ahead could send. Cast, because the type
+    // forbids exactly what the boundary does not.
+    const NEW = "something_newer";
+    const said = afterSigning({
+      path: "/docs/a-signed.pdf",
+      field: "Signature3",
+      signatures: [
+        {
+          field: "Signature1",
+          integrity: { verdict: "unchecked", why: NEW as Why, digest: "", method: "" },
+          ours: false,
+        },
+        {
+          field: "Signature2",
+          integrity: { verdict: NEW as Verdict, why: null, digest: "", method: "" },
+          ours: false,
+        },
+        {
+          field: "Signature3",
+          integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" },
+          ours: true,
+        },
+      ],
+    });
+    expect(said).not.toContain("undefined");
+    expect(said).toContain(`Signature1 not checked (a reason this version of tpdf does not know (“${NEW}”))`);
+    expect(said).toContain(`Signature2 not known to this version — tpdf was given the answer “${NEW}”`);
+    // The new signature itself with an unknown verdict is the failure branch,
+    // and says why in the same words.
+    const ours = afterSigning({
+      path: "/docs/a-signed.pdf",
+      field: "Signature1",
+      signatures: [
+        { field: "Signature1", integrity: { verdict: NEW as Verdict, why: null, digest: "", method: "" }, ours: true },
+      ],
+    });
+    expect(ours.startsWith("a-signed.pdf was written, but reading it back did not find")).toBe(true);
+    expect(ours).toContain(`“${NEW}”`);
+    expect(ours).not.toContain("undefined");
   });
 
   it("never calls a signature valid, verified, authentic or genuine", () => {

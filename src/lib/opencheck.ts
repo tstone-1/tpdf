@@ -47,6 +47,7 @@ import { screenshotCheck } from "./screenshotcheck";
 import { screenCheck } from "./screencheck";
 import { closingCheck } from "./closecheck";
 import { fitCheck } from "./fitcheck";
+import { diskChangeCheck } from "./diskchangecheck";
 
 import { pause, Report, settle } from "./checkreport";
 import { listenForOutsideInput, outsideInputNote } from "./outsideinput";
@@ -1246,6 +1247,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "screen": await screenCheck(host, expected, report); break;
     case "closing": await closingCheck(host, expected, report); break;
     case "fit": await fitCheck(host, expected, report); break;
+    case "disk-change": await diskChangeCheck(host, expected, report); break;
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");
       const [first, second] = expected.split("|");

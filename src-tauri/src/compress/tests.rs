@@ -369,7 +369,8 @@ fn what_could_change_by_more_than_resolution_is_left_as_it_is() {
         Done {
             pictures: 0,
             pictures_changed: 0,
-            streams_deflated: 0
+            streams_deflated: 0,
+            pictures_unsized: 0,
         }
     );
     assert_eq!(stream(&doc, unseen).content, raw);
@@ -684,7 +685,7 @@ fn a_sample_is_the_part_of_the_page_that_differs_most() {
     );
 
     // Side by side: before, eight white pixels, after.
-    let (across, down, pixels) = sample.side_by_side();
+    let (across, down, pixels) = sample.side_by_side().expect("its size is its pixels");
     assert_eq!((across, down), (648, 320));
     assert_eq!(pixels.len(), 648 * 320 * 4);
     assert_eq!(sample.before_rgba().len(), 320 * 320 * 4);
@@ -804,5 +805,286 @@ fn a_deflated_picture_whose_predictor_would_not_be_undone_is_left() {
             stream(&doc, picture).dict.has(b"DecodeParms"),
             "{what}: and its parameters are still beside it"
         );
+    }
+}
+
+/// Pages that each draw `content` with these XObjects, in order.
+fn pages_with(doc: &mut Document, pages: &[(&str, &[(&str, ObjectId)])]) {
+    let tree = doc.new_object_id();
+    let mut kids = Vec::new();
+    for (content, objects) in pages {
+        let mut named = Dictionary::new();
+        for (name, id) in *objects {
+            named.set(*name, *id);
+        }
+        let content = doc.add_object(Stream::new(dictionary! {}, content.as_bytes().to_vec()));
+        kids.push(Object::Reference(doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => tree, "Contents" => content,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => dictionary! { "XObject" => named },
+        })));
+    }
+    let count = i64::try_from(kids.len()).unwrap();
+    doc.objects.insert(
+        tree,
+        dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count }.into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+    doc.trailer.set("Root", catalog);
+}
+
+/// A picture behind a PNG predictor, which is how this module stores every
+/// picture it keeps without loss, is read and shrunk again.
+///
+/// The inflated bytes still carry a filter byte a row when they are held to
+/// the limit, so a limit of the samples alone refused all of them.
+#[test]
+fn a_picture_behind_a_png_predictor_is_read_and_shrunk_again() {
+    let lossless = Pictures {
+        dpi: 110,
+        quality: 60,
+        jpeg: false,
+    };
+    let raw = noise(400 * 400);
+    let mut dict = image(400, 400, "DeviceGray".into());
+    dict.set("Filter", "FlateDecode");
+    dict.set(
+        "DecodeParms",
+        dictionary! { "Predictor" => 15, "Colors" => 1, "BitsPerComponent" => 8, "Columns" => 400 },
+    );
+    let stored = super::deflated_rows(&raw, 400).expect("deflates");
+    let (mut doc, picture) = one_picture(dict, stored);
+    assert_eq!(
+        apply(&mut doc, Compress::Pictures(lossless)).pictures_changed,
+        1
+    );
+    assert_eq!(whole(&doc, picture, b"Width"), 110);
+    assert_eq!(filter(&doc, picture), "FlateDecode");
+
+    // What it wrote, read once more for a coarser setting.
+    let coarser = Pictures {
+        dpi: 50,
+        ..lossless
+    };
+    assert_eq!(
+        apply(&mut doc, Compress::Pictures(coarser)).pictures_changed,
+        1
+    );
+    assert_eq!(whole(&doc, picture, b"Width"), 50);
+    let pixels = stream(&doc, picture)
+        .decompressed_content_with_limit(1 << 20)
+        .expect("decodes");
+    assert_eq!(pixels.len(), 50 * 50);
+}
+
+/// A JPEG whose `/DecodeParms` says how its colours were coded is left as it
+/// is; the same JPEG without them is the control and is shrunk.
+#[test]
+fn a_jpeg_with_decode_parameters_is_left_as_it_is() {
+    let jpeg = super::jpeg(&noise(400 * 400 * 3), 400, 400, 3, 90).expect("encodes");
+    let with_parms = |parms: Option<Dictionary>| {
+        let mut dict = image(400, 400, "DeviceRGB".into());
+        dict.set("Filter", "DCTDecode");
+        if let Some(parms) = parms {
+            dict.set("DecodeParms", parms);
+        }
+        one_picture(dict, jpeg.clone())
+    };
+    let (mut doc, _) = with_parms(None);
+    assert_eq!(apply(&mut doc, SCREEN).pictures_changed, 1, "the control");
+
+    let (mut doc, picture) = with_parms(Some(dictionary! { "ColorTransform" => 0 }));
+    assert_eq!(apply(&mut doc, SCREEN).pictures_changed, 0);
+    let after = stream(&doc, picture);
+    assert_eq!(after.content, jpeg);
+    assert_eq!(whole(&doc, picture, b"Width"), 400);
+    assert!(after.dict.has(b"DecodeParms"), "its parameters are kept");
+}
+
+/// A picture that content this could not follow may draw is not scaled to
+/// the size another page draws it at: that size is only the smallest known.
+///
+/// Three ways content is not followed: a page whose content does not decode,
+/// a block whose stream does not, and a block drawn deeper than the walk
+/// goes. The control is a page that draws nothing, where the picture is
+/// scaled to the one size it is drawn at.
+#[test]
+fn a_picture_drawn_where_content_could_not_be_followed_is_not_scaled() {
+    let raw = noise(400 * 400);
+    let gray =
+        || Stream::new(image(400, 400, "DeviceGray".into()), raw.clone()).with_compression(false);
+    let small = "q 72 0 0 72 0 0 cm /Im Do Q";
+    // An inline image with no end cannot be stepped over, so the whole stream
+    // fails, the picture drawn across the page before it included.
+    let undecodable = "q 600 0 0 600 0 0 cm /Im Do Q\nBI /W 1 /H 1 /BPC 8 /CS /G ID X\n";
+    assert!(
+        lopdf::content::Content::decode(undecodable.as_bytes()).is_err(),
+        "the fixture"
+    );
+
+    // The control.
+    let mut doc = Document::with_version("1.7");
+    let picture = doc.add_object(gray());
+    pages_with(
+        &mut doc,
+        &[("", &[("Im", picture)]), (small, &[("Im", picture)])],
+    );
+    let done = apply(&mut doc, SCREEN);
+    assert_eq!((done.pictures_changed, done.pictures_unsized), (1, 0));
+    assert_eq!(whole(&doc, picture, b"Width"), 110, "the control is scaled");
+
+    // A page whose content does not decode.
+    let mut doc = Document::with_version("1.7");
+    let picture = doc.add_object(gray());
+    pages_with(
+        &mut doc,
+        &[
+            (undecodable, &[("Im", picture)]),
+            (small, &[("Im", picture)]),
+        ],
+    );
+    let done = apply(&mut doc, SCREEN);
+    assert_eq!(done.pictures_unsized, 1, "a page that does not decode");
+    assert_eq!(
+        whole(&doc, picture, b"Width"),
+        400,
+        "a page that does not decode"
+    );
+
+    // A block whose stream does not decode, drawn across the whole page.
+    let mut doc = Document::with_version("1.7");
+    let picture = doc.add_object(gray());
+    let block = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Form", "Filter" => "NoSuchDecode",
+            "BBox" => vec![0.into(), 0.into(), 1.into(), 1.into()],
+            "Resources" => dictionary! { "XObject" => dictionary! { "Im" => picture } },
+        },
+        b"/Im Do".to_vec(),
+    ));
+    assert!(
+        stream(&doc, block)
+            .decompressed_content_with_limit(1 << 20)
+            .is_err(),
+        "the fixture"
+    );
+    pages_with(
+        &mut doc,
+        &[
+            ("q 600 0 0 600 0 0 cm /Blk Do Q", &[("Blk", block)]),
+            (small, &[("Im", picture)]),
+        ],
+    );
+    let done = apply(&mut doc, SCREEN);
+    assert_eq!(done.pictures_unsized, 1, "a block that does not decode");
+    assert_eq!(
+        whole(&doc, picture, b"Width"),
+        400,
+        "a block that does not decode"
+    );
+
+    // A block that draws itself, deeper than the walk follows.
+    let mut doc = Document::with_version("1.7");
+    let picture = doc.add_object(gray());
+    let block = doc.new_object_id();
+    doc.objects.insert(
+        block,
+        Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 1.into(), 1.into()],
+                "Resources" => dictionary! {
+                    "XObject" => dictionary! { "Im" => picture, "Blk" => block },
+                },
+            },
+            b"/Blk Do".to_vec(),
+        )
+        .into(),
+    );
+    pages_with(
+        &mut doc,
+        &[
+            ("q 600 0 0 600 0 0 cm /Blk Do Q", &[("Blk", block)]),
+            (small, &[("Im", picture)]),
+        ],
+    );
+    let done = apply(&mut doc, SCREEN);
+    assert_eq!(done.pictures_unsized, 1, "a block too deep");
+    assert_eq!(whole(&doc, picture, b"Width"), 400, "a block too deep");
+
+    // More drawing than the walk follows, before a page that draws it large.
+    let mut doc = Document::with_version("1.7");
+    let picture = doc.add_object(gray());
+    let many = "/None Do\n".repeat(super::MAX_DRAWS + 1);
+    pages_with(
+        &mut doc,
+        &[
+            (small, &[("Im", picture)]),
+            (&many, &[]),
+            ("q 600 0 0 600 0 0 cm /Im Do Q", &[("Im", picture)]),
+        ],
+    );
+    let done = apply(&mut doc, SCREEN);
+    assert_eq!(done.pictures_unsized, 1, "more drawing than is followed");
+    assert_eq!(
+        whole(&doc, picture, b"Width"),
+        400,
+        "more drawing than is followed"
+    );
+}
+
+/// The picture that loses most is chosen from the file's own numbers for a
+/// stream this only deflated, which may be any two integers.
+#[test]
+fn a_picture_whose_stated_size_overflows_is_compared_without_overflowing() {
+    use super::estimate;
+    let mut doc = Document::with_version("1.7");
+    let picture = doc.add_object(Stream::new(
+        image(i64::MAX, 1 << 40, "DeviceGray".into()),
+        vec![0; 4096],
+    ));
+    page_with(
+        &mut doc,
+        "q 72 0 0 72 100 100 cm /Im Do Q",
+        &[("Im", picture)],
+    );
+    // The fixture: not a picture this can shrink, and a stream it deflates,
+    // so the two sizes are compared.
+    let mut copy = doc.clone();
+    assert_eq!(apply(&mut copy, SCREEN).pictures_changed, 0);
+    assert_eq!(filter(&copy, picture), "FlateDecode", "the fixture");
+    let estimated = estimate(&doc, SCREEN).expect("estimates");
+    assert_eq!(estimated.estimate.done.pictures_changed, 0);
+}
+
+/// A sample's stated size is held to its pixels before a picture is made from
+/// it: a worker that says more than it sent is refused, not followed.
+#[test]
+fn a_sample_whose_size_is_not_its_pixels_is_not_drawn() {
+    use super::{Sample, SAMPLE_SIDE};
+    let of = |width: u32, height: u32, before: usize, after: usize| Sample {
+        width,
+        height,
+        before: vec![7; before],
+        after: vec![9; after],
+        ..Sample::default()
+    };
+    let full = (SAMPLE_SIDE * SAMPLE_SIDE * 3) as usize;
+    assert!(of(SAMPLE_SIDE, SAMPLE_SIDE, full, full)
+        .side_by_side()
+        .is_ok());
+    let (across, down, pixels) = of(2, 1, 6, 6).side_by_side().expect("the control");
+    assert_eq!((across, down, pixels.len()), (12, 1, 48));
+    for (sample, says) in [
+        (of(2, 1, 5, 6), "holds 5 bytes"),
+        (of(2, 1, 6, 9), "sample after holds 9 bytes"),
+        (of(0, 1, 0, 0), "0 by 1"),
+        (of(SAMPLE_SIDE + 1, 1, 963, 963), "which no sample is"),
+        (of(100_000, 100_000, 3, 3), "which no sample is"),
+        (of(u32::MAX, u32::MAX, 3, 3), "which no sample is"),
+    ] {
+        let why = sample.side_by_side().expect_err(says);
+        assert!(why.contains(says), "{why}");
+        assert_eq!(sample.checked().expect_err(says), why);
     }
 }

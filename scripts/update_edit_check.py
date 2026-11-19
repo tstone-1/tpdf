@@ -65,7 +65,6 @@ import ctypes
 import os
 import re
 import select
-import shutil
 import socket
 import socketserver
 import subprocess
@@ -79,7 +78,8 @@ from installed_check import (APP_KEY, NAME, PDF_CLASS, UNINSTALL_KEY, Checks, Ra
                              already_installed, bounded, processes, registry, tool, uninstall,
                              window_titles)
 from live_output import stream_results
-from update_check import buttons, close, copies, offered, offers, start
+from update_check import (buttons, close, copies, offered, offers, restore_session, set_session_aside,
+                          start)
 from update_log import SECOND_START_S, explain, served_old
 
 # The checks a `--control edit-after` run must fail, and the one that a copy
@@ -336,8 +336,11 @@ def answer(checks: Checks, script: Path, pid: int, asked: int, choice: str) -> b
     The two choices are panes without Invoke, and a click on their centre
     missed twice on 2026-11-17, so the dialog is told which button was pressed
     with `TDM_CLICK_BUTTON`, the message a task dialog takes for exactly that.
-    The labels are read first, so a number that no longer matches its label
-    is caught here rather than pressing the other choice.
+    The labels are read first, and both must be there: a question whose
+    choices were renamed or replaced stops the run here. Which number each
+    label has is not read from the dialog --- the element listing carries no
+    button ids --- so the numbers rest on `CHOICES` and the rfd version it
+    names, and the check after the press is what says the question went.
 
     Every later step assumes the question is gone. On the first run that day
     it stayed up and a check after it passed with the dialog still open; so
@@ -433,7 +436,11 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
             still = any(b.startswith("Downloading update") for b in header(script, window))
             checks.note(still, "the download still runs after two tries to turn the page",
                         "; ".join(during))
-            checks.note(all(said.startswith("REFUSED|") for said in during),
+            # `REFUSED|<name>|disabled` and not any refusal: a press refused
+            # because the control has no Invoke, or threw, is not the edit
+            # commands being disabled, and would pass this with the download
+            # not holding them at all.
+            checks.note(all(said.startswith("REFUSED|") and said.endswith("|disabled") for said in during),
                         "the edit commands are disabled while the download runs", "; ".join(during))
 
         print("--- the proxy cuts the download ---")
@@ -467,8 +474,12 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
 
         print("--- the proxy passes everything; the copy is started again and updated ---")
         proxy.mode = "open"
-        close([app.pid])
-        checks.note(app.poll() is not None, "the copy closes without asking, nothing being unsaved")
+        # Gone is not enough: `close` kills a copy still there after 20 s,
+        # which is exactly what a copy that asked would be.
+        killed = close([app.pid])
+        checks.note(app.poll() is not None and not killed,
+                    "the copy closes without asking, nothing being unsaved",
+                    f"killed after 20 s: {killed}" if killed else "")
         app, window = start(folder, pdf, env, scratch, old, wait)
         seen = offers(script, window, offer, wait) if window else []
         if not checks.note(f"BUTTON {offer}" in seen, f"the second start offers '{offer}'"):
@@ -555,13 +566,14 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="tpdf-update-edit-check-") as temporary:
         scratch = Path(temporary)
         kept = scratch / "session-as-it-was.json"
-        if real_session.is_file():
-            shutil.move(str(real_session), str(kept))
-        spaced = scratch / "a folder with a space"
-        spaced.mkdir()
-        document = spaced / "turn me.pdf"
-        document.write_bytes(one_page_pdf())
+        set_aside = False
         try:
+            set_session_aside(real_session, kept)
+            set_aside = True
+            spaced = scratch / "a folder with a space"
+            spaced.mkdir()
+            document = spaced / "turn me.pdf"
+            document.write_bytes(one_page_pdf())
             print(f"--- latest.json offers {new}; installing {old} into {folder} ---")
             code = bounded(f'"{installer}" /S /D={folder}', "the installer", 300)
             checks.note(code == 0, "the installer ends with exit code 0", f"exit {code}")
@@ -569,13 +581,13 @@ def main() -> int:
         except (RanOut, RuntimeError, OSError) as e:
             checks.note(False, "every step ends, and within its time limit", str(e))
         finally:
-            proxy.shutdown()
-            uninstall(checks, folder, before, run_it=True)
-            if real_session.is_file():
-                real_session.unlink()
-            if kept.is_file():
-                real_session.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(kept), str(real_session))
+            try:
+                restore_session(real_session, kept, set_aside)
+            finally:
+                try:
+                    proxy.shutdown()
+                finally:
+                    uninstall(checks, folder, before, run_it=True)
 
     print()
     summary = f"first attempt: {result['first']}; eventually: {result['eventual']}"

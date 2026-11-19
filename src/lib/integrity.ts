@@ -263,6 +263,10 @@ const TEXT = catalog({
   "en-US": {
     trustNotChecked: "Whether that key belongs to the person the certificate names was not checked.",
     noReason: "no reason was given",
+    unknownAnswer: (value: string): string =>
+      `not known to this version — tpdf was given the answer “${value}”, which this version ` +
+      "cannot read, so nothing is concluded from it",
+    unknownReason: (value: string): string => `a reason this version of tpdf does not know (“${value}”)`,
     why: (why: Why): string => {
       switch (why) {
         case "format":
@@ -659,6 +663,10 @@ const TEXT = catalog({
   "de-DE": {
     trustNotChecked: "Ob dieser Schlüssel der Person gehört, die das Zertifikat nennt, wurde nicht geprüft.",
     noReason: "es wurde kein Grund angegeben",
+    unknownAnswer: (value: string): string =>
+      `dieser Version unbekannt — tpdf hat die Antwort „${value}“ erhalten, die diese Version ` +
+      "nicht lesen kann, daher wird nichts daraus geschlossen",
+    unknownReason: (value: string): string => `ein Grund, den diese Version von tpdf nicht kennt („${value}“)`,
     why: (why: Why): string => {
       switch (why) {
         case "format":
@@ -1100,6 +1108,64 @@ const GAPS: readonly Gap[] = [
   "unreadable", "bound", "issuer", "signature", "unauthorised", "algorithm", "unsupported",
   "stale", "expired", "dates", "budget",
 ];
+const VERDICTS: readonly Verdict[] = ["unchecked", "broken", "altered", "weak", "intact"];
+const STANDINGS: readonly Standing[] = [
+  "unchecked", "untrusted", "not_yet_valid", "expired", "trusted", "trusted_at_timestamp",
+];
+const LEVELS: readonly PadesLevel[] = ["B-B", "B-T", "B-LT", "B-LTA"];
+const STATUSES: readonly RevocationStatus[] = ["none", "unchecked", "unknown", "revoked", "good"];
+const BASES: readonly Basis[] = ["attested", "stated", "claimed", "now"];
+
+/**
+ * Whether `value` is one this version has words for.
+ *
+ * The types say every value is, and a backend one version ahead can still
+ * send another: a reply crosses the boundary as JSON, where the type is a
+ * claim. A record lookup on it then throws, and a `switch` falls out of its
+ * end with `undefined`, which a row then shows as text. So every enum a row
+ * is worded from is asked about first, and one that is not known is said to
+ * be not known, as a warning: never as a verdict, and never as a throw.
+ */
+function isKnown<K extends string>(known: readonly K[], value: string | null | undefined): value is K {
+  return value !== null && value !== undefined && (known as readonly string[]).includes(value);
+}
+
+/** A reason clause, or the clause for a reason this version does not know. */
+function reasonFrom<K extends string, V>(
+  known: readonly K[],
+  table: Record<K, V>,
+  value: string | null | undefined,
+  word: (found: V) => string,
+): string {
+  const said = TEXT();
+  if (value === null || value === undefined || value === "") return said.noReason;
+  return isKnown(known, value) ? word(table[value]) : said.unknownReason(value);
+}
+
+/** The row for an answer this version cannot word. */
+function unknownRow(name: string, value: string): Row {
+  return row(name, TEXT().unknownAnswer(value), true);
+}
+
+/**
+ * The sentence for a verdict this version cannot word, or `null` for one it
+ * can. Exported so that a sentence built outside this module (`signing.ts`
+ * lists signatures in a line, not in rows) says an unknown verdict in the same
+ * words and asks the same list.
+ */
+export function unknownVerdict(value: string): string | null {
+  return isKnown(VERDICTS, value) ? null : TEXT().unknownAnswer(value);
+}
+
+/**
+ * Why a signature was not checked, as the clause after "not checked", or `""`
+ * when no reason came: {@link WHY}'s words, or the clause for a reason this
+ * version does not know. A bare `WHY[why]` gives `undefined` for that one.
+ */
+export function whyClause(why: string | null | undefined): string {
+  if (why === null || why === undefined || why === "") return "";
+  return reasonFrom(WHYS, WHY, why, (words) => words);
+}
 
 /**
  * Said after every answer that could be read as "this signer is who they say".
@@ -1139,6 +1205,7 @@ export function rowNames() {
     authority: said.authorityName,
     authorityRevocation: said.revocationName(true),
     authorityChain: said.chainName(true),
+    pades: said.padesName,
   };
 }
 
@@ -1174,8 +1241,9 @@ export function trustRow(
 ): Row | null {
   if (!trust) return null;
   const said = TEXT();
+  if (!isKnown(STANDINGS, trust.standing)) return unknownRow(said.trustName, trust.standing);
   const computer = said.computer(trust.store);
-  const why = trust.why ? DOUBT[trust.why](computer) : said.noReason;
+  const why = reasonFrom(DOUBTS, DOUBT, trust.why, (doubt) => doubt(computer));
   const value = said.trust({
     standing: trust.standing,
     computer,
@@ -1209,8 +1277,9 @@ export function integrityRow(
 ): Row | null {
   if (!integrity) return null;
   const said = TEXT();
+  if (!isKnown(VERDICTS, integrity.verdict)) return unknownRow(said.integrityName, integrity.verdict);
   const owner = trustFollows ? "" : ` ${said.trustNotChecked}`;
-  const why = integrity.why ? WHY[integrity.why] : said.noReason;
+  const why = reasonFrom(WHYS, WHY, integrity.why, (words) => words);
   const value = said.integrity(integrity.verdict, how(integrity), appended > 0, owner, why);
   return row(said.integrityName, value, integrity.verdict !== "intact");
 }
@@ -1235,7 +1304,8 @@ export function timestampRow(
   document: boolean,
 ): Row {
   const said = TEXT();
-  const why = integrity?.why ? WHY[integrity.why] : said.noReason;
+  if (integrity && !isKnown(VERDICTS, integrity.verdict)) return unknownRow(said.timestampName, integrity.verdict);
+  const why = reasonFrom(WHYS, WHY, integrity?.why, (words) => words);
   const value = said.timestamp(
     integrity?.verdict ?? null,
     when,
@@ -1254,13 +1324,17 @@ export function timestampRow(
  * is not CAdES, and one that does not hold. The level is decided in the worker
  * (`pades.rs`) and only worded here.
  *
- * **Every answer ends by saying what was not done.** The level is read from
- * the parts the document carries. A validator's conformance test is a larger
- * thing, and "B-LTA" with no qualification would be taken for it.
+ * **Every row ends by saying what was not done.** The level is read from the
+ * parts the document carries. A validator's conformance test is a larger
+ * thing, and "B-LTA" with no qualification would be taken for it. A closed
+ * card's face is the one place the level stands alone (`briefly` in
+ * `properties.ts`), as a pointer to this row, which is one click away and
+ * carries the qualification.
  */
 export function padesRow(level: PadesLevel | null | undefined): Row | null {
   if (!level) return null;
   const said = TEXT();
+  if (!isKnown(LEVELS, level)) return unknownRow(said.padesName, level);
   return { name: said.padesName, value: said.pades(level) };
 }
 
@@ -1276,8 +1350,9 @@ export function padesRow(level: PadesLevel | null | undefined): Row | null {
 export function authorityRow(trust: Trust | null, from = "", until = ""): Row | null {
   if (!trust) return null;
   const said = TEXT();
+  if (!isKnown(STANDINGS, trust.standing)) return unknownRow(said.authorityName, trust.standing);
   const computer = said.computer(trust.store);
-  const why = trust.why ? DOUBT[trust.why](computer, true) : said.noReason;
+  const why = reasonFrom(DOUBTS, DOUBT, trust.why, (doubt) => doubt(computer, true));
   const value = said.authority({
     standing: trust.standing,
     computer,
@@ -1328,19 +1403,22 @@ export function revocationRow(
 ): Row | null {
   if (!revocation) return null;
   const said = TEXT();
+  const name = said.revocationName(authority);
+  if (!isKnown(STATUSES, revocation.standing)) return unknownRow(name, revocation.standing);
+  if (!isKnown(BASES, revocation.basis)) return unknownRow(name, revocation.basis);
   const moment = momentPhrase(revocation);
   const value = said.revocation({
     revocation,
     authority,
     whose,
     moment,
-    reason: revocation.reason ? REASON[revocation.reason] : "",
-    gap: revocation.why ? GAP[revocation.why](moment) : said.noReason,
+    reason: revocation.reason ? reasonFrom(REASONS, REASON, revocation.reason, (words) => words) : "",
+    gap: reasonFrom(GAPS, GAP, revocation.why, (gap) => gap(moment)),
   });
   const fine =
     revocation.standing === "good" ||
     (revocation.standing === "revoked" && revocation.after_moment);
-  return row(said.revocationName(authority), value, !fine);
+  return row(name, value, !fine);
 }
 
 /** A certificate above the leaf, as the sentences name it. */
@@ -1362,6 +1440,7 @@ export function issuingCertificate(judged: Judged): string {
 export function chainRow(chain: Chain | null, authority = false): Row | null {
   if (!chain) return null;
   if (chain.certificates.length <= 1 && chain.dropped === 0) return null;
+  if (!isKnown(STATUSES, chain.standing)) return unknownRow(TEXT().chainName(authority), chain.standing);
   const warn = !(chain.standing === "good" || (chain.standing === "revoked" && chain.after_moment));
   return row(TEXT().chainName(authority), chainSentence(chain, authority), warn);
 }
@@ -1372,6 +1451,7 @@ export function chainRow(chain: Chain | null, authority = false): Row | null {
  */
 export function chainSentence(chain: Chain, authority = false): string {
   const said = TEXT();
+  if (!isKnown(STATUSES, chain.standing)) return said.unknownAnswer(chain.standing);
   const above = Math.max(chain.certificates.length - 1, 0);
   const unjudged = chain.dropped === 0 ? "" : said.chainUnjudged(chain.dropped);
   const decided = chain.decided_by;

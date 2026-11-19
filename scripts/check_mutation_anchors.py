@@ -418,6 +418,10 @@ def main() -> int:
             problems.append(f"{path}: no MUTATIONS table, or it is empty")
             continue
         intact = 0
+        # Rows with no anchor, named in the summary: they are counted in the
+        # table and not checked here, and a line saying "N/N" over a table that
+        # holds them would claim a check this gate did not make.
+        unanchored: list[str] = []
         for mutation in table:
             # An environment mutation has no anchor: `scripts/mutate_python.py`
             # perturbs `RUSTUP_TOOLCHAIN` for the gate whose whole subject is
@@ -432,6 +436,7 @@ def main() -> int:
                         f"{path}: {mutation.name} -- no anchor and no env, so this "
                         "row perturbs nothing and cannot fail"
                     )
+                unanchored.append(mutation.name)
                 continue
             target = base / mutation.path
             if not target.exists():
@@ -464,8 +469,13 @@ def main() -> int:
                     f"       behind, or a mutation harness is running RIGHT NOW and this\n"
                     f"       is its edit in flight -- check before concluding."
                 )
-        total += len(table)
-        print(f"[OK] {path}: {intact}/{len(table)} anchors present exactly once")
+        checked = len(table) - len(unanchored)
+        total += checked
+        mark = "[OK]" if intact == checked else "[FAIL]"
+        print(f"{mark} {path}: {intact}/{checked} anchors present exactly once")
+        if unanchored:
+            print(f"       {len(unanchored)} row(s) with no anchor, not checked here: "
+                  + ", ".join(unanchored))
 
         # Only the Rust table has platform-gated tests; the frontend ones run
         # under one Node. Scanning the others would be a check with no subject,

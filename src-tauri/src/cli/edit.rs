@@ -714,10 +714,7 @@ impl Subcommand for Edit {
                 );
             } else {
                 for item in &comments.items {
-                    say(
-                        out,
-                        &format!("Page {}: {}: {}", item.page + 1, item.author, item.body),
-                    );
+                    say(out, &comment_line(item.page, &item.author, &item.body));
                 }
                 if !complete {
                     say(
@@ -816,9 +813,36 @@ impl Subcommand for Edit {
     }
 }
 
+/// One comment as `comments` prints it without `--json`: one line, whatever
+/// the author and the body hold. Both are the document's to choose, and a line
+/// break in a body would print lines that read as further comments.
+fn comment_line(page: u32, author: &str, body: &str) -> String {
+    format!(
+        "Page {}: {}: {}",
+        page + 1,
+        super::verify::one_line(author),
+        super::verify::one_line(body)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_comment_is_one_line_whatever_its_body_holds() {
+        let line = comment_line(
+            0,
+            "A.\nAuthor",
+            "first\r\nPage 2: Mallory: approved\u{2028}x",
+        );
+        assert_eq!(line.lines().count(), 1, "{line}");
+        assert!(!line.contains('\u{2028}'), "{line}");
+        assert!(
+            line.starts_with("Page 1: A.\u{fffd}Author: first"),
+            "{line}"
+        );
+    }
 
     #[test]
     fn edit_plan_rejects_unknown_fields_versions_and_unbounded_requests() {

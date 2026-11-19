@@ -828,6 +828,13 @@ pub fn write_raster_copy(
 
 /// Adds opaque black appearances only after the removal output was checked.
 /// The fingerprint binds this pass to those exact checked bytes.
+///
+/// It writes the file the path names, with every link resolved, for
+/// [`commit_in_place`]'s reason. An in-place redaction is handed the path the
+/// reader opened, which nothing canonicalizes, and the removal pass wrote
+/// through the link to the document. Renaming the filled copy over the link
+/// itself would make the link a file holding the fill and leave the document
+/// with the removal and no boxes over it.
 pub fn fill_redactions(
     path: &Path,
     original_plan: &Plan,
@@ -836,6 +843,7 @@ pub fn fill_redactions(
     rewriter: &dyn Rewriter,
     fill: redaction_fill::Fill,
 ) -> Result<(), Refusal> {
+    let path = &resolved(path);
     let mut plan = redaction_fill::output_plan(original_plan)?;
     plan.opened_as = Some(expected.clone());
     let (mut reading, len) = opened_to_rewrite(path)?;
@@ -1411,7 +1419,8 @@ fn name_of(path: &Path) -> String {
 /// # Errors
 ///
 /// Everything [`rewrite_ready`] and [`rewrite_update`] refuse; a source that
-/// cannot be opened or measured; a rewriter that wrote a different number of
+/// cannot be opened or measured, or that [`replaceable`] says a rename could
+/// not replace; a rewriter that wrote a different number of
 /// bytes than it reported; and a temporary file that cannot be written. The
 /// temporary file is removed on every failing path that created one.
 pub fn stage_in_place(
@@ -1450,6 +1459,9 @@ pub fn stage_in_place(
     // filesystem as the thing it will replace, which is what makes the rename
     // atomic rather than a copy.
     let target = resolved(source);
+    // Before the close rather than at the rename, which is past it. See
+    // `replaceable`.
+    replaceable(&target)?;
     // Opened here and read through, never re-opened by name --- the reason is
     // on `opened_to_rewrite`, which is where the three paths that do it share it.
     let (mut file, len) = opened_to_rewrite(&target)?;
@@ -1898,7 +1910,7 @@ impl Ready {
 /// # Errors
 ///
 /// The plan is not append-shaped or has no fingerprint; the file changed since
-/// it was opened; or it cannot be measured.
+/// it was opened; it cannot be measured; or it cannot be opened for writing.
 pub fn append_ready(source: &Path, plan: &Plan) -> Result<Ready, Refusal> {
     let was = std::fs::metadata(source)
         .map_err(|e| {
@@ -1924,6 +1936,9 @@ pub fn append_ready(source: &Path, plan: &Plan) -> Result<Ready, Refusal> {
         )
     })?;
     let verified = opened_as.agrees_with(source).map_err(Refusal::changed)?;
+    // Before the close rather than at the landing's own open, which is past it.
+    // See `openable_to_append`.
+    openable_to_append(source)?;
     Ok(Ready { was, verified })
 }
 
@@ -2210,7 +2225,7 @@ pub fn append_update(
 
 /// Refuses an update `lopdf` would write less of than it holds.
 ///
-/// `lopdf` 0.45's incremental writer leaves out, **with no error**, every
+/// `lopdf`'s incremental writer leaves out, **with no error**, every
 /// object whose dictionary answers `ObjStm`, `XRef` or `Linearized` to
 /// `Object::type_name` (`writer.rs`, the loop over `new_document.objects`).
 /// It means the previous revision's own containers, which an update must not
@@ -2223,8 +2238,10 @@ pub fn append_update(
 /// edit that saves and changes nothing --- and nothing says so.
 ///
 /// So every object about to be written is asked the writer's own question
-/// first. Read in `lopdf` 0.45.0's source, 2026-10-09; when the pin moves,
-/// read that loop again.
+/// first. Read in `lopdf` 0.45.0's source, 2026-10-09, and again in 0.46.0's
+/// on 2026-11-19: the incremental writer's loop now asks
+/// `Document::is_regenerated_on_save`, which is the same three names through
+/// the same `type_name`. When the pin moves, read that function again.
 ///
 /// # Errors
 ///
@@ -2247,9 +2264,9 @@ pub(crate) fn written_whole(incremental: &IncrementalDocument) -> Result<(), Str
     Ok(())
 }
 
-/// The three answers to `Object::type_name` that `lopdf` 0.45's plain writers
-/// leave out: [`written_whole`] for an update, [`reached_whole`] for a whole
-/// copy.
+/// The three answers to `Object::type_name` that `lopdf`'s plain writers leave
+/// out (`Document::is_regenerated_on_save` in 0.46.0): [`written_whole`] for an
+/// update, [`reached_whole`] for a whole copy.
 const LEFT_OUT: [&[u8]; 3] = [b"ObjStm", b"XRef", b"Linearized"];
 
 /// Refuses a whole copy that `lopdf` would write without an object the
@@ -2284,7 +2301,11 @@ const LEFT_OUT: [&[u8]; 3] = [b"ObjStm", b"XRef", b"Linearized"];
 /// hands an encrypted document to the plain writer. The question asked here
 /// is the one the writer about to run asks, so a smaller copy that would be
 /// whole is not refused for what a plain copy would lose. Read in `lopdf`
-/// 0.45.0's source, 2026-10-09; when the pin moves, read both loops again.
+/// 0.45.0's source, 2026-10-09, and again in 0.46.0's on 2026-11-19: the plain
+/// writer asks `Document::is_regenerated_on_save`, and the object-stream writer
+/// skips a stream whose own `/Type` is `/ObjStm` and writes everything else,
+/// sending an encrypted document to the plain writer. When the pin moves, read
+/// both loops again.
 ///
 /// The mark is only walked when some object has such a type at all, which no
 /// document written by a writer without those containers does.
@@ -3310,17 +3331,6 @@ pub fn commit_in_place(staged: &Path, source: &Path) -> Result<(), String> {
     commit(staged, &resolved(source))
 }
 
-/// A plan checked against the document on disk, and everything the rewrite needs.
-///
-/// The output of [`checked`] and the whole input to [`rewrite`], which is why it
-/// exists: those two used to be one 217-line function whose first half refuses
-/// and whose second half mutates, with nothing but blank lines between them. An
-/// outside review scored it *"surgery whose correctness is sentence order"*.
-///
-/// Splitting on that line is worth more than the length is. Everything above it
-/// can refuse and has written nothing; everything below it has changed the object
-/// graph, so a refusal there costs a cleanup. That is a real property of the code
-/// and it was readable only by reading all 217 lines in order.
 /// What supplies one page of the output.
 ///
 /// [`crate::docmodel::PageSource`]'s counterpart on this side of the plan, and
@@ -3341,6 +3351,17 @@ enum Slot {
     Imported { from: usize, page: u32 },
 }
 
+/// A plan checked against the document on disk, and everything the rewrite needs.
+///
+/// The output of [`checked`] and the whole input to [`rewrite`], which is why it
+/// exists: those two used to be one 217-line function whose first half refuses
+/// and whose second half mutates, with nothing but blank lines between them. An
+/// outside review scored it *"surgery whose correctness is sentence order"*.
+///
+/// Splitting on that line is worth more than the length is. Everything above it
+/// can refuse and has written nothing; everything below it has changed the object
+/// graph, so a refusal there costs a cleanup. That is a real property of the code
+/// and it was readable only by reading all 217 lines in order.
 struct Checked {
     /// The parsed document, not yet touched.
     doc: Document,
@@ -4399,42 +4420,6 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     Ok(bytes)
 }
 
-/// Turns a document into the bytes that will be written, and checks them.
-///
-/// **The one place in tpdf where a `Document` becomes a file**, which is what
-/// makes the check here rather than at each of the three callers: a check bound
-/// to one caller covers only that caller, and `docs/TRAPS.md` records that
-/// costing a defect already.
-///
-/// `what` names the artifact in the refusal, because the three callers produce
-/// different things and a reader who merged four files should not be told about
-/// "the document".
-///
-/// What [`crate::verify::structure`] does and deliberately does not do is
-/// written there. In short: it is `docs/PLAN.md` §6 step 5's narrow half, it
-/// catches only what cannot be legitimate in a file written a moment ago, and it
-/// is not cross-reference validation --- which measurement says no parser in
-/// this process performs.
-///
-/// **The refusal below has no reachable input today, and that is stated rather
-/// than left to be discovered by whoever writes the mutation for it.** `lopdf`
-/// 0.44 writes a header, one `%%EOF` and a `startxref` for *every* document it
-/// will serialise, including an empty one --- measured: `Document::new()` comes
-/// out as 125 structurally valid bytes. So no `Document` this crate can build
-/// makes the check fire, and a mutation deleting the call would survive.
-///
-/// It is kept, and it is a guard rather than decoration, because it is the
-/// standing assertion `docs/PLAN.md` §6 step 3 asks for in so many words ---
-/// *exactly one logical revision and no trailing data* --- placed on the seam
-/// where every future writer will arrive. Four things make it reachable: a
-/// `lopdf` bump, a rewrite that starts writing update sections, a redaction path
-/// that assembles bytes rather than serialising a graph, and any caller handing
-/// [`crate::verify::structure`] bytes from somewhere else. Its *logic* is
-/// covered head-on in `verify`'s own tests, where every complaint has a case.
-///
-/// # Errors
-///
-/// `lopdf` refusing to serialise, or the bytes it produced failing the check.
 /// Removes the planned show operators from each page that has any.
 ///
 /// The destructive half of a redaction, and the only place in this module that
@@ -4626,19 +4611,24 @@ fn apply_redactions(
         // one list a caller has in mind is what leaves the object alive: a
         // structure element's `/OBJR` or an AcroForm's `/Fields` names it too,
         // and an annotation still reachable is an annotation still written.
-        let taken = redact::covered_annots(doc, page, &redaction.areas);
+        let mut taken: std::collections::HashSet<lopdf::ObjectId> =
+            redact::covered_annots(doc, page, &redaction.areas)
+                .into_iter()
+                .collect();
+        // An annotation written as a dictionary inside `/Annots` has no object
+        // for `forget` to name, and PDFium draws it like any other: over the
+        // region, its `/Contents` and appearance are the same carrier. Taken
+        // out of the array, under `covered_annots`' rule, and **before** the
+        // `forget` below: an inline reply or popup is known by the `/IRT` or
+        // `/Parent` naming a taken annotation, which `forget` removes. The
+        // popups the inline ones name join `taken`.
+        done.annots += redact::take_inline_annots(doc, page, &redaction.areas, &mut taken);
         if !taken.is_empty() {
             done.annots += taken.len();
-            let taken: std::collections::HashSet<lopdf::ObjectId> = taken.into_iter().collect();
             lost.extend(redact::widget_fields(doc, &taken));
             answers.extend(redact::widget_answers(doc, &taken));
             pagetree::forget(doc, &taken).map_err(Refusal::from)?;
         }
-        // An annotation written as a dictionary inside `/Annots` has no object
-        // for `forget` to name, and PDFium draws it like any other: over the
-        // region, its `/Contents` and appearance are the same carrier. Taken
-        // out of the array, under `covered_annots`' rule.
-        done.annots += redact::take_inline_annots(doc, page, &redaction.areas);
 
         // **The page's thumbnail, which is a picture of the page before this
         // redaction.** `/Thumb` is an image a viewer may show in place of
@@ -4705,8 +4695,19 @@ fn apply_redactions(
                 }
             })
             .collect();
-        let entries = redact::covered_outline(doc, &taken);
-        done.outline = redact::drop_outline_items(doc, &entries).map_err(Refusal::from)?;
+        let cover = redact::covered_outline(doc, &taken);
+        if cover.cut {
+            // **An outline too large to read through is taken whole.** The
+            // walk stopped before every title was compared, so an entry past
+            // the bound may name what went, and nothing would say so. The
+            // metadata's rule, for the metadata's reason: what cannot be
+            // matched is removed rather than left.
+            pagetree::drop_outline(doc).map_err(Refusal::from)?;
+            done.outline_whole = true;
+        } else {
+            done.outline =
+                redact::drop_outline_items(doc, &cover.entries).map_err(Refusal::from)?;
+        }
 
         // **The form fields, and this runs last because its first rule needs the
         // annotation pass to have finished.** A widget over a region is removed
@@ -4729,6 +4730,9 @@ fn apply_redactions(
         let lines: Vec<String> = taken.iter().chain(&answers).cloned().collect();
         let fields = redact::covered_fields(doc, &lines, &lost);
         done.fields = redact::drop_fields(doc, &fields).map_err(Refusal::from)?;
+        // A field written out in place has no object to forget, so it is taken
+        // out of its array instead, once the widgets under it have gone.
+        done.fields += redact::drop_inline_fields(doc, &lines);
     }
     Ok(done)
 }
@@ -4749,21 +4753,43 @@ fn apply_redactions(
 /// sweep's bound.
 fn strip_metadata(doc: &mut Document) -> Result<usize, Refusal> {
     let mut doomed: std::collections::HashSet<lopdf::ObjectId> = std::collections::HashSet::new();
-    if let Ok(info) = doc.trailer.get(b"Info").and_then(Object::as_reference) {
-        doomed.insert(info);
+    let mut written_in = 0usize;
+    // **Whatever the trailer holds, and not only a reference.** A `/Info`
+    // dictionary written straight into the trailer is legal in a classic
+    // trailer, every reader shows its title, and it has no object id for
+    // `forget` to name, so the key itself goes.
+    match doc.trailer.get(b"Info") {
+        Ok(Object::Reference(info)) => {
+            doomed.insert(*info);
+        }
+        Ok(_) => {
+            doc.trailer.remove(b"Info");
+            written_in += 1;
+        }
+        Err(_) => {}
     }
-    if let Ok(metadata) = doc
-        .catalog()
-        .and_then(|catalog| catalog.get(b"Metadata"))
-        .and_then(Object::as_reference)
-    {
-        doomed.insert(metadata);
+    // The catalog's `/Metadata` in the same two spellings. An XMP packet is a
+    // stream and so always an object of its own; anything else under the key is
+    // not a packet a reader parses, and goes with the key for the same reason.
+    let inline_metadata = match doc.catalog().and_then(|catalog| catalog.get(b"Metadata")) {
+        Ok(Object::Reference(metadata)) => {
+            doomed.insert(*metadata);
+            false
+        }
+        Ok(_) => true,
+        Err(_) => false,
+    };
+    if inline_metadata {
+        if let Ok(catalog) = doc.catalog_mut() {
+            catalog.remove(b"Metadata");
+            written_in += 1;
+        }
     }
     let found = doomed.len();
     if found > 0 {
         pagetree::forget(doc, &doomed).map_err(Refusal::from)?;
     }
-    Ok(found)
+    Ok(found + written_in)
 }
 
 /// What a redaction took out of the document.
@@ -4782,6 +4808,9 @@ struct Redacted {
     metadata: usize,
     /// Outline entries removed, the subtrees under them included.
     outline: usize,
+    /// The outline went whole, because it was too large to compare entry by
+    /// entry. See `redact::OutlineCover::cut`.
+    outline_whole: bool,
     /// Form fields removed, the widgets under them included.
     fields: usize,
     /// Images removed, counted by the `Do` operations that drew them.
@@ -4792,6 +4821,42 @@ struct Redacted {
     cuts: usize,
 }
 
+/// Turns a document into the bytes that will be written, and checks them.
+///
+/// **The one place in tpdf where a `Document` becomes a file**, which is what
+/// makes the check here rather than at each of the three callers: a check bound
+/// to one caller covers only that caller, and `docs/TRAPS.md` records that
+/// costing a defect already.
+///
+/// `what` names the artifact in the refusal, because the three callers produce
+/// different things and a reader who merged four files should not be told about
+/// "the document".
+///
+/// What [`crate::verify::structure`] does and deliberately does not do is
+/// written there. In short: it is `docs/PLAN.md` §6 step 5's narrow half, it
+/// catches only what cannot be legitimate in a file written a moment ago, and it
+/// is not cross-reference validation --- which measurement says no parser in
+/// this process performs.
+///
+/// **The refusal below has no reachable input today, and that is stated rather
+/// than left to be discovered by whoever writes the mutation for it.** `lopdf`
+/// 0.44 writes a header, one `%%EOF` and a `startxref` for *every* document it
+/// will serialise, including an empty one --- measured: `Document::new()` comes
+/// out as 125 structurally valid bytes. So no `Document` this crate can build
+/// makes the check fire, and a mutation deleting the call would survive.
+///
+/// It is kept, and it is a guard rather than decoration, because it is the
+/// standing assertion `docs/PLAN.md` §6 step 3 asks for in so many words ---
+/// *exactly one logical revision and no trailing data* --- placed on the seam
+/// where every future writer will arrive. Four things make it reachable: a
+/// `lopdf` bump, a rewrite that starts writing update sections, a redaction path
+/// that assembles bytes rather than serialising a graph, and any caller handing
+/// [`crate::verify::structure`] bytes from somewhere else. Its *logic* is
+/// covered head-on in `verify`'s own tests, where every complaint has a case.
+///
+/// # Errors
+///
+/// `lopdf` refusing to serialise, or the bytes it produced failing the check.
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
     serialise_as(doc, what, false)
 }
@@ -5210,35 +5275,6 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
     Ok(order.into_iter().map(|s| (s, chosen[&s].0)).collect())
 }
 
-/// Writes `bytes` to a fresh sibling temporary file for `out`, and names it.
-///
-/// One definition of where the partial file goes, read by both save paths ---
-/// the in-place one stages and commits with the document's close between them,
-/// and a second copy of this is how the two halves would come to disagree about
-/// which file the other meant.
-///
-/// **The name is fresh for each call in flight and the file is created
-/// exclusively**, and both halves of that matter. Until 2026-08-22 this staged at
-/// `out.with_extension(PARTIAL)` --- one fixed name, derived from the
-/// destination and reused by every save --- and wrote it with `std::fs::write`,
-/// which truncates whatever is at that path and follows a symlink there. Saving
-/// `report.pdf` therefore destroyed any existing `report.tpdf-partial` beside it,
-/// two saves to one destination shared a staging file and could rename or delete
-/// each other's work, and the cleanup on failure removed the path whether or not
-/// this call had created it. That is silent destruction outside the file the
-/// reader asked to write, which is the one thing this module exists not to do.
-///
-/// `create_new` is what makes the name a claim rather than a guess: it is
-/// `O_CREAT | O_EXCL`, so it fails rather than truncating, and it refuses a
-/// symlink at that path outright. A collision is retried at the next attempt
-/// index rather than reported, because a collision is not an error --- it means
-/// another save of this destination got there first, which is exactly the case
-/// the index is for.
-///
-/// The name appends rather than replacing the extension, so `report.pdf` stages
-/// beside itself as `report.pdf.tpdf-partial-<pid>-<n>` and can never collide
-/// with a document somebody named `report.tpdf-partial`. See [`staging_name`]
-/// for why `n` counts attempts rather than saves.
 /// The file name [`stage`] tries on its `attempt`-th try, for a destination
 /// called `stem`.
 ///
@@ -5282,6 +5318,34 @@ fn resolved(path: &Path) -> PathBuf {
 }
 
 /// Creates the temporary file and lets `write` fill it.
+///
+/// One definition of where the partial file goes, read by both save paths ---
+/// the in-place one stages and commits with the document's close between them,
+/// and a second copy of this is how the two halves would come to disagree about
+/// which file the other meant.
+///
+/// **The name is fresh for each call in flight and the file is created
+/// exclusively**, and both halves of that matter. Until 2026-08-22 this staged at
+/// `out.with_extension(PARTIAL)` --- one fixed name, derived from the
+/// destination and reused by every save --- and wrote it with `std::fs::write`,
+/// which truncates whatever is at that path and follows a symlink there. Saving
+/// `report.pdf` therefore destroyed any existing `report.tpdf-partial` beside it,
+/// two saves to one destination shared a staging file and could rename or delete
+/// each other's work, and the cleanup on failure removed the path whether or not
+/// this call had created it. That is silent destruction outside the file the
+/// reader asked to write, which is the one thing this module exists not to do.
+///
+/// `create_new` is what makes the name a claim rather than a guess: it is
+/// `O_CREAT | O_EXCL`, so it fails rather than truncating, and it refuses a
+/// symlink at that path outright. A collision is retried at the next attempt
+/// index rather than reported, because a collision is not an error --- it means
+/// another save of this destination got there first, which is exactly the case
+/// the index is for.
+///
+/// The name appends rather than replacing the extension, so `report.pdf` stages
+/// beside itself as `report.pdf.tpdf-partial-<pid>-<n>` and can never collide
+/// with a document somebody named `report.tpdf-partial`. See [`staging_name`]
+/// for why `n` counts attempts rather than saves.
 ///
 /// **A closure rather than a `&[u8]`, since 2026-08-28**, and the reason is the
 /// whole of `docs/THREAT-MODEL.md` residual risk 18: a rewrite's bytes are
@@ -5460,6 +5524,107 @@ fn commit(staged: &Path, out: &Path) -> Result<(), String> {
     }
 }
 
+/// Whether a rename over `target` would be refused, asked while the reader
+/// still has the document.
+///
+/// **The landing is past the close, so a refusal there costs the reader's
+/// edits.** [`stage_in_place`] proves the folder takes a new file, because it
+/// writes one there, and that is all a rename needs on Unix. Windows asks two
+/// more things of the file being replaced, and neither was asked until the
+/// document was closed: it must not carry the read-only attribute, and no other
+/// program may hold it open without delete sharing. Both make the rename fail
+/// with *Access is denied*, measured on 2026-11-19, and both are asked here.
+///
+/// The second is asked by opening the file for delete access and nothing else,
+/// which reads no byte, writes none and changes no timestamp. A refusal that
+/// clears is retried on [`commit`]'s schedule, because the program holding the
+/// file is usually a scanner reading what was just written.
+///
+/// # Errors
+///
+/// The file carries the read-only attribute, or stays held without delete
+/// sharing.
+#[cfg_attr(unix, allow(clippy::unnecessary_wraps))]
+fn replaceable(target: &Path) -> Result<(), Refusal> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        /// `DELETE` from `winnt.h`: the right a rename over the file needs.
+        const DELETE_ACCESS: u32 = 0x0001_0000;
+        if std::fs::metadata(target).is_ok_and(|m| m.permissions().readonly()) {
+            return Err(said!(
+                "{target:?} is marked read-only, so tpdf cannot save over it --- nothing was \
+                 changed. Use Save a copy, or clear the attribute and save again."
+            )
+            .into());
+        }
+        held_open(target, || {
+            std::fs::OpenOptions::new()
+                .access_mode(DELETE_ACCESS)
+                .open(target)
+                .map(drop)
+        })?;
+    }
+    #[cfg(unix)]
+    let _ = target;
+    Ok(())
+}
+
+/// Whether `target` can be opened for writing, asked while the reader still has
+/// the document.
+///
+/// The append's landing opens the file it adds to for reading and writing, and
+/// that open is past the close. Asked here first, with the same access and no
+/// write: a read-only file, one the reader may not write, or one another program
+/// holds without write sharing is refused while the edits are still theirs.
+/// Opening without writing changes no byte and no timestamp, and truncates
+/// nothing.
+///
+/// # Errors
+///
+/// The file cannot be opened for reading and writing.
+fn openable_to_append(target: &Path) -> Result<(), Refusal> {
+    held_open(target, || {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(target)
+            .map(drop)
+    })
+}
+
+/// Runs `open` until it succeeds, is refused for a reason waiting cannot
+/// change, or [`COMMIT_RETRIES`] waits have passed.
+///
+/// Only a sharing violation is waited for, the one refusal another program can
+/// be causing and stop causing, and only on Windows, where a file being read is
+/// a file that cannot be replaced.
+fn held_open(target: &Path, open: impl Fn() -> std::io::Result<()>) -> Result<(), Refusal> {
+    /// `ERROR_SHARING_VIOLATION`.
+    const SHARING_VIOLATION: i32 = 32;
+    let mut attempt = 0;
+    loop {
+        match open() {
+            Ok(()) => return Ok(()),
+            Err(e)
+                if cfg!(windows)
+                    && e.raw_os_error() == Some(SHARING_VIOLATION)
+                    && attempt < COMMIT_RETRIES =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(50 << attempt));
+                attempt += 1;
+            }
+            Err(e) => {
+                return Err(said!(
+                    "tpdf cannot save over {target:?}: {e} --- nothing was changed. Use Save \
+                     a copy, or close the program holding it and save again."
+                )
+                .into())
+            }
+        }
+    }
+}
+
 /// Whether two paths name the same file.
 ///
 /// **By file identity first**, when both exist: [`crate::fingerprint::FileId`],
@@ -5509,3 +5674,6 @@ mod tests;
 
 #[cfg(test)]
 mod import_tests;
+
+#[cfg(test)]
+mod landing_tests;

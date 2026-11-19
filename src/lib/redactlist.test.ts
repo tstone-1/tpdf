@@ -4,6 +4,7 @@ import objects from "../../src-tauri/src/objects.rs?raw";
 import backend from "../../src-tauri/src/redact.rs?raw";
 import {
   RedactList,
+  RegionWords,
   UNHANDLED_KINDS,
   UNMEASURED_TEXT,
   unhandledKinds,
@@ -960,5 +961,66 @@ describe("the redaction walk, when the page order changes while it waits", () =>
     });
     expect(asked).toEqual([1, 0]);
     expect(planned.get(7)).toEqual(planFor(0 as FilePage));
+  });
+});
+
+describe("what one document's region walk keeps", () => {
+  /** A walk over one unedited page whose regions are `regions()`, counting reads. */
+  function over(regions: () => RedactionView[], read: number[]) {
+    const map = unedited(1);
+    return {
+      current: () => true,
+      regions,
+      slotOf: (page: RedactionView["page"]) => map.slotOfId(page),
+      sourceOf: (slot: number) => map.sourceOf(slot),
+      text: async (slot: number) => { read.push(slot); return null; },
+      plans: async (page: FilePage, areas: RedactionView["area"][]) =>
+        areas.map(() => ({ taking: `file page ${page}` }) as unknown as RegionPlan),
+      answered: () => {},
+      failed: (e: unknown) => { throw e; },
+    };
+  }
+
+  it("keeps each region's words and plan in its own maps", async () => {
+    const state = new RegionWords();
+    await state.fill(over(() => [region({ id: 4 })], []));
+    expect(state.words.get(4)).toBeNull();
+    expect(state.plans.get(4)).toEqual({ taking: "file page 0" });
+  });
+
+  it("asks across calls about a region drawn on a page already read", async () => {
+    // Answered by region id, not by page: a set of pages kept between walks
+    // never selected the second region, and its row said *reading* for good.
+    const state = new RegionWords();
+    const read: number[] = [];
+    await state.fill(over(() => [region({ id: 4 })], read));
+    await state.fill(over(() => [region({ id: 4 }), region({ id: 5, area: [100, 200, 300, 240] })], read));
+    expect(read).toEqual([0, 0]);
+    expect(state.plans.has(5)).toBe(true);
+  });
+
+  it("stands down while a region walk is running, and lowers the flag when it ends", async () => {
+    const state = new RegionWords();
+    let answer: () => void = () => {};
+    const read: number[] = [];
+    const first = state.fill({
+      ...over(() => [region({ id: 4 })], read),
+      text: (slot: number) => { read.push(slot); return new Promise((resolve) => { answer = () => resolve(null); }); },
+    });
+    expect(state.filling).toBe(true);
+    await state.fill(over(() => [region({ id: 5 })], read));
+    expect(read).toEqual([0]);
+    answer();
+    await first;
+    expect(state.filling).toBe(false);
+  });
+
+  it("lowers the region walk's flag when it fails, so the next call walks", async () => {
+    const state = new RegionWords();
+    await expect(state.fill({
+      ...over(() => [region({ id: 4 })], []),
+      text: () => Promise.reject(new Error("no page")),
+    })).rejects.toThrow("no page");
+    expect(state.filling).toBe(false);
   });
 });

@@ -25,7 +25,60 @@ import {
   type Verdict,
   type Why,
 } from "./integrity";
-import { signatureRows, VERDICT_WORDS, type Signature } from "./properties";
+import { briefly, signatureRows, VERDICT_WORDS, type Signature } from "./properties";
+import { padesRow, timestampRow, type PadesLevel } from "./integrity";
+
+describe("an answer this version has no words for", () => {
+  // What a backend one version ahead could send. Cast, because the type
+  // forbids exactly what the boundary does not.
+  const NEW = "something_newer";
+  const unknownAnswer = (value: string | undefined) => {
+    expect(value).toContain("not known to this version");
+    expect(value).toContain(NEW);
+  };
+
+  it("is said to be unknown, as a warning, for every row worded from an enum", () => {
+    const rows = [
+      trustRow(standing(NEW as Standing)),
+      authorityRow(standing(NEW as Standing)),
+      integrityRow(verdict(NEW as Verdict), 0),
+      timestampRow("2026-08-21", "TSA", verdict(NEW as Verdict), false),
+      padesRow(NEW as PadesLevel),
+      revocationRow(revocation(NEW as Revocation["standing"])),
+      revocationRow(revocation("good", { basis: NEW as Basis })),
+    ];
+    for (const row of rows) {
+      expect(row?.warn, row?.name).toBe(true);
+      unknownAnswer(row?.value);
+    }
+  });
+
+  it("is a reason this version does not know, never a throw, inside a known answer", () => {
+    const trust = trustRow(standing("untrusted", NEW as Doubt));
+    expect(trust?.warn).toBe(true);
+    expect(trust?.value).toContain(`does not know (“${NEW}”)`);
+    expect(authorityRow(standing("unchecked", NEW as Doubt))?.value).toContain(NEW);
+    expect(integrityRow(verdict("unchecked", NEW as Why), 0)?.value).toContain(NEW);
+    expect(revocationRow(revocation("unchecked", { why: NEW as Gap }))?.value).toContain(NEW);
+    expect(revocationRow(revocation("revoked", { reason: NEW as Reason }))?.value).toContain(NEW);
+  });
+
+  it("is the same unknown sentence on a closed card, with the warning", () => {
+    const signature = {
+      field: "Signature1",
+      signed: true,
+      kind: "adbe.pkcs7.detached",
+      byte_range: null,
+      integrity: verdict(NEW as Verdict),
+      trust: null,
+      pades: NEW,
+    } as unknown as Signature;
+    const face = briefly(signature, signatureRows(signature, 1024));
+    expect(face).toContainEqual({ text: "not known to this version", warn: true });
+    // The level on the face keeps its row's warning too.
+    expect(face).toContainEqual({ text: NEW, warn: true });
+  });
+});
 
 function verdict(v: Verdict, why: Why | null = null): Integrity {
   return { verdict: v, why, digest: "SHA-256", method: "ECDSA P-256" };

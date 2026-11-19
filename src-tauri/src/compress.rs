@@ -15,7 +15,9 @@
 //! and a picture that compresses badly without loss --- a photograph or a
 //! scan --- is stored as JPEG. What a picture is drawn at is read from the
 //! pages: [`drawn`] walks each page's content, and the content of the reusable
-//! blocks it draws, for the matrix in effect at every `Do`.
+//! blocks it draws, for the matrix in effect at every `Do`. A picture that
+//! content which could not be followed may draw is not scaled, since the
+//! largest size it is shown at is then not known.
 //!
 //! **What is left exactly as it is**, because changing it could change what
 //! it shows by more than resolution:
@@ -30,6 +32,8 @@
 //!   transparent, and a soft mask with a `/Matte`;
 //! - a filter that is neither `FlateDecode` nor `DCTDecode`, or more than one:
 //!   JBIG2 and CCITT are already small, and JPEG 2000 is not decoded here;
+//! - a JPEG with `/DecodeParms`, whose `/ColorTransform` the decoder here
+//!   does not follow;
 //! - a JPEG that needs no scaling, since encoding it again loses quality for
 //!   little;
 //! - a picture whose new form is not at least a tenth smaller than the old.
@@ -199,6 +203,11 @@ pub struct Done {
     pub pictures_changed: usize,
     /// Streams that were stored without a filter and are now deflated.
     pub streams_deflated: usize,
+    /// Of the pictures, the ones drawn at a size that is not known: under a
+    /// matrix that would not read, or by content that could not be followed.
+    /// None of them is scaled.
+    #[serde(default)]
+    pub pictures_unsized: usize,
 }
 
 /// The largest size, in points, any page draws a picture at.
@@ -252,9 +261,69 @@ struct Walk<'a> {
     draws: usize,
     /// The page being walked, counted from 0.
     page: u32,
+    /// Pictures a content stream this could not follow may draw. Another
+    /// page drawing one small says nothing about how large that one shows it.
+    unfollowed: BTreeSet<ObjectId>,
+    /// Some drawing was not followed and which pictures it draws is not
+    /// known either, so no size measured is known to be the largest.
+    lost: bool,
 }
 
 impl Walk<'_> {
+    /// Notes every picture `resources` name, and every picture the blocks
+    /// they name draw, as drawn by content this could not follow.
+    fn unfollowed_in(&mut self, resources: &[&Dictionary]) {
+        let doc = self.doc;
+        let mut blocks: Vec<(ObjectId, usize)> = Vec::new();
+        let mut seen: BTreeSet<ObjectId> = BTreeSet::new();
+        let named = |all: &Dictionary, depth: usize, blocks: &mut Vec<(ObjectId, usize)>| {
+            let Some(all) = all
+                .get(b"XObject")
+                .ok()
+                .and_then(|all| resolved(doc, all))
+                .and_then(|all| all.as_dict().ok())
+            else {
+                return;
+            };
+            for (_, value) in all {
+                if let Ok(id) = value.as_reference() {
+                    blocks.push((id, depth));
+                }
+            }
+        };
+        for resources in resources {
+            named(resources, 0, &mut blocks);
+        }
+        while let Some((id, depth)) = blocks.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Ok(stream) = doc.get_object(id).and_then(Object::as_stream) else {
+                continue;
+            };
+            match stream.dict.get(b"Subtype").and_then(Object::as_name) {
+                Ok(b"Image") => {
+                    self.unfollowed.insert(id);
+                }
+                Ok(b"Form") if depth < MAX_NESTING => {
+                    if let Some(own) = stream
+                        .dict
+                        .get(b"Resources")
+                        .ok()
+                        .and_then(|own| resolved(doc, own))
+                        .and_then(|own| own.as_dict().ok())
+                    {
+                        named(own, depth + 1, &mut blocks);
+                    }
+                }
+                // A block deeper than that is not looked into, and what it
+                // draws is not known.
+                Ok(b"Form") => self.lost = true,
+                _ => {}
+            }
+        }
+    }
+
     /// Follows one content stream. `resources` is searched nearest first.
     fn content(
         &mut self,
@@ -264,6 +333,7 @@ impl Walk<'_> {
         depth: usize,
     ) {
         let Ok(content) = Content::decode(data) else {
+            self.unfollowed_in(resources);
             return;
         };
         let mut ctm = base;
@@ -285,6 +355,7 @@ impl Walk<'_> {
                 "Do" => {
                     self.draws += 1;
                     if self.draws > MAX_DRAWS {
+                        self.lost = true;
                         return;
                     }
                     let Some(name) = operation.operands.first().and_then(|n| n.as_name().ok())
@@ -329,7 +400,19 @@ impl Walk<'_> {
                     }
                 }
             }
-            Ok(b"Form") if depth < MAX_NESTING => {
+            Ok(b"Form") => {
+                let own = stream
+                    .dict
+                    .get(b"Resources")
+                    .ok()
+                    .and_then(|own| resolved(self.doc, own))
+                    .and_then(|own| own.as_dict().ok());
+                let mut nearest: Vec<&Dictionary> = own.into_iter().collect();
+                nearest.extend(resources);
+                if depth >= MAX_NESTING {
+                    self.unfollowed_in(&nearest);
+                    return;
+                }
                 let inner = stream
                     .dict
                     .get(b"Matrix")
@@ -343,17 +426,10 @@ impl Walk<'_> {
                     (Some(inner), Some(ctm)) => Some(concat(inner, ctm)),
                     _ => None,
                 };
-                let own = stream
-                    .dict
-                    .get(b"Resources")
-                    .ok()
-                    .and_then(|own| resolved(self.doc, own))
-                    .and_then(|own| own.as_dict().ok());
                 let Ok(data) = stream.decompressed_content_with_limit(MAX_CONTENT_BYTES) else {
+                    self.unfollowed_in(&nearest);
                     return;
                 };
-                let mut nearest: Vec<&Dictionary> = own.into_iter().collect();
-                nearest.extend(resources);
                 self.content(&data, &nearest, base, depth + 1);
             }
             _ => {}
@@ -363,19 +439,24 @@ impl Walk<'_> {
 
 /// The largest size each picture is drawn at, by the pages and the blocks
 /// they draw.
+///
+/// A picture some content may draw that could not be followed is shown at a
+/// size that is not known, as one drawn under a matrix that would not read:
+/// the size another page draws it at is only a lower bound, and scaling it to
+/// that would show it coarse where it is drawn large.
 fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
     let mut walk = Walk {
         doc,
         shown: BTreeMap::new(),
         draws: 0,
         page: 0,
+        unfollowed: BTreeSet::new(),
+        lost: false,
     };
     for (index, page) in doc.get_pages().into_values().enumerate() {
         walk.page = u32::try_from(index).unwrap_or(u32::MAX);
-        let Ok(data) = doc.get_page_content_with_limit(page, MAX_CONTENT_BYTES) else {
-            continue;
-        };
         let Ok((inline, inherited)) = doc.get_page_resources(page) else {
+            walk.lost = true;
             continue;
         };
         let mut resources: Vec<&Dictionary> = inline.into_iter().collect();
@@ -384,7 +465,24 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
                 .into_iter()
                 .filter_map(|id| doc.get_dictionary(id).ok()),
         );
+        let Ok(data) = doc.get_page_content_with_limit(page, MAX_CONTENT_BYTES) else {
+            walk.unfollowed_in(&resources);
+            continue;
+        };
         walk.content(&data, &resources, Some(IDENTITY), 0);
+    }
+    let unknown = |shown: &mut Shown| {
+        shown.width = f64::INFINITY;
+        shown.height = f64::INFINITY;
+    };
+    if walk.lost {
+        walk.shown.values_mut().for_each(unknown);
+    } else {
+        for id in &walk.unfollowed {
+            if let Some(shown) = walk.shown.get_mut(id) {
+                unknown(shown);
+            }
+        }
     }
     walk.shown
 }
@@ -519,6 +617,12 @@ fn picture(doc: &Document, id: ObjectId, as_mask: bool) -> Option<Picture> {
     if stored == Stored::Flate && !parms_are_read(dict) {
         return None;
     }
+    // A JPEG's parameters say how its colours were coded (`/ColorTransform`),
+    // which the decoder here does not read, and a JPEG written again would
+    // not carry them.
+    if stored == Stored::Jpeg && dict.has(b"DecodeParms") {
+        return None;
+    }
     let mask = match dict.get(b"SMask") {
         Err(_) => None,
         Ok(mask) => {
@@ -546,7 +650,25 @@ fn samples(doc: &Document, id: ObjectId, picture: &Picture) -> Option<Vec<u8>> {
     let wanted = picture.width * picture.height * picture.channels;
     match picture.stored {
         Stored::Raw | Stored::Flate => {
-            let data = stream.decompressed_content_with_limit(wanted).ok()?;
+            // `lopdf` holds the inflated bytes to the limit before it undoes a
+            // PNG predictor, and those still carry one filter byte a row: the
+            // samples alone as the limit refused every such picture, the ones
+            // this module writes itself among them. The length after is held
+            // to the samples exactly all the same.
+            let png = picture.stored == Stored::Flate
+                && stream
+                    .dict
+                    .get(b"DecodeParms")
+                    .and_then(Object::as_dict)
+                    .and_then(|parms| parms.get(b"Predictor"))
+                    .and_then(Object::as_i64)
+                    .is_ok_and(|predictor| predictor >= 10);
+            let limit = if png {
+                wanted.checked_add(picture.height)?
+            } else {
+                wanted
+            };
+            let data = stream.decompressed_content_with_limit(limit).ok()?;
             (data.len() == wanted).then_some(data)
         }
         Stored::Jpeg => {
@@ -786,10 +908,14 @@ fn shrink(
     true
 }
 
-/// Shrinks the pictures the pages draw. Returns how many there are and how
-/// many were stored smaller.
-fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize) {
+/// Shrinks the pictures the pages draw. Returns how many there are, how many
+/// were stored smaller and how many are drawn at a size that is not known.
+fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize, usize) {
     let shown = drawn(doc);
+    let unknown = shown
+        .values()
+        .filter(|shown| !shown.width.is_finite() || !shown.height.is_finite())
+        .count();
     let mut changed = 0usize;
     // A mask is scaled once, for the largest any of its pictures is shown.
     let mut masks: BTreeMap<ObjectId, Shown> = BTreeMap::new();
@@ -817,7 +943,7 @@ fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize) {
             shrink(doc, id, &found, shown, how, true);
         }
     }
-    (shown.len(), changed)
+    (shown.len(), changed, unknown)
 }
 
 /// Deflates every stream stored without a filter. Returns how many.
@@ -886,7 +1012,7 @@ pub fn apply(doc: &mut Document, compress: Compress) -> Done {
         Compress::No => return done,
         Compress::Lossless => {}
         Compress::Pictures(how) => {
-            (done.pictures, done.pictures_changed) = pictures(doc, how);
+            (done.pictures, done.pictures_changed, done.pictures_unsized) = pictures(doc, how);
         }
     }
     done.streams_deflated = deflate_streams(doc);
@@ -932,6 +1058,39 @@ fn rgba(rgb: &[u8]) -> Vec<u8> {
 }
 
 impl Sample {
+    /// This sample, when its stated size is its pixels.
+    ///
+    /// A worker says both, and whatever draws a sample trusts the size it is
+    /// given. Each side is at most [`SAMPLE_SIDE`], which is what a worker
+    /// cuts a sample to, and each picture exactly that many RGB pixels, the
+    /// product checked rather than wrapped.
+    ///
+    /// # Errors
+    ///
+    /// The sentence for the reader, naming the size and the bytes.
+    pub fn checked(&self) -> Result<&Self, String> {
+        let side = 1..=SAMPLE_SIDE;
+        let (width, height) = (self.width, self.height);
+        if !side.contains(&width) || !side.contains(&height) {
+            return Err(said!(
+                "the worker described a sample of {width} by {height} pixels, which no sample is"
+            ));
+        }
+        let bytes = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(3));
+        for (which, pixels) in [("before", &self.before), ("after", &self.after)] {
+            if bytes != Some(pixels.len()) {
+                return Err(said!(
+                    "the worker's sample {which} holds {held} bytes, and {width} by {height} RGB \
+                     pixels are not that many",
+                    held = pixels.len()
+                ));
+            }
+        }
+        Ok(self)
+    }
+
     /// The part before, as RGBA.
     #[must_use]
     pub fn before_rgba(&self) -> Vec<u8> {
@@ -946,8 +1105,13 @@ impl Sample {
 
     /// Before on the left and after on the right with a white gap between, as
     /// a width, a height and RGBA.
-    #[must_use]
-    pub fn side_by_side(&self) -> (u32, u32, Vec<u8>) {
+    ///
+    /// # Errors
+    ///
+    /// A size the pixels do not have, in [`Self::checked`]'s sentence: the
+    /// picture is allocated from the size, so it is held to them first.
+    pub fn side_by_side(&self) -> Result<(u32, u32, Vec<u8>), String> {
+        self.checked()?;
         let (width, height) = (self.width as usize, self.height as usize);
         let across = width * 2 + GAP;
         let mut out = vec![255u8; across * height * 4];
@@ -961,7 +1125,7 @@ impl Sample {
                 out[start..start + width * 4].copy_from_slice(&rgba(line));
             }
         }
-        (u32::try_from(across).unwrap_or(u32::MAX), self.height, out)
+        Ok((u32::try_from(across).unwrap_or(u32::MAX), self.height, out))
     }
 
     /// The part of two drawings of one page that differs most, cut from both.
@@ -1084,7 +1248,12 @@ fn focus(before: &Document, after: &Document, shown: &BTreeMap<ObjectId, Shown>)
         .filter(|(id, _)| content(before, **id) != content(after, **id))
         .filter_map(|(id, shown)| Some((*id, *shown, size(before, *id)?, size(after, *id)?)))
         // The most pixels lost; among pictures only re-encoded, the largest.
-        .max_by_key(|(_, _, old, new)| (old.0 * old.1 - new.0 * new.1, old.0 * old.1))?;
+        // The sizes are the file's own numbers for any stream that was only
+        // deflated, so the arithmetic saturates rather than overflows.
+        .max_by_key(|(_, _, old, new)| {
+            let (before, after) = (old.0.saturating_mul(old.1), new.0.saturating_mul(new.1));
+            (before.saturating_sub(after), before)
+        })?;
     let _ = id;
     let dpi = |pixels: i64| -> u32 {
         if shown.width <= 0.0 || !shown.width.is_finite() {

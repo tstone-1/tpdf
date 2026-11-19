@@ -1755,8 +1755,8 @@ ROWS += [
     Mutation(
         'cli: redact calls a match with no position marked',
         'src/cli/redact.rs',
-        '                        regions::regions_on(text, half.page, &[*half]).is_empty()',
-        '                        false',
+        '            marked_any |= !areas.is_empty();',
+        '            marked_any = true;',
         'a_match_with_no_position_on_the_page_is_a_reason_and_a_placed_one_is_not',
     ),
     Mutation(

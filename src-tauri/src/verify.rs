@@ -9,7 +9,8 @@
 //! **The refusal rate is the finding, not a detail.** `lopdf` decoded
 //! `FlateDecode`, `LZWDecode` and `ASCII85Decode` when the spike ran, and
 //! answered `Unimplemented("decompression algorithms")` for everything else
-//! (0.45 added three, none of them an image filter; see `DECODABLE`). Everything
+//! (0.45 added three, none of them an image filter, and 0.46 none; see
+//! `DECODABLE`). Everything
 //! else includes `/DCTDecode`, `/CCITTFaxDecode`, `/JBIG2Decode` and
 //! `/JPXDecode`, which is what every scanner on earth emits. On the `filters`
 //! fixture all six of the spike's rewrite routes reported *not verified*,
@@ -25,10 +26,11 @@
 //!
 //! * [`Report::blind`] --- nothing here can account for these bytes. There is no
 //!   instrument that would change the answer.
-//! * [`Report::deferred`] --- a raster image. Its *encoded bytes* were scanned
-//!   like every other byte in the file, so a needle sitting literally in the
-//!   stream is found; what was not read is the **picture**, and text that exists
-//!   only as pixels is exactly what OCR is for.
+//! * [`Report::deferred`] --- a raster image, whether a JPEG, a deflated
+//!   picture or one drawn inline in a content stream. Its *encoded bytes* were
+//!   scanned like every other byte in the file, so a needle sitting literally in
+//!   the stream is found; what was not read is the **picture**, and text that
+//!   exists only as pixels is exactly what OCR is for.
 //!
 //! **That instrument exists now, and it is narrower than this list.**
 //! [`crate::ocr_gate`] renders the regions a redaction removed from and has an
@@ -97,9 +99,9 @@ use crate::encoding::MAX_DECODE;
 /// distinguish "this failed to decode" from "this was never going to decode",
 /// and only the second is a fact about the library.
 ///
-/// **Narrower than the library since 0.45, which the lock file now holds.**
-/// 0.45.0 dispatches on six: these, `BrotliDecode`, `ASCIIHexDecode` and
-/// `RunLengthDecode`. This list was not widened with it, so [`classify`] still
+/// **Narrower than the library since 0.45.** 0.45.0 dispatches on six: these,
+/// `BrotliDecode`, `ASCIIHexDecode` and `RunLengthDecode`; 0.46.0, which the
+/// lock file holds, dispatches on the same six. This list was not widened with it, so [`classify`] still
 /// answers [`Carrier::Undecodable`] for a stream ending in `ASCIIHexDecode` or
 /// `RunLengthDecode` and [`Carrier::Unrecognised`] for one ending in
 /// `BrotliDecode`, and the scan withholds certification from bytes the library
@@ -141,6 +143,11 @@ const MAX_OBJECT_REASONS: usize = 1_000;
 /// even a decoder for these would not answer the question the byte scan asks.
 /// That is what makes them a different instrument's problem rather than a
 /// weaker version of the same one.
+///
+/// **Not how a picture is recognised, only how a filter is.** A picture stored
+/// losslessly carries `/FlateDecode` or no filter at all, which this list
+/// cannot tell from a content stream; [`as_drawn`] reads `/Subtype /Image`
+/// first, and that is what makes such a stream a picture here.
 const IMAGE: &[&[u8]] = &[
     b"DCTDecode",
     b"JPXDecode",
@@ -177,6 +184,14 @@ pub enum Carrier {
         /// The filter as the file spells it.
         filter: String,
     },
+    /// A filter this build decodes, and a stream it still did not read the way
+    /// a viewer reads it: a key the decoder consults in a form `lopdf` passes
+    /// over, a decode that failed, or one that stopped part way. Never produced
+    /// by [`classify`], which sees only the filter names; [`as_drawn`] says it.
+    Unread {
+        /// The sentence, with the object it is about.
+        why: String,
+    },
 }
 
 /// What a stream's filter chain means for the scan.
@@ -211,6 +226,288 @@ pub fn classify(filters: &[&[u8]]) -> Carrier {
     } else {
         Carrier::Unrecognised { filter: name() }
     }
+}
+
+/// One stream as the scan has it: what it rests on, and its bytes when read.
+struct Drawn {
+    carrier: Carrier,
+    /// The decoded content. Empty unless `carrier` is [`Carrier::Scanned`].
+    decoded: Vec<u8>,
+    /// The decoded content draws an inline image (`BI` ... `ID` ... `EI`).
+    inline_picture: bool,
+}
+
+/// Whether one stream was read the way a viewer reads it, and if so its bytes.
+///
+/// **The one question this scan has to ask of every stream, asked in one
+/// place.** A stream counts as read only when it is not a picture, its filters
+/// are ones this build decodes, every key the decoder consults is one `lopdf`
+/// reads as PDFium does, and the decode ran to the end of the data. Anything
+/// else is a picture nobody read ([`Carrier::Image`]) or bytes nobody read
+/// ([`Carrier::Unread`] and the filter cases), and both withhold the verdict.
+///
+/// Each clause was a way to certify a file the reader can still see words in:
+///
+/// * **A picture is a picture whatever its filter.** The filter list
+///   ([`IMAGE`]) names the lossy and fax codecs, and a picture stored with
+///   `/FlateDecode`, `/LZWDecode` or nothing at all --- what img2pdf, a PNG and
+///   most 1-bit scanners write --- was inflated, searched for the words as if
+///   its samples were text, and passed. `/Subtype /Image` is what makes PDFium
+///   draw it as a picture, so that is what decides, through a reference too.
+/// * **`lopdf` reads `/DecodeParms` only when it is direct**, and its
+///   `/Predictor`, `/Columns`, `/Colors`, `/BitsPerComponent` and
+///   `/EarlyChange` only as direct integers; PDFium resolves all of them. A
+///   PNG-predicted stream whose parameters are `9 0 R` decodes to row-differenced
+///   bytes, the words are not in those, and the stream was counted as read.
+///   See [`parameters_unread`].
+/// * **A Flate decode that stops part way is `Ok`.** `lopdf` logs the zlib
+///   error and returns what it produced, so a stream cut short was searched only
+///   up to the cut. See [`inflates_whole`]. Its LZW and ASCII85 decoders end
+///   the same way, and this build has no second decoder for either to ask, so a
+///   stream of those cut short is still searched up to the cut and passes.
+/// * **A content stream can hold a picture of its own**, an inline image, and
+///   reading the stream's bytes reads the words around it, not the picture.
+fn as_drawn(doc: &Document, object: u32, stream: &lopdf::Stream, filters: &[&[u8]]) -> Drawn {
+    let not_read = |carrier| Drawn {
+        carrier,
+        decoded: Vec::new(),
+        inline_picture: false,
+    };
+    if subtype_is(doc, &stream.dict, b"Image") {
+        // The filter names the picture's encoding in the sentence; an empty
+        // one says it has none.
+        let filter = filters
+            .last()
+            .map(|last| String::from_utf8_lossy(last).into_owned())
+            .unwrap_or_default();
+        return not_read(Carrier::Image { filter });
+    }
+    let carrier = classify(filters);
+    if carrier != Carrier::Scanned {
+        return not_read(carrier);
+    }
+    if let Some(why) = parameters_unread(object, stream) {
+        return not_read(Carrier::Unread { why });
+    }
+    // Classified as decodable and then would not decode: a bomb over the
+    // bound, or damage. Blind either way, and it must not be mistaken for the
+    // filter cases above --- those are decided before any decoding is
+    // attempted.
+    let decoded = match stream.decompressed_content_with_limit(MAX_DECODE) {
+        Ok(decoded) => decoded,
+        Err(why) => {
+            return not_read(Carrier::Unread {
+                why: said!(
+                    "object {object} could not be decoded, so its contents are unknown: {why}"
+                ),
+            })
+        }
+    };
+    if stopped_part_way(stream, filters) {
+        return not_read(Carrier::Unread {
+            why: said!(
+                "object {object} stopped decoding part way, so whatever follows the point it \
+                 stopped at was not read"
+            ),
+        });
+    }
+    let inline_picture = draws_inline_picture(&decoded);
+    Drawn {
+        carrier: Carrier::Scanned,
+        decoded,
+        inline_picture,
+    }
+}
+
+/// Whether a dictionary's `/Subtype`, followed through references as PDFium
+/// follows it, is `subtype`.
+fn subtype_is(doc: &Document, dict: &lopdf::Dictionary, subtype: &[u8]) -> bool {
+    dict.get(b"Subtype")
+        .and_then(|value| doc.dereference(value))
+        .and_then(|(_, value)| value.as_name())
+        .is_ok_and(|name| name == subtype)
+}
+
+/// The sentence for a stream whose decoding parameters `lopdf` would not read
+/// as a viewer reads them, or `None` when it reads all of them.
+///
+/// `lopdf` 0.46.0 (`Stream::decode_filters`) takes `/DecodeParms` when it is a
+/// dictionary or an array of dictionaries, and anything else --- a reference,
+/// an array holding one, a number --- as no parameters at all. Inside the
+/// dictionary it reads each key with `as_i64`, so a reference or a real there
+/// is the default. PDFium resolves every one of them. A `/Predictor` above 15
+/// is the one value the two read differently when it is direct: PDFium takes
+/// every value from 10 up as PNG, `lopdf` only 10 to 15. And when a predictor
+/// applies, a sample size outside what a picture row can have is one the two
+/// libraries guard differently, so it is not read either.
+///
+/// **Every key, not the one the last defect used.** A `/Filter` written as a
+/// reference was the first spelling of this, and closing it left these open.
+fn parameters_unread(object: u32, stream: &lopdf::Stream) -> Option<String> {
+    let direct = |params: &lopdf::Dictionary| -> bool {
+        const INTEGERS: &[&[u8]] = &[
+            b"Predictor",
+            b"Columns",
+            b"Colors",
+            b"BitsPerComponent",
+            b"EarlyChange",
+        ];
+        let integer = |key: &[u8]| match params.get(key) {
+            Err(_) => Some(None),
+            Ok(Object::Integer(value)) => Some(Some(*value)),
+            Ok(_) => None,
+        };
+        let Some(values) = INTEGERS
+            .iter()
+            .map(|key| integer(key))
+            .collect::<Option<Vec<Option<i64>>>>()
+        else {
+            return false;
+        };
+        let &[predictor, columns, colors, bits, _] = values.as_slice() else {
+            return false;
+        };
+        match predictor.unwrap_or(1) {
+            2 | 10..=15 => {}
+            // Above 15 PDFium still applies PNG and `lopdf` does not.
+            16.. => return false,
+            // No predictor in either library: the sample keys are not read.
+            _ => return true,
+        }
+        columns.is_none_or(|n| n > 0)
+            && colors.is_none_or(|n| (1..=32).contains(&n))
+            && bits.is_none_or(|n| matches!(n, 1 | 2 | 4 | 8 | 16))
+    };
+    let read = match stream.dict.get(b"DecodeParms") {
+        Err(_) | Ok(Object::Null) => true,
+        Ok(Object::Dictionary(params)) => direct(params),
+        Ok(Object::Array(items)) => items.iter().all(|item| match item {
+            Object::Null => true,
+            Object::Dictionary(params) => direct(params),
+            _ => false,
+        }),
+        Ok(_) => false,
+    };
+    if read {
+        None
+    } else {
+        Some(said!(
+            "object {object} gives how to decode it (/DecodeParms) in a form this build does not \
+             read, so its contents were not decoded"
+        ))
+    }
+}
+
+/// Whether a `/FlateDecode` stage of `filters` stopped before the end of its data.
+///
+/// `lopdf` answers `Ok` with whatever the inflate produced when zlib reports
+/// an error, so a stream cut short reaches the search as its first part and
+/// nothing says the rest was never read. This asks `flate2` the same question
+/// for each Flate stage and listens to the answer, once over the stage's input
+/// into a sink: nothing is kept, and the work is one more inflate of a stream
+/// `lopdf` has just inflated under the same bound.
+///
+/// A stage after the first reads what the stages before it produced, so those
+/// are decoded again on their own; a prefix that will not decode is a stage
+/// that cannot be shown whole.
+fn stopped_part_way(stream: &lopdf::Stream, filters: &[&[u8]]) -> bool {
+    for (at, filter) in filters.iter().enumerate() {
+        if *filter != b"FlateDecode" {
+            continue;
+        }
+        if at == 0 {
+            if !inflates_whole(&stream.content) {
+                return true;
+            }
+            continue;
+        }
+        let mut before = stream.clone();
+        let names: Vec<Object> = filters[..at]
+            .iter()
+            .map(|name| Object::Name(name.to_vec()))
+            .collect();
+        before.dict.set("Filter", Object::Array(names));
+        match before.decompressed_content_with_limit(MAX_DECODE) {
+            Ok(input) if inflates_whole(&input) => {}
+            _ => return true,
+        }
+    }
+    false
+}
+
+/// Whether zlib data inflates to its end, as `lopdf` would read it.
+///
+/// `lopdf` falls back to raw deflate after the two header bytes when zlib
+/// fails, and so does this: a stream whose only fault is its checksum ---
+/// which is what an encrypted file with a broken Adler-32 looks like --- has
+/// been read whole by both, and calling it blind would refuse real documents
+/// for a fault that hides nothing. A stream that fails both ways stopped in its
+/// data, and that is the one this reports.
+fn inflates_whole(input: &[u8]) -> bool {
+    use std::io::Read;
+    if input.is_empty() {
+        return true;
+    }
+    let bound = u64::try_from(MAX_DECODE)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let whole = |reader: &mut dyn Read| {
+        std::io::copy(&mut reader.take(bound), &mut std::io::sink()).is_ok()
+    };
+    whole(&mut flate2::read::ZlibDecoder::new(input))
+        || (input.len() > 2 && whole(&mut flate2::read::DeflateDecoder::new(&input[2..])))
+}
+
+/// Whether decoded content draws an inline image.
+///
+/// A token test first, because nearly every stream has neither `BI` nor `ID`
+/// as a word and parsing every stream to find that out would cost the scan a
+/// second pass. When both occur, the content parser decides, so `(BI ID)` in a
+/// string is not a picture; and when the parser refuses bytes that hold both,
+/// they are counted as a picture, which withholds the verdict rather than
+/// waving through a stream nothing could read.
+fn draws_inline_picture(content: &[u8]) -> bool {
+    if !has_token(content, b"BI") || !has_token(content, b"ID") {
+        return false;
+    }
+    lopdf::content::Content::decode(content).map_or(true, |parsed| {
+        parsed.operations.iter().any(|op| op.operator == "BI")
+    })
+}
+
+/// Whether `token` occurs in `content` as a word of PDF syntax.
+fn has_token(content: &[u8], token: &[u8]) -> bool {
+    let apart = |byte: u8| {
+        matches!(
+            byte,
+            b'\0'
+                | b'\t'
+                | b'\n'
+                | b'\x0c'
+                | b'\r'
+                | b' '
+                | b'('
+                | b')'
+                | b'<'
+                | b'>'
+                | b'['
+                | b']'
+                | b'{'
+                | b'}'
+                | b'/'
+                | b'%'
+        )
+    };
+    content
+        .windows(token.len())
+        .enumerate()
+        .any(|(at, window)| {
+            window == token
+                && (at == 0 || apart(content[at - 1]))
+                && content
+                    .get(at + token.len())
+                    .is_none_or(|next| apart(*next))
+        })
 }
 
 /// How deep one page's reachability walk may follow references.
@@ -503,6 +800,9 @@ struct Carriers {
     objects: BTreeSet<lopdf::ObjectId>,
     /// More than [`MAX_CARRIERS`] of them, so the list is not an answer.
     overflowed: bool,
+    /// Also carried by something that is not an object at all (the trailer),
+    /// which no page reaches, so no page set is the answer.
+    unreached: bool,
 }
 
 impl Carriers {
@@ -558,7 +858,7 @@ fn locate(
                 }
             }
         }
-        let answer = if unplaced {
+        let answer = if unplaced || carried.unreached {
             Located::Unplaced
         } else if !shared.is_empty() {
             Located::Shared(Placed::of(&shared))
@@ -893,7 +1193,9 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
             let mut carriers: BTreeMap<String, Carriers> = BTreeMap::new();
             // Said once for the file, however many such fonts it has: the
             // reason is about the instrument, and it is the same reason for
-            // every one of them.
+            // every one of them. Asked through the document, because the
+            // `/Subtype` that says so may be a reference, and PDFium follows it.
+            let names_a_composite_font = |object: &Object| composite_font_in(&doc, object);
             if doc.objects.values().any(names_a_composite_font) {
                 report.blind.push(said!(
                     "the file draws text through a composite (Type0) font, which stores glyph \
@@ -953,14 +1255,26 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                         continue;
                     }
                 };
-                match classify(&filters) {
+                // Read the way a viewer reads it, or counted as not read: see
+                // [`as_drawn`], which is the one place that question is asked.
+                let drawn = as_drawn(&doc, id.0, stream, &filters);
+                match drawn.carrier {
                     Carrier::Image { filter } => {
                         deferred_objects += 1;
                         if deferred_objects <= MAX_OBJECT_REASONS {
-                            report.deferred.push(said!(
+                            report.deferred.push(if filter.is_empty() {
+                                said!(
+                                    "object {object} is an image stored without compression, so \
+                                     its picture was not read; text visible only as pixels needs \
+                                     OCR",
+                                    object = id.0
+                                )
+                            } else {
+                                said!(
                                 "object {object} is a {filter} image, so its encoded bytes were \
                                  scanned and its picture was not read \u{2014} text visible only as \
-                                 pixels needs OCR", object = id.0));
+                                 pixels needs OCR", object = id.0)
+                            });
                         }
                     }
                     Carrier::Undecodable { filter } => {
@@ -980,30 +1294,48 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                             ));
                         }
                     }
+                    Carrier::Unread { why } => {
+                        blind_objects += 1;
+                        if blind_objects <= MAX_OBJECT_REASONS {
+                            report.blind.push(why);
+                        }
+                    }
                     Carrier::Scanned => {
-                        match stream.decompressed_content_with_limit(MAX_DECODE) {
-                            Ok(decoded) => {
-                                for needle in needles {
-                                    if find(&decoded, needle.as_bytes()) {
-                                        report.found.insert(needle.clone());
-                                        carriers.entry(needle.clone()).or_default().note(*id);
-                                    }
-                                }
+                        for needle in needles {
+                            if find(&drawn.decoded, needle.as_bytes()) {
+                                report.found.insert(needle.clone());
+                                carriers.entry(needle.clone()).or_default().note(*id);
                             }
-                            // Classified as decodable and then would not decode: a
-                            // bomb over the bound, or damage. Blind either way, and
-                            // it must not be mistaken for the filter cases above ---
-                            // those are decided before any decoding is attempted.
-                            Err(why) => {
-                                blind_objects += 1;
-                                if blind_objects <= MAX_OBJECT_REASONS {
-                                    report.blind.push(said!(
-                                    "object {object} could not be decoded, so its contents are \
-                                     unknown: {why}", object = id.0));
-                                }
+                        }
+                        // The words around it were read; the picture was not, and
+                        // it is the same picture a `BI` before it would have drawn
+                        // from an XObject, so it gets that picture's reason.
+                        if drawn.inline_picture {
+                            deferred_objects += 1;
+                            if deferred_objects <= MAX_OBJECT_REASONS {
+                                report.deferred.push(said!(
+                                    "object {object} draws a picture inside its own content (an \
+                                     inline image), so that picture was not read; text visible \
+                                     only as pixels needs OCR",
+                                    object = id.0
+                                ));
                             }
                         }
                     }
+                }
+            }
+            // **The trailer is not an object, and it can hold strings.** A
+            // document information dictionary written into the trailer
+            // directly rather than by reference is read by every viewer that
+            // shows a title, and the loop above walks `doc.objects` only, so a
+            // title in UTF-16BE was compared nowhere in what it says. A word
+            // found only here is carried by no object, which `locate` answers
+            // as reached by no page: the truth about a trailer.
+            let trailer = flatten_strings(&Object::Dictionary(doc.trailer.clone()));
+            for needle in needles {
+                if find(&trailer, needle.as_bytes()) {
+                    report.found.insert(needle.clone());
+                    carriers.entry(needle.clone()).or_default().unreached = true;
                 }
             }
             // The suppressed ones, said once. A count is still a reason, so the
@@ -1059,7 +1391,12 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
 /// worklist rather than recursion, for [`push_refs`]'s reason: the nesting is
 /// the file's to choose. The work is linear in the object's size, which
 /// [`flatten_strings`] already pays for every object.
-fn names_a_composite_font(object: &Object) -> bool {
+///
+/// **`/Subtype` is resolved through `doc`**, because the key a viewer reads is
+/// the key this has to read: a font whose `/Subtype` is `8 0 R`, naming
+/// `/Type0`, is a composite font to PDFium, and a direct-only read counted it
+/// as nothing at all. The same shape as the indirect `/Filter`, one key over.
+fn composite_font_in(doc: &Document, object: &Object) -> bool {
     let mut inner: Vec<&Object> = vec![object];
     while let Some(value) = inner.pop() {
         let dict = match value {
@@ -1071,11 +1408,7 @@ fn names_a_composite_font(object: &Object) -> bool {
             }
             _ => continue,
         };
-        if dict
-            .get(b"Subtype")
-            .and_then(Object::as_name)
-            .is_ok_and(|name| name == b"Type0")
-        {
+        if subtype_is(doc, dict, b"Type0") {
             return true;
         }
         inner.extend(dict.iter().map(|(_, value)| value));
@@ -2739,6 +3072,401 @@ mod tests {
         assert!(
             matches!(report.verdict(), Verdict::NotVerified(_)),
             "so it must not call the file clean: {report:?}"
+        );
+    }
+
+    /// One page whose content is `content`, drawing `xobject` as `/X1` when
+    /// there is one; `trailer` adds keys to the trailer as the writer leaves it.
+    fn one_page(
+        content: &[u8],
+        xobject: Option<lopdf::Stream>,
+        build: impl FnOnce(&mut lopdf::Document, &mut lopdf::Stream),
+    ) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let mut resources = dictionary! {};
+        if let Some(mut xobject) = xobject {
+            build(&mut doc, &mut xobject);
+            let id = doc.add_object(xobject);
+            resources.set("XObject", dictionary! { "X1" => id });
+        }
+        let content = doc.add_object(Stream::new(dictionary! {}, content.to_vec()));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content,
+            "Resources" => resources,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise the fixture");
+        bytes
+    }
+
+    /// Bytes that are both a valid content stream and 32 by 32 grey samples,
+    /// so one stream can be a form in a control and a picture in the test.
+    fn samples() -> Vec<u8> {
+        b"q Q\n".repeat(256)
+    }
+
+    /// A stream of [`samples`] with `subtype`, deflated.
+    fn deflated(subtype: &str) -> lopdf::Stream {
+        use lopdf::{dictionary, Stream};
+        let mut stream = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => subtype,
+                "Width" => 32,
+                "Height" => 32,
+                "ColorSpace" => "DeviceGray",
+                "BitsPerComponent" => 8,
+                "BBox" => vec![0.into(), 0.into(), 32.into(), 32.into()],
+            },
+            samples(),
+        );
+        stream.compress().expect("deflate");
+        assert!(stream.dict.has(b"Filter"), "the fixture must be deflated");
+        stream
+    }
+
+    fn deferred_reasons(report: &Report) -> Vec<&String> {
+        report
+            .deferred
+            .iter()
+            .filter(|why| why.contains("needs OCR"))
+            .collect()
+    }
+
+    #[test]
+    fn a_deflated_image_is_deferred_like_a_jpeg() {
+        let needles = vec!["4711-0815".to_string()];
+        let drawn = b"q 32 0 0 32 0 0 cm /X1 Do Q";
+        let deflated_picture = super::scan(
+            &one_page(drawn, Some(deflated("Image")), |_, _| {}),
+            &needles,
+            None,
+        );
+        let Verdict::NotVerified(why) = deflated_picture.verdict() else {
+            panic!("a picture nobody read must not certify the file: {deflated_picture:?}");
+        };
+        assert!(
+            why.iter()
+                .any(|one| one.contains("FlateDecode image") && one.contains("needs OCR")),
+            "{why:?}"
+        );
+        // The JPEG twin: the same picture under `/DCTDecode`, which is the case
+        // that always had this reason. One reason each, of one kind, so the
+        // deflated picture is treated as the JPEG is and no more harshly.
+        let mut jpeg = deflated("Image");
+        jpeg.dict.set("Filter", "DCTDecode");
+        let jpeg = super::scan(&one_page(drawn, Some(jpeg), |_, _| {}), &needles, None);
+        assert_eq!(deferred_reasons(&jpeg).len(), 1, "{jpeg:?}");
+        assert_eq!(deferred_reasons(&deflated_picture).len(), 1);
+        assert_eq!(jpeg.blind, deflated_picture.blind);
+        // The control: the same bytes as a form are content, decoded and read.
+        let form = super::scan(
+            &one_page(drawn, Some(deflated("Form")), |_, _| {}),
+            &needles,
+            None,
+        );
+        assert_eq!(form.verdict(), Verdict::Verified, "{form:?}");
+    }
+
+    #[test]
+    fn an_image_named_by_a_reference_or_stored_raw_is_still_an_image() {
+        use lopdf::Object;
+        let needles = vec!["4711-0815".to_string()];
+        let drawn = b"q 32 0 0 32 0 0 cm /X1 Do Q";
+        let by_reference = super::scan(
+            &one_page(drawn, Some(deflated("Image")), |doc, image| {
+                let name = doc.add_object(Object::Name(b"Image".to_vec()));
+                image.dict.set("Subtype", Object::Reference(name));
+            }),
+            &needles,
+            None,
+        );
+        assert_eq!(deferred_reasons(&by_reference).len(), 1, "{by_reference:?}");
+        let mut raw = deflated("Image");
+        raw.dict.remove(b"Filter");
+        raw.set_content(samples());
+        let raw = super::scan(&one_page(drawn, Some(raw), |_, _| {}), &needles, None);
+        assert!(
+            raw.deferred
+                .iter()
+                .any(|why| why.contains("stored without compression")),
+            "{raw:?}"
+        );
+    }
+
+    #[test]
+    fn an_inline_image_in_a_content_stream_is_deferred() {
+        let needles = vec!["4711-0815".to_string()];
+        let inline = super::scan(
+            &one_page(
+                b"BT /F1 12 Tf 72 700 Td (kept) Tj ET\nq 10 0 0 10 0 0 cm\nBI /W 2 /H 1 /CS /G /BPC 8 ID \x00\x00 EI\nQ",
+                None,
+                |_, _| {},
+            ),
+            &needles,
+            None,
+        );
+        assert!(
+            inline
+                .deferred
+                .iter()
+                .any(|why| why.contains("inline image")),
+            "{inline:?}"
+        );
+        // The control: the same two words in a string are text, not a picture.
+        let words = super::scan(
+            &one_page(
+                b"BT /F1 12 Tf 72 700 Td (BI and ID EI) Tj ET",
+                None,
+                |_, _| {},
+            ),
+            &needles,
+            None,
+        );
+        assert_eq!(words.verdict(), Verdict::Verified, "{words:?}");
+    }
+
+    /// How a predicted stream's parameters are written.
+    #[derive(Clone, Copy)]
+    enum Params {
+        Direct,
+        Reference,
+        InArrayByReference,
+        ColumnsByReference,
+        Predictor16,
+    }
+
+    /// A deflated form holding `hidden`, stored with PNG predictor 12 (Up for
+    /// every row is enough to hide nothing; Sub is used, so every byte after a
+    /// row's first is a difference and the words are in no reading but the
+    /// decoded one).
+    fn predicted(hidden: &str, params: Params) -> Vec<u8> {
+        use lopdf::{dictionary, Object, Stream};
+        use std::io::Write;
+
+        const COLUMNS: usize = 16;
+        let mut plain = format!("BT /F1 12 Tf 72 600 Td ({hidden}) Tj ET\n").into_bytes();
+        plain.resize(plain.len().div_ceil(COLUMNS) * COLUMNS, b' ');
+        let mut rows = Vec::new();
+        for row in plain.chunks(COLUMNS) {
+            rows.push(1u8);
+            let mut left = 0u8;
+            for &byte in row {
+                rows.push(byte.wrapping_sub(left));
+                left = byte;
+            }
+        }
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder.write_all(&rows).expect("deflate");
+        let deflated = encoder.finish().expect("deflate");
+        let form = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Filter" => "FlateDecode",
+            },
+            deflated,
+        );
+        one_page(b"/X1 Do", Some(form), |doc, form| {
+            let mut decode = dictionary! { "Predictor" => 12, "Columns" => COLUMNS as i64 };
+            let value = match params {
+                Params::Direct => Object::Dictionary(decode),
+                Params::Reference => Object::Reference(doc.add_object(decode)),
+                Params::InArrayByReference => {
+                    Object::Array(vec![Object::Reference(doc.add_object(decode))])
+                }
+                Params::ColumnsByReference => {
+                    let columns = doc.add_object(Object::Integer(COLUMNS as i64));
+                    decode.set("Columns", Object::Reference(columns));
+                    Object::Dictionary(decode)
+                }
+                Params::Predictor16 => {
+                    decode.set("Predictor", 16);
+                    Object::Dictionary(decode)
+                }
+            };
+            form.dict.set("DecodeParms", value);
+        })
+    }
+
+    #[test]
+    fn a_stream_whose_decode_parms_is_a_reference_withholds_the_verdict() {
+        let needles = vec!["4711-0815".to_string()];
+        for params in [
+            Params::Reference,
+            Params::InArrayByReference,
+            Params::ColumnsByReference,
+            Params::Predictor16,
+        ] {
+            let report = super::scan(&predicted("4711-0815", params), &needles, None);
+            let Verdict::NotVerified(why) = report.verdict() else {
+                panic!("parameters this build does not read must not certify: {report:?}");
+            };
+            assert!(
+                why.iter().any(|one| one.contains("(/DecodeParms)")),
+                "{why:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stream_whose_decode_parms_is_direct_is_decoded_and_scanned() {
+        // The control, and it proves the fixture: with the parameters read the
+        // predictor is undone and the words are found, and a clean one passes.
+        let needles = vec!["4711-0815".to_string()];
+        let report = super::scan(&predicted("4711-0815", Params::Direct), &needles, None);
+        assert!(report.found.contains("4711-0815"), "{report:?}");
+        let clean = super::scan(&predicted("nothing here", Params::Direct), &needles, None);
+        assert_eq!(clean.verdict(), Verdict::Verified, "{clean:?}");
+    }
+
+    #[test]
+    fn a_composite_font_named_by_reference_is_still_composite() {
+        use lopdf::Object;
+        let mut doc = lopdf::Document::load_mem(&drawn_through("Type1")).expect("load");
+        let type0 = doc.add_object(Object::Name(b"Type0".to_vec()));
+        for object in doc.objects.values_mut() {
+            let Ok(page) = object.as_dict_mut() else {
+                continue;
+            };
+            let Ok(font) = page
+                .get_mut(b"Resources")
+                .and_then(Object::as_dict_mut)
+                .and_then(|resources| resources.get_mut(b"Font"))
+                .and_then(Object::as_dict_mut)
+                .and_then(|fonts| fonts.get_mut(b"F1"))
+                .and_then(Object::as_dict_mut)
+            else {
+                continue;
+            };
+            font.set("Subtype", Object::Reference(type0));
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+        let report = super::scan(&bytes, &["4711-0815".to_string()], None);
+        assert!(
+            report
+                .blind
+                .iter()
+                .any(|one| one.contains("composite (Type0) font")),
+            "{report:?}"
+        );
+    }
+
+    /// [`filtered`]'s page with its form's deflated bytes passed through `cut`.
+    fn recompressed(hidden: &str, cut: impl Fn(&mut Vec<u8>)) -> Vec<u8> {
+        let mut doc = lopdf::Document::load_mem(&filtered("kept", hidden, false)).expect("load");
+        for object in doc.objects.values_mut() {
+            if let lopdf::Object::Stream(stream) = object {
+                if stream.dict.has(b"Filter") {
+                    cut(&mut stream.content);
+                    let len = stream.content.len();
+                    stream.dict.set("Length", len as i64);
+                }
+            }
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+        bytes
+    }
+
+    #[test]
+    fn a_flate_stream_cut_short_withholds_the_verdict() {
+        let needles = vec!["4711-0815".to_string()];
+        // The words lead the form and the padding follows, so the cut takes
+        // padding and the decode that `lopdf` returns still holds the words;
+        // what makes the file uncertifiable is the part nothing read.
+        let cut = super::scan(
+            &recompressed("4711-0815", |content| {
+                let keep = content.len() - 6;
+                content.truncate(keep);
+            }),
+            &needles,
+            None,
+        );
+        assert!(
+            cut.blind
+                .iter()
+                .any(|why| why.contains("stopped decoding part way")),
+            "{cut:?}"
+        );
+        // The control: a stream whose only fault is its checksum was read to
+        // its end, by `lopdf` and by this, and is not blind.
+        let checksum = super::scan(
+            &recompressed("nothing here", |content| {
+                let last = content.len() - 1;
+                content[last] ^= 0xFF;
+            }),
+            &needles,
+            None,
+        );
+        assert_eq!(checksum.verdict(), Verdict::Verified, "{checksum:?}");
+    }
+
+    /// `page_text` drawn on the page, and a document information dictionary
+    /// written directly into a classic trailer with `title` in UTF-16BE.
+    fn titled(page_text: &str, title: &str) -> Vec<u8> {
+        use lopdf::{dictionary, Object, StringFormat};
+        let mut doc =
+            lopdf::Document::load_mem(&filtered(page_text, "nothing here", false)).expect("load");
+        let mut utf16 = vec![0xFE, 0xFF];
+        for unit in title.encode_utf16() {
+            utf16.extend_from_slice(&unit.to_be_bytes());
+        }
+        doc.trailer.set(
+            "Info",
+            Object::Dictionary(dictionary! {
+                "Title" => Object::String(utf16, StringFormat::Hexadecimal),
+            }),
+        );
+        // A cross-reference stream is an object, and its dictionary would be
+        // read with the objects; a classic trailer is not one, which is the
+        // case the objects never reach.
+        doc.reference_table.cross_reference_type = lopdf::xref::XrefType::CrossReferenceTable;
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+        assert!(
+            bytes.windows(8).any(|window| window == b"trailer\n")
+                || bytes.windows(8).any(|window| window == b"trailer\r"),
+            "the fixture must have a classic trailer"
+        );
+        bytes
+    }
+
+    #[test]
+    fn a_title_in_an_info_dictionary_written_into_the_trailer_is_found() {
+        let needles = vec!["4711-0815".to_string()];
+        let report = super::scan(&titled("kept", "4711-0815"), &needles, None);
+        assert!(report.found.contains("4711-0815"), "{report:?}");
+        // And on the page as well: the page alone would place it there, and
+        // the copy in the trailer, which no page reaches, has to undo that.
+        let both = super::scan(&titled("4711-0815", "4711-0815"), &needles, None);
+        assert_eq!(
+            both.located.get("4711-0815"),
+            Some(&Located::Unplaced),
+            "{both:?}"
+        );
+        // The control: on the page alone it is placed, so the answer above is
+        // the trailer's.
+        let page = super::scan(&titled("4711-0815", "plain"), &needles, None);
+        assert!(
+            matches!(page.located.get("4711-0815"), Some(Located::Pages(_))),
+            "{page:?}"
         );
     }
 }

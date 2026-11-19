@@ -88,6 +88,7 @@ impl Subcommand for Completions {
         out: &mut dyn Write,
         _err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
+        // A failed write is kept by `cli::run`, which ends the run 3.
         let _ = out.write_all(script(self.shell).as_bytes());
         let _ = out.flush();
         Ok(Exit::Ok)

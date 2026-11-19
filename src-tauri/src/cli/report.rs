@@ -206,7 +206,8 @@ pub struct FormAdded {
 pub struct AddedField {
     /// The name `fill` answers it by.
     pub name: String,
-    /// `text` or `checkbox`.
+    /// `text`, `checkbox`, `radio`, `choice_combo` for a dropdown, or `other`
+    /// for an empty signature field.
     pub kind: FieldKind,
     /// Whether a text field wraps over several lines.
     pub multiline: bool,
@@ -472,8 +473,9 @@ pub struct Verified {
     /// `revoked` other than after an attested moment, and nothing appended
     /// after a document's last intact signature that touches a page other
     /// than to list a signature or timestamp field, or that could not be
-    /// read ([`Signature::appendix`] holds what was). Present whether or not
-    /// `--strict` was given.
+    /// read ([`Signature::appendix`] holds what was), and every document's
+    /// list of signatures complete ([`File::signatures_complete`]). Present
+    /// whether or not `--strict` was given.
     pub strict_passed: bool,
     /// One entry per document, in the order given.
     pub files: Vec<File>,
@@ -489,6 +491,12 @@ pub struct File {
     /// Every signed signature field, in the document's order. Empty fields
     /// waiting for a signature are left out.
     pub signatures: Vec<Signature>,
+    /// Whether [`File::signatures`] is every signature the document has:
+    /// `false` when the scan stopped at its bound on signature fields, or met
+    /// a form field it could not read, and when the document was not read at
+    /// all. A list that may be missing one fails `--strict`, since the one
+    /// missing may be the one that is not intact. Since 2026-11-19.
+    pub signatures_complete: bool,
 }
 
 /// Why a document could not be read.
@@ -1001,7 +1009,9 @@ pub struct Field {
     /// Its current answer, in the form `fill` takes one: a string for text, a
     /// boolean for a checkbox, an export value or `null` for a radio group or a
     /// single choice, an array of export values for a multiple-selection list;
-    /// `null` for `other`.
+    /// `null` for `other`. A selection on a field that is neither a radio
+    /// group nor a choice, which a damaged form can hold, is an array of its
+    /// option indices, counted from 0 (`fields::value_json`).
     pub value: serde_json::Value,
     /// A radio group's states or a choice's options, in the document's order;
     /// empty for the other kinds.

@@ -1374,8 +1374,12 @@ export class Viewer {
    * The boxes a LaTeX source line made, marked by a forward search
    * (`synctex.rs`): one page, rectangles in points from the file's displayed
    * top-left corner. Until Escape or the next forward search.
+   *
+   * Held by the page's identity, as {@link shownRegion} is, so a page moved by
+   * an edit keeps its boxes and a deleted one takes them with it rather than
+   * leaving them on whatever moved into its slot.
    */
-  private sourceBoxes: { page: number; rects: readonly SourceRect[] } | null = null;
+  private sourceBoxes: { page: PageId; rects: readonly SourceRect[] } | null = null;
   /**
    * The changed words on this side of a comparison, in slots, and which change
    * the reader is on. See `comparison.ts`.
@@ -2103,10 +2107,12 @@ export class Viewer {
         if (!live) return;
         // The page the drag *started* on, not the one under the pointer. A crop
         // is a property of one page --- cropping two at once is a different
-        // command --- so a drag that wanders onto the next is clamped to the
-        // first by `boxQuad`, exactly as a box's is.
-        const { x, y } = this.pageAndPoint(at);
-        live.to = { x, y };
+        // command --- so the moving end is measured in that page's space by
+        // `pointOn` and clamped to it by `boxQuad`, exactly as a box's is.
+        // `pageAndPoint` here would answer in the next page's space once the
+        // pointer crossed its top edge, and a drag ending 30 points into it
+        // would become one ending 30 points down the first.
+        live.to = this.pointOn(live.slot, at);
         this.wake();
       },
       end: (_at: DragPoint, committed: boolean) => {
@@ -2248,18 +2254,25 @@ export class Viewer {
         // drawing cannot reach, and silently dragging their stroke a page
         // upwards would be worse than doing nothing.
         if (this.inking && this.inking.slot !== page) return false;
+        // On the page for `move`'s reason: a press in the gap below a page
+        // answers for that page with a point just past its edge.
+        const start = keepOnPage({ x, y }, this.laidSize(page));
         this.drawing = {
           slot: page,
-          from: { x, y },
-          to: { x, y },
-          points: [{ x, y }],
+          from: start,
+          to: { ...start },
+          points: [{ ...start }],
         };
         this.wake();
         return true;
       },
       move: (at: DragPoint) => {
         if (this.doomed) {
-          const { x, y } = this.pageAndPoint(at);
+          // Measured on the page the sweep started on, for the reason the
+          // drawing's branch below gives: past that page's bottom the point
+          // lies below every mark on it, where `pageAndPoint` would put it at
+          // the top of the first page and sweep a line up the whole of it.
+          const { x, y } = this.pointOn(this.doomed.slot, at);
           this.sweep(x, y);
           this.wake();
           return;
@@ -2269,8 +2282,11 @@ export class Viewer {
         // The page is the one the drag *started* on and is deliberately not
         // re-read here. A box spanning two pages is not a thing a PDF can hold
         // --- an annotation belongs to one page --- so a drag that wanders onto
-        // the next one is clamped to the first rather than silently moving.
-        const { x, y } = this.pageAndPoint(at);
+        // the next one is measured on the first by `pointOn` and clamped to it
+        // by `keepOnPage` rather than silently moving. The clamp is here and
+        // not only in `boxQuad` because ink, line and corner points reach the
+        // model as they are, and nothing after this keeps them on the page.
+        const { x, y } = keepOnPage(this.pointOn(live.slot, at), this.laidSize(live.slot));
         live.to = { x, y };
         // **Sampled, not every event.** A pointer reports at the display's rate
         // and a slow hand produces dozens of points inside one millimetre, none
@@ -2493,19 +2509,21 @@ export class Viewer {
     this.root.removeEventListener("pointerup", this.onPanEnd);
     this.root.removeEventListener("pointercancel", this.onPanEnd);
     this.root.removeEventListener("pointermove", this.onHover);
-    // A drag adds these two and its own `pointerup` takes them away again ---
-    // which a document closed mid-drag never reaches. Removing a listener that
-    // was never added is a no-op, so this needs no flag to consult; what it
-    // must not do is rely on `life.ended`, which stops the frame loop and does
-    // nothing about a move still extending a selection and still asking the
-    // backend for the text of every page it crosses.
+    // A drag adds these three and its own `pointerup` or `pointercancel` takes
+    // them away again --- which a document closed mid-drag never reaches.
+    // Removing a listener that was never added is a no-op, so this needs no
+    // flag to consult; what it must not do is rely on `life.ended`, which stops
+    // the frame loop and does nothing about a move still extending a selection
+    // and still asking the backend for the text of every page it crosses.
     this.root.removeEventListener("pointermove", this.onSelectMove);
     this.root.removeEventListener("pointerup", this.onSelectEnd);
+    this.root.removeEventListener("pointercancel", this.onSelectCancel);
     this.track.removeEventListener("pointerdown", this.onTrackPointerDown);
     // The scrollbar's drag is the same shape, and the same closed document can
     // be left in the middle of one.
     this.track.removeEventListener("pointermove", this.onTrackPointerMove);
     this.track.removeEventListener("pointerup", this.onTrackPointerUp);
+    this.track.removeEventListener("pointercancel", this.onTrackPointerUp);
     // And the box's, which owns its own listener pair rather than the two
     // above. `dispose` ends a live drag without committing it, which is the
     // right answer for a document being closed mid-gesture: the model it would
@@ -3557,6 +3575,21 @@ export class Viewer {
     this.clearLinkFocus();
     this.closeComment();
     this.turnedLinks = null;
+    // A drag under way is measured against a slot too, and its release would
+    // commit on whatever page now holds that slot: a page deleted under a
+    // redaction drag would have the region marked on the page after it. The
+    // gesture is cancelled, never committed, by the same door `pointercancel`
+    // uses, so what each tool does with a cancelled drag is decided in one
+    // place. The selection's own drag ends with the selection, above.
+    this.cropDrag.cancel();
+    this.drawDrag.cancel();
+    this.measureDrag.cancel();
+    this.moveDrag.cancel();
+    // Back and Forward hold slots as well. `setLinks` forgets them when the
+    // caller translates the links after this, and that is a reason the caller
+    // has, not one this method should depend on.
+    this.history.clear();
+    this.opts.onNavigate?.();
     // A search confined to a selection is confined to slots too, and the
     // selection it was a snapshot of has just gone. Dropped rather than
     // followed: `Search.setPages` has the reason, and the two copies go
@@ -5537,6 +5570,12 @@ export class Viewer {
   armDraw(kind: MarkKind, stamp: StampName | null = null): void {
     if (this.markNote.openId !== null) this.closeMark();
     if (this.popup.openId !== null) this.closeComment();
+    // A drawing in progress belongs to the kind it was started with. Another
+    // kind drops it, as every other arming does and as Escape does: kept, two
+    // ink strokes would become a polygon's first corners, because the corner
+    // branch adds to whatever `inking` it finds. Arming the same kind again is
+    // not a change of tool, and keeps the strokes Enter has yet to finish.
+    if (this.drawArmed !== kind) this.inking = null;
     // Two tools, one hand. One assignment puts the eraser, the crop and the
     // redaction away, because they are the same field --- no two can be set and
     // no gesture has to ask which meant it.
@@ -6196,10 +6235,17 @@ export class Viewer {
     return true;
   }
 
-  /** A file widget placed through the same mapping as comments and links. */
+  /**
+   * A file widget placed through the same mapping as comments and links. The
+   * rectangle is the file's displayed one, so it is placed under the crop and
+   * every turn, as {@link showRegion}'s is: its raw top is off by the crop's
+   * own top on a cropped page.
+   */
   showForm(widget: import("./forms").FormWidget): void {
     const slot = this.pages.slotOf(widget.page);
-    if (slot !== undefined) this.goToDestination(slot, widget.display_rect[1]);
+    if (slot !== undefined) {
+      this.goToDestination(slot, Math.max(0, this.viewRectOn(slot, widget.display_rect).top));
+    }
   }
 
   /**
@@ -6936,6 +6982,7 @@ export class Viewer {
     capture(this.root, event.pointerId);
     this.root.addEventListener("pointermove", this.onSelectMove);
     this.root.addEventListener("pointerup", this.onSelectEnd);
+    this.root.addEventListener("pointercancel", this.onSelectCancel);
     event.preventDefault();
     this.wake();
   }
@@ -6976,12 +7023,30 @@ export class Viewer {
     this.wake();
   };
 
-  private readonly onSelectEnd = (event: PointerEvent): void => {
+  /** Lets go of the selection's pointer and every listener its press added. */
+  private stopSelecting(pointerId: number): void {
     this.selecting = false;
-    release(this.root, event.pointerId);
+    release(this.root, pointerId);
     this.root.removeEventListener("pointermove", this.onSelectMove);
     this.root.removeEventListener("pointerup", this.onSelectEnd);
+    this.root.removeEventListener("pointercancel", this.onSelectCancel);
     this.wake();
+  }
+
+  /**
+   * The browser took the pointer away: a touch turned into a scroll, a system
+   * gesture, the window losing it. The selection made so far stays, as it
+   * would after a release; what does not happen is anything a *release*
+   * means. Without this the drag kept following the pointer with no button
+   * down, and the next release anywhere marked the selection for redaction.
+   */
+  private readonly onSelectCancel = (event: PointerEvent): void => {
+    this.press = null;
+    this.stopSelecting(event.pointerId);
+  };
+
+  private readonly onSelectEnd = (event: PointerEvent): void => {
+    this.stopSelecting(event.pointerId);
     // With the redaction tool armed the selection was made to be marked. A
     // press that selected nothing is a click, and marks nothing.
     if (this.tool.kind === "redact" && this.hasSelection) this.opts.onRedactSelection?.();
@@ -7346,6 +7411,12 @@ export class Viewer {
   private readonly crops = new Map<number, CropGeometry>();
 
   /**
+   * The crop box each entry of {@link crops} was measured under, by page id,
+   * so a state reply that leaves a page's box alone costs that page nothing.
+   */
+  private readonly cropBoxes = new Map<number, readonly [number, number, number, number]>();
+
+  /**
    * Learns each page's crop, and drops what was measured under the old one.
    *
    * The model answers with the crop **box**; laying a cropped page out needs its
@@ -7386,6 +7457,7 @@ export class Viewer {
         // so a cleared crop needs the entry gone rather than a round trip.
         if (held) {
           this.crops.delete(view.id);
+          this.cropBoxes.delete(view.id);
           source?.cache.setPageCrop(source.page, undefined);
           this.scroller.invalidatePage(slot);
         }
@@ -7393,6 +7465,12 @@ export class Viewer {
       }
       if (source === undefined) continue;
       source.cache.setPageCrop(source.page, want);
+      // The box this page's geometry was measured under, and if it is the box
+      // the model holds now, nothing about the page changed: no question, no
+      // dropped tiles. The size the scroller learned is carried by identity
+      // across a reorder (`Scroller.setPages`), so it needs no re-noting either.
+      const asked = this.cropBoxes.get(view.id);
+      if (held && asked && asked.every((value, index) => value === want[index])) continue;
       const at = await pageGeometry(source.doc, source.page, want).catch(
         () => null,
       );
@@ -7404,9 +7482,10 @@ export class Viewer {
       // geometry was in flight recorded the cropped page's dimensions against
       // the page that had taken its slot, which lays an uncropped page out at
       // another page's size and looks like a rendering fault.
-      if (this.pages !== pages) return;
+      if (this.pages !== pages || this.life.ended) return;
       if (!at) continue;
       this.crops.set(view.id, at);
+      this.cropBoxes.set(view.id, [want[0], want[1], want[2], want[3]]);
       // Re-anchored and refitted as `learnGeometry` and `setPageTurns` are. On a
       // lazily opened document the pages not yet read are laid out at the mean
       // of the known sizes, so this one size moves all of them: cropping the
@@ -7433,6 +7512,9 @@ export class Viewer {
     // life of the document and a reused id would find a stale answer.
     for (const id of [...this.crops.keys()]) {
       if (!live.has(id)) this.crops.delete(id);
+    }
+    for (const id of [...this.cropBoxes.keys()]) {
+      if (!live.has(id)) this.cropBoxes.delete(id);
     }
     this.wake();
   }
@@ -8568,15 +8650,31 @@ export class Viewer {
   }
 
   /**
-   * Marks the boxes a LaTeX source line made on `page` and lands on the first,
-   * a little below the top of the window. Through {@link goToDestination}, so
-   * Back returns to where the reader was.
+   * Marks the boxes a LaTeX source line made on page `filePage` of the opened
+   * file, counted from 0, and lands on the first, a little below the top of the
+   * window. Through {@link goToDestination}, so Back returns to where the
+   * reader was.
+   *
+   * A page of the *file*, because that is what SyncTeX names: once pages are
+   * inserted, deleted or moved it is no longer the slot it is shown in, so it
+   * is looked up as a link's page is. A page an edit removed marks nothing and
+   * moves nothing. The first box is placed under the crop and every turn, as
+   * {@link showRegion} places its rectangle and as the boxes are painted.
    */
-  showSourceBoxes(page: number, rects: readonly SourceRect[]): void {
-    const clamped = Math.max(0, Math.min(page, this.opts.pageCount - 1));
-    this.sourceBoxes = { page: clamped, rects };
+  showSourceBoxes(filePage: number, rects: readonly SourceRect[]): void {
+    const slot = this.pages.slotOf(filePage);
+    const id = slot === undefined ? undefined : this.pages.idOf(slot);
+    if (slot === undefined || id === undefined) {
+      this.sourceBoxes = null;
+      this.wake();
+      return;
+    }
+    this.sourceBoxes = { page: id, rects };
     const first = rects[0];
-    this.goToDestination(clamped, first ? Math.max(0, first.top - SOURCE_MARGIN_PT) : null);
+    const top = first
+      ? this.viewRectOn(slot, [first.x, first.top, first.x + first.width, first.top + first.height]).top
+      : null;
+    this.goToDestination(slot, top === null ? null : Math.max(0, top - SOURCE_MARGIN_PT));
     this.wake();
   }
 
@@ -8645,9 +8743,14 @@ export class Viewer {
     this.wake();
   }
 
-  /** The forward search's marks, for the checks. */
+  /**
+   * The forward search's marks, for the checks: the slot their page is in
+   * now, or `null` when none are marked or their page has gone.
+   */
   get sourceMarks(): { page: number; rects: readonly SourceRect[] } | null {
-    return this.sourceBoxes;
+    const marked = this.sourceBoxes;
+    const slot = marked ? this.pages.slotOfId(marked.page) : undefined;
+    return marked && slot !== undefined ? { page: slot, rects: marked.rects } : null;
   }
 
   /** Index of the current match in {@link searchMatches}, or -1. */
@@ -8818,7 +8921,7 @@ export class Viewer {
    * painted: under the crop and every turn, as a mark is.
    */
   sourceBoxesOnScreen(): Quad[] {
-    const marked = this.sourceBoxes;
+    const marked = this.sourceMarks;
     if (!marked) return [];
     const origin = this.scroller.pageOrigin(marked.page);
     return marked.rects.map((rect) => {
@@ -8838,7 +8941,8 @@ export class Viewer {
     dpr: number,
     onScreen: readonly number[],
   ): void {
-    if (!this.sourceBoxes || !onScreen.includes(this.sourceBoxes.page)) return;
+    const marked = this.sourceMarks;
+    if (!marked || !onScreen.includes(marked.page)) return;
     ctx.fillStyle = SOURCE_FILL;
     for (const box of this.sourceBoxesOnScreen()) {
       ctx.fillRect(box.left * dpr, box.top * dpr, (box.right - box.left) * dpr, (box.bottom - box.top) * dpr);
@@ -9031,6 +9135,11 @@ export class Viewer {
     capture(this.track, event.pointerId);
     this.track.addEventListener("pointermove", this.onTrackPointerMove);
     this.track.addEventListener("pointerup", this.onTrackPointerUp);
+    // A cancelled drag ends as a release does: every move has already
+    // scrolled, so a release has nothing left to commit and the two are one
+    // handler. Without it the thumb kept following a pointer the browser had
+    // taken away, until some later release on the track.
+    this.track.addEventListener("pointercancel", this.onTrackPointerUp);
     this.dragTo(y);
     event.preventDefault();
   };
@@ -9044,6 +9153,7 @@ export class Viewer {
     release(this.track, event.pointerId);
     this.track.removeEventListener("pointermove", this.onTrackPointerMove);
     this.track.removeEventListener("pointerup", this.onTrackPointerUp);
+    this.track.removeEventListener("pointercancel", this.onTrackPointerUp);
   };
 
   private dragTo(y: number): void {

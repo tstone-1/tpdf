@@ -127,9 +127,9 @@ struct Pane {
     /// the size already asked for starts nothing.
     asked: Option<(Fit, u32)>,
     mailbox: Arc<Mutex<Option<Outcome>>>,
-    /// The render out and the newest one waiting behind it. See
-    /// [`plan::Renders`] for why there is never a second.
-    renders: plan::Renders<Job>,
+    /// The render out and the newest one waiting behind it, each with what
+    /// ends it. See [`plan::Renders`] for why there is never a second.
+    renders: plan::Renders<Job, render::Cancel>,
     /// Set when the window procedure took its reference to the pane, so that
     /// a `CreateWindowExW` that failed before then can give it back.
     taken: bool,
@@ -141,6 +141,7 @@ struct Job {
     fit: Fit,
     page: u32,
     document: Arc<[u8]>,
+    cancel: render::Cancel,
 }
 
 // `Agile = false`: `#[implement]` otherwise adds `IAgileObject` and the
@@ -188,9 +189,10 @@ fn hwnd(raw: isize) -> HWND {
 }
 
 /// Destroys the window if there is one, and forgets the page and the
-/// document. A result still out is dropped by the generation moving on.
+/// document. A render still out is ended, `tpdf-cli` and its worker with it,
+/// and what it returns is dropped by the generation moving on.
 fn destroy(pane: &Rc<RefCell<Pane>>) {
-    let window = {
+    let (window, out) = {
         let Ok(mut p) = pane.try_borrow_mut() else {
             return;
         };
@@ -198,9 +200,12 @@ fn destroy(pane: &Rc<RefCell<Pane>>) {
         p.asked = None;
         p.shown = None;
         p.document = None;
-        p.renders.reset();
-        std::mem::take(&mut p.window)
+        let out = p.renders.reset();
+        (std::mem::take(&mut p.window), out)
     };
+    if let Some(out) = out {
+        out.cancel();
+    }
     if window != 0 {
         // SAFETY: a window this pane made; no borrow is held, since its
         // procedure runs during the call.
@@ -269,13 +274,15 @@ fn request(pane: &Rc<RefCell<Pane>>, page: u32) {
     p.asked = Some((fit, page));
     p.wanted = page;
     p.generation += 1;
+    let cancel = render::Cancel::default();
     let job = Job {
         generation: p.generation,
         fit,
         page,
         document,
+        cancel: cancel.clone(),
     };
-    let start = p.renders.ask(job);
+    let start = p.renders.ask(job, cancel);
     let window = p.window;
     let mailbox = Arc::clone(&p.mailbox);
     drop(p);
@@ -304,6 +311,7 @@ fn spawn(job: Job, window: isize, mailbox: Arc<Mutex<Option<Outcome>>>) {
         fit,
         page,
         document,
+        cancel,
     } = job;
     // Taken here, before the thread exists, so the DLL cannot be unloaded
     // between the two.
@@ -311,7 +319,7 @@ fn spawn(job: Job, window: isize, mailbox: Arc<Mutex<Option<Outcome>>>) {
     std::thread::spawn(move || {
         let _counted = counted;
         let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            rendered(document, fit, page)
+            rendered(document, fit, page, &cancel)
         }))
         .unwrap_or(Got::Failed);
         if let Ok(mut slot) = mailbox.lock() {
@@ -353,12 +361,12 @@ impl Drop for ComScope {
 }
 
 /// The render thread's work: `tpdf-cli`, then WIC.
-fn rendered(document: Arc<[u8]>, fit: Fit, page: u32) -> Got {
+fn rendered(document: Arc<[u8]>, fit: Fit, page: u32, cancel: &render::Cancel) -> Got {
     let _com = ComScope::new();
     let Some(cli) = crate::cli_path() else {
         return Got::Failed;
     };
-    match render::page(&cli, document, fit, page, plan::PREVIEW_TIME) {
+    match render::page(&cli, document, fit, page, plan::PREVIEW_TIME, cancel) {
         Ok(png) => png::decode(&png, fit).map_or(Got::Failed, Got::Page),
         Err(render::Failure::Refused) => Got::Refused,
         Err(render::Failure::TimedOut | render::Failure::Failed) => Got::Failed,

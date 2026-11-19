@@ -253,8 +253,10 @@ CommentKind = Literal[
 
 # A form field's answer: a string for text, a boolean for a checkbox, an export
 # value or None for a radio group or a single choice, a list of export values
-# for a multiple-selection list; None for kind "other".
-FieldValue = str | bool | list[str] | None
+# for a multiple-selection list; None for kind "other". A list of option
+# indices, counted from 0, for a selection on a field that is not a radio group
+# or a choice, a shape a damaged form can have.
+FieldValue = str | bool | list[str] | list[int] | None
 
 
 # --- Errors ----------------------------------------------------------------
@@ -520,7 +522,8 @@ class AddedField(TypedDict):
 
     # The name `fill` answers it by.
     name: str
-    # `text`, `checkbox`, or `choice_combo` for a dropdown.
+    # `text`, `checkbox`, `radio`, `choice_combo` for a dropdown, or `other`
+    # for an empty signature field.
     kind: "FieldKind"
     # Whether a text field wraps over several lines.
     multiline: bool
@@ -948,6 +951,9 @@ class VerifiedFile(TypedDict):
     error: FileError | None
     # Every signed signature field, in the document's order.
     signatures: list[Signature]
+    # False when not every signature field could be read, so the list may be
+    # missing one (and `--strict` fails), and when the document was not read.
+    signatures_complete: bool
 
 
 class VerifyReport(TypedDict):

@@ -1227,6 +1227,17 @@ integration off and compares the user's classes with what they were, and uninsta
 on. `--control no-add` and `--control no-remove` break one step each and exit 0 exactly when
 the checks aimed at it failed.
 
+**What it does not check: that a render is ended when the pane leaves it** (since
+2026-11-19 it is, through `render::Cancel`). The crate's own tests hold the state machine and
+the ending of a real child and grandchild in a job (`cargo test --locked --manifest-path
+src-tauri/Cargo.toml -p tpdf-shell`, which no gate runs); the call from the pane's `destroy`
+runs only inside `prevhost.exe`. By hand, with the integration on: open Explorer on a folder
+of at least five PDFs that are slow to render, turn the preview pane on (Alt+P), select the
+first and press Down four times quickly, and a second later count `(Get-Process tpdf-cli
+-ErrorAction SilentlyContinue).Count`. It is at most 2, the current file's `tpdf-cli` and its
+worker; before the change it was up to 2 for each file passed, for 20 s. Close the pane while
+a render is out and the count is 0 within about a second.
+
 On 2026-10-16 on the Windows build machine (Windows 11, build 26200): 20 of 20. All 15 hostile fixtures and
 the document got drawn thumbnails, random bytes and the password-protected document got
 Explorer's generic icon, each within 0.25 s; the provider ran in `dllhost.exe` and not in
@@ -3418,6 +3429,8 @@ registry key fragment in `explorer_check.py` look like variables and are not.
 | `TPDF_CHOICE_UNIQUE_PROBE` | `src-tauri/src/forms.rs` | Where it writes the same form with unique exports, for `choice_pdfkit_check.swift` | test |
 | `TPDF_CLI_SAMPLES` | `src-tauri/src/cli/tests.rs` | `write` regenerates the committed `--json` samples in `src-tauri/testdata/cli/` | test |
 | `TPDF_CLI_TEST_A_VARIABLE_NOBODY_SETS` | `src-tauri/src/cli/tests.rs` | A name asserted unset, for a test of an unset `--password-env` | test |
+| `TPDF_SHELL_TEST_ROLE` | `src-tauri/shellext/src/render.rs` | Which part the test binary plays when a cancelled render's test starts it again: `child` or `grandchild` | test |
+| `TPDF_SHELL_TEST_MARKER` | `src-tauri/shellext/src/render.rs` | Where that grandchild writes its process id, so the test can see it ended | test |
 | `TPDF_CREATION_BOUNDARY_LOW` | `src-tauri/src/sandbox_win.rs` | Windows: the child half of the parent-death test runs at low integrity | test |
 | `TPDF_CREATION_BOUNDARY_PID` | `src-tauri/src/sandbox_win.rs` | Windows: turns a test into the child half of the parent-death test | test |
 | `TPDF_DEFAULT_APP` | `src-tauri/src/defaultapp.rs` | macOS, an ignored test: the application to make the default for PDFs | test |

@@ -58,6 +58,9 @@ const TEXT = catalog({
       `Saved ${name}. Created an image-only PDF with ` +
       `${regions === 1 ? "1 masked region" : `${regions} masked regions`}. ` +
       "The original is unchanged.",
+    rasterNotVerified: (why: string) =>
+      ` The image-only copy is not verified: tpdf could not prove it is clean. Checks of the written file found: ${why}. ` +
+      "Treat it as unredacted until you have checked it.",
     extracted: (pages: number, name: string) =>
       `Wrote ${pages === 1 ? "1 page" : `${pages} pages`} to ${name}.`,
     splitNothing: "Nothing was written.",
@@ -98,6 +101,9 @@ const TEXT = catalog({
       `${name} gespeichert. Ein PDF nur aus Bildern mit ` +
       `${regions === 1 ? "1 abgedecktem Bereich" : `${regions} abgedeckten Bereichen`} wurde erstellt. ` +
       "Das Original ist unverändert.",
+    rasterNotVerified: (why: string) =>
+      ` Die Kopie nur aus Bildern ist nicht bestätigt: tpdf konnte nicht nachweisen, dass sie sauber ist. Die Prüfung der geschriebenen Datei ergab: ${why}. ` +
+      "Behandle sie als ungeschwärzt, bis du sie geprüft hast.",
     extracted: (pages: number, name: string) =>
       `${pages === 1 ? "1 Seite" : `${pages} Seiten`} in ${name} geschrieben.`,
     splitNothing: "Es wurde nichts geschrieben.",
@@ -126,6 +132,9 @@ const TEXT = catalog({
       `Die Prüfung vor dem Einfügen der Füllung ergab: ${why}. Behandeln Sie die Datei als ungeschwärzt, bis Sie sie geprüft haben.`,
     redactionAlsoChanged: " Außerdem hat sich das Original auf dem Datenträger geändert, während Sie es geöffnet hatten. " +
       "Das Ergebnis beruht daher auf der neueren Fassung.",
+    rasterNotVerified: (why: string) =>
+      ` Die Kopie nur aus Bildern ist nicht bestätigt: tpdf konnte nicht nachweisen, dass sie sauber ist. Die Prüfung der geschriebenen Datei ergab: ${why}. ` +
+      "Behandeln Sie sie als ungeschwärzt, bis Sie sie geprüft haben.",
     splitChanged: " Das Original hat sich auf dem Datenträger geändert, während Sie es geöffnet hatten. Ihre Änderungen " +
       "wurden deshalb auf die neuere Fassung angewendet. Prüfen Sie sie, bevor Sie sich auf sie verlassen.",
     mergeChanged: " Das Original hat sich auf dem Datenträger geändert, während Sie es geöffnet hatten. " +
@@ -410,9 +419,34 @@ export function afterRedactionCopy(applied: Parameters<typeof afterRedaction>[0]
   };
 }
 
-/** What to say after creating the deliberately image-only redaction fallback. */
-export function afterRasterRedaction(applied: { regions: number }, name: string): string {
-  return TEXT().rasterSaved(name, applied.regions);
+/**
+ * What to say after creating the deliberately image-only redaction fallback.
+ *
+ * The file is written either way, and a reader who asked for it is told where.
+ * Its verdict is the same `redact::Applied` the other two redactions return:
+ * the marked areas are proved painted over before the file is published, and a
+ * code elsewhere on the page that still holds the name is found afterwards. So
+ * this says *not verified* with the reasons when there are any, and is a
+ * success only when there are none and no note qualifies the verdict.
+ */
+export function afterRasterRedaction(
+  applied: { regions: number; verified: boolean; why: string[]; notes?: string[] },
+  name: string,
+): { message: string; success: boolean } {
+  const saved = TEXT().rasterSaved(name, applied.regions);
+  if (!applied.verified) {
+    return {
+      message: saved + TEXT().rasterNotVerified(applied.why.map((w) => spoken(w)).join("; ")),
+      success: false,
+    };
+  }
+  // A note qualifies a clean verdict, so it is said, and the tone is the
+  // copy's: a success only with nothing beside it ({@link afterRedactionCopy}).
+  if (!applied.notes?.length) return { message: saved, success: true };
+  return {
+    message: saved + TEXT().redactionNote(applied.notes.map((n) => spoken(n)).join("; ")),
+    success: false,
+  };
 }
 
 /**

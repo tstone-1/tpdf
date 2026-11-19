@@ -66,7 +66,7 @@
 import { isLinux } from "./keys";
 import { basename } from "./paths";
 import type { Integrity } from "./integrity";
-import { WHY, authorityRow, revocationRow, timestampRow } from "./integrity";
+import { WHY, authorityRow, revocationRow, timestampRow, unknownVerdict, whyClause } from "./integrity";
 import type { Revocation } from "./integrity";
 import type { Timestamp } from "./properties";
 import type { PageId } from "./pages";
@@ -531,10 +531,18 @@ export function keyHint(linux = isLinux()): string {
   return linux ? TEXT().keyHintLinux : TEXT().keyHint;
 }
 
-/** A verdict in a few words, for a list of signatures. */
+/**
+ * A verdict in a few words, for a list of signatures.
+ *
+ * The verdict and its reason arrive as JSON, so either can be a value a newer
+ * backend added: both are asked about first (`integrity.ts`, `isKnown`), and an
+ * unknown one is said to be unknown rather than passed on as `undefined`.
+ */
 function verdict(integrity: Integrity | null): string {
   if (!integrity) return TEXT().verdict("none", "");
-  return TEXT().verdict(integrity.verdict, integrity.why ? WHY[integrity.why] : "");
+  const unknown = unknownVerdict(integrity.verdict);
+  if (unknown !== null) return unknown;
+  return TEXT().verdict(integrity.verdict, whyClause(integrity.why));
 }
 
 /**

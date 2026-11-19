@@ -363,8 +363,8 @@ export function isMovable(kind: MarkKind): boolean {
 /**
  * Whether a mark's rectangle can be dragged larger or smaller by its corner.
  *
- * The four kinds whose whole shape is one rectangle the reader dragged: a box,
- * an ellipse, a text box and a form field. `reshape` in `docmodel.rs` holds
+ * The five kinds whose whole shape is one rectangle the reader dragged: a box,
+ * an ellipse, a text box, a form field and a link. `reshape` in `docmodel.rs` holds
  * the same list and refuses the rest. Ink is strokes; a stamp and a signature
  * keep their proportions and a signature has its own size control; a comment
  * is an icon of one size; and a mark tied to words takes its shape from them.

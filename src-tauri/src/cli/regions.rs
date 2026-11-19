@@ -224,6 +224,48 @@ pub fn regions_on(text: &PageText, page: u32, halves: &[Half]) -> Vec<[f32; 4]> 
     areas_from(&quads)
 }
 
+/// How many characters of `half` that draw something no area of `areas` holds:
+/// a character with no box, or one whose box's centre is outside every area.
+///
+/// Whitespace, control and invisible format characters (a soft hyphen, a
+/// zero-width space or joiner) are passed over, since PDFium gives a generated
+/// line break or space no box and there is nothing of any of them to see.
+/// A character whose run was dropped as too thin counts, as does one with no
+/// box: either way it stays on the page.
+#[must_use]
+pub fn uncovered(text: &PageText, half: Half, areas: &[[f32; 4]]) -> usize {
+    let boxes: Vec<f64> = text.boxes.iter().copied().map(webview_number).collect();
+    let end = half
+        .to
+        .map_or(text.codes.len(), |to| (to as usize).min(text.codes.len()));
+    (half.from as usize..end)
+        .filter(|&index| {
+            char::from_u32(text.codes[index]).is_some_and(|c| {
+                !c.is_whitespace()
+                    && !c.is_control()
+                    && !matches!(
+                        c,
+                        '\u{ad}' | '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}'
+                    )
+            })
+        })
+        .filter(|&index| {
+            let quad = char_quad(&boxes, index);
+            if !is_placed(quad) {
+                return true;
+            }
+            let (x, y) = (
+                (quad.left + quad.right) / 2.0,
+                (quad.top + quad.bottom) / 2.0,
+            );
+            !areas.iter().any(|[left, top, right, bottom]| {
+                (f64::from(*left)..=f64::from(*right)).contains(&x)
+                    && (f64::from(*top)..=f64::from(*bottom)).contains(&y)
+            })
+        })
+        .count()
+}
+
 /// Every case the parity test asks about, with what this file answers.
 ///
 /// Reading's eighteen pages --- every rotation, turned characters, unplaced

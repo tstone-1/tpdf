@@ -461,6 +461,13 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
 - `wiring` — `Viewer`'s optional callbacks against `App.svelte`'s object literal, both ways.
   The box shipped inert with three layers of tests green, because nothing looks at the literal
   that joins them.
+- `appstate` — refuses a new top-level `Map` or `Set` in `App.svelte`
+  (`check_app_state.py`, since 2026-11-19). Its ledger of collections that predate it is
+  empty: the five that did moved into `CoveredWords`, `CommentWords` and `RegionWords` the
+  same week. A ledger entry `App.svelte` no longer has is a failure too.
+- `diskrequests` — the line the `disk-change` window phase writes to ask for the open file
+  to be changed, held equal between the page (`diskchangecheck.ts`) and the script that
+  answers it (`tabs_check.py`).
 - `docs` — a doc comment must be followed by code. Two `/** */` blocks in a row bind only the
   second, silently; the first scan found 31 orphans across twelve files. Since 2026-08-28 it
   also has a **Rust** arm, for the mirror failure: two `///` runs with no blank line between

@@ -224,6 +224,24 @@ pub(crate) fn operand(after_separator: bool, word: &str) -> PathBuf {
     }
 }
 
+/// A `--color` value, `r,g,b`, each from 0 to 1, or `None` for anything else.
+///
+/// Every part is read and none is passed over: a part that is not a number, or
+/// is out of range, refuses the whole value, so `1,x,0,0.5` is not taken as the
+/// three parts that happened to parse.
+pub(crate) fn rgb(raw: &str) -> Option<[f32; 3]> {
+    let parts = raw
+        .split(',')
+        .map(|part| {
+            part.trim()
+                .parse::<f32>()
+                .ok()
+                .filter(|channel| (0. ..=1.).contains(channel))
+        })
+        .collect::<Option<Vec<f32>>>()?;
+    <[f32; 3]>::try_from(parts).ok()
+}
+
 /// Whether two paths are the same path as written, `.` and `..` resolved.
 ///
 /// Lexical only: `cli.rs` asks the filesystem afterwards (`save::same_file`),

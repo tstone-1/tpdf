@@ -532,7 +532,7 @@ fn spawn_reader(tx: Sender<Request>, queue: SharedQueue) {
                 if line.trim().is_empty() {
                     continue;
                 }
-                match serde_json::from_str::<Request>(&line) {
+                match read_request(&line) {
                     Ok(Request::Withdraw { rid }) => queue.with(|queue| queue.withdraw(rid)),
                     Ok(request) => {
                         if let Some(rid) = request.tile_rid() {
@@ -545,15 +545,37 @@ fn spawn_reader(tx: Sender<Request>, queue: SharedQueue) {
                             break;
                         }
                     }
-                    Err(e) => {
+                    Err(said) => {
                         // Not fatal: a malformed line is a bug in the parent, and
                         // killing the worker would lose the document over it.
-                        eprintln!("[worker] unreadable request {line:?}: {e}");
+                        let _ = std::io::stderr().write_all(said.as_bytes());
                     }
                 }
             }
         })
         .expect("failed to spawn the worker's reader thread");
+}
+
+/// One request line, or the stderr line to write for it, as one write.
+fn read_request(line: &str) -> Result<Request, String> {
+    serde_json::from_str::<Request>(line).map_err(|e| unreadable_request(line, &e))
+}
+
+/// The stderr line for a request line that did not parse.
+///
+/// **Neither the line nor the error's text.** A request may carry the
+/// document's password (`worker_proto`'s `Unlock`), and `serde_json`'s message
+/// quotes the value it could not take ("invalid type: string \"...\""), so
+/// either would put it in a log. What is kept is what finds the bug: the kind
+/// of error, where it was, and how long the line was.
+fn unreadable_request(line: &str, error: &serde_json::Error) -> String {
+    format!(
+        "[worker] unreadable request: {:?} error at line {}, column {}, in {} bytes\n",
+        error.classify(),
+        error.line(),
+        error.column(),
+        line.len()
+    )
 }
 
 /// Serves one request.
@@ -1352,6 +1374,31 @@ pub fn apply_sandbox(_profile: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// A request that does not parse is reported without what it carried: a
+    /// password sent where the type wants something else is in neither the
+    /// line nor `serde_json`'s message, and so in neither half of this one.
+    #[test]
+    fn an_unreadable_request_is_reported_without_its_contents() {
+        let line = r#"{"Unlock":{"password":["hunter2-secret"]}}"#;
+        let error = serde_json::from_str::<crate::worker_proto::Request>(line)
+            .expect_err("a list is not a password");
+        // The control: the line as it used to be printed held the secret.
+        assert!(format!("{line:?}: {error}").contains("hunter2"));
+        // And a message that quotes a value is what `serde_json` writes.
+        let quoting = serde_json::from_str::<u32>(r#""hunter2""#).expect_err("not a number");
+        assert!(quoting.to_string().contains("hunter2"), "{quoting}");
+        let said = super::unreadable_request(r#""hunter2""#, &quoting);
+        assert!(!said.contains("hunter2"), "{said}");
+        let said = super::read_request(line).err().unwrap_or_default();
+        assert!(!said.contains("hunter2"), "{said}");
+        assert!(said.starts_with("[worker] unreadable request: "), "{said}");
+        assert!(
+            said.ends_with(&format!("in {} bytes\n", line.len())),
+            "{said}"
+        );
+        assert_eq!(said.matches('\n').count(), 1, "{said}");
+    }
+
     /// An uncontained process cannot get past `establish_boundary`.
     ///
     /// This test exists because a refusal was **deleted** to make room for it.

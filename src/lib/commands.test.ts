@@ -48,6 +48,15 @@ describe("fuzzyMatch", () => {
     expect(fuzzyMatch("l", "Seite löschen")?.score).toBeGreaterThan(fuzzyMatch("l", "Seiteblöschen")?.score ?? 0);
   });
 
+  it("answers positions in the title as written, where lower case would lengthen it", () => {
+    // `İ` lowers to two code units, which moved every later position one to
+    // the right and emboldened the letter after the one that matched.
+    const title = "İstanbul notes";
+    const hit = fuzzyMatch("notes", title);
+    expect(hit?.positions.map((at) => title[at]).join("")).toBe("notes");
+    expect(fuzzyMatch("stan", title)?.positions).toEqual([1, 2, 3, 4]);
+  });
+
   it("matches characters that are not adjacent", () => {
     const hit = fuzzyMatch("zi", "Zoom in");
     expect(hit).not.toBeNull();

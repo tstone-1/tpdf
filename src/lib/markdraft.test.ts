@@ -343,8 +343,8 @@ describe("the drafts' wiring in App.svelte", () => {
 
   it("hands the edit's promise back for a note, so a draft is held until the model answers", () => {
     expect(missingFrom(app, [
-      "if (!isSaved(mark)) return applyEdit((e) => e.renote(mark, note));",
-      "return to ? applyEdit((e) => e.refield([to])) : undefined;",
+      "if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, note), note);",
+      "return to ? typedEdit((e) => e.refield([to]), note) : undefined;",
     ])).toEqual([]);
   });
 });

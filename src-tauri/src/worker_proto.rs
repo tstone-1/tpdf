@@ -672,7 +672,7 @@ pub enum Reply {
     /// reason: it carries a sample of pixels.
     Shrunk(Box<crate::compress::Estimate>),
     /// The codes one page carries. Boxed for [`Reply::Properties`]' reason.
-    Codes(Box<crate::codes::PageCodes>),
+    Codes(Box<crate::codes::Page2dCodes>),
     /// The update section for a save that only adds marks.
     Append(crate::save::Update),
     /// The revision a signature goes into, with its hole still empty.
@@ -1479,7 +1479,7 @@ mod tests {
             // wire by nothing.
             Reply::Properties(Box::default()),
             Reply::Shrunk(Box::default()),
-            Reply::Codes(Box::new(crate::codes::PageCodes {
+            Reply::Codes(Box::new(crate::codes::Page2dCodes {
                 codes: vec![crate::codes::Code {
                     kind: "QR code".into(),
                     text: "BCD\n002".into(),

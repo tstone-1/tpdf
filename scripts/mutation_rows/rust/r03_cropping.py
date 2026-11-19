@@ -176,7 +176,7 @@ ROWS += [
         "links: take /Dest before the action that overrides it",
         "src/links.rs",
         '    if let Ok(action) = annot.get(b"A") {',
-        '    if let Ok(dest) = annot.get(b"Dest") {\n        return destination(dest, document, numbers, geometry, limits);\n    }\n    if let Ok(action) = annot.get(b"A") {',
+        '    if let Ok(dest) = annot.get(b"Dest") {\n        return destination(dest, document, numbers, geometry, limits, names);\n    }\n    if let Ok(action) = annot.get(b"A") {',
         "an_action_beats_a_dest_sitting_beside_it",
     ),
     Mutation(
@@ -186,7 +186,7 @@ ROWS += [
         "links: follow an unknown action's destination",
         "src/links.rs",
         '            _ => refused("unsupported"),',
-        "            _ => match action.get(b\"D\") {\n                Ok(dest) => destination(dest, document, numbers, geometry, limits),\n                Err(_) => Target::Broken,\n            },",
+        "            _ => match action.get(b\"D\") {\n                Ok(dest) => destination(dest, document, numbers, geometry, limits, names),\n                Err(_) => Target::Broken,\n            },",
         "an_unknown_action_is_refused_rather_than_followed",
     ),
     Mutation(
@@ -225,8 +225,8 @@ ROWS += [
         # tell a hostile tree from an honest typo.
         "links: report an exhausted name tree as a missing name",
         "src/links.rs",
-        "        Found::Exhausted => {\n            limits.unresolved_names += 1;\n            Target::Broken\n        }",
-        "        Found::Exhausted => Target::Broken,",
+        "        Err(GaveUp) => {\n            limits.unresolved_names += 1;\n            Target::Broken\n        }",
+        "        Err(GaveUp) => Target::Broken,",
         "a_cyclic_name_tree_is_given_up_on_and_counted",
     ),
     Mutation(
@@ -235,8 +235,8 @@ ROWS += [
         # control for the mutation above, failing in the other direction.
         "links: charge a limit for a name that is simply absent",
         "src/links.rs",
-        "        Found::Missing => Target::Broken,",
-        "        Found::Missing => {\n            limits.unresolved_names += 1;\n            Target::Broken\n        }",
+        "        Ok(None) => Target::Broken,",
+        "        Ok(None) => {\n            limits.unresolved_names += 1;\n            Target::Broken\n        }",
         "a_missing_name_is_broken_without_charging_a_limit",
     ),
     Mutation(
@@ -392,7 +392,7 @@ ROWS += [
         # -- and `links-probe --mode agree` compares two lists positionally.
         "links: walk the outline siblings-first rather than pre-order",
         "src/links.rs",
-        "        if let Ok(Object::Reference(child)) = dict.get(b\"First\") {\n            walk_outline(\n                document,\n                *child,\n                numbers,\n                geometry,\n                seen,\n                out,\n                limits,\n                urls,\n                depth - 1,\n            );\n        }\n        node = match dict.get(b\"Next\") {",
+        "        if let Ok(Object::Reference(child)) = dict.get(b\"First\") {\n            walk_outline(\n                document,\n                *child,\n                numbers,\n                geometry,\n                seen,\n                out,\n                limits,\n                urls,\n                names,\n                depth - 1,\n            );\n        }\n        node = match dict.get(b\"Next\") {",
         "        node = match dict.get(b\"Next\") {",
         "the_outline_walk_is_pre_order",
     ),
@@ -413,8 +413,8 @@ ROWS += [
         # nothing.
         "links: call an unresolvable outline destination absent rather than broken",
         "src/links.rs",
-        "    match annot.get(b\"Dest\") {\n        Ok(dest) => destination(dest, document, numbers, geometry, limits),",
-        "    match annot.get(b\"Dest\") {\n        Ok(dest) => match destination(dest, document, numbers, geometry, limits) {\n            Target::Broken => Target::None,\n            other => other,\n        },",
+        "    match annot.get(b\"Dest\") {\n        Ok(dest) => destination(dest, document, numbers, geometry, limits, names),",
+        "    match annot.get(b\"Dest\") {\n        Ok(dest) => match destination(dest, document, numbers, geometry, limits, names) {\n            Target::Broken => Target::None,\n            other => other,\n        },",
         "a_destination_that_resolves_nowhere_is_broken_not_absent",
     ),
     Mutation(

@@ -228,10 +228,15 @@ impl Compress {
         };
         drop(session);
 
-        let mut preview = None;
+        // The preview is staged now and published only once the copy is: a
+        // copy refused as not smaller leaves no picture of it behind, and
+        // does not replace one that was there.
+        let mut staged_preview = None;
         if let (Some(path), Some(estimate)) = (&self.preview, &estimate) {
             if let Some(sample) = &estimate.sample {
-                let (width, height, pixels) = sample.side_by_side();
+                let (width, height, pixels) = sample
+                    .side_by_side()
+                    .map_err(|why| Failure::new(Exit::Internal, why))?;
                 let png = crate::render::encode_png(&pixels, width, height)
                     .map_err(|why| Failure::new(Exit::Internal, why))?;
                 let staging = Temporary::beside(path)?;
@@ -239,8 +244,7 @@ impl Compress {
                 std::fs::write(&staged, png).map_err(|why| {
                     Failure::new(Exit::Internal, format!("{}: {why}", path.display()))
                 })?;
-                Temporary::publish(&staged, path, self.force)?;
-                preview = Some(path.display().to_string());
+                staged_preview = Some((staging, staged, path));
             }
         }
 
@@ -299,6 +303,12 @@ impl Compress {
                     Ok(after)
                 },
             )?;
+        }
+
+        let mut preview = None;
+        if let Some((_staging, staged, path)) = &staged_preview {
+            Temporary::publish(staged, path, self.force)?;
+            preview = Some(path.display().to_string());
         }
 
         let report = report::Compressed {

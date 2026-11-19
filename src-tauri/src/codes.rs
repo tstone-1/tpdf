@@ -17,7 +17,8 @@
 //! the redaction's verification and nothing else: there is no command that
 //! reads a code.
 //!
-//! The decode runs in the worker, on pixels PDFium drew there ([`read_page`]);
+//! The decode runs in the worker, on pixels PDFium drew there ([`read`], called
+//! from `render::run_codes`);
 //! only the decoded strings cross, bounded by [`MAX_CODES`] and [`MAX_TEXT`].
 //! The comparison ([`reasons`]) runs in the app, against the words the
 //! redaction removed.
@@ -82,9 +83,10 @@ pub struct Code {
     pub plain: bool,
 }
 
-/// What one page's read found.
+/// What one page's read found: its QR codes and other 2D codes. Not
+/// `compare::PageCodes`, which is a page's characters.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct PageCodes {
+pub struct Page2dCodes {
     /// The codes, at most [`MAX_CODES`].
     pub codes: Vec<Code>,
     /// Whether more were found than were kept.
@@ -137,7 +139,18 @@ pub fn luma_of_rgba(rgba: &[u8]) -> Vec<u8> {
 /// When the image is empty or `luma` does not hold `width * height` values.
 /// Finding nothing is `Ok` with no codes, never an error: rxing reports
 /// "not found" as an error, and that is translated here.
-pub fn read(luma: Vec<u8>, width: u32, height: u32) -> Result<PageCodes, String> {
+pub fn read(luma: Vec<u8>, width: u32, height: u32) -> Result<Page2dCodes, String> {
+    read_at_most(luma, width, height, MAX_CODES)
+}
+
+/// [`read`], keeping at most `most` codes: the bound is a parameter so a test
+/// can reach it with two codes rather than sixty-five.
+fn read_at_most(
+    luma: Vec<u8>,
+    width: u32,
+    height: u32,
+    most: usize,
+) -> Result<Page2dCodes, String> {
     let wanted = u64::from(width) * u64::from(height);
     if wanted == 0 || luma.len() as u64 != wanted {
         return Err(said!(
@@ -156,10 +169,10 @@ pub fn read(luma: Vec<u8>, width: u32, height: u32) -> Result<PageCodes, String>
             Err(rxing::Exceptions::NotFoundException(_)) => Vec::new(),
             Err(e) => return Err(said!("the codes on the page could not be read: {e}")),
         };
-    let more = found.len() > MAX_CODES;
+    let more = found.len() > most;
     let codes = found
         .iter()
-        .take(MAX_CODES)
+        .take(most)
         .map(|result| {
             let text: String = result.getText().chars().take(MAX_TEXT).collect();
             Code {
@@ -169,7 +182,7 @@ pub fn read(luma: Vec<u8>, width: u32, height: u32) -> Result<PageCodes, String>
             }
         })
         .collect();
-    Ok(PageCodes { codes, more })
+    Ok(Page2dCodes { codes, more })
 }
 
 /// Lower case, letters and digits only: `DE89 3704 0044` and `de89370400440`
@@ -225,7 +238,7 @@ pub fn terms_of(needle: &str) -> Vec<String> {
 /// of the removed words adds nothing: what else it carries is the document's,
 /// and the redaction did not ask about it.
 #[must_use]
-pub fn reasons(page: u32, found: &PageCodes, needles: &[String]) -> Vec<String> {
+pub fn reasons(page: u32, found: &Page2dCodes, needles: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     // Nothing was removed as text --- a region over a picture or a drawing ---
     // so there is nothing a code could still carry, and a code whose content
@@ -315,7 +328,7 @@ pub fn read_note(codes: usize) -> String {
 mod tests {
     use super::{
         folded, is_plain, luma_of_rgba, read, read_note, reasons, scale_for, terms_of, Code,
-        PageCodes,
+        Page2dCodes,
     };
 
     #[test]
@@ -354,8 +367,8 @@ mod tests {
     /// An EPC "GiroCode" payment payload, as German invoices print it.
     const EPC: &str = "BCD\n002\n1\nSCT\nCOBADEFFXXX\nJane Doe\nDE89370400440532013000\nEUR123.45\n\n\nInvoice 2026-117\n";
 
-    fn page_with(text: &str) -> PageCodes {
-        PageCodes {
+    fn page_with(text: &str) -> Page2dCodes {
+        Page2dCodes {
             codes: vec![Code {
                 kind: "QR code".into(),
                 text: text.into(),
@@ -387,6 +400,38 @@ mod tests {
             assert_eq!(found.codes.len(), 1, "{format:?}: {found:?}");
             assert_eq!(found.codes[0].text, "Jane Doe 1974-05-02", "{format:?}");
         }
+    }
+
+    /// Two codes side by side in one grey image, each with its quiet zone.
+    fn two_drawn(first: &str, second: &str) -> (Vec<u8>, u32, u32) {
+        let (a, aw, ah) = drawn(first, &rxing::BarcodeFormat::QR_CODE, 4);
+        let (b, bw, bh) = drawn(second, &rxing::BarcodeFormat::QR_CODE, 4);
+        let (width, height) = (aw + bw, ah.max(bh));
+        let mut luma = vec![255u8; (width * height) as usize];
+        for y in 0..ah {
+            let row = (y * width) as usize;
+            luma[row..row + aw as usize]
+                .copy_from_slice(&a[(y * aw) as usize..((y + 1) * aw) as usize]);
+        }
+        for y in 0..bh {
+            let row = (y * width + aw) as usize;
+            luma[row..row + bw as usize]
+                .copy_from_slice(&b[(y * bw) as usize..((y + 1) * bw) as usize]);
+        }
+        (luma, width, height)
+    }
+
+    /// The bound keeps the first codes and says the rest were not kept, and a
+    /// page holding exactly as many as the bound is not "more".
+    #[test]
+    fn a_page_past_the_bound_keeps_the_first_codes_and_says_there_were_more() {
+        let (luma, width, height) = two_drawn("Jane Doe", "Richard Roe");
+        let both = super::read_at_most(luma.clone(), width, height, 2).expect("reads");
+        assert_eq!(both.codes.len(), 2, "{both:?}");
+        assert!(!both.more, "two codes under a bound of two are all of them");
+        let cut = super::read_at_most(luma, width, height, 1).expect("reads");
+        assert_eq!(cut.codes.len(), 1, "{cut:?}");
+        assert!(cut.more, "a second code past a bound of one is more");
     }
 
     #[test]
@@ -506,7 +551,7 @@ mod tests {
 
     #[test]
     fn a_page_with_more_codes_than_kept_says_so() {
-        let page = PageCodes {
+        let page = Page2dCodes {
             codes: Vec::new(),
             more: true,
         };

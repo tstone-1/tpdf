@@ -272,6 +272,9 @@ mod tests {
         /// What each writer answers. Only the arm the mode picks is asked.
         prepare: Result<&'static str, Refusal>,
         closed: Result<(), String>,
+        /// A file the append asks `save::append_ready` about before answering,
+        /// so its refusal is the real one rather than a canned string.
+        checks: Option<std::path::PathBuf>,
     }
 
     impl Fake {
@@ -283,6 +286,7 @@ mod tests {
                 password: None,
                 prepare: Ok("prepared"),
                 closed: Ok(()),
+                checks: None,
             }
         }
 
@@ -312,10 +316,13 @@ mod tests {
 
         fn prepare_append(
             &self,
-            _plan: Plan,
+            plan: Plan,
         ) -> impl std::future::Future<Output = Result<&'static str, Refusal>> + Send {
             self.say("prepare_append");
-            let answer = self.prepare.clone();
+            let checked = self.checks.as_deref().map_or(Ok(()), |path| {
+                crate::save::append_ready(path, &plan).map(drop)
+            });
+            let answer = checked.and_then(|()| self.prepare.clone());
             async move { answer }
         }
 
@@ -752,6 +759,91 @@ mod tests {
 
         assert_eq!(why.message, "the save did not finish");
         assert!(why.reopen());
+    }
+
+    /// A one-page document on disk, and the marks-only plan fingerprinted
+    /// against it.
+    fn a_real_document(tag: &str) -> (TempDir, std::path::PathBuf, Plan) {
+        use lopdf::{dictionary, Document, Object};
+        let dir = TempDir::new(tag);
+        let path = dir.join("source.pdf");
+        let mut doc = Document::with_version("1.7");
+        let pages = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages,
+            "MediaBox" => vec![0.into(), 0.into(), 200.into(), 200.into()],
+        });
+        doc.objects.insert(
+            pages,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", catalog);
+        doc.save(&path).expect("write the document");
+        let plan = Plan {
+            opened_as: Some(
+                crate::fingerprint::Fingerprint::of(&path).expect("fingerprint the document"),
+            ),
+            ..marks_only()
+        };
+        (dir, path, plan)
+    }
+
+    /// A file that cannot be written is refused while the document is open.
+    ///
+    /// The refusal is `save::append_ready`'s own, asked of a real read-only
+    /// file. The landing's open for writing would refuse it too, but that open
+    /// is past the close, and by then the reader's edits are gone.
+    #[test]
+    fn a_file_that_cannot_be_written_is_refused_before_the_document_is_closed() {
+        let log: Log = Arc::default();
+        let (_dir, source, plan) = a_real_document("save-order-readonly");
+        let mut permissions = std::fs::metadata(&source).expect("stat").permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&source, permissions.clone()).expect("mark it read-only");
+        let saving = Fake {
+            plan: Ok(plan),
+            checks: Some(source.clone()),
+            ..Fake::new(&log)
+        };
+
+        let refused = run(save_over(&saving, &source, landing(&log)));
+
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&source, permissions).expect("clear the attribute");
+        let why = refused.expect_err("a file that cannot be written must not be saved over");
+        assert!(!why.reopen(), "nothing was closed: {}", why.message);
+        let entries = entries(&log);
+        assert!(
+            entries.contains(&"prepare_append".to_string()),
+            "the control: the append was the arm asked: {entries:?}"
+        );
+        assert!(
+            !entries.iter().any(|step| step.starts_with("close")),
+            "the refusal must come before the close: {entries:?}"
+        );
+    }
+
+    /// The control for the test above: the same document, writable, lands.
+    #[test]
+    fn a_writable_file_passes_the_same_check_and_lands() {
+        let log: Log = Arc::default();
+        let (_dir, source, plan) = a_real_document("save-order-writable");
+        let saving = Fake {
+            plan: Ok(plan),
+            checks: Some(source.clone()),
+            ..Fake::new(&log)
+        };
+
+        run(save_over(&saving, &source, landing(&log))).expect("the save lands");
+
+        assert!(entries(&log).contains(&"close_document".to_string()));
     }
 
     /// The reader's key is asked once and reaches both the rewrite and the landing.

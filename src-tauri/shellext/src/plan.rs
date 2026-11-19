@@ -135,32 +135,43 @@ pub const STEP_SETTLE_MS: u32 = 150;
 /// ran to the end regardless. So a request made while one is out waits here
 /// instead of starting another, and a newer request replaces a waiting one:
 /// the page the reader stopped on is rendered next, and the ones they passed
-/// on the way are never started. Generic, so the order can be tested without
-/// a window or a process.
+/// on the way are never started.
+///
+/// **A pane that is reset ends the render it has out**, rather than letting
+/// it run to its bound: Explorer resets the pane for every file the reader
+/// arrows past, so each would otherwise leave a `tpdf-cli` and a worker
+/// running for up to [`PREVIEW_TIME`]. Each request comes with a `stop`, the
+/// means of ending its render; [`Renders::reset`] hands back the stop of the
+/// render out, once, and never the stop of one that has finished or of one
+/// that never started.
+///
+/// Generic, so the order can be tested without a window or a process.
 #[derive(Debug)]
-pub struct Renders<R> {
-    in_flight: bool,
-    waiting: Option<R>,
+pub struct Renders<R, S> {
+    /// The stop of the render out, if one is.
+    out: Option<S>,
+    waiting: Option<(R, S)>,
 }
 
-impl<R> Default for Renders<R> {
+impl<R, S> Default for Renders<R, S> {
     fn default() -> Self {
         Self {
-            in_flight: false,
+            out: None,
             waiting: None,
         }
     }
 }
 
-impl<R> Renders<R> {
-    /// A request. Returned when it should start now; kept, in place of any
-    /// request already waiting, when a render is out.
-    pub fn ask(&mut self, request: R) -> Option<R> {
-        if self.in_flight {
-            self.waiting = Some(request);
+impl<R, S> Renders<R, S> {
+    /// A request, and what ends its render. Returned when it should start
+    /// now; kept, in place of any request already waiting, when a render is
+    /// out.
+    pub fn ask(&mut self, request: R, stop: S) -> Option<R> {
+        if self.out.is_some() {
+            self.waiting = Some((request, stop));
             None
         } else {
-            self.in_flight = true;
+            self.out = Some(stop);
             Some(request)
         }
     }
@@ -168,17 +179,19 @@ impl<R> Renders<R> {
     /// The render out has ended. Returns the request to start in its place,
     /// if one is waiting.
     pub fn finished(&mut self) -> Option<R> {
-        let next = self.waiting.take();
-        self.in_flight = next.is_some();
+        let (next, stop) = self.waiting.take().unzip();
+        self.out = stop;
         next
     }
 
     /// Forgets everything, for a pane whose window is gone: a render still
     /// out reports to that window, so its end would never arrive here, and a
-    /// pane that waited for it would never render again.
-    pub fn reset(&mut self) {
-        self.in_flight = false;
+    /// pane that waited for it would never render again. Returns the stop of
+    /// that render, for the caller to end it with; a request still waiting
+    /// never started, so it has nothing to end.
+    pub fn reset(&mut self) -> Option<S> {
         self.waiting = None;
+        self.out.take()
     }
 }
 
@@ -300,26 +313,59 @@ mod tests {
     #[test]
     fn requests_made_while_a_render_is_out_start_only_the_newest() {
         let mut renders = Renders::default();
-        assert_eq!(renders.ask(1), Some(1), "nothing is out, so it starts");
+        assert_eq!(renders.ask(1, ()), Some(1), "nothing is out, so it starts");
         for page in 2..=10 {
-            assert_eq!(renders.ask(page), None, "page {page} waits");
+            assert_eq!(renders.ask(page, ()), None, "page {page} waits");
         }
         assert_eq!(renders.finished(), Some(10), "the newest is next");
-        assert_eq!(renders.ask(11), None, "page 10 is out now");
+        assert_eq!(renders.ask(11, ()), None, "page 10 is out now");
         assert_eq!(renders.finished(), Some(11));
         assert_eq!(renders.finished(), None, "nothing waits");
-        assert_eq!(renders.ask(12), Some(12), "and the pane is free again");
+        assert_eq!(renders.ask(12, ()), Some(12), "and the pane is free again");
     }
 
     /// A pane whose window went starts the next request at once.
     #[test]
     fn a_reset_pane_does_not_wait_for_a_render_that_cannot_report() {
         let mut renders = Renders::default();
-        assert_eq!(renders.ask(1), Some(1));
-        assert_eq!(renders.ask(2), None);
+        assert_eq!(renders.ask(1, ()), Some(1));
+        assert_eq!(renders.ask(2, ()), None);
         renders.reset();
-        assert_eq!(renders.ask(3), Some(3), "not held behind the lost render");
+        assert_eq!(
+            renders.ask(3, ()),
+            Some(3),
+            "not held behind the lost render"
+        );
         assert_eq!(renders.finished(), None, "and page 2 was forgotten");
+    }
+
+    /// A reset ends the render out, once: the first reset hands back its
+    /// stop, and a second has nothing left to end. The request waiting
+    /// behind it never started, so its stop is not handed back at all.
+    #[test]
+    fn a_reset_ends_the_render_out_once_and_never_the_one_waiting() {
+        let mut renders = Renders::default();
+        assert_eq!(renders.ask(1, "first"), Some(1));
+        assert_eq!(renders.ask(2, "waiting"), None);
+        assert_eq!(renders.reset(), Some("first"), "the render out is ended");
+        assert_eq!(renders.reset(), None, "and not ended twice");
+        assert_eq!(renders.finished(), None, "the waiting one was dropped");
+    }
+
+    /// The stop handed back belongs to the render out now, which after a
+    /// render ends is the one that started in its place, or none.
+    #[test]
+    fn a_render_that_has_finished_is_not_ended_by_a_reset() {
+        let mut renders = Renders::default();
+        assert_eq!(renders.ask(1, "first"), Some(1));
+        assert_eq!(renders.finished(), None);
+        assert_eq!(renders.reset(), None, "nothing is out");
+
+        assert_eq!(renders.ask(2, "second"), Some(2));
+        assert_eq!(renders.ask(3, "third"), None);
+        assert_eq!(renders.finished(), Some(3), "third starts as second ends");
+        assert_eq!(renders.reset(), Some("third"), "not the finished second");
+        assert_eq!(renders.reset(), None);
     }
 
     #[test]

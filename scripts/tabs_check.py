@@ -121,16 +121,25 @@ timestamp authorities over the network. It refuses to run without --identity,
 the SHA-256 of the signing certificate; there is no default. BUILD.md has the
 test identity, the command and what the person clicks.
   uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase sign --identity <sha256>
+--phase disk-change changes the open copy on disk while a message is on screen, and reads
+that the message stays, that no Reload is offered and nothing is reloaded until it is
+dismissed, in the mode that asks and in the one that reloads; with the bar empty the
+change is asked about at once, which is the control. The webview cannot write a file,
+so the app prints `[disk-change] rewrite N` and this script appends a PDF comment to the
+copy for each such line (`src/lib/diskchangecheck.ts`). Any PDF:
+  uv run scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase disk-change
 """
 
 import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
 import tempfile
+import time
 
 from harness_launch import report
 from win_worker_exit import check_worker_exit
@@ -140,7 +149,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "compare", "add-text", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen", "closing", "fit"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "compare", "add-text", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen", "closing", "fit", "disk-change"), default="tabs")
     parser.add_argument("--other", type=Path, help="The second file --phase import and --phase answers read")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -278,7 +287,10 @@ def main() -> int:
                 stderr=subprocess.STDOUT, start_new_session=os.name != "nt",
             )
             try:
-                code = process.wait(timeout=args.timeout)
+                if args.phase == "disk-change":
+                    code = answer_rewrites(process, log, first, args.timeout)
+                else:
+                    code = process.wait(timeout=args.timeout)
             except subprocess.TimeoutExpired:
                 if os.name == "nt":
                     subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
@@ -309,6 +321,36 @@ def main() -> int:
         if passed and args.saved_copy:
             shutil.copyfile(first, args.saved_copy)
         return 0 if passed else 1
+
+
+#: What `src/lib/diskchangecheck.ts` prints to ask for a change on disk, followed by
+#: its number. `diskchangecheck.test.ts` holds the two spellings equal.
+REWRITE_REQUEST = re.compile(r"^\[disk-change\] rewrite \d+$", re.M)
+
+
+def answer_rewrites(process: subprocess.Popen, log: Path, target: Path, timeout: float) -> int:
+    """`process.wait(timeout)`, appending to `target` once for each request it prints.
+
+    The webview has no filesystem, so the disk-change phase asks this side to change
+    the open copy. A PDF comment after the end is appended rather than the file
+    rewritten: a file another process has mapped cannot be truncated on Windows, and
+    the watch compares by content, so a new timestamp alone would not be a change.
+    Matched by whole line, so a failure detail that quotes the request is not one.
+    Raises `TimeoutExpired` as `wait` does.
+    """
+    deadline = time.monotonic() + timeout
+    answered = 0
+    while True:
+        try:
+            return process.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            if time.monotonic() > deadline:
+                raise
+        asked = len(REWRITE_REQUEST.findall(log.read_text(encoding="utf-8", errors="replace")))
+        while answered < asked:
+            answered += 1
+            with target.open("ab") as copy:
+                copy.write(b"\n%% tpdf disk-change check %d\n" % answered)
 
 
 def placed_fields(saved: Path, binary: Path) -> bool:

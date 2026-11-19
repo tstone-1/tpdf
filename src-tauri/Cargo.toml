@@ -1,6 +1,6 @@
 [package]
 name = "tpdf"
-version = "26.11.9"
+version = "26.11.10"
 description = "Fast, lightweight PDF viewer and editor"
 authors = ["tstone-1"]
 edition = "2021"
@@ -632,6 +632,10 @@ path = "examples/redact_gate_probe.rs"
 [[example]]
 name = "redact-reach-probe"
 path = "examples/redact_reach_probe.rs"
+
+[[example]]
+name = "picture-verdict-probe"
+path = "examples/picture_verdict_probe.rs"
 
 [[example]]
 name = "ocr-worker-probe"

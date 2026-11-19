@@ -541,6 +541,7 @@ fn verify_one(env: &Env<'_>, path: &Path, fetch_roots: bool) -> (report::File, A
                 path: shown.clone(),
                 error: Some(FileError { kind, message }),
                 signatures: Vec::new(),
+                signatures_complete: false,
             },
             After::Unchanged,
         )
@@ -571,18 +572,40 @@ fn verify_one(env: &Env<'_>, path: &Path, fetch_roots: bool) -> (report::File, A
         properties
     };
     let after = after_last_signature(&properties.signatures);
-    (
-        report::File {
-            path: shown,
-            error: None,
-            signatures: properties
-                .signatures
-                .iter()
-                .filter(|s| s.signed)
-                .map(signature_report)
-                .collect(),
-        },
-        after,
+    (file_report(shown, &properties), after)
+}
+
+/// One document's entry in the report, from what a worker read of it.
+#[must_use]
+pub fn file_report(shown: String, properties: &docinfo::Properties) -> report::File {
+    report::File {
+        path: shown,
+        error: None,
+        signatures: properties
+            .signatures
+            .iter()
+            .filter(|s| s.signed)
+            .map(signature_report)
+            .collect(),
+        signatures_complete: signatures_complete(&properties.limits),
+    }
+}
+
+/// Whether the scan listed every signature the document has: it stopped at
+/// no bound on signature fields, and read every form field. `fill` and the
+/// page commands read the same two counts as "whether it is signed is not
+/// known" (`fill::signed_state`).
+#[must_use]
+pub fn signatures_complete(limits: &docinfo::Limits) -> bool {
+    limits.signatures_dropped == 0 && limits.unreadable == 0
+}
+
+/// What `verify` says of a document whose list of signatures was cut.
+#[must_use]
+pub fn incomplete_sentence(shown: &str) -> String {
+    format!(
+        "{shown}: not every signature field could be read, so the signatures listed may not be \
+         all of them, and --strict fails it"
     )
 }
 
@@ -607,10 +630,21 @@ fn read_again_after_fetching(
 ) -> Option<docinfo::Properties> {
     use crate::save::Verifier as _;
     use std::io::{Read as _, Seek as _};
+    // The survey reads the whole document into this process, so it has the
+    // bound every other whole-document read here has (`sign`'s), checked
+    // before anything is allocated; a larger document keeps its offline
+    // answer. One byte past the bound at most, for a file that grew since.
+    let bound = crate::save::APPEND_MAX_BYTES;
+    if len as u64 > bound {
+        return None;
+    }
     let mut bytes = Vec::with_capacity(len);
     let mut reading = file;
     reading.seek(std::io::SeekFrom::Start(0)).ok()?;
-    reading.read_to_end(&mut bytes).ok()?;
+    reading.take(bound + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > bound {
+        return None;
+    }
     let worker = env.worker();
     let survey = worker.survey(&bytes).ok()?;
     let now = std::time::SystemTime::now()
@@ -666,6 +700,7 @@ pub fn verified(files: Vec<report::File>) -> report::Verified {
 pub fn verified_after(files: Vec<report::File>, after: &[After]) -> report::Verified {
     let strict_passed = files.iter().enumerate().all(|(at, file)| {
         file.error.is_none()
+            && file.signatures_complete
             && file.signatures.iter().any(|s| !s.document_timestamp)
             && file.signatures.iter().all(passes_strict)
             && after.get(at).is_none_or(|after| *after == After::Unchanged)
@@ -676,6 +711,23 @@ pub fn verified_after(files: Vec<report::File>, after: &[After]) -> report::Veri
         strict_passed,
         files,
     }
+}
+
+/// What `verify` says on stderr of each document: why one could not be read,
+/// or that its list of signatures may be cut, one line each.
+#[must_use]
+pub fn file_complaints(program: &str, report: &report::Verified) -> Vec<String> {
+    report
+        .files
+        .iter()
+        .filter_map(|file| match &file.error {
+            Some(error) => Some(format!("{program}: {}", error.message)),
+            None if !file.signatures_complete => {
+                Some(format!("{program}: {}", incomplete_sentence(&file.path)))
+            }
+            None => None,
+        })
+        .collect()
 }
 
 fn run_verify(
@@ -690,10 +742,8 @@ fn run_verify(
         .map(|p| verify_one(env, p, verify.fetch_roots))
         .unzip();
     let report = verified_after(files, &after);
-    for file in &report.files {
-        if let Some(error) = &file.error {
-            say(err, &format!("{}: {}", env.program, error.message));
-        }
+    for line in file_complaints(&env.program, &report) {
+        say(err, &line);
     }
     if !verify.fetch_roots && report_may_be_missing_a_root(&report) {
         say(
@@ -754,6 +804,11 @@ pub fn verify_text_after(report: &report::Verified, after: &[After]) -> String {
             continue;
         }
         lines.push(format!("{}: {}", file.path, counted(&file.signatures)));
+        if !file.signatures_complete {
+            lines.push(
+                "  Not every signature field could be read: the list may not be complete".into(),
+            );
+        }
         for signature in &file.signatures {
             lines.push(signature_text(signature));
         }
@@ -793,8 +848,9 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
 /// replaced by U+FFFD. A field's name and a certificate's are the document's to
 /// choose, and with a line break in one it could print rows that read as tpdf's own,
 /// `Trust:` among them. [`super::printable`] keeps `\n`, for output that is many
-/// lines by nature.
-fn one_line(text: &str) -> String {
+/// lines by nature. `comments` keeps an author and a body to one line by it
+/// too.
+pub(crate) fn one_line(text: &str) -> String {
     text.replace(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}'], "\u{fffd}")
 }
 

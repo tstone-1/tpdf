@@ -347,19 +347,6 @@ pub const UNPLACED_PATH: &str = "unplaced-path";
 /// be measured. Taking it would move that text; see [`cut_within`].
 pub const UNMEASURED_TEXT: &str = "unmeasured-text";
 
-/// What removing one region would take, as somebody outside this process reads it.
-///
-/// [`Plan`] with the ordinals replaced by what they *draw*. A caller across the
-/// IPC boundary cannot do anything with an ordinal --- it addresses a show
-/// operator in a content stream this process parsed --- and what a reader
-/// reviewing a redaction needs is the words and the refusals.
-///
-/// **`taking` is not the words the region covers**, and the difference is the
-/// whole reason this crosses the boundary at all. Route B removes a whole
-/// text-showing operation when any of its glyphs is inside the region, so this
-/// is at least what the reader selected and commonly the rest of the line. The
-/// frontend computes the covered words itself, from geometry it already holds;
-/// what it cannot compute is this.
 /// The drawings one region takes from inside the page's Form XObjects.
 ///
 /// One field of [`RegionPlan`] rather than three, because the three travel
@@ -420,6 +407,19 @@ impl FormPathsPlanned {
 // `PartialEq` without `Eq`, because `area` is floats. Nothing compares two of
 // these for equality outside a test, and an `Eq` on a type holding an `f32` is
 // the wrong promise rather than a missing convenience.
+/// What removing one region would take, as somebody outside this process reads it.
+///
+/// [`Plan`] with the ordinals replaced by what they *draw*. A caller across the
+/// IPC boundary cannot do anything with an ordinal --- it addresses a show
+/// operator in a content stream this process parsed --- and what a reader
+/// reviewing a redaction needs is the words and the refusals.
+///
+/// **`taking` is not the words the region covers**, and the difference is the
+/// whole reason this crosses the boundary at all. Route B removes a whole
+/// text-showing operation when any of its glyphs is inside the region, so this
+/// is at least what the reader selected and commonly the rest of the line. The
+/// frontend computes the covered words itself, from geometry it already holds;
+/// what it cannot compute is this.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RegionPlan {
     /// Which of the page's text-showing operations the removal would delete.
@@ -797,22 +797,22 @@ pub fn shared_draws(doc: &Document, page: ObjectId, images: usize, forms: usize)
         .into_iter()
         .map(|(_, name)| name)
         .collect();
+    // One count of every page's draws for both questions, filled the first
+    // time a shared list needs it.
+    let mut draws = PageDraws::default();
     SharedDraws {
         form_images: Vec::new(),
-        images: times_drawn(doc, page, &drawn, images),
+        images: times_drawn(doc, page, &drawn, images, &mut draws),
         forms: times_drawn(
             doc,
             page,
             &form_draws(doc, page, &content).unwrap_or_default(),
             forms,
+            &mut draws,
         ),
     }
 }
 
-/// How many times each of `names` is drawn, when that is more than once.
-///
-/// `expected` is how many PDFium reported; a disagreement answers `None`
-/// throughout for [`SharedDraws`]'s reason.
 impl SharedDraws {
     /// Fills [`form_images`](Self::form_images): for each form the page draws,
     /// how many times the document draws each of its pictures.
@@ -1006,11 +1006,17 @@ fn picture_draws(
     out
 }
 
+/// How many times each of `names` is drawn, when that is more than once.
+///
+/// `expected` is how many PDFium reported; a disagreement answers `None`
+/// throughout for [`SharedDraws`]'s reason. `draws` is shared by every name,
+/// so the pages are decoded once for the whole list rather than once per name.
 fn times_drawn(
     doc: &Document,
     page: ObjectId,
     names: &[String],
     expected: usize,
+    draws: &mut PageDraws,
 ) -> Vec<Option<usize>> {
     if names.len() != expected {
         return vec![None; expected];
@@ -1020,7 +1026,7 @@ fn times_drawn(
         .map(|name| {
             form_id(doc, page, name)
                 .ok()
-                .and_then(|id| drawn_more_than_once(doc, page, id, names, name))
+                .and_then(|id| drawn_more_than_once_in(doc, page, id, names, name, draws))
         })
         .collect()
 }
@@ -1556,7 +1562,20 @@ pub fn covered_annots(doc: &Document, page: ObjectId, areas: &[Rect]) -> Vec<Obj
 ///
 /// The array is edited where it lives: in the page dictionary, or in the
 /// object an indirect `/Annots` names.
-pub fn take_inline_annots(doc: &mut Document, page: ObjectId, areas: &[Rect]) -> usize {
+///
+/// **Dependents both ways, as [`covered_annots`] takes them.** `taken` is what
+/// that pass took, and is read before anything is forgotten: an inline reply
+/// whose `/IRT` names a taken annotation, or an inline popup whose `/Parent`
+/// does, goes with it wherever its own `/Rect` lies. And the `/Popup` an inline
+/// annotation taken here names is added to `taken`, because the page's
+/// `/Annots` lists that popup too and the sweep would keep it. Run before
+/// `forget`, which removes the `/IRT` and `/Parent` keys this reads.
+pub fn take_inline_annots(
+    doc: &mut Document,
+    page: ObjectId,
+    areas: &[Rect],
+    taken: &mut HashSet<ObjectId>,
+) -> usize {
     let held = match doc
         .get_dictionary(page)
         .and_then(|page| page.get(b"Annots"))
@@ -1575,18 +1594,32 @@ pub fn take_inline_annots(doc: &mut Document, page: ObjectId, areas: &[Rect]) ->
     let Ok(entries) = entries else {
         return 0;
     };
+    let names_taken = |annot: &Dictionary, key: &[u8]| {
+        annot
+            .get(key)
+            .and_then(Object::as_reference)
+            .is_ok_and(|id| taken.contains(&id))
+    };
+    let mut popups: Vec<ObjectId> = Vec::new();
     let kept: Vec<Object> = entries
         .iter()
         .filter(|entry| match entry {
             Object::Dictionary(annot) => {
-                matches!(rect_of(doc, annot), Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)))
+                let keep = matches!(rect_of(doc, annot), Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)))
+                    && !names_taken(annot, b"IRT")
+                    && !names_taken(annot, b"Parent");
+                if !keep {
+                    popups.extend(annot.get(b"Popup").and_then(Object::as_reference).ok());
+                }
+                keep
             }
             _ => true,
         })
         .cloned()
         .collect();
-    let taken = entries.len() - kept.len();
-    if taken == 0 {
+    let gone = entries.len() - kept.len();
+    taken.extend(popups);
+    if gone == 0 {
         return 0;
     }
     match held {
@@ -1601,7 +1634,7 @@ pub fn take_inline_annots(doc: &mut Document, page: ObjectId, areas: &[Rect]) ->
             }
         }
     }
-    taken
+    gone
 }
 
 /// The object ids on a page's `/Annots`, in whichever spelling it uses.
@@ -1752,6 +1785,47 @@ fn clear_shadow_text(
     operations: &mut [Operation],
     removed: &[usize],
 ) -> Result<Cleared, String> {
+    clear_shadow_text_in(doc, Lists::Page(page), operations, removed)
+}
+
+/// [`clear_shadow_text`] for the operations of one Form XObject the page
+/// draws.
+///
+/// **A form's spans are a second set of carriers, and the page's walk cannot
+/// see them.** `/Span << /ActualText (...) >> BDC` is as common inside a form
+/// as on a page --- a header or a stamp written once and drawn through `Do` ---
+/// and taking the form's glyphs while its property list keeps the words leaves
+/// the copy this module exists to remove. A name in one of its `BDC`s is
+/// resolved through the form's own resources, which is where a reader looks it
+/// up.
+fn clear_form_shadow_text(
+    doc: &Document,
+    page: ObjectId,
+    form: ObjectId,
+    operations: &mut [Operation],
+    removed: &[usize],
+) -> Result<Cleared, String> {
+    clear_shadow_text_in(doc, Lists::Form { page, form }, operations, removed)
+}
+
+/// Where the names in a content stream's `BDC` operators are looked up.
+#[derive(Clone, Copy, Debug)]
+enum Lists {
+    /// A page's own content: the page's resources, then the ones it inherits.
+    Page(ObjectId),
+    /// A Form XObject's content: the form's own `/Resources`, or the page's
+    /// when the form has none (PDF 1.1 allowed that, and readers still honour
+    /// it).
+    Form { page: ObjectId, form: ObjectId },
+}
+
+/// The walk behind [`clear_shadow_text`] and [`clear_form_shadow_text`].
+fn clear_shadow_text_in(
+    doc: &Document,
+    lists: Lists,
+    operations: &mut [Operation],
+    removed: &[usize],
+) -> Result<Cleared, String> {
     // (index of the BDC/BMC, whether a removal fell inside it).
     let mut open: Vec<(usize, bool)> = Vec::new();
     let mut touched: Vec<usize> = Vec::new();
@@ -1807,7 +1881,17 @@ fn clear_shadow_text(
             }
             Some(Object::Name(name)) => {
                 let name = name.clone();
-                if let Some(shared) = property_list(doc, page, &name) {
+                let resolved = match lists {
+                    Lists::Page(page) => property_list(doc, page, &name),
+                    Lists::Form { page, form } => form_property_list(doc, page, form, &name),
+                };
+                if let Some(shared) = resolved {
+                    // A named list ties its span to the structure tree as an
+                    // inline one does, so its `/MCID` leads to the element
+                    // holding the other copy.
+                    if let Ok(mcid) = shared.get(b"MCID").and_then(Object::as_i64) {
+                        cleared.mcids.push(mcid);
+                    }
                     if let Some(key) = SHADOW_TEXT.into_iter().find(|key| shared.has(key)) {
                         return Err(said!(
                             "the region covers a marked-content span whose property list is the \
@@ -1872,6 +1956,11 @@ struct Cleared {
 /// failure to *find* one is not a failure to remove it, and anything the walk
 /// could not reach is still a copy of the words that [`crate::verify::scan`]
 /// will find and report.
+///
+/// `page` is whatever carries the `/StructParents` the `/MCID`s are numbered
+/// under: the page for its own content, and a Form XObject for the spans
+/// inside it, which PDF 32000-1 §14.7.4.4 numbers in the form's own parent
+/// tree entry rather than the page's.
 fn clear_struct_shadow_text(doc: &mut Document, page: ObjectId, mcids: &[i64]) -> usize {
     if mcids.is_empty() {
         return 0;
@@ -1938,12 +2027,23 @@ fn clear_struct_shadow_text(doc: &mut Document, page: ObjectId, mcids: &[i64]) -
 /// A structure tree is a handful of levels deep in any real document. The bound
 /// is here because the chain is the document's to shape and a cycle in it would
 /// otherwise be an infinite loop inside a save --- the same reason `pagetree`
-/// bounds its `/Parent` walk. The visited set below makes a *simple* cycle
-/// terminate on its own; this catches the rest.
+/// bounds its `/Parent` walk. It is the only thing that ends a cycle there:
+/// an element already met is not counted twice, but the walk goes on until
+/// this bound, which is why [`clear_struct_shadow_text`] keeps no visited set.
 const MAX_ANCESTORS: usize = 64;
 
 /// How deep a number tree may nest before this stops following it.
 const MAX_TREE_DEPTH: usize = 32;
+
+/// How many number-tree nodes one lookup visits before giving up.
+///
+/// The depth bound alone does not bound the work: a `/Kids` array naming the
+/// same node twice doubles the walk at every level, so 32 levels of it are
+/// 2^33 visits, which ends only at the worker's deadline and leaves a hostile
+/// tagged document impossible to redact. A node is visited once, and the walk
+/// stops after this many, as [`MAX_OUTLINE_ITEMS`] stops the outline's. A real
+/// parent tree has one leaf per page or so.
+const MAX_TREE_NODES: usize = 100_000;
 
 /// The parent tree's entry for a page: its structure elements, indexed by `/MCID`.
 ///
@@ -1953,13 +2053,16 @@ const MAX_TREE_DEPTH: usize = 32;
 ///
 /// `None` for anything missing or the wrong shape, which is every untagged
 /// document.
+///
+/// `page` may also be a Form XObject, whose stream dictionary carries a
+/// `/StructParents` of its own for the marked content inside it.
 fn parent_tree_entry(doc: &Document, page: ObjectId) -> Option<Vec<Object>> {
-    let key = doc
-        .get_dictionary(page)
-        .ok()?
-        .get(b"StructParents")
-        .and_then(Object::as_i64)
-        .ok()?;
+    let owner = match doc.get_object(page).ok()? {
+        Object::Dictionary(dict) => dict,
+        Object::Stream(stream) => &stream.dict,
+        _ => return None,
+    };
+    let key = owner.get(b"StructParents").and_then(Object::as_i64).ok()?;
     let tree = doc
         .catalog()
         .ok()?
@@ -1972,7 +2075,8 @@ fn parent_tree_entry(doc: &Document, page: ObjectId) -> Option<Vec<Object>> {
         .and_then(Object::as_dict)
         .ok()?
         .clone();
-    let found = number_tree_lookup(doc, &tree, key, 0)?;
+    let mut walk = TreeWalk::default();
+    let found = number_tree_lookup(doc, &tree, key, 0, &mut walk)?;
     doc.dereference(&found)
         .ok()
         .and_then(|(_, object)| object.as_array().ok())
@@ -1989,8 +2093,18 @@ fn parent_tree_entry(doc: &Document, page: ObjectId) -> Option<Vec<Object>> {
 /// `/Limits` is used to *skip* a subtree and never to conclude one holds the
 /// key: a tree whose limits are wrong is malformed, and a search that trusts
 /// them would answer nothing where a search that ignores them answers correctly.
-fn number_tree_lookup(doc: &Document, node: &Dictionary, key: i64, depth: usize) -> Option<Object> {
-    if depth > MAX_TREE_DEPTH {
+///
+/// `walk` is shared by the whole lookup: a node reached a second time is not
+/// searched again, and the lookup ends after [`MAX_TREE_NODES`] visits.
+fn number_tree_lookup(
+    doc: &Document,
+    node: &Dictionary,
+    key: i64,
+    depth: usize,
+    walk: &mut TreeWalk,
+) -> Option<Object> {
+    walk.visits += 1;
+    if depth > MAX_TREE_DEPTH || walk.visits > MAX_TREE_NODES {
         return None;
     }
     if let Ok(nums) = node
@@ -2016,6 +2130,17 @@ fn number_tree_lookup(doc: &Document, node: &Dictionary, key: i64, depth: usize)
         .ok()?
         .clone();
     for kid in kids {
+        // The bound ends the whole lookup, not only the call that crossed it:
+        // a `/Kids` of a million entries would otherwise go on being read one
+        // refused call at a time.
+        if walk.visits >= MAX_TREE_NODES {
+            return None;
+        }
+        if let Object::Reference(id) = &kid {
+            if !walk.seen.insert(*id) {
+                continue;
+            }
+        }
         let Ok((_, Object::Dictionary(child))) = doc.dereference(&kid) else {
             continue;
         };
@@ -2034,11 +2159,21 @@ fn number_tree_lookup(doc: &Document, node: &Dictionary, key: i64, depth: usize)
             }
         }
         let child = child.clone();
-        if let Some(found) = number_tree_lookup(doc, &child, key, depth + 1) {
+        if let Some(found) = number_tree_lookup(doc, &child, key, depth + 1, walk) {
             return Some(found);
         }
     }
     None
+}
+
+/// What one walk of a document-shaped tree has visited so far: a
+/// [`number_tree_lookup`] or a [`recount`].
+#[derive(Default)]
+struct TreeWalk {
+    /// The nodes reached by reference, so a node named twice is walked once.
+    seen: std::collections::HashSet<ObjectId>,
+    /// How many nodes have been visited, against the walk's own bound.
+    visits: usize,
 }
 
 /// The dictionary a marked-content operand's name refers to.
@@ -2060,23 +2195,48 @@ fn property_list<'a>(doc: &'a Document, page: ObjectId, name: &[u8]) -> Option<&
             sources.push(dictionary);
         }
     }
-    for resources in sources {
-        let Ok(properties) = resources
-            .get(b"Properties")
-            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
-            .and_then(Object::as_dict)
-        else {
-            continue;
-        };
-        if let Ok(entry) = properties
-            .get(name)
-            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
-            .and_then(Object::as_dict)
-        {
-            return Some(entry);
+    sources
+        .into_iter()
+        .find_map(|resources| named_in(doc, resources, name))
+}
+
+/// The dictionary a `BDC` name inside a Form XObject refers to.
+///
+/// The form's own `/Resources /Properties`, and the page's only when the form
+/// has no `/Resources` at all: a form that has some does not also read the
+/// page's, as with [`nearest_resources`].
+fn form_property_list<'a>(
+    doc: &'a Document,
+    page: ObjectId,
+    form: ObjectId,
+    name: &[u8],
+) -> Option<&'a Dictionary> {
+    let dict = &doc.get_object(form).ok()?.as_stream().ok()?.dict;
+    match dict.get(b"Resources") {
+        Ok(resources) => {
+            let (_, resources) = doc.dereference(resources).ok()?;
+            named_in(doc, resources.as_dict().ok()?, name)
         }
+        Err(_) => property_list(doc, page, name),
     }
-    None
+}
+
+/// `/Properties /<name>` in one resource dictionary, followed through
+/// references.
+fn named_in<'a>(
+    doc: &'a Document,
+    resources: &'a Dictionary,
+    name: &[u8],
+) -> Option<&'a Dictionary> {
+    resources
+        .get(b"Properties")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_dict)
+        .ok()?
+        .get(name)
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_dict)
+        .ok()
 }
 
 /// Puts `encoded` in place of everything a page draws, and proves that it did.
@@ -2352,8 +2512,8 @@ pub fn remove_shows(
 /// [`MAX_CONTENT_BYTES`]; the form-`Do` count disagreeing with `forms`; the named
 /// XObject being absent or not a stream; the form being drawn more than once
 /// anywhere; the form's own stream not decoding; its show-operator count
-/// disagreeing with what PDFium reported; an ordinal naming no operator; or the
-/// rewritten stream not encoding.
+/// disagreeing with what PDFium reported; an ordinal naming no operator; what
+/// [`clear_form_shadow_text`] refuses; or the rewritten stream not encoding.
 pub fn remove_form_shows(
     doc: &mut Document,
     page: ObjectId,
@@ -2430,12 +2590,19 @@ pub fn remove_form_shows(
     positions.dedup();
     let removed = positions.len();
 
+    // The form's own spans, before the removal renumbers them, for
+    // `remove_shows`' reason. The page's walk never sees these: it reads the
+    // page's operations, where the whole form is one `Do`. A span here carries
+    // an `/MCID` in the form's numbering, which its own `/StructParents` keys.
+    let carriers = clear_form_shadow_text(doc, page, id, &mut inside.operations, &positions)?;
+
     // Descending, for `remove_shows`' reason: an earlier removal moves every
     // later index.
     for where_ in positions.into_iter().rev() {
         let stays = without_drawing(&inside.operations[where_]);
         inside.operations.splice(where_..=where_, stays);
     }
+    let struct_carriers = clear_struct_shadow_text(doc, id, &carriers.mcids);
 
     let encoded = inside
         .encode()
@@ -2452,13 +2619,8 @@ pub fn remove_form_shows(
     Ok(Removed {
         shows_before: shows.len(),
         removed,
-        // Neither carrier lives inside a form. The marked-content property list
-        // and the structure tree are addressed from the *page*, and a span inside
-        // a form carries an `/MCID` in the page's own numbering that
-        // `clear_shadow_text` already walks -- so reporting a count here would be
-        // reporting somebody else's work twice.
-        carriers: 0,
-        struct_carriers: 0,
+        carriers: carriers.keys,
+        struct_carriers,
     })
 }
 
@@ -2477,8 +2639,9 @@ pub fn remove_form_shows(
 /// # Errors
 ///
 /// When the page's forms or the form's pictures do not agree in number with
-/// what PDFium reported, when the form is drawn more than once, or when the
-/// form's content cannot be read or written. Nothing is changed.
+/// what PDFium reported, when the form is drawn more than once, when
+/// [`clear_form_shadow_text`] refuses, or when the form's content cannot be
+/// read or written. Nothing is changed.
 pub fn remove_form_images(
     doc: &mut Document,
     page: ObjectId,
@@ -2531,22 +2694,26 @@ pub fn remove_form_images(
     let mut positions: Vec<usize> = Vec::with_capacity(ordinals.len());
     let mut forgotten: Vec<String> = Vec::new();
     for &ordinal in ordinals {
-        let (where_, picture, object) = drawn.get(ordinal).ok_or_else(|| {
+        let (where_, picture, _) = drawn.get(ordinal).ok_or_else(|| {
             said!(
                 "there is no picture {ordinal} in this form, which draws {count}",
                 count = drawn.len()
             )
         })?;
-        let _ = object;
         positions.push(*where_);
         forgotten.push(picture.clone());
     }
     positions.sort_unstable();
     positions.dedup();
     let removed = positions.len();
+    // A figure's `/Alt` describes the picture going, and in a form it sits on
+    // a span the page's walk never reads. Before the removal, which renumbers
+    // the operations the spans are found by.
+    let cleared = clear_form_shadow_text(doc, page, id, &mut inside.operations, &positions)?;
     for where_ in positions.into_iter().rev() {
         inside.operations.remove(where_);
     }
+    let in_structure = clear_struct_shadow_text(doc, id, &cleared.mcids);
 
     let encoded = inside
         .encode()
@@ -2577,8 +2744,8 @@ pub fn remove_form_images(
     Ok(Removed {
         shows_before: drawn.len(),
         removed,
-        carriers: 0,
-        struct_carriers: 0,
+        carriers: cleared.keys,
+        struct_carriers: in_structure,
     })
 }
 
@@ -2692,9 +2859,11 @@ fn forget_form_xobjects(
 ///
 /// The page having no content, or it not parsing to its end within
 /// [`MAX_CONTENT_BYTES`]; the image-`Do` count disagreeing with `image_objects`;
-/// an ordinal naming no image; the rewritten stream not encoding; or the page
-/// not reading back as what was written for it. A call that names no image
-/// reads nothing and refuses nothing.
+/// an ordinal naming no image; everything [`clear_shadow_text`] refuses, since a
+/// span around a removed picture loses its alternate text as one around a
+/// removed show does; the rewritten stream not encoding; or the page not
+/// reading back as what was written for it. A call that names no image reads
+/// nothing and refuses nothing.
 pub fn remove_images(
     doc: &mut Document,
     page: ObjectId,
@@ -2749,9 +2918,14 @@ pub fn remove_images(
     positions.dedup();
     let removed = positions.len();
 
+    // A figure's `/Alt` describes the picture being taken, as it describes a
+    // drawing in [`take_paths`]. Before the removal, which renumbers the
+    // operations a span is found by.
+    let figure = clear_shadow_text(doc, page, &mut content.operations, &positions)?;
     for at in positions.into_iter().rev() {
         content.operations.remove(at);
     }
+    let figure_elements = clear_struct_shadow_text(doc, page, &figure.mcids);
     let encoded = content
         .encode()
         .map_err(|why| said!("the rewritten content stream will not encode: {why}"))?;
@@ -2788,8 +2962,8 @@ pub fn remove_images(
     Ok(Removed {
         shows_before: drawn.len(),
         removed,
-        carriers: 0,
-        struct_carriers: 0,
+        carriers: figure.keys,
+        struct_carriers: figure_elements,
     })
 }
 
@@ -3058,8 +3232,9 @@ fn apply_path_edits(
 ///
 /// When the page's forms or the form's paths do not agree in number with what
 /// PDFium reported, when the document draws the form more than once, when a
-/// path to be removed also clips or one to be cut cannot be split exactly, or
-/// when the form's content cannot be read or written. Nothing is changed.
+/// path to be removed also clips or one to be cut cannot be split exactly, when
+/// [`clear_form_shadow_text`] refuses, or when the form's content cannot be
+/// read or written. Nothing is changed.
 pub fn take_form_paths(
     doc: &mut Document,
     page: ObjectId,
@@ -3118,7 +3293,11 @@ pub fn take_form_paths(
         pathcut::drawings_in_form(doc, page, &content, *drawn_at, id, &inside, &paths)
     })?;
     let (removed, cut) = (edits.removed, edits.cut);
+    // The form's spans, before the edit renumbers them, for `take_paths`'
+    // reason: a figure's `/Alt` describes the drawing being taken.
+    let cleared = clear_form_shadow_text(doc, page, id, &mut inside.operations, &edits.positions)?;
     apply_path_edits(&mut inside.operations, &edits.positions, edits.rewritten);
+    let in_structure = clear_struct_shadow_text(doc, id, &cleared.mcids);
 
     let encoded = inside
         .encode()
@@ -3137,8 +3316,8 @@ pub fn take_form_paths(
         removed: Removed {
             shows_before: painted.len(),
             removed,
-            carriers: 0,
-            struct_carriers: 0,
+            carriers: cleared.keys,
+            struct_carriers: in_structure,
         },
     })
 }
@@ -3237,7 +3416,6 @@ fn form_draws(doc: &Document, page: ObjectId, content: &Content) -> Result<Vec<S
         .collect())
 }
 
-/// The object a page's `/Resources /XObject` gives that name.
 /// Where the resources a page draws through are written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Holder {
@@ -3288,6 +3466,7 @@ fn held(doc: &Document, holder: Holder) -> Option<&Dictionary> {
     }
 }
 
+/// The object a page's `/Resources /XObject` gives that name.
 fn form_id(doc: &Document, page: ObjectId, name: &str) -> Result<ObjectId, String> {
     let resources = nearest_resources(doc, page)
         .and_then(|(holder, _)| held(doc, holder))
@@ -3327,6 +3506,19 @@ fn drawn_more_than_once(
     names: &[String],
     name: &str,
 ) -> Option<usize> {
+    drawn_more_than_once_in(doc, page, id, names, name, &mut PageDraws::default())
+}
+
+/// [`drawn_more_than_once`] with the pages' draws counted by the caller, so a
+/// caller asking about many objects decodes the pages once.
+fn drawn_more_than_once_in(
+    doc: &Document,
+    page: ObjectId,
+    id: ObjectId,
+    names: &[String],
+    name: &str,
+    draws: &mut PageDraws,
+) -> Option<usize> {
     let here = names.iter().filter(|other| *other == name).count();
     let elsewhere = references_to(doc, id);
     // **A list other pages read is one reference however many of them draw
@@ -3336,7 +3528,7 @@ fn drawn_more_than_once(
     // page draws, and taking the name out of the list would take it from all
     // of them. There the pages themselves are counted.
     let across = if list_is_shared(doc, page) {
-        draws_across_pages(doc, id)
+        draws.of(doc, id)
     } else {
         here
     };
@@ -3370,28 +3562,57 @@ fn list_is_shared(doc: &Document, page: ObjectId) -> bool {
 /// resources. Only what a page's own content draws: a draw from inside a form
 /// is a reference from that form's resources, which `references_to` counts.
 fn draws_across_pages(doc: &Document, id: ObjectId) -> usize {
-    doc.get_pages()
-        .into_values()
-        .map(|page| {
-            let Some(content) = doc
-                .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
-                .ok()
-                .and_then(|data| Content::decode(&data).ok())
-            else {
-                return 0;
-            };
-            content
-                .operations
-                .iter()
-                .filter(|operation| operation.operator == "Do")
-                .filter_map(|operation| match operation.operands.first() {
-                    Some(Object::Name(raw)) => Some(String::from_utf8_lossy(raw).into_owned()),
-                    _ => None,
-                })
-                .filter(|name| form_id(doc, page, name).ok() == Some(id))
-                .count()
-        })
-        .sum()
+    PageDraws::default().of(doc, id)
+}
+
+/// How many times the pages' own content draws each XObject, counted the
+/// first time it is asked and kept for every later question.
+///
+/// A plan asks this about every picture and form a page draws, and each
+/// question used to decode every page of the document again: 300 pages and 20
+/// XObjects were 6,000 page decodes for one plan. The answers are the same
+/// numbers [`draws_across_pages`] gives, from one pass.
+#[derive(Default)]
+struct PageDraws(Option<std::collections::HashMap<ObjectId, usize>>);
+
+impl PageDraws {
+    /// How many times the pages draw `id`.
+    fn of(&mut self, doc: &Document, id: ObjectId) -> usize {
+        self.0
+            .get_or_insert_with(|| page_draw_counts(doc))
+            .get(&id)
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+/// Every page's `Do` operations, by the object each name resolves to on the
+/// page that draws it.
+fn page_draw_counts(doc: &Document) -> std::collections::HashMap<ObjectId, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for page in doc.get_pages().into_values() {
+        let Some(content) = doc
+            .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+            .ok()
+            .and_then(|data| Content::decode(&data).ok())
+        else {
+            continue;
+        };
+        let names = content
+            .operations
+            .iter()
+            .filter(|operation| operation.operator == "Do")
+            .filter_map(|operation| match operation.operands.first() {
+                Some(Object::Name(raw)) => Some(String::from_utf8_lossy(raw).into_owned()),
+                _ => None,
+            });
+        for name in names {
+            if let Ok(drawn) = form_id(doc, page, &name) {
+                *counts.entry(drawn).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
 }
 
 /// How many times the document's object graph refers to `id`.
@@ -3624,32 +3845,38 @@ const MIN_OUTLINE_TITLE: usize = 4;
 /// PDFium through the font's own encoding. Not the operands
 /// [`remove_shows`] deleted: those are font-encoded bytes, and on a Type0
 /// document they are CIDs rather than characters.
+///
+/// **A walk cut short says so.** [`OutlineCover::cut`] is set when the
+/// outline is larger than [`MAX_OUTLINE_ITEMS`], so entries past the bound were
+/// never compared; the caller then takes the outline whole, because an entry
+/// nobody read may name what went.
 #[must_use]
-pub fn covered_outline(doc: &Document, taken: &[String]) -> Vec<ObjectId> {
-    let Some(root) = outline_root(doc) else {
-        return Vec::new();
+pub fn covered_outline(doc: &Document, taken: &[String]) -> OutlineCover {
+    let mut cover = OutlineCover::default();
+    let Some(first) = outline_first(doc) else {
+        return cover;
     };
     let folded: Vec<String> = taken.iter().map(|line| fold(line)).collect();
     if folded.iter().all(|line| line.is_empty()) {
-        return Vec::new();
+        return cover;
     }
 
     let mut doomed: Vec<ObjectId> = Vec::new();
     // Depth-first, and the stack is what bounds it rather than recursion: this
     // walks a tree the document shaped, in a save, and a `/First` that points at
     // an ancestor is an infinite loop with no stack frame to run out of.
-    let mut stack: Vec<ObjectId> = first_child(doc, root).into_iter().collect();
-    let mut seen: Vec<ObjectId> = Vec::new();
+    let mut stack: Vec<ObjectId> = vec![first];
+    let mut seen: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
     let mut visits = 0usize;
     while let Some(id) = stack.pop() {
         visits += 1;
         if visits > MAX_OUTLINE_ITEMS {
+            cover.cut = true;
             break;
         }
-        if seen.contains(&id) {
+        if !seen.insert(id) {
             continue;
         }
-        seen.push(id);
         let Ok(item) = doc.get_dictionary(id) else {
             continue;
         };
@@ -3662,8 +3889,11 @@ pub fn covered_outline(doc: &Document, taken: &[String]) -> Vec<ObjectId> {
         if let Ok(child) = item.get(b"First").and_then(Object::as_reference) {
             stack.push(child);
         }
+        // Through a reference as well: `/Title 12 0 R` is legal, and a title
+        // read only when it is written inline is a bookmark never compared.
         let title = item
             .get(b"Title")
+            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
             .and_then(Object::as_str)
             .map(annots::decode_text_string)
             .unwrap_or_default();
@@ -3678,11 +3908,36 @@ pub fn covered_outline(doc: &Document, taken: &[String]) -> Vec<ObjectId> {
 
     // The subtrees, after the search rather than during it, so an entry that
     // matches is taken whole exactly once however it was reached.
-    let mut all: Vec<ObjectId> = Vec::new();
     for id in doomed {
-        collect_subtree(doc, id, &mut all);
+        if !collect_subtree(doc, id, &mut cover.entries) {
+            cover.cut = true;
+        }
     }
-    all
+    cover
+}
+
+/// What [`covered_outline`] found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OutlineCover {
+    /// The entries to take, each matching entry with its subtree.
+    pub entries: Vec<ObjectId>,
+    /// The walk stopped at [`MAX_OUTLINE_ITEMS`], so entries past it were not
+    /// compared and a subtree may be only partly listed.
+    pub cut: bool,
+}
+
+/// The first entry of the catalog's outline, whether `/Outlines` is an object
+/// of its own or a dictionary written into the catalog.
+fn outline_first(doc: &Document) -> Option<ObjectId> {
+    doc.catalog()
+        .ok()?
+        .get(b"Outlines")
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        .and_then(Object::as_dict)
+        .ok()?
+        .get(b"First")
+        .and_then(Object::as_reference)
+        .ok()
 }
 
 /// Folds a title or a line for comparison.
@@ -3727,14 +3982,15 @@ pub(crate) fn first_child(doc: &Document, node: ObjectId) -> Option<ObjectId> {
         .ok()
 }
 
-/// Adds `id` and everything under it to `into`, once each.
-fn collect_subtree(doc: &Document, id: ObjectId, into: &mut Vec<ObjectId>) {
+/// Adds `id` and everything under it to `into`, once each, and says whether it
+/// got to the end: `false` when [`MAX_OUTLINE_ITEMS`] cut it short.
+fn collect_subtree(doc: &Document, id: ObjectId, into: &mut Vec<ObjectId>) -> bool {
     let mut stack = vec![id];
     let mut visits = 0usize;
     while let Some(at) = stack.pop() {
         visits += 1;
         if visits > MAX_OUTLINE_ITEMS {
-            return;
+            return false;
         }
         if into.contains(&at) {
             continue;
@@ -3756,6 +4012,7 @@ fn collect_subtree(doc: &Document, id: ObjectId, into: &mut Vec<ObjectId>) {
             }
         }
     }
+    true
 }
 
 /// Removes outline entries, repairing the chains they were in first.
@@ -3791,6 +4048,12 @@ pub fn drop_outline_items(doc: &mut Document, doomed: &[ObjectId]) -> Result<usi
         return Ok(0);
     }
     let doomed_set: std::collections::HashSet<ObjectId> = doomed.iter().copied().collect();
+    // An `/Outlines` written into the catalog has no id for a top-level
+    // entry's `/Parent` to name, so its `/First` and `/Last` would be reached
+    // by no splice and `forget` would take the key, and with it every entry
+    // after the removed one. Made an object of its own first, which is the
+    // same outline, and spliced as every entry's root below.
+    let root = own_outline_root(doc);
 
     for &id in doomed {
         let Ok(item) = doc.get_dictionary(id) else {
@@ -3811,7 +4074,14 @@ pub fn drop_outline_items(doc: &mut Document, doomed: &[ObjectId]) -> Result<usi
         if let Some(at) = next {
             set_or_clear(doc, at, b"Prev", prev);
         }
-        if let Some(at) = parent {
+        // The parent the entry names, and the outline's root whatever the
+        // entry says: a top-level `/Parent` that is missing or wrong must not
+        // leave the root's `/First` naming an entry that is going.
+        let mut holders: Vec<ObjectId> = parent.into_iter().collect();
+        if let Some(root) = root.filter(|root| Some(*root) != parent) {
+            holders.push(root);
+        }
+        for at in holders {
             if names(doc, at, b"First", id) {
                 set_or_clear(doc, at, b"First", next);
             }
@@ -3835,6 +4105,25 @@ pub fn drop_outline_items(doc: &mut Document, doomed: &[ObjectId]) -> Result<usi
         }
     }
     Ok(doomed.len())
+}
+
+/// The outline's root as an object, moving an `/Outlines` dictionary written
+/// into the catalog out into one of its own first. `None` when there is no
+/// outline.
+fn own_outline_root(doc: &mut Document) -> Option<ObjectId> {
+    if let Some(root) = outline_root(doc) {
+        return Some(root);
+    }
+    let written = doc
+        .catalog()
+        .ok()?
+        .get(b"Outlines")
+        .and_then(Object::as_dict)
+        .ok()?
+        .clone();
+    let root = doc.add_object(written);
+    doc.catalog_mut().ok()?.set("Outlines", root);
+    Some(root)
 }
 
 /// Sets `key` on `at` to `value`, or removes it when there is no value.
@@ -3870,14 +4159,28 @@ fn names(doc: &Document, at: ObjectId, key: &[u8], id: ObjectId) -> bool {
 /// descendants of any child that is *open*. Sign carries whether it is open, and
 /// is read off the value that is there --- the removal must not expand a section
 /// the reader had collapsed.
+///
+/// **Bounded in work, not only in depth.** A `/First` naming an entry already
+/// counted elsewhere would otherwise count it again under every parent that
+/// reaches it, and a few such links nested to [`MAX_TREE_DEPTH`] are more
+/// calls than a save can finish. An entry is descended into once, keeping the
+/// `/Count` its first visit wrote, and the walk stops after
+/// [`MAX_OUTLINE_ITEMS`] entries, as [`covered_outline`]'s does.
 pub(crate) fn recount(doc: &mut Document, node: ObjectId, depth: usize) -> i64 {
+    let mut walk = TreeWalk::default();
+    recount_in(doc, node, depth, &mut walk)
+}
+
+/// [`recount`], with the entries already met and the visits so far.
+fn recount_in(doc: &mut Document, node: ObjectId, depth: usize, walk: &mut TreeWalk) -> i64 {
     if depth > MAX_TREE_DEPTH {
         return 0;
     }
     let mut children: Vec<ObjectId> = Vec::new();
+    let mut chained: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
     let mut at = first_child(doc, node);
     while let Some(id) = at {
-        if children.len() > MAX_OUTLINE_ITEMS || children.contains(&id) {
+        if children.len() > MAX_OUTLINE_ITEMS || !chained.insert(id) {
             break;
         }
         children.push(id);
@@ -3890,13 +4193,20 @@ pub(crate) fn recount(doc: &mut Document, node: ObjectId, depth: usize) -> i64 {
 
     let mut visible = i64::try_from(children.len()).unwrap_or(i64::MAX);
     for child in children {
+        walk.visits += 1;
+        if walk.visits > MAX_OUTLINE_ITEMS {
+            break;
+        }
+        if !walk.seen.insert(child) {
+            continue;
+        }
         let open = doc
             .get_dictionary(child)
             .ok()
             .and_then(|item| item.get(b"Count").ok())
             .and_then(|value| value.as_i64().ok())
             .is_none_or(|count| count > 0);
-        let under = recount(doc, child, depth + 1);
+        let under = recount_in(doc, child, depth + 1, walk);
         if under == 0 {
             // No children left. `/Count` is only defined for a node that has
             // some, so the key goes rather than being written as zero.
@@ -4039,11 +4349,29 @@ pub fn covered_fields(doc: &Document, taken: &[String], lost: &HashSet<ObjectId>
 
     let mut doomed: Vec<ObjectId> = Vec::new();
     fields::walk(doc, &bounds, |node| {
-        // An entry written out in place rather than referenced cannot be
-        // removed --- there is no object to forget --- so it is not walked
-        // either, which is what this loop did before the traversal moved.
-        let (Some(id), Some(field)) = (node.id, node.dict) else {
+        let Some(field) = node.dict else {
             return fields::Flow::Leaf;
+        };
+        // **An entry written out in place is walked, and judged by the second
+        // rule.** It has no object for `forget` to name, so
+        // [`drop_inline_fields`] removes it from its array after the referenced
+        // fields have gone; what is decided here is the widgets under it,
+        // which are objects and go as a referenced field's do. Until
+        // 2026-11-19 such an entry ended the walk, so neither its value nor
+        // any field under it was looked at.
+        let Some(id) = node.id else {
+            if carries_taken(doc, field, &folded) {
+                doomed.extend(
+                    field
+                        .get(b"Kids")
+                        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+                        .and_then(Object::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|entry| entry.as_reference().ok()),
+                );
+            }
+            return fields::Flow::Descend;
         };
 
         let kids: Vec<ObjectId> = field
@@ -4066,20 +4394,7 @@ pub fn covered_fields(doc: &Document, taken: &[String], lost: &HashSet<ObjectId>
         let orphaned = lost.contains(&id) || (field.has(b"Kids") && kids.is_empty());
 
         // Rule two.
-        let carries = [b"V".as_slice(), b"DV".as_slice()].into_iter().any(|key| {
-            let Ok(value) = field
-                .get(key)
-                .and_then(|object| doc.dereference(object).map(|(_, object)| object))
-            else {
-                return false;
-            };
-            // A name is not a string, and `as_str` on `/Off` answers nothing.
-            let Ok(bytes) = value.as_str() else {
-                return false;
-            };
-            let text = fold(&annots::decode_text_string(bytes));
-            text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))
-        });
+        let carries = carries_taken(doc, field, &folded);
 
         if orphaned || carries {
             doomed.push(id);
@@ -4107,6 +4422,159 @@ pub fn covered_fields(doc: &Document, taken: &[String], lost: &HashSet<ObjectId>
         });
     }
     all
+}
+
+/// Whether a field's own `/V` or `/DV` is text the removal took: the second rule
+/// of [`covered_fields`]. `folded` is the taken lines, each through [`fold`].
+fn carries_taken(doc: &Document, field: &Dictionary, folded: &[String]) -> bool {
+    [b"V".as_slice(), b"DV".as_slice()].into_iter().any(|key| {
+        let Ok(value) = field
+            .get(key)
+            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
+        else {
+            return false;
+        };
+        // A name is not a string, and `as_str` on `/Off` answers nothing.
+        let Ok(bytes) = value.as_str() else {
+            return false;
+        };
+        let text = fold(&annots::decode_text_string(bytes));
+        text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))
+    })
+}
+
+/// Removes the fields written out in place that [`covered_fields`]'s rules
+/// take, and answers how many went.
+///
+/// **The half `forget` cannot do.** A field may be a dictionary written
+/// straight into `/AcroForm /Fields` or into another field's `/Kids`, and then
+/// there is no object id to forget: the entry is taken out of its array here
+/// instead. The rules are the same two. The second is the value. The first is
+/// a field whose `/Kids` is now empty, which is what an entry looks like once
+/// [`drop_fields`] has taken the widgets [`covered_fields`] doomed under it.
+///
+/// Run after [`drop_fields`], for that reason. Bounded by the arrays the
+/// form's own objects hold and by [`MAX_FIELD_NODES`] entries in all.
+pub fn drop_inline_fields(doc: &mut Document, taken: &[String]) -> usize {
+    let folded: Vec<String> = taken.iter().map(|line| fold(line)).collect();
+    let bounds = fields::Bounds {
+        nodes: MAX_FIELD_NODES,
+        depth: None,
+        dedup: true,
+        names: false,
+        order: fields::Order::Queue,
+    };
+    // The objects whose arrays may hold an entry written out in place: the
+    // `/AcroForm` (whatever holds its `/Fields`), and every referenced field.
+    let mut holders: Vec<ObjectId> = Vec::new();
+    fields::walk(doc, &bounds, |node| {
+        if let Some(id) = node.id {
+            holders.push(id);
+        }
+        fields::Flow::Descend
+    });
+    let form = doc
+        .catalog()
+        .ok()
+        .and_then(|catalog| catalog.get(b"AcroForm").ok())
+        .and_then(|object| object.as_reference().ok());
+    let fields_array = doc
+        .catalog()
+        .ok()
+        .and_then(|catalog| catalog.get(b"AcroForm").ok())
+        .and_then(|object| doc.dereference(object).map(|(_, object)| object).ok())
+        .and_then(|object| object.as_dict().ok())
+        .and_then(|form| form.get(b"Fields").ok())
+        .and_then(|object| object.as_reference().ok());
+
+    let mut budget = MAX_FIELD_NODES;
+    let mut gone = 0;
+    // Each holder's own array, and an array held as an object of its own.
+    let mut arrays: Vec<(Option<ObjectId>, &'static [u8])> = holders
+        .iter()
+        .map(|&id| (Some(id), b"Kids".as_slice()))
+        .collect();
+    arrays.push((form, b"Fields".as_slice()));
+    for id in fields_array
+        .into_iter()
+        .chain(holders.iter().filter_map(|&id| {
+            doc.get_dictionary(id)
+                .ok()?
+                .get(b"Kids")
+                .ok()?
+                .as_reference()
+                .ok()
+        }))
+    {
+        arrays.push((Some(id), b"".as_slice()));
+    }
+    for (at, key) in arrays {
+        if let Some(array) = array_at(doc, at, key) {
+            gone += prune_inline(array, &folded, &mut budget);
+        }
+    }
+    if gone > 0 {
+        drop_empty_form(doc);
+    }
+    gone
+}
+
+/// The array under `key` in object `at`, or the object itself when `key` is
+/// empty, or under `key` in the catalog's own `/AcroForm` when `at` is `None`.
+fn array_at<'a>(
+    doc: &'a mut Document,
+    at: Option<ObjectId>,
+    key: &[u8],
+) -> Option<&'a mut Vec<Object>> {
+    let holder = match at {
+        Some(id) if key.is_empty() => return doc.get_object_mut(id).ok()?.as_array_mut().ok(),
+        Some(id) => doc.get_object_mut(id).ok()?.as_dict_mut().ok()?,
+        None => doc
+            .catalog_mut()
+            .ok()?
+            .get_mut(b"AcroForm")
+            .ok()?
+            .as_dict_mut()
+            .ok()?,
+    };
+    holder.get_mut(key).ok()?.as_array_mut().ok()
+}
+
+/// Takes out of `entries` every field written out in place that the rules of
+/// [`drop_inline_fields`] take, after doing the same inside each one kept.
+///
+/// Reads the values as written: a `/V` held as an object of its own is not
+/// followed here, which [`covered_fields`] does for the widgets under it.
+fn prune_inline(entries: &mut Vec<Object>, folded: &[String], budget: &mut usize) -> usize {
+    let mut gone = 0;
+    entries.retain_mut(|entry| {
+        let Object::Dictionary(field) = entry else {
+            return true;
+        };
+        let Some(left) = budget.checked_sub(1) else {
+            return true;
+        };
+        *budget = left;
+        if let Ok(Object::Array(kids)) = field.get_mut(b"Kids") {
+            gone += prune_inline(kids, folded, budget);
+        }
+        let carries = [b"V".as_slice(), b"DV".as_slice()].into_iter().any(|key| {
+            field.get(key).and_then(Object::as_str).is_ok_and(|bytes| {
+                let text = fold(&annots::decode_text_string(bytes));
+                text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))
+            })
+        });
+        let orphaned = field
+            .get(b"Kids")
+            .and_then(Object::as_array)
+            .is_ok_and(Vec::is_empty);
+        if carries || orphaned {
+            gone += 1;
+            return false;
+        }
+        true
+    });
+    gone
 }
 
 /// The fields the given widgets belong to, read before they are removed.
@@ -4266,11 +4734,17 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
         return Ok(0);
     }
     pagetree::forget(doc, &doomed.iter().copied().collect())?;
+    drop_empty_form(doc);
+    Ok(doomed.len())
+}
 
-    // An `/AcroForm` with no fields left. Dropped whole rather than kept empty,
-    // for the reason an emptied outline is: a form with no fields reads as a
-    // document that never had one, and what it still carries --- `/DA`, `/DR`,
-    // `/NeedAppearances` --- describes fields that are gone.
+/// Removes an `/AcroForm` with no fields left.
+///
+/// Dropped whole rather than kept empty, for the reason an emptied outline is:
+/// a form with no fields reads as a document that never had one, and what it
+/// still carries --- `/DA`, `/DR`, `/NeedAppearances` --- describes fields that
+/// are gone.
+fn drop_empty_form(doc: &mut Document) {
     let empty = doc
         .catalog()
         .ok()
@@ -4287,7 +4761,6 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
             catalog.remove(b"AcroForm");
         }
     }
-    Ok(doomed.len())
 }
 
 /// What a result says beside its verdict.
@@ -4796,7 +5269,13 @@ mod form_image_tests;
 #[cfg(test)]
 mod form_path_tests;
 #[cfg(test)]
+mod form_shadow_tests;
+#[cfg(test)]
+mod inline_field_tests;
+#[cfg(test)]
 mod resource_tests;
+#[cfg(test)]
+mod tree_bound_tests;
 
 #[cfg(test)]
 mod tests {
@@ -7241,7 +7720,16 @@ mod tests {
                 .expect("the page")
                 .set("Annots", annots);
             let areas = [[90.0, 90.0, 210.0, 130.0]];
-            assert_eq!(take_inline_annots(&mut doc, page, &areas), 1, "held {held}");
+            assert_eq!(
+                take_inline_annots(
+                    &mut doc,
+                    page,
+                    &areas,
+                    &mut std::collections::HashSet::new()
+                ),
+                1,
+                "held {held}"
+            );
             let left = doc
                 .get_dictionary(page)
                 .and_then(|page| page.get(b"Annots"))
@@ -7263,6 +7751,68 @@ mod tests {
                 "and the one over the region is not among them"
             );
         }
+    }
+
+    /// An inline reply or popup to a taken annotation goes, wherever its own
+    /// rectangle lies; and the popup an inline annotation taken here names
+    /// joins what is forgotten.
+    #[test]
+    fn inline_dependents_of_a_taken_annotation_go_with_it() {
+        let (mut doc, page, ids) =
+            one_page_annots("BT (x) Tj ET", vec![note([100.0, 100.0, 200.0, 120.0])]);
+        let popup = doc.add_object(note([600.0, 600.0, 700.0, 650.0]));
+        let mut reply = note([400.0, 400.0, 500.0, 420.0]);
+        reply.set("IRT", ids[0]);
+        let mut window = note([400.0, 500.0, 500.0, 520.0]);
+        window.set("Parent", ids[0]);
+        let mut taken_here = note([110.0, 100.0, 190.0, 120.0]);
+        taken_here.set("Popup", popup);
+        let away = note([400.0, 300.0, 500.0, 320.0]);
+        doc.get_object_mut(page)
+            .and_then(Object::as_dict_mut)
+            .expect("the page")
+            .set(
+                "Annots",
+                vec![
+                    Object::Reference(ids[0]),
+                    Object::Dictionary(reply),
+                    Object::Dictionary(window),
+                    Object::Dictionary(taken_here),
+                    Object::Dictionary(away),
+                    Object::Reference(popup),
+                ],
+            );
+        let areas = [[90.0, 90.0, 210.0, 130.0]];
+        let mut taken: std::collections::HashSet<lopdf::ObjectId> =
+            covered_annots(&doc, page, &areas).into_iter().collect();
+        assert_eq!(
+            taken,
+            std::collections::HashSet::from([ids[0]]),
+            "the control"
+        );
+
+        let gone = take_inline_annots(&mut doc, page, &areas, &mut taken);
+
+        assert_eq!(
+            gone, 3,
+            "the reply, the popup window and the one over the region"
+        );
+        assert!(taken.contains(&popup), "the popup the inline one named");
+        let left = doc
+            .get_dictionary(page)
+            .and_then(|page| page.get(b"Annots"))
+            .and_then(Object::as_array)
+            .expect("the annotations")
+            .clone();
+        assert_eq!(
+            left,
+            vec![
+                Object::Reference(ids[0]),
+                Object::Dictionary(note([400.0, 300.0, 500.0, 320.0])),
+                Object::Reference(popup),
+            ],
+            "the one away from the region, answering nothing, stays"
+        );
     }
 
     /// The carrier: an annotation over the region goes with the words.

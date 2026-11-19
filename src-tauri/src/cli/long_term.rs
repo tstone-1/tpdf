@@ -142,12 +142,26 @@ impl Subcommand for LongTerm {
         }
         // Read once: every revision is built against exactly these bytes,
         // and they are what a worker is handed to read the signatures in.
-        let original = std::fs::read(&self.input).map_err(|e| {
+        // Measured before it is read, as `sign` measures it: a document past
+        // the bound is refused without being held in memory first. The read
+        // takes one byte past the bound at most, so a file that grew between
+        // the two is refused by the second check rather than read whole.
+        let unread = |e: std::io::Error| {
             Failure::new(
                 Exit::Refused,
                 format!("could not read {}: {e}", self.input.display()),
             )
-        })?;
+        };
+        let file = std::fs::File::open(&self.input).map_err(unread)?;
+        let len = file.metadata().map_err(unread)?.len();
+        refuse_too_large(len).map_err(|why| Failure::new(Exit::Refused, why))?;
+        let mut original = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(&file, crate::save::APPEND_MAX_BYTES + 1),
+            &mut original,
+        )
+        .map_err(unread)?;
+        drop(file);
         if original.is_empty() {
             return Err(Failure::new(
                 Exit::Refused,

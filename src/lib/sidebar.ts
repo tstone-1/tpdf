@@ -593,9 +593,10 @@ export class Sidebar {
     this.elements.clear();
 
     const limits = this.outline?.limits;
-    if (limits && (limits.cycles || limits.too_deep || limits.over_budget)) {
+    const said = limits ? noticeFor(limits) : null;
+    if (said !== null) {
       this.notice.style.display = "";
-      this.notice.textContent = noticeFor(limits);
+      this.notice.textContent = said;
     } else {
       this.notice.style.display = "none";
       this.notice.textContent = "";
@@ -831,14 +832,21 @@ export class Sidebar {
 }
 
 
-/** What the limits banner says, naming the bound that fired. */
-function noticeFor(limits: Outline["limits"]): string {
+/**
+ * What the limits banner says, naming the bound that fired, or `null` when
+ * none did. The banner is shown on exactly a non-null answer, so a bound this
+ * does not word cannot be shown as a banner with nothing in it either.
+ */
+export function noticeFor(limits: Outline["limits"]): string | null {
   const text = TEXT();
   const parts: string[] = [];
   if (limits.cycles) parts.push(text.loops);
   if (limits.too_deep) parts.push(text.tooDeep);
   if (limits.over_budget) parts.push(text.overBudget);
-  return text.incomplete(parts.join(", "));
+  // A clipped title is shown without a mark of its own, and one declined at
+  // the byte bound is shown empty, so the row alone cannot say it.
+  if (limits.titles_clipped) parts.push(text.titlesClipped(limits.titles_clipped));
+  return parts.length === 0 ? null : text.incomplete(parts.join(", "));
 }
 
 const TEXT = catalog({
@@ -860,6 +868,8 @@ const TEXT = catalog({
     loops: "loops back on itself",
     tooDeep: "nests deeper than tpdf will follow",
     overBudget: "has more entries than tpdf will show",
+    titlesClipped: (count: number) =>
+      count === 1 ? "has 1 title tpdf shows only in part" : `has ${count} titles tpdf shows only in part`,
     incomplete: (parts: string) => `This outline ${parts} — what is shown is incomplete.`,
   },
   "de-DE": {
@@ -880,6 +890,8 @@ const TEXT = catalog({
     loops: "verweist auf sich selbst zurück",
     tooDeep: "ist tiefer verschachtelt, als tpdf folgt",
     overBudget: "hat mehr Einträge, als tpdf anzeigt",
+    titlesClipped: (count: number) =>
+      count === 1 ? "hat 1 Titel, den tpdf nur teilweise anzeigt" : `hat ${count} Titel, die tpdf nur teilweise anzeigt`,
     incomplete: (parts: string) => `Diese Gliederung ${parts}; die Anzeige ist unvollständig.`,
   },
 });

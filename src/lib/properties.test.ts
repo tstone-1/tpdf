@@ -41,9 +41,12 @@ function blank(): Properties {
       locked: false,
       fields_dropped: 0,
       values_clipped: 0,
+      timestamps_unread: 0,
       signatures_dropped: 0,
       unreadable: 0,
       certificates_unread: 0,
+      revocation_unread: 0,
+      revocation_dropped: 0,
     },
     scan_ms: 0.1,
   };
@@ -1266,6 +1269,24 @@ describe("a certificate that could not be read", () => {
     // "present but could not be read" and "absent" are the two readings that
     // must not collapse; the first is about tpdf, the second about the file.
     expect(row?.value).toContain("present");
+  });
+});
+
+describe("an unread timestamp token and unread revocation data", () => {
+  it("each get a warning row, so the signature does not read as untimestamped or unchecked", () => {
+    const doc = blank();
+    doc.limits.timestamps_unread = 1;
+    expect(limitRows(doc.limits)).toEqual([
+      { name: "Timestamps", value: "1 was present but could not be read", warn: true },
+    ]);
+
+    const revocation = blank();
+    revocation.limits.revocation_unread = 2;
+    revocation.limits.revocation_dropped = 3;
+    expect(limitRows(revocation.limits)).toEqual([
+      { name: "Revocation data", value: "2 records were present but could not be read", warn: true },
+      { name: "Revocation data", value: "3 records were not read", warn: true },
+    ]);
   });
 });
 

@@ -116,7 +116,12 @@ export function positionsFor(
   const slotsOf = new Map<string, number[]>();
   for (let slot = 0; slot < pageCount; slot++) {
     const label = labelOf(slot);
-    if (label !== null) slotsOf.set(label, [...(slotsOf.get(label) ?? []), slot]);
+    if (label === null) continue;
+    // Pushed, not copied: a document whose every page prints the same label
+    // would otherwise copy a growing list once per page.
+    const slots = slotsOf.get(label);
+    if (slots) slots.push(slot);
+    else slotsOf.set(label, [slot]);
   }
   if (slotsOf.size === 0) return null;
   let usedLabel = false;

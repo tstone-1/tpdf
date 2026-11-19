@@ -386,6 +386,7 @@
     DiskWatch,
     onDiskChange,
     readDiskChangeMode,
+    WATCH_INTERVAL_MS,
     writeDiskChangeMode,
     type DiskChangeMode,
   } from "./lib/diskwatch";
@@ -529,14 +530,12 @@
   import type { Properties } from "./lib/properties";
   import { basename } from "./lib/paths";
   import { Sidebar, type SidebarOptions, type Tab } from "./lib/sidebar";
-  import {
-    pagesNeedingWords,
-    wantingWordsOn,
-    wordsForPage,
-    type Comments,
-  } from "./lib/comments";
-  import { fillRedactionRegions } from "./lib/redactlist";
+  import type { Comments } from "./lib/comments";
+  import { CommentWords } from "./lib/commentwalk";
+  import { CoveredWords } from "./lib/coveredwords";
+  import { RegionWords } from "./lib/redactlist";
   import { noticeFor as linkNotice, type Link } from "./lib/links";
+  import { promptUnaskedNow, whereUnasked } from "./lib/unasked";
   import { ImportedLinks } from "./lib/importedlinks";
   import type { Outline, WebTarget } from "./lib/outline";
   import {
@@ -553,7 +552,6 @@
     type FieldKind,
     type StampName,
     type PageId,
-    type RegionPlan,
   } from "./lib/pages";
   import { dimensionsOf, type PageSizeName } from "./lib/pagesizes";
   import { nameOf } from "./lib/markpopup";
@@ -600,10 +598,11 @@
   import { Viewer, type PageClick, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import {
-    dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin, tabToKeep,
-    toldAfterFallback,
+    abandonedBy, documentsBusy, dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint,
+    sharedByTwin, tabToKeep, toldAfterFallback,
     type OpenFound,
   } from "./lib/documentopen";
+  import { ranOr, typedNotTaken } from "./lib/edithold";
   import { Panes, otherSide, type Side, type Slot } from "./lib/panes";
   import { followPress, TabDrag, type Carried } from "./lib/tabdrag";
   import { NO_VIEW, ViewIds, viewOf, type ViewId } from "./lib/views";
@@ -917,7 +916,7 @@
     const tab = tabs.find(openView);
     if (!tab || !viewer || !edits) return;
     keepState(tab, {
-      edits, place: currentPlace(false), covered: new Map(covered), query,
+      edits, place: currentPlace(false), covered: covered.copy(), query,
       findShown, searchOptions: viewer.searchOptionsNow,
       searchScope: keepScope(viewer.searchScopeRanges, edits.state.pages), sidebarTab: sidebar?.tab ?? "outline",
       error, messageTone, offers, notice, redactedCopyPath, measures: viewer.measurements,
@@ -941,10 +940,7 @@
     redactedCopyPath: (value) => { redactedCopyPath = value; },
     // Mark ids start again with the model, so an entry kept from the last
     // document would put its words on this one's first highlight.
-    covered: (value) => {
-      covered.clear();
-      for (const [id, words] of value) covered.set(id, words);
-    },
+    covered: (value) => covered.restore(value),
     // A search is its words, how they are matched and where, restored by one
     // call so that a search confined to a selection is not widened on the way.
     // The scope only while the pages are the ones it was kept with: the
@@ -991,7 +987,7 @@
   function focusSide(side: Side): boolean {
     const id = panes.front(side);
     if (id === openView) return true;
-    if (opening || documentBusy || copyTaskBusy || !stage.parked.includes(id)) return false;
+    if (busyNow || !stage.parked.includes(id)) return false;
     commitPopups();
     // A search still waiting out its pause is this document's. Run now, it
     // reaches the viewer it was typed for.
@@ -1310,8 +1306,8 @@
    */
   async function openInFolder(step: 1 | -1): Promise<void> {
     const from = openView;
-    const tab = from === null ? undefined : tabs.find(from);
-    if (from === null || !tab) return;
+    const tab = from === NO_VIEW ? undefined : tabs.find(from);
+    if (!tab) return;
     let paths: string[];
     try {
       paths = await call("folder_pdfs", { path: tab.path });
@@ -1445,6 +1441,11 @@
     });
   }
   let copyTaskBusy = $state(false);
+  /**
+   * Whether nothing may be started on a document now (`documentsBusy`): what
+   * the menu greys by, and the message bar's buttons and the tab row with it.
+   */
+  const busyNow = $derived(documentsBusy({ opening, documentBusy, copyTaskBusy }));
   let redactedCopyPath = $state<string | null>(null);
   let blockingTask = $state<string | null>(null);
   // Whether the blocking task is a text recognition, which is the one of them
@@ -1497,33 +1498,11 @@
    */
   let markNib = $state<Nib>(DEFAULT_NIB);
   /**
-   * The words each mark covers, by the model's id for it.
-   *
-   * **Not `$state`, and not in the model.** The panel is imperative DOM that is
-   * repainted by hand, so nothing here has to be reactive; and the model holds
-   * what the document will become, which this is not --- a saved PDF has no
-   * entry for the text a highlight sits on, so this could never be read back
-   * and would be a field `save.rs` had to remember to ignore.
-   *
-   * Filled by {@link markSelection}, which is the only way a mark that covers
-   * words is made. Kept until the document changes rather than pruned against
-   * the live marks: an undone mark comes back under the same id --- the id is
-   * in the journalled command --- so a map pruned on undo would have redo show
-   * the reader "No note" for a highlight whose words it had just been
-   * displaying. The cost of that choice is an entry per mark removed and not
-   * redone, each capped at {@link COVERED_CHARS}.
+   * The words each mark covers, by the model's id for it: `coveredwords.ts`,
+   * which says why it is kept beside the model and not in it. Filled by
+   * {@link markSelection}. Not `$state`: the panel is repainted by hand.
    */
-  let covered = new Map<number, string>();
-  /**
-   * Longest covered text kept per mark, in characters.
-   *
-   * The row is one line and the CSS ellipsis cuts it far shorter than this, so
-   * nothing visible is lost. What it bounds is a reader who selects a hundred
-   * dense pages and highlights them: the whole of every page would otherwise be
-   * held here, beside the copy `TextCache` is already holding under its own
-   * bound.
-   */
-  const COVERED_CHARS = 200;
+  let covered = new CoveredWords();
 
   /**
    * What the status line calls the tool that is armed.
@@ -1703,71 +1682,21 @@
   let importedLinks = new ImportedLinks();
   let rawComments: Comments | null = null;
   /**
-   * Comments whose covered words have been asked for, so none is asked twice.
-   *
-   * **Comment ids, and until 2026-08-26 this held page slots.** The comment
-   * that justified that was half right and the half it got wrong decided the
-   * key: one extraction does answer every comment on a page, and a page that
-   * came back with nothing is a page that was asked --- both true, and neither
-   * says the *set* may be keyed by page. A page number here is a slot, and
-   * deleting a page renumbers every slot after it, so a walk that had answered
-   * slot 5 would then refuse the page that moved into slot 5 and its comments
-   * would read *no comment* for the rest of the session. Measured before it was
-   * changed: two bare highlights, one answered, one page deleted, and the walk
-   * returned nothing with a comment still wanting words.
-   *
-   * A comment id is what the annotation carries and it does not move. The
-   * redaction walk below reaches the same conclusion from the other end and
-   * goes one step further: it counts what has been answered by *region* id, so
-   * that a second region drawn on a page already read is still asked about.
-   * Cleared with the document, since an id means nothing across two files.
+   * The comment walk's asked set, the words it found and its flag:
+   * `CommentWords` in `commentwalk.ts`, where the trap about a set keyed by page
+   * slot is written down and tested.
    */
-  let wordsAsked = new Set<number>();
+  let commentWords = new CommentWords();
   /**
-   * The words each comment covers, for the ones that have been looked up.
-   *
-   * **Held here as well as in the panel, and that is not belt and braces.**
-   * `applyPageOrder` re-supplies the whole comment list whenever a page is
-   * deleted or moved, and the panel drops its words with every `setComments` ---
-   * ids are per document, so keeping them there across a list it did not compute
-   * would be the one way a sentence lands on the wrong row. Without this map the
-   * rows fell back to "Highlight, no comment" on the first page deletion and
-   * stayed there for the rest of the session, because {@link wordsAsked} had
-   * already recorded every page as asked.
-   *
-   * Found by a mutation that survived: clearing the panel's map on each answer
-   * changed nothing observable, which is what made it worth reading the code one
-   * layer out.
+   * The words each pending region covers and what a removal would take from
+   * it, by redaction id, with the walk's flag: `RegionWords` in `redactlist.ts`.
    */
-  let commentWords = new Map<number, string>();
-  /** Whether {@link fillCommentWords} is walking, so a second call stands down. */
-  let fillingWords = false;
-  /**
-   * The words each pending region covers, by redaction id.
-   *
-   * `null` for a region whose page could not be read, which is a different
-   * thing to tell a reader than an empty string --- `redactlist.ts` states the
-   * four answers and why none of them may be collapsed. A region with no entry
-   * has not been looked at yet.
-   */
-  let redactionWords = new Map<number, string | null>();
-  /**
-   * What a removal would take from each pending region, by redaction id.
-   *
-   * Separate from {@link redactionWords} because they answer different
-   * questions and come from different places: the words a region *covers* are
-   * geometry this process already holds, and this is a reading of the page's
-   * content stream that only a worker can do. What it is for is the row's
-   * second line --- the objects a removal cannot take.
-   */
-  let redactionPlans = new Map<number, RegionPlan>();
+  let redactionWords = new RegionWords();
   /**
    * The colour of the boxes a redaction draws: black unless the reader chose
    * another in the redactions panel. `redactfill.ts` keeps it between sessions.
    */
   let redactionFill: Fill = readFill();
-  /** Whether {@link fillRedactionWords} is walking, so a second call stands down. */
-  let fillingRedactionWords = false;
   /**
    * Raw state, not a plain variable, since the page counter reads its page
    * labels and the outline arrives after first paint; raw, because it is only
@@ -1854,12 +1783,8 @@
     scannedForm: { get: () => scannedForm, set: (value) => { scannedForm = value; } },
     formEditing: { get: () => formEditing, set: (value) => { formEditing = value; } },
     covered: { get: () => covered, set: (value) => { covered = value; } },
-    wordsAsked: { get: () => wordsAsked, set: (value) => { wordsAsked = value; } },
     commentWords: { get: () => commentWords, set: (value) => { commentWords = value; } },
     redactionWords: { get: () => redactionWords, set: (value) => { redactionWords = value; } },
-    redactionPlans: { get: () => redactionPlans, set: (value) => { redactionPlans = value; } },
-    fillingWords: { get: () => fillingWords, set: (value) => { fillingWords = value; } },
-    fillingRedactionWords: { get: () => fillingRedactionWords, set: (value) => { fillingRedactionWords = value; } },
   };
   const stage = new Stage<LiveDocument, ViewId>(liveSlots, blankLive, () => openView);
 
@@ -1976,8 +1901,10 @@
     setDiskChangeMode: (mode) => setDiskChangeMode(mode),
     closeDocument: () => void closeTab(openView),
     closeAllDocuments: () => void closeAllTabs(),
-    canCloseTabs: (which: CloseWhich) => openView !== null && tabsClosedBy(openView, which).length > 0,
-    closeTabs: (which: CloseWhich) => { if (openView !== null) void closeTabs(tabsClosedBy(openView, which)); },
+    // `NO_VIEW` and not null, which a view never is: "Close other tabs" with
+    // no view in front counted every tab as another.
+    canCloseTabs: (which: CloseWhich) => openView !== NO_VIEW && tabsClosedBy(openView, which).length > 0,
+    closeTabs: (which: CloseWhich) => { if (openView !== NO_VIEW) void closeTabs(tabsClosedBy(openView, which)); },
     canReopenClosedTab: () => closedTabs.latest((path) => tabs.forPath(path) !== undefined) !== null,
     reopenClosedTab: () => void reopenClosedTab(),
     openInFolder: (step: 1 | -1) => void openInFolder(step),
@@ -2024,7 +1951,7 @@
     nextDocument: (delta) => { const next = tabs.neighbour(delta); if (next) void activateTab(next.view); },
     documentCount: () => tabRows.length,
     busyOpening: () => opening || copyTaskBusy || documentBusy,
-    busyDocument: () => copyTaskBusy || opening || documentBusy,
+    busyDocument: () => busyNow,
     printDocument: () => void printDocument(),
     focusFind: () => focusFind(),
     toggleSearchOption: (which) => toggleSearchOption(which),
@@ -2267,12 +2194,12 @@
       );
       // Absent when the model refused. Nothing to record and nothing to say ---
       // `applyEdit` has already shown the refusal.
-      if (made) asDocument(view, () => covered.set(made.id, text.slice(0, COVERED_CHARS)));
+      if (made) asDocument(view, () => covered.note(made.id, text));
     }
     // `applyEdit` painted the panel already --- but it painted it *before* this
     // loop knew which id to file the words under, so every row it drew says
     // nothing was typed on the mark. One repaint here rather than one inside
-    // the loop after each `covered.set`: a selection over four pages makes four
+    // the loop after each `covered.note`: a selection over four pages makes four
     // marks, and the three intermediate paints would each be replaced within
     // the millisecond by the next `applyEdit`.
     if (marks.length > 0) asDocument(view, () => {
@@ -3073,7 +3000,9 @@
       void call("page_import_cancel", { doc: waiting.doc, pending: waiting.pending }).catch(() => {});
     const at = viewer?.position.page;
     if (at === undefined) return release();
-    await applyEdit((e) => {
+    // Released too when the edit never ran: refused while a task runs, which
+    // answers without calling this, the answer having already been taken.
+    await ranOr(applyEdit, (e) => {
       // The queue runs this later, against whichever document is open then.
       // The file was prepared for `model`, so another one releases it.
       if (e !== model) {
@@ -3081,7 +3010,7 @@
         return Promise.resolve(e.state);
       }
       return e.importPages(at, waiting.pending, pages);
-    });
+    }, release);
   }
 
   /**
@@ -3297,6 +3226,20 @@
     return done;
   }
 
+  /**
+   * An edit carrying words the reader typed in the box beside a mark or a
+   * comment, made as {@link applyEdit} makes one. The box has closed by the
+   * time it runs, so a refusal before it ran is said, with the words, rather
+   * than dropping them (`edithold.ts`): the box can be typed in while an
+   * update downloads, which refuses every edit.
+   */
+  function typedEdit(run: (edits: Edits) => Promise<EditState>, words: string): Promise<EditState | null> {
+    const view = openView;
+    return ranOr((edit) => applyEdit(edit, view), run, () => {
+      asDocument(view, () => say(typedNotTaken(words)));
+    });
+  }
+
   async function editExistingText(): Promise<void> {
     const model = edits, mounted = viewer, host = surface, view = openView;
     if (!model || !mounted || !host || documentBusy) return;
@@ -3495,7 +3438,7 @@
       // The words are about a comment rather than about a page order, so they
       // survive a page being deleted or moved --- and re-asking for them is not
       // an option, since the pages they came from are recorded as asked.
-      if (commentWords.size > 0) sidebar?.setCommentWords(commentWords);
+      if (commentWords.words.size > 0) sidebar?.setCommentWords(commentWords.words);
     }
     if (rawOutline) {
       sidebar?.setOutline({
@@ -3506,24 +3449,14 @@
   }
 
   /**
-   * Fills in the words each bare highlight covers, a page at a time.
-   *
-   * **Why it exists.** A reviewer's highlight with nothing typed on it is a
-   * rectangle and no text, so the panel listed nine of them as nine rows all
-   * reading "Highlight, no comment" --- a list that says a document was marked
-   * up and not one word about what was marked. The words are in the page, under
-   * the rectangle, and `wordsForPage` is what reads them out.
-   *
-   * **Why a page at a time, awaited.** Each page is a `page_text` extraction in
-   * the backend, and the pool that answers it is the pool drawing tiles. Firing
-   * them all at once puts a document's worth of extractions in front of the page
-   * the reader is looking at; awaiting each means at most one is ever queued,
-   * and the panel fills in from the front of the document while they scroll.
+   * Fills in the words each bare highlight covers, a page at a time. Why it
+   * exists, why a page at a time and why the asked set holds comment ids:
+   * `commentwalk.ts`, which is the walk.
    *
    * **Why it can be called again.** {@link CommentList.setWords} merges, and
-   * `asked` stops the same page being fetched twice, so a reader flipping to the
-   * comments tab repeatedly costs one pass. `running` is what makes a second
-   * call during the first a no-op rather than a second interleaved walk.
+   * the document's `CommentWords` stops the same comment being asked for twice
+   * and makes a second call during the first a no-op rather than a second
+   * interleaved walk.
    *
    * The words are read against the page **as it is now** while the comments were
    * scanned when the document opened. That is the same footing the rectangles
@@ -3532,60 +3465,29 @@
    * words together, or neither.
    */
   async function fillCommentWords(): Promise<void> {
-    if (fillingWords) return;
     const source = rawComments;
     if (!source) return;
-    fillingWords = true;
     // The walk waits for a page at a time, and the reader may change sides
     // while it does. Each round's reading and each round's writing runs as the
-    // document the walk was started in, and so does lowering the flag.
-    const id = openView;
-    try {
-      for (;;) {
-        const round = asDocument(id, () => {
-          // **Re-slotted every round, not once before the loop.** A page number
-          // here is a slot, and a reader who deletes a page mid-walk renumbers
-          // every slot after it --- so a list captured up front would read slot 4's
-          // text and hand it to the comment that used to be there. Wrong words on
-          // a real row, which is the failure that looks entirely plausible.
-          const items = commentsIn(
-            source.items,
-            edits?.map ?? NO_PAGES,
-            edits?.state.notes,
-          );
-          const page = pagesNeedingWords(items, wordsAsked)[0];
-          if (page === undefined) return null;
-          // The document that was open when this page was asked for. A second file
-          // opened mid-walk replaces `rawComments`, and writing this one's
-          // sentences onto its rows has the same shape as the slot problem above.
-          if (rawComments !== source) return null;
-          // The comments this round will answer, recorded before the await so a
-          // page that cannot be read is not asked for again on the next edit.
-          // **Their ids, not the page**: a page number here is a slot, and a
-          // deletion renumbers every slot after it --- see `pagesNeedingWords`,
-          // which now takes this set and states what went wrong when it held
-          // slots.
-          for (const comment of wantingWordsOn(items, page)) wordsAsked.add(comment.id);
-          return { items, page, reader: viewer };
-        });
-        if (!round) return;
-        const { items, page, reader } = round;
-        const words = await wordsForPage(items, page, (at) =>
-          reader ? reader.unturnedText(at) : Promise.resolve(null),
-        );
-        const kept = asDocument(id, () => {
-          if (rawComments !== source) return false;
-          if (words.size > 0) {
-            for (const [comment, said] of words) commentWords.set(comment, said);
-            sidebar?.setCommentWords(words);
-          }
-          return true;
-        });
-        if (!kept) return;
-      }
-    } finally {
-      asDocument(id, () => { fillingWords = false; });
-    }
+    // document the walk was started in. The viewer and the document's walk
+    // state are held for the walk, as `fillRedactionWords` holds its own: the
+    // variables are another document's once the reader changes sides, and a
+    // second file opened mid-walk replaces `rawComments`.
+    const id = openView, reader = viewer, walk = commentWords;
+    // The walk and what it keeps are `commentwalk.ts`, where a test can reach
+    // them; what stays here is the wiring. The comments are slotted again
+    // every round, as the document they are in is now.
+    await walk.fill({
+      comments: () => asDocument(id, () => rawComments === source
+        ? commentsIn(source.items, edits?.map ?? NO_PAGES, edits?.state.notes)
+        : null) ?? null,
+      text: (slot) => reader ? reader.unturnedText(slot) : Promise.resolve(null),
+      found: (words) => asDocument(id, () => {
+        if (rawComments !== source) return false;
+        if (words.size > 0) sidebar?.setCommentWords(words);
+        return true;
+      }) === true,
+    });
   }
 
   /**
@@ -3621,40 +3523,32 @@
    * slot into a different file page, and the plan was stored for the wrong page.
    */
   async function fillRedactionWords(): Promise<void> {
-    if (fillingRedactionWords) return;
     const model = edits;
     if (!model || !viewer) return;
-    fillingRedactionWords = true;
     // Held for the walk, as `fillCommentWords` holds its own: the variables
     // are another document's once the reader changes sides.
-    const id = openView, reader = viewer, panel = sidebar;
-    const words = redactionWords, planned = redactionPlans;
-    try {
-      // The walk is `redactlist.ts`, where a test can reach it; what stays here
-      // is the wiring. Every lookup reads `model.map` at the moment it is asked,
-      // because an edit replaces the page order in place during a wait.
-      await fillRedactionRegions({
-        // The model that was open when this walk started. A second document
-        // replaces `edits` mid-walk, and writing this one's words onto its rows
-        // is the same failure `fillCommentWords` guards against.
-        current: () => asDocument(id, () => edits === model) === true,
-        regions: () => model.state.redactions,
-        slotOf: (page) => model.map.slotOfId(page),
-        sourceOf: (slot) => model.map.sourceOf(slot),
-        text: async (slot) => (await reader.unturnedText(slot)) ?? null,
-        plans: (page, regions) => call("redaction_plans", { doc: model.doc, page, regions }),
-        words,
-        planned,
-        answered: () => panel?.setRedactionWords(),
-        // Not raised to the reader. The rows keep saying what they said,
-        // which is nothing about what a removal would take --- and the
-        // command that actually redacts asks again and reports its own
-        // failures, so a reader is never left acting on this silence.
-        failed: (e) => console.warn(`could not read what a removal would take: ${e}`),
-      });
-    } finally {
-      asDocument(id, () => { fillingRedactionWords = false; });
-    }
+    const id = openView, reader = viewer, panel = sidebar, walk = redactionWords;
+    // The walk and what it keeps are `redactlist.ts`, where a test can reach
+    // them; what stays here is the wiring. Every lookup reads `model.map` at
+    // the moment it is asked, because an edit replaces the page order in place
+    // during a wait.
+    await walk.fill({
+      // The model that was open when this walk started. A second document
+      // replaces `edits` mid-walk, and writing this one's words onto its rows
+      // is the same failure `fillCommentWords` guards against.
+      current: () => asDocument(id, () => edits === model) === true,
+      regions: () => model.state.redactions,
+      slotOf: (page) => model.map.slotOfId(page),
+      sourceOf: (slot) => model.map.sourceOf(slot),
+      text: async (slot) => (await reader.unturnedText(slot)) ?? null,
+      plans: (page, regions) => call("redaction_plans", { doc: model.doc, page, regions }),
+      answered: () => panel?.setRedactionWords(),
+      // Not raised to the reader. The rows keep saying what they said,
+      // which is nothing about what a removal would take --- and the
+      // command that actually redacts asks again and reports its own
+      // failures, so a reader is never left acting on this silence.
+      failed: (e) => console.warn(`could not read what a removal would take: ${e}`),
+    });
   }
 
   /**
@@ -3669,7 +3563,7 @@
    */
   async function reopenAfterWrite(path: string, place: Place | null): Promise<void> {
     openDoc = -1; openView = NO_VIEW;
-    await openPath(path, false, place);
+    await openPath(path, false, place, true);
   }
 
   /**
@@ -3756,6 +3650,9 @@
       if (!edits || !openPathName) return;
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
+        // Before the panel: it takes the keyboard from a form control, whose
+        // answer would then commit inside this task and be refused.
+        await settleDrafts();
         const chosen = await saveDialog({
           title: TEXT().saveCopy,
           defaultPath: TEXT().copySuggested(suggested),
@@ -3800,6 +3697,7 @@
       if (!edits || !openPathName) return;
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
+        await settleDrafts();
         const chosen = await saveDialog({
           title: TEXT().redactSaveAs,
           defaultPath: TEXT().redactedName(suggested),
@@ -3864,12 +3762,11 @@
       // this command. Without the tick, a fast state change followed by IPC can
       // leave the only visible acknowledgement until after the file exists.
       await tick();
-      say(
-        afterRasterRedaction(
-          await edits.redactRasterCopy(source, chosen, redactionFill),
-          basename(chosen),
-        ), [], "success",
+      const made = afterRasterRedaction(
+        await edits.redactRasterCopy(source, chosen, redactionFill),
+        basename(chosen),
       );
+      say(made.message, [], resultTone(made.success));
     } catch (e) {
         if (e instanceof SaveCancelled) return;
       say(TEXT().rasterFailed(spokenError(e)));
@@ -4452,6 +4349,7 @@
       if (!edits || !openPathName || slots.length === 0) return;
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
+        await settleDrafts();
         const chosen = await saveDialog({
           title: TEXT().extractPages,
           defaultPath: `${suggested} ${namePages(slots)}.pdf`,
@@ -4494,6 +4392,7 @@
       if (!edits || !openPathName || groups.length < 2) return;
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
+        await settleDrafts();
         const chosen = await saveDialog({
           title: TEXT().splitDocument,
           defaultPath: `${suggested}.pdf`,
@@ -4553,6 +4452,7 @@
     return documentTasks.run(async () => {
       if (!edits || !openPathName) return;
       try {
+        await settleDrafts();
         const picked = await openDialog({
           multiple: true,
           directory: false,
@@ -5186,6 +5086,10 @@
         turns: viewer.rotation,
       };
       try {
+        // The job is built from the model, so a form answer still in its
+        // control would be missing from the paper. Ctrl+P reaches here from
+        // inside a field.
+        await settleDrafts();
         // macOS's print panel draws the job itself. Windows' and GTK's do not,
         // so there the job is shown first (`printpreviewdialog.ts`), and on
         // Windows the preview is the print dialog: GTK's offers a scale and
@@ -5318,6 +5222,16 @@
   }
 
   /**
+   * Shows a report that arrived on its own, a while after anything was
+   * pressed, without replacing a message the reader has on screen: the bar
+   * while it is empty, the notice line otherwise (`unasked.ts`).
+   */
+  function sayUnasked(text: string): void {
+    if (whereUnasked(error) === "message") say(text);
+    else tell(spoken(text));
+  }
+
+  /**
    * Opens the current document's path again.
    *
    * The place is captured here and handed to the open, rather than left to the
@@ -5371,7 +5285,10 @@
       // check. A save's own write is the case that matters --- it changes the
       // file and then reopens it, and must not be answered with a reload.
       const current = () => doc === openDoc && !opening && !documentBusy;
-      if (!current()) return false;
+      // Nor while the bar holds a message: the prompt would replace it, and a
+      // reload nobody is asked about clears it on the way in. A redaction's
+      // verdict is the message this is for.
+      if (!current() || !promptUnaskedNow(error)) return false;
       // What happens, and the settling that comes before a reload nobody is
       // asked about, are `onDiskChange`'s.
       return onDiskChange({
@@ -5414,7 +5331,9 @@
    */
   function reloadAnyway() {
     const path = openPathName;
-    if (!path) return;
+    // Refused on what greys the menu's Reload: the offer on a message can be
+    // pressed while a task the menu waits for is still running on the file.
+    if (!path || busyNow) return;
     say(null);
     void openPath(path, false, currentPlace());
   }
@@ -5958,7 +5877,7 @@
       // Whether another program rewrote the open file. Once a second is a
       // `stat` and nothing else until one differs; on focus as well, so a
       // reader coming back from the program that wrote it is not kept waiting.
-      window.setInterval(checkDisk, 1000);
+      window.setInterval(checkDisk, WATCH_INTERVAL_MS);
       window.addEventListener("focus", checkDisk);
       // The link, or the PATH, can be changed from a terminal while tpdf is
       // open, and a greyed command cannot be run to find that out.
@@ -6030,8 +5949,8 @@
       if (plan.behind.length) tabRecorder.hold();
       for (const path of plan.show) {
         await openPath(path, plan.resuming);
-        const opening = handed.find((each) => each.path === path);
-        if (opening) placeOpened(opening);
+        const given = handed.find((each) => each.path === path);
+        if (given) placeOpened(given);
       }
       // After the document the reader is waiting for has been asked for, and
       // not awaited: until it answers, both of the tool's commands are offered.
@@ -6045,8 +5964,10 @@
       const unopenedTabs = (refused: readonly string[]): boolean => {
         const unopened = unopenedAtLaunch(plan, refused, isOpenTab);
         tabRecorder.keepUnopened(unopened, plan.order);
+        // After the tabs behind the first have opened, which is later than
+        // anything the reader may have pressed meanwhile.
         const said = afterLaunch(unopened, basename);
-        if (said) say(said);
+        if (said) sayUnasked(said);
         return unopened.length > 0;
       };
       if (plan.behind.length) {
@@ -6282,14 +6203,18 @@
     path: string,
     resuming = false,
     resume: Place | null = null,
+    afterWrite = false,
   ): Promise<void> {
-    // A save's own reopen must not wait for the save that requested it.
-    const ready = resume ? Promise.resolve() : documentTasks.idle();
+    // A write's own reopen must not wait for the task that requested it, and
+    // it is the only open that may skip the wait: `afterWrite` is set by
+    // `reopenAfterWrite` alone. A reload passes a place too, and read off the
+    // place it tore the document down under a task still running on it.
+    const ready = afterWrite ? Promise.resolve() : documentTasks.idle();
     return ready.then(() => opens.run(async () => {
       const existing = resume ? undefined : tabs.forPath(path);
       // A document already open is shown where it is, on its own side.
       if (existing) { await showTabNow(existing.view); viewer?.focus(); return; }
-      const failed = await openDocument(path, resuming, resume);
+      const failed = await openDocument(path, resuming, resume, undefined, afterWrite);
       // A second view of a document that was saved or reloaded went with the
       // old handle. It is mounted again on the new one, where it was. So is
       // the tab of a reload that failed, on the handle it had, and the reader
@@ -6306,9 +6231,9 @@
    * A document handed over from outside while the window is running: a
    * double-click, an Apple Event, or a second launch with `--page` or `--zoom`.
    */
-  async function openFromOutside(opening: Opening): Promise<void> {
-    await openPath(opening.path);
-    placeOpened(opening);
+  async function openFromOutside(given: Opening): Promise<void> {
+    await openPath(given.path);
+    placeOpened(given);
   }
 
   /**
@@ -6316,11 +6241,11 @@
    * the document is the one in front. Nothing when it asked for none, or when
    * the open failed and something else is in front.
    */
-  function placeOpened(opening: Opening): void {
-    if (!hasPlace(opening) || !viewer || openPathName !== opening.path) return;
-    const problem = applyPlace(viewer, opening, edits?.state.pages.length ?? openPageCount);
+  function placeOpened(given: Opening): void {
+    if (!hasPlace(given) || !viewer || openPathName !== given.path) return;
+    const problem = applyPlace(viewer, given, edits?.state.pages.length ?? openPageCount);
     if (problem !== null) say(problem);
-    if (opening.forward !== null) void searchForward(viewer, opening.path, opening.forward);
+    if (given.forward !== null) void searchForward(viewer, given.path, given.forward);
   }
 
   /**
@@ -6507,7 +6432,7 @@
         onRemove: (id) => void applyEdit((e) => e.unmark(id)),
         // What the selection said when the mark was made, or "" --- see
         // `covered` above for why this is held here and not in the model.
-        coveredFor: (id) => covered.get(id) ?? "",
+        coveredFor: (id) => covered.of(id),
       },
       redactions: {
         fill: {
@@ -6531,13 +6456,13 @@
         // Four answers, and the map deliberately holds no entry for a region
         // nobody has looked at yet: `Map.get` answering `undefined` is what
         // separates *not read* from a page read and found to hold nothing.
-        wordsFor: (id) => redactionWords.get(id),
+        wordsFor: (id) => redactionWords.words.get(id),
         // Absent until a worker has answered for the region's page, which is
         // why the row draws nothing rather than "no objects": a warning that
         // has not arrived and a region with nothing to warn about must not
         // look alike, and the way they are told apart here is that only one
         // of them ever produces a line.
-        planFor: (id) => redactionPlans.get(id),
+        planFor: (id) => redactionWords.plans.get(id),
       },
       hidden: { onPick: (passage) => showHidden(passage) },
       changes: { onPick: (index) => { if (comparisons.pick(index)) void goToChange(); } },
@@ -6691,10 +6616,10 @@
       // drawing what was typed until it settles, which is after `setMarks`
       // has the model's answer. See `markdraft.ts`.
       onMarkNote: (mark, note) => {
-        if (!isSaved(mark)) return applyEdit((e) => e.renote(mark, note));
+        if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, note), note);
         const to = scannedForm && edits ? fieldRenamed(scannedForm, edits.state, mark, note) : null;
         if (typeof to === "string") return say(to);
-        return to ? applyEdit((e) => e.refield([to])) : undefined;
+        return to ? typedEdit((e) => e.refield([to]), note) : undefined;
       },
       // The lines for a text box's words while they are being typed, from
       // the function the model wraps with. Nothing is stored by it.
@@ -6711,7 +6636,7 @@
       // here anyway --- `setComments` closes a popup whose comment has gone.
       onCommentEdit: (comment, body) => {
         const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
-        if (to) void applyEdit((e) => e.rewrite(to.object, to.page, body));
+        if (to) void typedEdit((e) => e.rewrite(to.object, to.page, body), body);
       },
       // The same two lookups as the rewrite above and for its reasons: a
       // comment the file wrote as a direct dictionary has no object to name,
@@ -6731,7 +6656,7 @@
       // for once.
       onCommentReply: (comment, body) => {
         const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
-        if (to) void applyEdit((e) => e.reply(to.page, to.object, comment.rect, body));
+        if (to) void typedEdit((e) => e.reply(to.page, to.object, comment.rect, body), body);
       },
       onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),
       // A colour picked in the swatch row, or by a `Colour:` command with a
@@ -6859,12 +6784,12 @@
       onWebLink: (target) => void followWebLink("links", target),
       // The one message here nobody asked for. It fires while someone is
       // reading, because a process outside the application shortened the file
-      // underneath them --- so it goes to the same surface as the errors they
-      // did ask for, which is the only one this window has. The pages already
-      // painted stay painted; what this adds is the reason the rest never
-      // arrive.
+      // underneath them --- so it goes to the bar the errors they did ask for
+      // go to, unless that holds a message already, which it does not take.
+      // The pages already painted stay painted; what this adds is the reason
+      // the rest never arrive.
       onGone: (message) => {
-        say(message);
+        sayUnasked(message);
       },
     }, runningAs(view)));
   }
@@ -6971,7 +6896,7 @@
       formLayer = buildFormLayer(surface, view, form, mounted);
       if (edits) formLayer.update(edits.state);
       formLayer.setBusy(documentBusy);
-    })).catch((error) => asDocument(view, () => { if (viewer === mounted) say(String(error)); }));
+    })).catch((error) => asDocument(view, () => { if (viewer === mounted) sayUnasked(String(error)); }));
   }
 
   /** Reads the document's outline once its first screen is up. */
@@ -7048,9 +6973,11 @@
         // A cut list is worth saying out loud, for the reason every bound in
         // this application reports itself: a document whose cross-references
         // half work is worse to use than one whose links are all dead, and
-        // silence makes the two indistinguishable.
+        // silence makes the two indistinguishable. It arrives about a second
+        // after the document opened, and by then the bar can hold a redaction's
+        // verdict or a tab's message with its buttons, which it must not take.
         const said = linkNotice(result.limits);
-        if (said) say(said);
+        if (said) sayUnasked(said);
       }))
       .catch(() => {
         // Deliberately quiet. A document with no readable links is the common
@@ -7108,6 +7035,16 @@
    * that is gone.
    */
   function abandonOpen(acquired: number, replaced: boolean, twins: readonly DocumentTab[]): void {
+    // A view that goes and is still mounted goes from its page area first.
+    // Only a write's reopen leaves one, failing before its own teardown: the
+    // tab it reopens, in the variables under no view, and any other view of
+    // its document still on the other side (`abandonedBy`).
+    if (replaced) {
+      for (const twin of twins) {
+        asDocument(twin.view, () => unmountDocument());
+        panes.unmounted(twin.view);
+      }
+    }
     // Which views go, and that the row is drawn after the last of them has
     // gone, is `dropAbandoned`'s. On every path, the ones that drop nothing
     // included: a row drawn once too often is the same row.
@@ -7162,6 +7099,7 @@
     resuming = false,
     override: Place | null = null,
     retained?: DocumentTab,
+    afterWrite = false,
   ): Promise<string | null> {
     let failed: string | null = null;
     opening = true;
@@ -7169,6 +7107,9 @@
     let replaced = false;
     let acquired = -1;
     let twins: DocumentTab[] = [];
+    // The tab a save or a redaction in place is reopening, whose handle the
+    // write already closed: an open that fails takes it down (`abandonedBy`).
+    const written = afterWrite ? tabs.forPath(path, tabs.active) : undefined;
     try {
       const doc = retained?.doc ?? await openOrAsk(path);
       acquired = retained ? -1 : doc.id;
@@ -7223,10 +7164,10 @@
       sidebar = buildSidebar(sidebarHost, view, doc, pages[0]);
       sidebar.setVisible(sidebarShown);
 
-      const opening = adoptModel(view, doc, path, { retained, replacing, replaceId, twins, resume, kept });
+      const model = adoptModel(view, doc, path, { retained, replacing, replaceId, twins, resume, kept });
       viewer = buildViewer(area, view, doc, pages);
       panes.mounted(view, slot);
-      showModel(viewer, sidebar, opening, resume, retained ? kept : null);
+      showModel(viewer, sidebar, model, resume, retained ? kept : null);
       readAfterFirstPaint(view, doc.id, viewer);
       // A save or a reload read the file again under a new view: the
       // comparison follows it and is out of date on both sides.
@@ -7234,7 +7175,8 @@
       // A document compared before it was last unmounted shows it again.
       showComparisonHere();
     } catch (e) {
-      abandonOpen(acquired, replaced, twins);
+      const left = abandonedBy(tabs.all, written, replaced, twins);
+      abandonOpen(acquired, left.replaced, left.twins);
       const said = openFailure(e, resuming);
       if (said !== null) say(said);
       failed = said;
@@ -7429,7 +7371,7 @@
       class:attention={messageTone === "attention"} data-testid="problem">
       {#if redactedCopyPath}
         <p>{TEXT().redactedCopySaved(basename(redactedCopyPath))}</p>
-        <button data-testid="open-redacted-copy" disabled={copyTaskBusy}
+        <button data-testid="open-redacted-copy" disabled={busyNow}
           onclick={async () => {
             const path = redactedCopyPath;
             const verdict = error;
@@ -7479,21 +7421,21 @@
         <div class="offers">
           {#each offers as offer (offer)}
             {#if offer === "saveCopy"}
-              <button data-testid="offer-saveCopy" disabled={copyTaskBusy}
+              <button data-testid="offer-saveCopy" disabled={busyNow}
                 onclick={() => void saveCopy()}
                 >{TEXT().offerSaveCopy}</button
               >
             {:else if offer === "reload"}
-              <button data-testid="offer-reload" disabled={copyTaskBusy}
+              <button data-testid="offer-reload" disabled={busyNow}
                 onclick={() => reloadAnyway()}
                 >{TEXT().offerReload}</button
               >
             {:else if offer === "rasterCopy"}
-              <button data-testid="offer-rasterCopy" disabled={copyTaskBusy}
+              <button data-testid="offer-rasterCopy" disabled={busyNow}
                 onclick={() => void redactRasterCopy()}
                 >{TEXT().offerRasterCopy}</button>
             {:else if offer === "redact"}
-              <button data-testid="offer-redact" disabled={copyTaskBusy}
+              <button data-testid="offer-redact" disabled={busyNow}
                 onclick={() => void redactAnyway()}
                 >{TEXT().offerRedact}</button
               >

@@ -203,6 +203,48 @@ export function dropAbandoned<Id>(
 }
 
 /**
+ * How far an open that failed had got, as {@link dropAbandoned} and the
+ * teardown after it take it: whether the outgoing document is gone, and the
+ * views that went with it.
+ *
+ * `replaced` and `twins` are what the open itself recorded. `written` is the
+ * tab a save or a redaction in place was reopening, or undefined for any other
+ * open. **A write has torn the document down before its reopen begins**: the
+ * backend closed the handle as part of the write and the window forgot it,
+ * so an open that fails at its first step, before it tore anything down
+ * itself, has still lost the reader's document. Read as "nothing touched", it
+ * left the old viewer on screen with no view named for it, and a tab whose
+ * close was refused because the window could not bring it forward.
+ *
+ * The written tab goes, with every other view of its document, all on the
+ * handle the write closed, however far the open got: one that failed after
+ * its own teardown would otherwise mount the written tab again on that
+ * handle, as a failed reload rightly does on the handle it still has. A tab
+ * the open already took out of the row is not taken out twice.
+ */
+export function abandonedBy<T extends { edits: unknown }>(
+  tabs: readonly T[],
+  written: T | undefined,
+  replaced: boolean,
+  twins: readonly T[],
+): { replaced: boolean; twins: readonly T[] } {
+  if (written === undefined) return { replaced, twins };
+  const gone = [written, ...twinsOf(tabs, written)].filter((tab) => tabs.includes(tab));
+  return { replaced: true, twins: gone };
+}
+
+/**
+ * Whether the window refuses to start anything on a document: an open is
+ * running, a document task or a hold is up (`DocumentTasks.busy`), or a copy
+ * task is. The menu greys by this, and so do the message bar's buttons, which
+ * otherwise started what the menu refused: Reload from disk tore a document
+ * down under a task still running on it.
+ */
+export function documentsBusy(flags: { opening: boolean; documentBusy: boolean; copyTaskBusy: boolean }): boolean {
+  return flags.opening || flags.documentBusy || flags.copyTaskBusy;
+}
+
+/**
  * What a failed open tells the reader, or null for nothing.
  *
  * A document that was open last time and is not there now is not a failure

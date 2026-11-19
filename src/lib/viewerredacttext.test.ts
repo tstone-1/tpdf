@@ -127,6 +127,35 @@ function drag(from: { x: number; y: number }, to: { x: number; y: number }): voi
   dom.root.dispatch("pointerup", { pointerId: 1, clientX: to.x, clientY: to.y });
 }
 
+describe("a selection drag the browser cancels", () => {
+  it("marks nothing, follows the pointer no further, and leaves no listener", async () => {
+    const viewer = await build();
+    viewer.armRedact();
+    const counts = (): number[] =>
+      ["pointermove", "pointerup", "pointercancel"].map((name) => dom.root.listeners.get(name)?.size ?? 0);
+    const resting = counts();
+    const from = at(60, 200);
+    const to = at(140, 200);
+    dom.root.dispatch("pointerdown", { button: 0, pointerId: 1, clientX: from.x, clientY: from.y, target: dom.root });
+    dom.root.dispatch("pointermove", { pointerId: 1, clientX: to.x, clientY: to.y });
+    dom.root.dispatch("pointercancel", { pointerId: 1, clientX: to.x, clientY: to.y });
+    const kept = viewer.selectionQuadsByPage().map((one) => one.text).join("|");
+    // The control: the press did select, so "nothing was marked" is about
+    // the cancel and not about a press that found no words.
+    expect(kept).not.toBe("");
+    expect(counts()).toEqual(resting);
+
+    // A move with no button down extends nothing, and a later release marks
+    // nothing: the gesture that would have been marked was taken away.
+    const further = at(490, 200);
+    dom.root.dispatch("pointermove", { pointerId: 1, clientX: further.x, clientY: further.y });
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: further.x, clientY: further.y });
+    expect(marked).toEqual([]);
+    expect(viewer.selectionQuadsByPage().map((one) => one.text).join("|")).toBe(kept);
+    viewer.destroy();
+  });
+});
+
 describe("the redaction tool pressed on text", () => {
   it("marks the words dragged across and stays armed", async () => {
     const viewer = await build();

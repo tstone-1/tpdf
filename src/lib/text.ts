@@ -1111,8 +1111,38 @@ type CharClass = "word" | "space" | "mark";
 const WORD_CHARACTER = /[\p{L}\p{N}\p{M}_]/u;
 const WHITESPACE = /\s/u;
 
+/**
+ * The character a code from a worker stands for.
+ *
+ * `String.fromCodePoint` throws a `RangeError` for anything that is not a
+ * whole number from 0 to 0x10FFFF, and a code is whatever the worker sent:
+ * one such value in a page would take down a double-click, a copy or the
+ * screen-reader text with it. It becomes U+FFFD, the character every text
+ * decoder puts where it could not read one.
+ */
+export function charOf(code: number): string {
+  return Number.isInteger(code) && code >= 0 && code <= 0x10ffff
+    ? String.fromCodePoint(code)
+    : "�";
+}
+
+/**
+ * {@link charOf} over many codes, in chunks of 4096 so that a page-sized run
+ * cannot overflow the argument limit of the spread underneath.
+ */
+export function charsOf(codes: readonly number[]): string {
+  let out = "";
+  for (let at = 0; at < codes.length; at += 4096) {
+    const chunk = codes.slice(at, at + 4096);
+    out += chunk.every((code) => Number.isInteger(code) && code >= 0 && code <= 0x10ffff)
+      ? String.fromCodePoint(...chunk)
+      : chunk.map(charOf).join("");
+  }
+  return out;
+}
+
 function classOf(code: number): CharClass {
-  const char = String.fromCodePoint(code);
+  const char = charOf(code);
   if (WORD_CHARACTER.test(char)) return "word";
   if (WHITESPACE.test(char)) return "space";
   return "mark";
@@ -1172,15 +1202,11 @@ export function lineAt(text: PageText, index: number): IndexRange {
  * The text of a character range.
  *
  * Built from code points rather than sliced out of a string, because there is no
- * string to slice --- see the module docs. `fromCodePoint` is applied in chunks
- * so a page-sized selection cannot overflow the argument limit.
+ * string to slice --- see the module docs. {@link charsOf} chunks them so a
+ * page-sized selection cannot overflow the argument limit.
  */
 export function textOf(text: PageText, from: number, to: number): string {
   const start = Math.max(0, from);
   const end = Math.min(to, text.codes.length);
-  let out = "";
-  for (let at = start; at < end; at += 4096) {
-    out += String.fromCodePoint(...text.codes.slice(at, Math.min(at + 4096, end)));
-  }
-  return out;
+  return start < end ? charsOf(text.codes.slice(start, end)) : "";
 }

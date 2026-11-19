@@ -516,7 +516,7 @@ pub(crate) enum Job {
     Codes {
         doc: u32,
         page: u32,
-        reply: Reply<crate::codes::PageCodes>,
+        reply: Reply<crate::codes::Page2dCodes>,
     },
     Append {
         doc: u32,
@@ -1135,7 +1135,7 @@ impl RenderService {
 
     /// Reads the QR codes and other 2D codes on one page, invoking `reply` on a
     /// service thread. See `codes.rs`; the page is drawn where it is parsed.
-    pub fn codes(&self, doc: u32, page: u32, reply: Reply<crate::codes::PageCodes>) {
+    pub fn codes(&self, doc: u32, page: u32, reply: Reply<crate::codes::Page2dCodes>) {
         if self.tx.send(Job::Codes { doc, page, reply }).is_err() {
             // Render thread is gone; nothing left to reply with.
         }
@@ -1407,7 +1407,7 @@ pub(crate) trait Engine {
         doc: u32,
         compress: crate::compress::Compress,
     ) -> Result<crate::compress::Estimate, String>;
-    fn codes(&self, doc: u32, page: u32) -> Result<crate::codes::PageCodes, String>;
+    fn codes(&self, doc: u32, page: u32) -> Result<crate::codes::Page2dCodes, String>;
     fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String>;
     fn prepare_signature(
         &self,
@@ -1854,7 +1854,7 @@ impl Engine for InProcess {
         )
     }
 
-    fn codes(&self, doc: u32, page: u32) -> Result<crate::codes::PageCodes, String> {
+    fn codes(&self, doc: u32, page: u32) -> Result<crate::codes::Page2dCodes, String> {
         run_codes(self.bindings, open_slot(&self.docs.borrow(), doc)?, page)
     }
 
@@ -2752,12 +2752,6 @@ fn search_run(
     Ok(answers)
 }
 
-/// Roughly how many bytes one page's answer will occupy as JSON.
-///
-/// An estimate and named as one. What it has to be is *monotone in the thing
-/// that can run away* --- the number of matches and the text each carries ---
-/// rather than accurate: the budget above leaves an order of magnitude of margin
-/// precisely so that the JSON scaffolding this does not count cannot close it.
 /// Folds a run's answers into the one a caller sees: the first, carrying the
 /// rest.
 ///
@@ -2777,6 +2771,13 @@ pub(crate) fn packed(mut answers: Vec<PageMatches>) -> Result<PageMatches, Strin
     Ok(first)
 }
 
+/// Roughly how many bytes one page's answer will occupy as JSON.
+///
+/// An estimate and named as one. What it has to be is *monotone in the thing
+/// that can run away* --- the number of matches and the text each carries ---
+/// rather than accurate: the search's budget leaves an order of magnitude of
+/// margin precisely so that the JSON scaffolding this does not count cannot
+/// close it.
 fn weight_of(answer: &PageMatches) -> usize {
     /// The fixed part of one match: five numbers, their field names, and the
     /// punctuation between them.
@@ -3045,7 +3046,7 @@ pub(crate) fn run_codes(
     bindings: Bindings,
     document: &OpenDocument,
     page: u32,
-) -> Result<crate::codes::PageCodes, String> {
+) -> Result<crate::codes::Page2dCodes, String> {
     let (width_pt, height_pt) = {
         let at = document.page(page)?;
         (at.width_pt(), at.height_pt())

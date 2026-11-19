@@ -18,7 +18,8 @@
 //! an unclosed `q`. So the content is wrapped: a stream holding `q` goes in
 //! front of it, and the text's own stream begins with one `Q` for that and one
 //! more for every `q` the content opened and never closed, counted by decoding
-//! it. A content stream that cannot be decoded within
+//! it, up to many times the format's own limit on nesting. A content stream
+//! that cannot be decoded within
 //! `redact::MAX_CONTENT_BYTES` is taken to be balanced, which is what nearly
 //! every writer produces.
 //!
@@ -426,7 +427,17 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
     Ok(())
 }
 
-/// How many `q` the page's content leaves open: `q` less `Q`, at least zero.
+/// The most `q` a page's content is closed for.
+///
+/// The format's own limit on nesting is 28 (ISO 32000-1, Annex C), so no
+/// content a reader draws as its producer meant leaves more open than this.
+/// The count is otherwise bounded only by the content's size, and each page
+/// gets a stream of its own, so a hostile stream shared by every page would
+/// be multiplied by the page count.
+const MAX_UNCLOSED: usize = 4_096;
+
+/// How many `q` the page's content leaves open: `q` less `Q`, at least zero,
+/// and at most [`MAX_UNCLOSED`].
 fn unclosed(doc: &Document, page: ObjectId) -> usize {
     let Ok(data) = doc.get_page_content_with_limit(page, crate::redact::MAX_CONTENT_BYTES) else {
         return 0;
@@ -442,7 +453,7 @@ fn unclosed(doc: &Document, page: ObjectId) -> usize {
             _ => {}
         }
     }
-    usize::try_from(depth.max(0)).unwrap_or(0)
+    usize::try_from(depth.max(0)).unwrap_or(0).min(MAX_UNCLOSED)
 }
 
 /// The font a line is set in.
@@ -490,13 +501,16 @@ impl Face<'_> {
 /// clear of any the page already uses.
 fn names(doc: &Document, page: ObjectId, states: usize) -> (Vec<String>, Vec<String>) {
     let resources = resources_of(doc, page);
-    let taken = |key: &[u8], name: &str| {
+    // Each read once: a probe that copied the dictionary would copy it once
+    // for every name tried.
+    let used = |key: &[u8]| {
         resources
             .get(key)
             .ok()
             .map(|found| dictionary_of(doc, found))
-            .is_some_and(|dict| dict.has(name.as_bytes()))
+            .unwrap_or_default()
     };
+    let (font_names, state_names) = (used(b"Font"), used(b"ExtGState"));
     let fonts = FONT_NAMES
         .iter()
         .map(|base| {
@@ -507,7 +521,7 @@ fn names(doc: &Document, page: ObjectId, states: usize) -> (Vec<String>, Vec<Str
                 } else {
                     format!("{base}{suffix}")
                 };
-                if !taken(b"Font", &name) {
+                if !font_names.has(name.as_bytes()) {
                     break name;
                 }
                 suffix += 1;
@@ -518,7 +532,7 @@ fn names(doc: &Document, page: ObjectId, states: usize) -> (Vec<String>, Vec<Str
     let mut n = 0_u32;
     while out.len() < states {
         let name = format!("{STATE_NAME}{n}");
-        if !taken(b"ExtGState", &name) {
+        if !state_names.has(name.as_bytes()) {
             out.push(name);
         }
         n += 1;
@@ -894,6 +908,30 @@ mod tests {
             _ => d,
         });
         assert_eq!(depth, 1, "only the text's own q is open at BT: {ops:?}");
+    }
+
+    /// Content that leaves far more `q` open than any producer nests is closed
+    /// for no more than [`MAX_UNCLOSED`] of them, on every page that shares it:
+    /// the count is the content's to choose, and the closing stream is one
+    /// per page. A content just at the bound is the control.
+    #[test]
+    fn the_q_closed_for_the_content_are_bounded() {
+        let leading_q = |doc: &Document| {
+            let ops = operations(doc, 0);
+            let first = ops.iter().position(|op| op.operator == "Q").expect("a Q");
+            ops[first..]
+                .iter()
+                .take_while(|op| op.operator == "Q")
+                .count()
+        };
+        let mut doc = document(1, 0, "q ".repeat(MAX_UNCLOSED).as_bytes());
+        write(&mut doc, &[AddedText::page_numbers()]).expect("writes");
+        assert_eq!(leading_q(&doc), MAX_UNCLOSED + 1, "the control");
+
+        let mut doc = document(2, 0, "q ".repeat(MAX_UNCLOSED * 4).as_bytes());
+        write(&mut doc, &[AddedText::page_numbers()]).expect("writes");
+        assert_eq!(leading_q(&doc), MAX_UNCLOSED + 1);
+        assert_eq!(shown(&doc, 1), ["Page 2 of 2"]);
     }
 
     #[test]

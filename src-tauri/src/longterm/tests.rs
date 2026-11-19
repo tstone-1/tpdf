@@ -1828,6 +1828,7 @@ fn strict(pki: &Pki, bytes: &[u8]) -> (bool, crate::cli::Exit, crate::cli::verif
             .filter(|s| s.signed)
             .map(signature_report)
             .collect(),
+        signatures_complete: true,
     };
     // Every signature passes on its own in every case below, so what decides
     // is what follows the last of them.

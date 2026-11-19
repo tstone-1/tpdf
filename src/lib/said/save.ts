@@ -264,6 +264,14 @@ export default {
     "Objekt {object} konnte nicht dekodiert werden, daher ist sein Inhalt unbekannt: {why}",
   "object {object} names its filter in a form this build does not read, so its contents were not decoded":
     "Objekt {object} nennt seinen Filter in einer Form, die diese Version nicht liest, daher wurde sein Inhalt nicht dekodiert",
+  "object {object} is an image stored without compression, so its picture was not read; text visible only as pixels needs OCR":
+    "Objekt {object} ist ein unkomprimiert gespeichertes Bild, daher wurde das Bild nicht gelesen; Text, der nur als Pixel sichtbar ist, braucht Texterkennung",
+  "object {object} draws a picture inside its own content (an inline image), so that picture was not read; text visible only as pixels needs OCR":
+    "Objekt {object} zeichnet ein Bild in seinem eigenen Inhalt (ein Inline-Bild), daher wurde dieses Bild nicht gelesen; Text, der nur als Pixel sichtbar ist, braucht Texterkennung",
+  "object {object} gives how to decode it (/DecodeParms) in a form this build does not read, so its contents were not decoded":
+    "Objekt {object} gibt an, wie es zu dekodieren ist (/DecodeParms), in einer Form, die diese Version nicht liest, daher wurde sein Inhalt nicht dekodiert",
+  "object {object} stopped decoding part way, so whatever follows the point it stopped at was not read":
+    "Die Dekodierung von Objekt {object} brach mittendrin ab, daher wurde alles nach dieser Stelle nicht gelesen",
   "the file draws text through a composite (Type0) font, which stores glyph numbers rather than characters, so a copy of the words drawn through it cannot be found by reading its bytes":
     "Die Datei zeichnet Text mit einer zusammengesetzten Schrift (Type0), die Glyphennummern statt Zeichen speichert, daher lässt sich eine Kopie der damit gezeichneten Wörter nicht durch Lesen der Bytes finden",
   "the file carries embedded files, which are documents of their own that nothing here reads, so a copy of the words inside one would not be found":
@@ -372,6 +380,10 @@ export default {
     "{source} konnte zum Speichern nicht geöffnet werden: {e}",
   "could not open {source:?} to read it back: {e}":
     "{source} konnte zum Zurücklesen nicht geöffnet werden: {e}",
+  "{target:?} is marked read-only, so tpdf cannot save over it --- nothing was changed. Use Save a copy, or clear the attribute and save again.":
+    "{target} ist schreibgeschützt, daher kann tpdf nicht darüber speichern - es wurde nichts geändert. Nutze „Kopie speichern“, oder hebe den Schreibschutz auf und speichere erneut.",
+  "tpdf cannot save over {target:?}: {e} --- nothing was changed. Use Save a copy, or close the program holding it and save again.":
+    "tpdf kann nicht über {target} speichern: {e} - es wurde nichts geändert. Nutze „Kopie speichern“, oder schließe das Programm, das die Datei geöffnet hält, und speichere erneut.",
   "{source:?} stopped being the file it was while it was being opened to save --- nothing was written. Use Save a copy.":
     "{source} war nicht mehr dieselbe Datei, während sie zum Speichern geöffnet wurde - es wurde nichts geschrieben. Nutze „Kopie speichern“.",
   "tpdf could not tell which file {source:?} is, so it cannot promise a save would land there --- nothing was written. Use Save a copy.":
@@ -711,6 +723,10 @@ export const sie = {
     "{why} - es wurde nichts geschrieben, die Datei auf dem Datenträger ist also unverändert. Ihr Dokument wurde geschlossen, und Ihre Änderungen sind verloren.",
   "tpdf could not tell which file {source:?} is, so it cannot promise a save would land there --- nothing was written. Use Save a copy.":
     "tpdf konnte nicht feststellen, welche Datei {source} ist, und kann daher nicht zusichern, dass ein Speichern dort ankommt - es wurde nichts geschrieben. Nutzen Sie „Kopie speichern“.",
+  "{target:?} is marked read-only, so tpdf cannot save over it --- nothing was changed. Use Save a copy, or clear the attribute and save again.":
+    "{target} ist schreibgeschützt, daher kann tpdf nicht darüber speichern - es wurde nichts geändert. Nutzen Sie „Kopie speichern“, oder heben Sie den Schreibschutz auf und speichern Sie erneut.",
+  "tpdf cannot save over {target:?}: {e} --- nothing was changed. Use Save a copy, or close the program holding it and save again.":
+    "tpdf kann nicht über {target} speichern: {e} - es wurde nichts geändert. Nutzen Sie „Kopie speichern“, oder schließen Sie das Programm, das die Datei geöffnet hält, und speichern Sie erneut.",
   "{source:?} stopped being the file it was while it was being opened to save --- nothing was written. Use Save a copy.":
     "{source} war nicht mehr dieselbe Datei, während sie zum Speichern geöffnet wurde - es wurde nichts geschrieben. Nutzen Sie „Kopie speichern“.",
   "save this document before merging it --- it holds pages inserted from another document, and a merge cannot carry those yet":

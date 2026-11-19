@@ -591,6 +591,71 @@ describe("a drag that wanders", () => {
     const [, , , bottom] = corners();
     expect(bottom).toBeLessThanOrEqual(800.001);
   });
+
+  /** A two-page document, and where a point on either page is on screen. */
+  async function twoPages(): Promise<{
+    viewer: Viewer;
+    on: (slot: number, x: number, y: number) => { x: number; y: number };
+  }> {
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 2,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onDrawn: (kind, page, shape) => drawn.push({ kind, page, shape }),
+    });
+    viewer.setPages([
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+    ]);
+    await settle();
+    const inner = viewer as unknown as {
+      scroller: { pageOrigin(slot: number): { left: number; top: number } };
+      zoom: number;
+      scrollTop: number;
+    };
+    const on = (slot: number, x: number, y: number) => {
+      const origin = inner.scroller.pageOrigin(slot);
+      return { x: origin.left + x * inner.zoom, y: origin.top + y * inner.zoom - inner.scrollTop };
+    };
+    return { viewer, on };
+  }
+
+  it("keeps a box that ends inside the next page at the first page's bottom", async () => {
+    // Past the document's end, above, cannot tell a drag measured on the page
+    // it started on from one measured on the page under the pointer. Thirty
+    // points into the next page can: the second reading is thirty points down
+    // the first, above where the drag began.
+    const { viewer, on } = await twoPages();
+    viewer.armDraw("square");
+    drag(on(0, 100, 700), on(1, 300, 30));
+    viewer.destroy();
+
+    expect(drawn).toHaveLength(1);
+    const [, top, , bottom] = corners();
+    expect(Math.min(top, bottom)).toBeCloseTo(700, 3);
+    expect(Math.max(top, bottom)).toBeCloseTo(800, 3);
+  });
+
+  it("keeps every point of an ink stroke on its page", async () => {
+    // Ink and corner points reach the model as they are; no `boxQuad` clamps
+    // them on the way, so a stroke that ran off the page's edge would be saved
+    // with points outside it.
+    const { viewer, on } = await twoPages();
+    viewer.armDraw("ink");
+    drag(on(0, 500, 700), on(0, 900, 1000));
+    viewer.finishDrawing();
+    viewer.destroy();
+
+    expect(drawn).toHaveLength(1);
+    const points = drawn[0]!.shape.strokes.flat();
+    expect(points.length).toBeGreaterThanOrEqual(4);
+    for (let i = 0; i < points.length; i += 2) {
+      expect(points[i]!, "x").toBeLessThanOrEqual(600.001);
+      expect(points[i + 1]!, "y").toBeLessThanOrEqual(800.001);
+      expect(points[i]!, "x").toBeGreaterThanOrEqual(-0.001);
+      expect(points[i + 1]!, "y").toBeGreaterThanOrEqual(-0.001);
+    }
+  });
 });
 
 describe("placing a comment", () => {
@@ -1335,6 +1400,47 @@ describe("the eraser", () => {
     expect(erased).toEqual([]);
   });
 
+  it("takes nothing at the top of the first page when the sweep crosses into the next", async () => {
+    // From just above the first page's bottom to just inside the second's top.
+    // Measured on the second page, the moving end would be near the *top* of
+    // the first, and one event would sweep a line up the whole page through
+    // all three strokes. The sweep stays on the page it started on and passes
+    // below every stroke there.
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1,
+      pageCount: 2,
+      pages: [{ width_pt: 600, height_pt: 800 }],
+      onErased: (mark, remove) => erased.push({ mark, remove }),
+      onUnmarked: (mark) => unmarked.push(mark),
+    });
+    viewer.setPages([
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+    ]);
+    viewer.setMarks(threeStrokes());
+    await settle();
+    const inner = viewer as unknown as {
+      scroller: { pageOrigin(slot: number): { left: number; top: number } };
+      zoom: number;
+      scrollTop: number;
+    };
+    const on = (slot: number, x: number, y: number) => {
+      const origin = inner.scroller.pageOrigin(slot);
+      return { x: origin.left + x * inner.zoom, y: origin.top + y * inner.zoom - inner.scrollTop };
+    };
+    viewer.armErase();
+    drag(on(0, 85, 790), on(1, 85, 20));
+    await settle();
+    expect(erased).toEqual([]);
+    expect(unmarked).toEqual([]);
+    // The control: the same sweep kept on the first page does cross all three,
+    // so the fixture is one in which a wrong measurement would show.
+    drag(on(0, 85, 790), on(0, 85, 20));
+    await settle();
+    expect(erased).toEqual([{ mark: 77, remove: [0, 1, 2] }]);
+    viewer.destroy();
+  });
+
   it("takes a highlight whole, and rubs no stroke out of it", async () => {
     // A highlight has no parts, so the nib takes the mark rather than dropping
     // pieces of it -- which is `Unannotate` and not `Erase`, and the two
@@ -1819,6 +1925,37 @@ describe("drawing a polygon or connected lines", () => {
     enter();
     expect(drawn).toEqual([]);
     expect(viewer.drawArmed).toBeNull();
+    viewer.destroy();
+  });
+
+  it("starts from no corners when armed after two ink strokes", async () => {
+    // The corner branch adds to whatever drawing is in progress, so ink strokes
+    // carried across the arming would become the polygon's first corners.
+    const viewer = build();
+    await settle();
+    viewer.armDraw("ink");
+    drag({ x: 100, y: 100 }, { x: 200, y: 120 });
+    drag({ x: 100, y: 300 }, { x: 200, y: 320 });
+    expect(viewer.drawnStrokes).toBe(2);
+    viewer.armDraw("polygon");
+    expect(viewer.placedCorners ?? 0).toBe(0);
+    click({ x: 100, y: 100 });
+    click({ x: 300, y: 100 });
+    click({ x: 200, y: 250 });
+    enter();
+    expect(drawn.map((made) => made.kind)).toEqual(["polygon"]);
+    expect(drawn[0]?.shape.strokes).toHaveLength(1);
+    expect(stroke()).toHaveLength(6);
+    viewer.destroy();
+  });
+
+  it("keeps the strokes when the same kind is armed again", async () => {
+    const viewer = build();
+    await settle();
+    viewer.armDraw("ink");
+    drag({ x: 100, y: 100 }, { x: 200, y: 120 });
+    viewer.armDraw("ink");
+    expect(viewer.drawnStrokes).toBe(1);
     viewer.destroy();
   });
 });

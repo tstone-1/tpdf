@@ -29,6 +29,44 @@ have the binary.)
   section, in its Security section, and in the release notes from 26.11.10 on. Both say that
   updating tpdf does not change files it has already written. A notice only in `SECURITY.md`
   reached nobody who opened the page to download.
+- **`SECURITY.md` has a second notice, for redactions made with 26.11.9 or earlier**, and
+  the README's Download section and the release notes name that version now. The three
+  entries below are what it covers.
+- **A redaction no longer reads *verified* over a picture nobody read.** A picture stored
+  losslessly or without compression, and an inline image in a page's content, are now
+  treated as a JPEG already was: their pixels were not read, so the result is *not verified*
+  and says that text visible only as pixels needs text recognition. Until now such a
+  picture's samples were searched as if they were text, nothing matched, and the file
+  passed. The consequence is visible: a document that holds a figure or a logo on any page
+  now reads *not verified* for a redaction anywhere in it, because pictures are not read.
+  Measured over 40 real documents, 19 hold a picture; a one-word redaction on a page
+  without one was verified in 4 of 12 before and is verified in none now.
+- **A stream the verifier could not decode as a viewer does withholds the verdict.** That is
+  a stream whose decoding parameters are given by reference or in a form the decoder does
+  not read, one that names a predictor it does not know, and a deflated stream whose data
+  stops part way. Each was searched as if whole. A composite font named by reference counts
+  as composite, and a document title written straight into the file's trailer is searched.
+- **The image-only redaction copy has a real verdict.** It always reported success. It now
+  reads the 2D codes on the written file, as the other two redaction commands do, and reads
+  *not verified* with the reason when a code still holds a removed text.
+- **A redaction removes more of what repeats the removed words**: the replacement text
+  (`/ActualText`, `/Alt`, `/E`) of a span inside a form XObject and around a removed
+  picture, a document information dictionary written straight into the trailer, a form
+  field written inline in the field list, and an inline reply or popup of a removed note. An
+  outline too large to read through is taken whole, and a bookmark whose title is its own
+  object is compared.
+- **A sentence about a document's links no longer replaces a redaction's verdict.** It
+  arrived about a second after the verdict and took its place in the message bar, on any
+  document with more links than are read. A report nobody asked for now goes to the line in
+  the header while a message is on screen.
+- **`tpdf verify --strict` fails a document whose list of signatures may be incomplete**, and
+  its JSON entry gains `signatures_complete`. A signature past the 32 that are read was
+  not judged, and the run passed.
+- **The signature panel says what it could not read**: timestamp tokens and revocation data
+  that did not parse, which showed as a signature without them. The outline says when a
+  title is shown only in part.
+- **The Python client no longer runs a `tpdf-cli` found in the current directory** on
+  Windows.
 
 ### Added
 
@@ -50,6 +88,49 @@ have the binary.)
   button disappeared and nothing was said, and the menu's install item went with it. The
   message gives the reason, says the documents are still open, and names *Check for updates*
   as the way to try again.
+- **A redaction, crop, drawing or eraser drag that ends on the next page stays on the page
+  it started on.** The far end was measured on the page under the pointer, so the rectangle
+  landed in another part of the first page, and one eraser move across the page edge could
+  take every mark above it.
+- **A drag ends cleanly when it is cut short.** Deleting or moving pages during a drag
+  cancels it and forgets Back and Forward; a drag the system cancels marks nothing, a
+  selection with the redaction tool armed included. Arming another drawing tool no longer
+  carries unfinished ink strokes into it.
+- **Print, Save a copy, a redacted copy, Extract, Split and Merge include a form answer
+  still being typed.**
+- **A save or redaction in place whose reopen fails no longer leaves a tab that cannot be
+  closed**, and Reload and the other buttons on a message are greyed while a document task
+  runs, as the menu already was.
+- **A note or comment typed while an update downloads is no longer lost without a word**;
+  the window says it was not added and quotes it.
+- **Saving over the open file refuses a file that cannot be replaced before closing the
+  document**: one marked read-only or held open by another program on Windows, and one that
+  cannot be written before an appended save. The edits used to be lost with the refusal.
+- **Importing pages of a filled form no longer brings another page's answers through a
+  button's action.**
+- **A smaller copy shrinks pictures stored with a PNG predictor**, which were counted and
+  left at full size, its own earlier output included. It leaves a picture drawn where the
+  page's content could not be followed, and a JPEG with decoding parameters, as they are.
+- **A page whose box is too large to measure reads as a page without one**, where its
+  comments and links used to become unreadable for the whole document.
+- **A signature answer this version does not know shows as *not known to this version*,
+  with a warning**, where it used to break the panel, and in the list of signatures where it
+  read *no reason given* or *undefined*. Text with a character code no
+  character has no longer breaks copying or a double-click.
+- **On Windows, AltGr no longer triggers Ctrl+Alt shortcuts** while typing in a field.
+- **Explorer's preview pane ends the page it was rendering when the reader moves to another
+  file or closes the pane.** It left `tpdf-cli` and its worker running for up to 20 seconds
+  for each file passed.
+- **Links into a large table of named destinations resolve**, and such documents scan
+  faster: a name stored late in the table read as a broken link.
+- **`tpdf` exits 3 with one line when its report could not be written to standard output**;
+  a closed pipe, as in `| head`, ends quietly. `redact` names a match it could mark only in
+  part. With `--force` and no match over an output that is already there it is refused
+  (exit 3) and says the file is not this run's copy, where it exited 0 and left the earlier
+  file under the name. A file that changed on disk is asked about, or reloaded, only once
+  the message on screen has been dealt with, so it cannot replace a redaction's verdict.
+  `--color` refuses a part it cannot read, `render -- -` reads a file named `-`, and
+  `comments` prints one line per comment.
 
 ### Internal
 
@@ -67,6 +148,18 @@ have the binary.)
   `try_update`, the new name of the deprecated `fetch_update`, which raises its minimum
   Rust to 1.95; the application stays at 1.86. Four test imports that 1.100 reports as
   unused, because `use super::*` already brings the same traits in, are gone.
+- **The three redaction commands take their verdict from one function**
+  (`redaction_steps::read_back`), which replaces a source-text test that held two of the
+  three bodies equal by five substrings.
+- **Two gates**: `appstate` refuses a new top-level `Map` or `Set` in `App.svelte`, and the
+  words kept for marks, comments and redaction regions moved out of it into `CoveredWords`,
+  `CommentWords` and `RegionWords`; `diskrequests` holds the page and the script of the new
+  window phase to one request line.
+- **A window phase, `tabs_check.py --phase disk-change`**, checks that a change on disk
+  waits while the message bar holds a message, in ask and in reload mode.
+- `textedit::layout::prepare` lost its 281-line closure to `Edit::wrapped`; named
+  destinations are read into one bounded map per scan; `check_mutation_anchors.py` counts
+  only the anchors it checked.
 
 ## [26.11.9] - 2026-11-15
 

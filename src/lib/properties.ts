@@ -237,6 +237,16 @@ const TEXT = catalog({
     entriesUnreadable: (count: number): string => `${count} could not be read at all`,
     certificatesName: "Certificates",
     certificatesUnread: (count: number): string => `${count} were present but could not be read`,
+    timestampsName: "Timestamps",
+    timestampsUnread: (count: number): string =>
+      count === 1 ? "1 was present but could not be read" : `${count} were present but could not be read`,
+    revocationName: "Revocation data",
+    revocationUnread: (count: number): string =>
+      count === 1
+        ? "1 record was present but could not be read"
+        : `${count} records were present but could not be read`,
+    revocationDropped: (count: number): string =>
+      count === 1 ? "1 record was not read" : `${count} records were not read`,
   },
   "de-DE": {
     notChecked:
@@ -424,6 +434,18 @@ const TEXT = catalog({
       count === 1
         ? "1 war vorhanden, konnte aber nicht gelesen werden"
         : `${count} waren vorhanden, konnten aber nicht gelesen werden`,
+    timestampsName: "Zeitstempel",
+    timestampsUnread: (count: number): string =>
+      count === 1
+        ? "1 war vorhanden, konnte aber nicht gelesen werden"
+        : `${count} waren vorhanden, konnten aber nicht gelesen werden`,
+    revocationName: "Widerrufsdaten",
+    revocationUnread: (count: number): string =>
+      count === 1
+        ? "1 Eintrag war vorhanden, konnte aber nicht gelesen werden"
+        : `${count} Einträge waren vorhanden, konnten aber nicht gelesen werden`,
+    revocationDropped: (count: number): string =>
+      count === 1 ? "1 Eintrag wurde nicht gelesen" : `${count} Einträge wurden nicht gelesen`,
   },
 });
 
@@ -604,9 +626,15 @@ export interface Limits {
   locked: boolean;
   fields_dropped: number;
   values_clipped: number;
+  /** Timestamp tokens present on a signature and not readable. */
+  timestamps_unread: number;
   signatures_dropped: number;
   unreadable: number;
   certificates_unread: number;
+  /** Revocation data present and not readable. */
+  revocation_unread: number;
+  /** Revocation data not read at a count bound. */
+  revocation_dropped: number;
 }
 
 /** Everything a document says about itself. Mirrors `docinfo::Properties`. */
@@ -1183,7 +1211,7 @@ export function countedSignatures(signatures: Signature[]): string {
 
 /**
  * What a closed card says: whose certificate, then the leading word of each
- * verdict row.
+ * verdict row, then the PAdES level by itself.
  *
  * A closed card hides its rows, so every row that carries a verdict has its
  * verdict on the face, and a warning there stays a warning. The words are cut
@@ -1210,9 +1238,15 @@ export function briefly(signature: Signature, rows: Row[]): Brief[] {
     const text = row.value.split(" — ")[0]!.replace(/\.$/, "");
     out.push(row.warn ? { text, warn: true } : { text });
   }
-  // Last, and the level alone: a reader asked "is this B-LTA?" should not have
-  // to open the card and scroll to its last row. The row says what it rests on.
-  if (signature.pades) out.push({ text: signature.pades });
+  // Last, and the level alone, without the qualification its row ends with: a
+  // reader asked "is this B-LTA?" should not have to open the card and scroll
+  // to its last row, and that row, one click away, says what the level rests
+  // on and what was not tested. A level this version does not know keeps the
+  // row's warning, as every other verdict on the face does.
+  if (signature.pades) {
+    const level = rows.find((row) => row.name === named.pades);
+    out.push(level?.warn ? { text: signature.pades, warn: true } : { text: signature.pades });
+  }
   return out;
 }
 
@@ -1377,5 +1411,11 @@ export function limitRows(limits: Limits): Row[] {
   // a signature whose certificate went unread must not read like one that has
   // none, which is the whole reason this is counted separately.
   say(said.certificatesName, limits.certificates_unread, said.certificatesUnread);
+  // The same reasoning, and here it matters most: an unread timestamp token
+  // shown as no row at all reads as a signature nobody timestamped, which is
+  // the ordinary case and therefore the reassuring one.
+  say(said.timestampsName, limits.timestamps_unread, said.timestampsUnread);
+  say(said.revocationName, limits.revocation_unread, said.revocationUnread);
+  say(said.revocationName, limits.revocation_dropped, said.revocationDropped);
   return rows;
 }

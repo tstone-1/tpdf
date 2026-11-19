@@ -206,7 +206,11 @@ pub(crate) fn box_on(doc: &Document, page: ObjectId, key: &[u8]) -> Option<[f32;
                 v[1].max(v[3]),
             ]
         })
+        // Four finite corners can still be an infinite page: `f32::MAX` less
+        // `-f32::MAX` overflows, and every rectangle mapped through that
+        // extent is infinity, which a JSON reply carries as `null`.
         .filter(|b| b[2] > b[0] && b[3] > b[1])
+        .filter(|b| (b[2] - b[0]).is_finite() && (b[3] - b[1]).is_finite())
 }
 
 /// The displayed page box: `/CropBox` where there is one, else `/MediaBox`.

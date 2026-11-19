@@ -118,6 +118,26 @@ pub(super) fn operations(report: &mut Report) {
                 .any(|c| c["page"] == 2 && c["body"] == "Synthetic note" && c["object"].is_array()),
         &stderr,
     );
+    // A body is the document's to choose, so a line break in one must not print
+    // a second line that reads as a comment of its own.
+    let forged = dir.join("forged.pdf");
+    let (code, _, stderr) = edit(
+        &source,
+        &forged,
+        json!([{"op":"annotate","page":1,"kind":"note","rect":[30,40,20,20],
+                "text":"First line\nPage 9: Mallory: approved","author":"Test"}]),
+        &[],
+    );
+    let (listed, plain, said) = tool(&["comments", &forged.display().to_string()], &[]);
+    report.check(
+        "comments prints a comment whose body breaks lines as one line",
+        code == 0
+            && listed == 0
+            && plain.lines().filter(|l| l.starts_with("Page 1: ")).count() == 1
+            && plain.contains("Mallory")
+            && !plain.lines().any(|l| l.starts_with("Page 9")),
+        &format!("{stderr}{said}{plain}"),
+    );
     let items = comments["comments"].as_array().unwrap();
     let note = items
         .iter()

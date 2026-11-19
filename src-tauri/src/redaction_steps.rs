@@ -3,9 +3,12 @@
 //! read-back of the written file, the OCR gate and the fill.
 //!
 //! The window's commands (`commands::redact`) and `tpdf redact` (`cli::redact`)
-//! both reach these, so the ask, the gate and the scan are stated once.
+//! all reach these: the ask is [`ask_redactions`], and the readers of a written
+//! file and the verdict they come to are [`read_back`], which the copy, the
+//! in-place redaction and the image-only copy each call after their own write.
 //! `docs/TRAPS.md` records more than one defect that was a second copy of a
-//! rule drifting from the first.
+//! rule drifting from the first, and the image-only copy was a third copy that
+//! had drifted all the way to a verdict written down as `true`.
 
 use std::path::Path;
 
@@ -99,12 +102,14 @@ pub(crate) fn scan_written_file(
 
 /// A redaction worked out against the open document, ready for either writer.
 ///
-/// **The Ask step of `docs/PLAN.md` §6, held apart from the write.** Two
-/// commands apply a redaction --- `commands::redact::redact_copy` to a new file
-/// and `commands::redact::redact_document` over the open one --- and they differ in the writer and
-/// in nothing else. A second copy of this loop is the drift this repository
-/// keeps recording: the two would go on agreeing about the ordinals and
-/// eventually disagree about which objects the reader was warned about.
+/// **The Ask step of `docs/PLAN.md` §6, held apart from the write.** Three
+/// commands apply a redaction --- `commands::redact::redact_copy` to a new file,
+/// `commands::redact::redact_document` over the open one and
+/// `commands::redact::redact_raster_copy` as pictures --- and they differ in the
+/// writer and in which readers apply to what it wrote ([`Written`]). A second
+/// copy of this loop is the drift this repository keeps recording: the copies
+/// would go on agreeing about the ordinals and eventually disagree about which
+/// objects the reader was warned about.
 ///
 /// **Public for the command-line tool**, which is the third caller: `tpdf
 /// redact` asks with this, reports [`Asked::pages`] for `--dry-run`, and hands
@@ -121,6 +126,13 @@ pub struct Asked {
     /// What the removal could not take. Not a refusal --- see `commands::redact::redact_copy`
     /// --- but a reason the file cannot be called clean, carried to the verdict.
     pub concerns: Vec<String>,
+    /// The concerns that say [`Asked::needles`] may be short of something the
+    /// regions cover: today one, a form whose answers could not be read.
+    ///
+    /// Also in [`Asked::concerns`]. Kept apart because the image-only copy
+    /// takes no object out and so leaves none of the others standing, while
+    /// this one limits the code reader that copy still runs.
+    pub needles_short: Vec<String>,
     /// What the result says beside its verdict that is true whatever the
     /// verdict: a picture taken off a page that the document draws elsewhere.
     pub notes: Vec<String>,
@@ -242,6 +254,7 @@ pub async fn ask_redactions(
     //
     // A form that cannot be read is a reason, not a refusal: the answers under
     // the regions are then unknown, and an unknown is *not verified*.
+    let mut needles_short: Vec<String> = Vec::new();
     let (reply, rx) = reply_channel();
     service.form(doc, reply);
     match await_reply("form", rx).await {
@@ -255,10 +268,14 @@ pub async fn ask_redactions(
                 ));
             }
         }
-        Err(why) => concerns.push(said!(
-            "the form fields could not be read, so an answer under a marked area \
-             cannot be checked: {why}"
-        )),
+        Err(why) => {
+            let unread = said!(
+                "the form fields could not be read, so an answer under a marked area \
+                 cannot be checked: {why}"
+            );
+            needles_short.push(unread.clone());
+            concerns.push(unread);
+        }
     }
     plan.redactions = planned;
     // **After the plan, because the plan is what says where each page lands.**
@@ -295,6 +312,7 @@ pub async fn ask_redactions(
         fill: crate::redaction_fill::Fill::default(),
         needles,
         concerns,
+        needles_short,
         notes,
         regions,
         shows: shows_total,
@@ -308,17 +326,16 @@ pub async fn ask_redactions(
 /// Runs `docs/PLAN.md` §6 step 4 over a written file, off the async runtime.
 ///
 /// [`ocr_gate::run`] blocks --- it waits on a render and on another process ---
-/// and every other step of these two commands is already on a blocking thread
-/// for the same reason. The service is reached through the app handle rather
-/// than borrowed, because `spawn_blocking` needs what it captures to outlive the
-/// call and a `tauri::State` borrow does not.
+/// and the writes before it are already on a blocking thread for the same
+/// reason.
 ///
 /// **Nothing here refuses.** A join that failed is one more reason the file
 /// cannot be called clean, and [`redact::Applied`] is what carries it.
 ///
 /// The service is taken by value --- a clone is a handle to the same render
-/// thread --- rather than fetched from an app handle, so the command-line tool,
-/// which has a service and no app, runs the same gate.
+/// thread --- because `spawn_blocking` needs what it captures to outlive the
+/// call and a `tauri::State` borrow does not, and because the command-line
+/// tool, which has a service and no app, runs the same gate.
 pub(crate) async fn gate_written_file(
     service: RenderService,
     path: String,
@@ -436,6 +453,169 @@ pub(crate) fn read_codes(
     }
 }
 
+/// What a redaction wrote, as far as the readers after it are concerned.
+pub(crate) enum Written {
+    /// The content was rewritten with the marked objects taken out: the copy
+    /// and the in-place redaction. The byte scan has read it, and `also` is
+    /// what [`redact_copy_asked`]'s extra reader found, empty for the others.
+    Rewritten {
+        /// [`scan_written_file`]'s answer.
+        report: verify::Report,
+        /// Reasons from one more reader of the unfilled file.
+        also: Vec<String>,
+    },
+    /// Every page replaced by a picture of itself with the marked areas
+    /// painted over: the image-only copy.
+    ///
+    /// `save::write_raster_copy` has already proved, before the file was
+    /// published (`raster_redact::rewrite`), that its object graph is exactly
+    /// the pictures, content streams and page tree it generated, that PDFium
+    /// finds no text layer on any page, and that every pixel inside a marked
+    /// area is the fill colour. So three readers do not apply: the byte scan
+    /// has no text to read and would call every picture unread, the OCR gate
+    /// would look at areas already proved to be one colour, and an object the
+    /// removal could not take is not in a file that keeps no object of the
+    /// source. A code printed beside the marked area is still in the picture,
+    /// and the code reader is the one that sees it.
+    Pictures,
+}
+
+/// What [`read_back`] needs from an [`Asked`], borrowed, so a test can build it.
+pub(crate) struct Parts<'a> {
+    /// [`Asked::concerns`].
+    pub concerns: &'a [String],
+    /// [`Asked::needles_short`].
+    pub needles_short: &'a [String],
+    /// [`Asked::marked`].
+    pub marked: &'a [u32],
+    /// [`Asked::inserted`].
+    pub inserted: usize,
+    /// [`Asked::gate`].
+    pub gate: &'a [ocr_gate::GatePage],
+    /// [`Asked::notes`].
+    pub taken_here: &'a [String],
+}
+
+impl Asked {
+    /// The parts of this the verdict reads.
+    pub(crate) fn parts(&self) -> Parts<'_> {
+        Parts {
+            concerns: &self.concerns,
+            needles_short: &self.needles_short,
+            marked: &self.marked,
+            inserted: self.inserted,
+            gate: &self.gate,
+            taken_here: &self.notes,
+        }
+    }
+}
+
+/// A redaction's verdict: every reason it is not clean, and what it says beside.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Judged {
+    /// Empty exactly when the file can be called clean.
+    pub why: Vec<String>,
+    /// [`redact::notes_for`]'s answer.
+    pub notes: Vec<String>,
+}
+
+/// Runs the readers that apply to what was written, then comes to the verdict.
+///
+/// **The one place a redaction's verdict is assembled**, for all three
+/// commands: each does its own write and its own fill and calls this in
+/// between. Until it existed the chain was written out in the copy and again
+/// in the in-place redaction, held equal by a test that looked for five names
+/// in both bodies, and the image-only copy had no chain at all: it returned
+/// `verified: true` without reading anything, so a QR code beside the marked
+/// name came out of it certified.
+///
+/// Runs the OCR gate only for [`Written::Rewritten`] (see [`Written::Pictures`]
+/// for why) and the code reader for both; [`judge`] says what their answers
+/// and the report come to.
+pub(crate) async fn read_back(
+    service: RenderService,
+    path: String,
+    key: Option<String>,
+    asked: &Asked,
+    written: Written,
+) -> Judged {
+    // §6 step 4, which is the only reader that can see a picture of the words.
+    // It runs on the file that was just written, never on the source --- see
+    // `ocr::RedactedPixels`, where that is a type-level rule.
+    let gate = match written {
+        Written::Rewritten { .. } => {
+            gate_written_file(
+                service.clone(),
+                path.clone(),
+                asked.gate.clone(),
+                key.clone(),
+            )
+            .await
+        }
+        Written::Pictures => Vec::new(),
+    };
+    // Then the codes in the file, which no other reader can see: a payment
+    // code beside the marked name holds the name too (`codes.rs`).
+    let codes = codes_written_file(service, path, key, asked.needles.clone()).await;
+    judge(&asked.parts(), written, gate, codes)
+}
+
+/// What the readers' answers come to: [`read_back`] without the reading.
+///
+/// The order of `why` is the order a reader should meet the reasons in, and
+/// it is fixed here so all three commands keep it:
+///
+/// 1. The objects the removal could not take, because they are the finding a
+///    reader can act on: a picture of the words in the region is a different
+///    problem from a scan that could not decode a stream, and only the first
+///    tells them the region is still readable.
+/// 2. The scan's own reasons, and directly under them the notes on how to read
+///    them, which only speak when there is something to read. The short-piece
+///    note and the marked-pages note are exclusive by construction: one speaks
+///    when every word was placed and the other when at least one was not.
+/// 3. The extra reader's reasons, then the OCR gate's, then the code reader's.
+pub(crate) fn judge(
+    asked: &Parts<'_>,
+    written: Written,
+    gate: Vec<String>,
+    codes: CodesRead,
+) -> Judged {
+    let mut why: Vec<String> = Vec::new();
+    let mut sizing: Vec<String> = Vec::new();
+    let mut taken_here: Vec<String> = Vec::new();
+    match written {
+        Written::Rewritten { report, also } => {
+            why.extend(asked.concerns.iter().cloned());
+            if let verify::Verdict::NotVerified(reasons) = report.verdict() {
+                why.extend(reasons);
+            }
+            why.extend(redact::short_needle_note(&report));
+            why.extend(redact::marked_pages_note(&report, asked.marked));
+            why.extend(redact::inserted_pages_note(
+                asked.inserted,
+                &report.found,
+                report.placed(),
+            ));
+            why.extend(also);
+            why.extend(gate);
+            sizing = ocr_gate::sizing_notes(asked.gate);
+            // A picture taken off one page and left in the file for the
+            // others: true of a rewrite, and of nothing a picture copy keeps.
+            taken_here = asked.taken_here.to_vec();
+        }
+        Written::Pictures => {
+            // Only what limits the one reader that still applies: a form
+            // answer under a marked area that could not be read is a word the
+            // code reader was never given to look for.
+            why.extend(asked.needles_short.iter().cloned());
+        }
+    }
+    why.extend(codes.why);
+    sizing.extend(codes.note);
+    let notes = redact::notes_for(why.is_empty(), sizing, taken_here);
+    Judged { why, notes }
+}
+
 /// Why a redaction to a new file stopped before it had a verdict.
 ///
 /// **Two kinds, because a caller that can delete has to know which one.** The
@@ -479,9 +659,10 @@ pub type ReadBack<'a> = dyn Fn(&str, Option<&str>) -> Vec<String> + Sync + 'a;
 /// **The body of the window's command, reached by the command-line tool too.**
 /// `tpdf redact` builds the same model the window builds --- regions on an
 /// [`edits::Edits`], through [`edits::Edits::redact`] --- asks with
-/// [`ask_redactions`], and hands the answer here, so the writer, the read-back,
-/// the OCR gate, the black fill and the rule that `verified` is true only when
-/// `why` is empty are this function's and nobody else's. `library` is where the
+/// [`ask_redactions`], and hands the answer here, so the writer, the byte scan
+/// and the black fill are this function's and nobody else's, and the readers
+/// after the scan, with the rule that `verified` is true only when `why` is
+/// empty, are [`read_back`]'s, which the other two commands call too. `library` is where the
 /// writing and scanning workers find PDFium: the app's resource directory, or
 /// the tool's, found by the same search.
 ///
@@ -535,8 +716,7 @@ pub type ReadBack<'a> = dyn Fn(&str, Option<&str>) -> Vec<String> + Sync + 'a;
 /// one more reason in `why`. The window passes `None`. `tpdf redact` passes a
 /// search of the written file for its own queries --- the check a reader would
 /// make by hand --- which has no counterpart in the window because the window
-/// marks by hand. It runs before the fill so that the sentence the application
-/// shows, *"Checks before adding the fill found: ..."*, stays true of it.
+/// marks by hand.
 pub async fn redact_copy_asked(
     service: &RenderService,
     library: std::path::PathBuf,
@@ -548,7 +728,6 @@ pub async fn redact_copy_asked(
 ) -> Result<redact::Applied, Stopped> {
     let plan = asked.plan.clone();
     let needles = asked.needles.clone();
-    let concerns = asked.concerns.clone();
     let regions = asked.regions;
     let shows_total = asked.shows;
     let backend = service.backend();
@@ -614,45 +793,18 @@ pub async fn redact_copy_asked(
         written: true,
     })?;
 
-    // The objects the removal could not take come first, because they are the
-    // finding a reader can act on: a picture of the words in the region is a
-    // different problem from a scan that could not decode a stream, and only the
-    // first tells them the region is still readable.
-    let mut why = concerns;
-    if let verify::Verdict::NotVerified(reasons) = report.verdict() {
-        why.extend(reasons);
-    }
-    // Directly under them, because they are about how to read them rather than
-    // findings of their own --- and only when there is something to read. The
-    // two are exclusive by construction: one speaks when every word was placed
-    // on a page and the other when at least one was not.
-    why.extend(redact::short_needle_note(&report));
-    why.extend(redact::marked_pages_note(&report, &asked.marked));
-    why.extend(redact::inserted_pages_note(
-        asked.inserted,
-        &report.found,
-        report.placed(),
-    ));
-    if let Some(also) = also {
-        why.extend(also(&out_path, key.as_deref()));
-    }
-    // Then §6 step 4, which is the only one of the two that can see a picture of
-    // the words. It runs on the file that was just written, never on the source
-    // --- see `ocr::RedactedPixels`, where that is a type-level rule.
-    let mut notes = ocr_gate::sizing_notes(&asked.gate);
-    let taken_here = asked.notes;
-    why.extend(gate_written_file(service.clone(), out_path.clone(), asked.gate, key.clone()).await);
-    // Then the codes in the file, which neither reader above can see: a
-    // payment code beside the marked name holds the name too (`codes.rs`).
-    let codes = codes_written_file(
+    // Before the other readers, on the unfilled file, so that the sentence the
+    // application shows, *"Checks before adding the fill found: ..."*, stays
+    // true of it.
+    let also = also.map_or_else(Vec::new, |also| also(&out_path, key.as_deref()));
+    let judged = read_back(
         service.clone(),
         out_path.clone(),
         key.clone(),
-        asked.needles.clone(),
+        &asked,
+        Written::Rewritten { report, also },
     )
     .await;
-    why.extend(codes.why);
-    notes.extend(codes.note);
     finish_redaction_fill(
         library,
         backend,
@@ -671,50 +823,165 @@ pub async fn redact_copy_asked(
         regions,
         shows: shows_total,
         changed: copied.changed,
-        verified: why.is_empty(),
-        notes: redact::notes_for(why.is_empty(), notes, taken_here),
-        why,
+        verified: judged.why.is_empty(),
+        notes: judged.notes,
+        why: judged.why,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    /// The body of a function in `source`, from its `fn` line to the next
-    /// line that starts a top-level item.
-    fn body<'a>(source: &'a str, signature: &str) -> &'a str {
-        let start = source.find(signature).expect("the function is in the file");
-        let rest = &source[start..];
-        let end = rest[1..].find("\n}\n").map_or(rest.len(), |at| at + 3);
-        &rest[..end]
+    use super::{judge, CodesRead, Judged, Parts, Written};
+
+    /// Every part a verdict reads, each a sentence naming itself, so an
+    /// assertion on `why` says which reader put each line there.
+    struct Asked {
+        concerns: Vec<String>,
+        needles_short: Vec<String>,
+        taken_here: Vec<String>,
     }
 
-    /// The window's in-place redaction repeats [`super::redact_copy_asked`]'s
-    /// chain of readers rather than calling it, and no test drives that
-    /// command. So this holds the two lists of readers equal in the source.
-    ///
-    /// It proves each call is written in the body, not that it runs; a reader
-    /// dropped from one copy is what it catches, which is how a check added to
-    /// one copy goes missing from the other.
-    #[test]
-    fn in_place_redaction_calls_every_reader_the_copy_calls() {
-        const READERS: [&str; 5] = [
-            "scan_written_file(",
-            "redact::short_needle_note(",
-            "redact::marked_pages_note(",
-            "gate_written_file(",
-            "codes_written_file(",
-        ];
-        let copy = body(
-            include_str!("redaction_steps.rs"),
-            "pub async fn redact_copy_asked(",
-        );
-        let in_place = body(
-            include_str!("commands/redact.rs"),
-            "pub async fn redact_document(",
-        );
-        for reader in READERS {
-            assert!(copy.contains(reader), "redact_copy_asked calls {reader}");
-            assert!(in_place.contains(reader), "redact_document calls {reader}");
+    impl Asked {
+        fn full() -> Self {
+            Asked {
+                concerns: vec!["page 1: object 7 was left".to_string()],
+                needles_short: vec!["the form fields could not be read".to_string()],
+                taken_here: vec!["page 1: object 9 is still in the file".to_string()],
+            }
         }
+
+        fn parts(&self) -> Parts<'_> {
+            Parts {
+                concerns: &self.concerns,
+                needles_short: &self.needles_short,
+                marked: &[],
+                inserted: 0,
+                gate: &[],
+                taken_here: &self.taken_here,
+            }
+        }
+    }
+
+    /// A scan that found `needle` and placed it nowhere.
+    fn found(needle: &str) -> crate::verify::Report {
+        let mut report = crate::verify::Report::default();
+        report.found.insert(needle.to_string());
+        report
+    }
+
+    fn code(why: &[&str]) -> CodesRead {
+        CodesRead {
+            why: why.iter().map(ToString::to_string).collect(),
+            note: Some("1 code was read".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_rewrite_is_judged_on_every_reader_in_order() {
+        let asked = Asked::full();
+        let judged = judge(
+            &asked.parts(),
+            Written::Rewritten {
+                report: found("4711-0815"),
+                also: vec!["the search found it".to_string()],
+            },
+            vec!["the gate read it".to_string()],
+            code(&["a code still carries it"]),
+        );
+        assert_eq!(
+            judged.why,
+            vec![
+                // `needles_short` is a copy of lines `concerns` already holds,
+                // so a rewrite does not say it twice.
+                "page 1: object 7 was left".to_string(),
+                "4711-0815 is still in the file".to_string(),
+                "the search found it".to_string(),
+                "the gate read it".to_string(),
+                "a code still carries it".to_string(),
+            ],
+            "the objects left first, then the scan, the extra reader, the gate and the codes"
+        );
+        // Not clean, so no note qualifies a clean verdict; the picture left in
+        // the file is said whatever the verdict.
+        assert_eq!(
+            judged.notes,
+            vec!["page 1: object 9 is still in the file".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_code_reader_finding_alone_withholds_a_rewrite_s_verdict() {
+        let asked = Asked {
+            concerns: Vec::new(),
+            needles_short: Vec::new(),
+            taken_here: Vec::new(),
+        };
+        let rewritten = || Written::Rewritten {
+            report: crate::verify::Report::default(),
+            also: Vec::new(),
+        };
+        let judged = judge(
+            &asked.parts(),
+            rewritten(),
+            Vec::new(),
+            code(&["a code still carries it"]),
+        );
+        assert_eq!(judged.why, vec!["a code still carries it".to_string()]);
+        // The control: nothing found anywhere is clean, and says how many
+        // codes were compared.
+        let clean = judge(&asked.parts(), rewritten(), Vec::new(), code(&[]));
+        assert_eq!(
+            clean,
+            Judged {
+                why: Vec::new(),
+                notes: vec!["1 code was read".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn an_image_only_copy_reports_a_code_that_still_carries_the_name() {
+        let asked = Asked {
+            concerns: Vec::new(),
+            needles_short: Vec::new(),
+            taken_here: Vec::new(),
+        };
+        let judged = judge(
+            &asked.parts(),
+            Written::Pictures,
+            Vec::new(),
+            code(&["the QR code on page 1 still holds 4711-0815"]),
+        );
+        assert_eq!(
+            judged.why,
+            vec!["the QR code on page 1 still holds 4711-0815".to_string()]
+        );
+    }
+
+    /// What a picture copy leaves behind is not what a rewrite leaves: no
+    /// object of the source is in it, so the objects a removal could not take
+    /// and the picture taken off one page are not reasons or notes about it.
+    /// A form that could not be read still is, because the words under it
+    /// were never handed to the code reader.
+    #[test]
+    fn an_image_only_copy_is_judged_on_what_applies_to_pictures() {
+        let asked = Asked::full();
+        let judged = judge(&asked.parts(), Written::Pictures, Vec::new(), code(&[]));
+        assert_eq!(
+            judged.why,
+            vec!["the form fields could not be read".to_string()]
+        );
+        let readable = Asked {
+            needles_short: Vec::new(),
+            ..Asked::full()
+        };
+        let clean = judge(&readable.parts(), Written::Pictures, Vec::new(), code(&[]));
+        assert_eq!(
+            clean,
+            Judged {
+                why: Vec::new(),
+                notes: vec!["1 code was read".to_string()],
+            }
+        );
     }
 }

@@ -31,8 +31,13 @@ export interface FocusClock {
   hasFocus(): boolean;
   /** Milliseconds since the page started, as `performance.now()` counts them. */
   now(): number;
-  /** Calls `listener` each time the window gets the focus. */
-  onFocus(listener: () => void): void;
+  /**
+   * Calls `listener` each time the window gets the focus, until the function
+   * it returns is called. A viewer closed with its tab must not leave a
+   * listener, and the region it writes into, held by the window for the rest
+   * of the session.
+   */
+  onFocus(listener: () => void): () => void;
   later(run: () => void, ms: number): void;
 }
 
@@ -41,20 +46,30 @@ export function windowClock(): FocusClock {
   return {
     hasFocus: () => document.hasFocus(),
     now: () => performance.now(),
-    onFocus: (listener) => window.addEventListener("focus", listener),
+    onFocus: (listener) => {
+      window.addEventListener("focus", listener);
+      return () => window.removeEventListener("focus", listener);
+    },
     later: (run, ms) => void setTimeout(run, ms),
   };
 }
+
+/** A held writer, and how to stop it: {@link whenHeard}'s answer. */
+export type Heard = ((text: string) => void) & {
+  /** Stops listening for the focus, and drops a text still held. */
+  stop(): void;
+};
 
 /**
  * `write`, held back as the header says: until {@link OPENING_MS} after the
  * page started, and {@link SETTLE_MS} after each time the window gets the
  * focus, whichever ends later.
  */
-export function whenHeard(write: (text: string) => void, clock: FocusClock = windowClock()): (text: string) => void {
+export function whenHeard(write: (text: string) => void, clock: FocusClock = windowClock()): Heard {
   let focusedAt = -Infinity;
   let pending: string | null = null;
   let waiting = false;
+  let stopped = false;
   const flush = (): void => {
     waiting = false;
     if (pending === null || !clock.hasFocus()) return;
@@ -67,15 +82,24 @@ export function whenHeard(write: (text: string) => void, clock: FocusClock = win
     write(pending);
     pending = null;
   };
-  clock.onFocus(() => {
+  const unlisten = clock.onFocus(() => {
     focusedAt = clock.now();
     if (pending !== null && !waiting) {
       waiting = true;
       clock.later(flush, SETTLE_MS);
     }
   });
-  return (text) => {
+  const say = (text: string): void => {
+    if (stopped) return;
     pending = text;
     if (!waiting) flush();
   };
+  return Object.assign(say, {
+    stop: (): void => {
+      if (stopped) return;
+      stopped = true;
+      pending = null;
+      unlisten();
+    },
+  });
 }

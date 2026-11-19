@@ -694,6 +694,10 @@ fn page_geometry(document: &Document, page: ObjectId) -> (f32, f32, u8, f32, f32
                 ]
             })
             .filter(|b| b[2] > b[0] && b[3] > b[1])
+            // And an extent that is finite: corners at `-f32::MAX` and
+            // `f32::MAX` are a page infinitely wide, and every rectangle on it
+            // infinity, which a JSON reply carries as `null`.
+            .filter(|b| (b[2] - b[0]).is_finite() && (b[3] - b[1]).is_finite())
     };
 
     let media = box_of(b"MediaBox").unwrap_or([0.0, 0.0, 612.0, 792.0]);
@@ -1456,6 +1460,47 @@ mod tests {
         );
     }
 
+    /// A page box whose corners are finite and whose extent is not is no box,
+    /// and the page falls back to US Letter like a page without one.
+    ///
+    /// `f32::MAX` less `-f32::MAX` is infinity, and on a page that wide every
+    /// rectangle was infinity, which `serde_json` writes as `null`: the reply
+    /// stopped being readable as comments at all. The control is the same
+    /// note on a page with no box, which places it identically.
+    #[test]
+    fn a_page_box_too_large_for_a_number_falls_back_like_no_box() {
+        let mut note = note("on a page too wide to measure");
+        note.set("Rect", vec![100.into(), 690.into(), 300.into(), 720.into()]);
+        let mut doc =
+            Document::load_mem(&document_with(vec![note], Dictionary::new())).expect("loads");
+        let page = doc.get_pages()[&1];
+        let control = scan_from(&doc, 1).expect("scans").items[0].rect;
+        assert_eq!(control, [100.0, 122.0, 300.0, 152.0], "the control");
+        // Set in memory: no writer spells `f32::MAX` as a number that reads back.
+        doc.get_object_mut(page)
+            .and_then(Object::as_dict_mut)
+            .expect("the page")
+            .set(
+                "MediaBox",
+                vec![
+                    Object::Real(-f32::MAX),
+                    0.into(),
+                    Object::Real(f32::MAX),
+                    842.into(),
+                ],
+            );
+        let comments = scan_from(&doc, 1).expect("scans");
+        let rect = comments.items[0].rect;
+        assert_eq!(rect, [100.0, 72.0, 300.0, 102.0], "US Letter, 792 tall");
+        let sent = serde_json::to_value(&comments).expect("serialises");
+        assert!(sent["items"][0]["rect"]
+            .as_array()
+            .is_some_and(|rect| rect.iter().all(serde_json::Value::is_f64)));
+        // The shared reader says the same about the same page.
+        let shown = crate::pagetree::displayed_page(&doc, page);
+        assert_eq!((shown.width, shown.height), (612.0, 792.0));
+    }
+
     /// A sticky note with a body and an author.
     fn note(body: &str) -> Dictionary {
         dictionary! {
@@ -1463,7 +1508,7 @@ mod tests {
             "Subtype" => "Text",
             "Rect" => vec![100.into(), 700.into(), 124.into(), 724.into()],
             "Contents" => Object::string_literal(body),
-            "T" => Object::string_literal("Timo"),
+            "T" => Object::string_literal("Jane Example"),
         }
     }
 
@@ -1473,7 +1518,7 @@ mod tests {
         assert_eq!(comments.items.len(), 1);
         let first = &comments.items[0];
         assert_eq!(first.kind, Kind::Text);
-        assert_eq!(first.author, "Timo");
+        assert_eq!(first.author, "Jane Example");
         assert_eq!(first.body, "Check this figure.");
         assert_eq!(first.page, 0);
         assert!(
@@ -1529,11 +1574,11 @@ mod tests {
             "Type" => "Annot",
             "Subtype" => "Highlight",
             "Rect" => vec![10.into(), 10.into(), 20.into(), 20.into()],
-            "T" => Object::string_literal("Timo"),
+            "T" => Object::string_literal("Jane Example"),
         }]);
         assert_eq!(comments.items.len(), 1);
         assert_eq!(comments.items[0].body, "");
-        assert_eq!(comments.items[0].author, "Timo");
+        assert_eq!(comments.items[0].author, "Jane Example");
         assert_eq!(comments.items[0].kind, Kind::Highlight);
     }
 
@@ -1775,9 +1820,9 @@ mod tests {
             "Subtype" => "Text",
             "Rect" => vec![10.into(), 10.into(), 20.into(), 20.into()],
             "Contents" => Object::string_literal("Body."),
-            "T" => Object::string_literal("Timo\nStein"),
+            "T" => Object::string_literal("Jane\nExample"),
         }]);
-        assert_eq!(comments.items[0].author, "Timo Stein");
+        assert_eq!(comments.items[0].author, "Jane Example");
     }
 
     #[test]
@@ -2338,7 +2383,7 @@ mod tests {
             id: 1,
             page: 2,
             kind: Kind::Text,
-            author: "Timo".into(),
+            author: "Jane Example".into(),
             body: "Have a look at https://example.invalid/ when you can.".into(),
             subject: "Figure 3".into(),
             date: Some("2026-08-12 10:15".into()),

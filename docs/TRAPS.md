@@ -292,6 +292,7 @@ hop through the index.
 - A bound the worker holds on its own answer is the worker's word, and the parse it bounds is on the other side
 - A document timestamp is a signature anybody can get, so nothing may rest on one
 - A revocation chain followed through a signature's own certificates is chosen by whoever holds the file
+- lopdf reads `/DecodeParms` only when it is direct, and hands back a failed inflate's partial output as success
 
 ## Tauri, the webview and startup
 - A viewer lasts as long as a tab is on screen, not as long as its document
@@ -341,6 +342,8 @@ hop through the index.
 - Svelte drops a space written as the first text of an element, so the counter read 1 / 8(i)
 - A live region built together with its text is not announced, and the palette's preview was one
 - VoiceOver drops what is announced while the window is not key, and does not speak a focused field's new name
+- A report nobody asked for, said through the message bar, replaces the one the reader has not read
+- A reply enum crosses the boundary as JSON, so the TypeScript union is a claim
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -624,6 +627,7 @@ hop through the index.
 - A coverage figure that is the length of the list it was handed measures nothing
 - A test plan built with `plan_of(&[0, 1])` turns the second page, and a turn sweeps the file by itself
 - A test font whose glyphs fill their boxes hides the difference between ink and advance
+- A fix written for the reported spelling leaves the neighbouring spellings open
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -907,6 +911,7 @@ hop through the index.
 - An empty Private DICT reads the same wherever its offset points
 - A fixture written through the library spells a value the library's way, and the branch for the other spelling is never read
 - A test that skips on an absent fixture passes on every machine where nobody wrote it
+- lopdf's `Content::decode` stops silently at trailing garbage, so only a structural break makes it fail
 
 ## Documents as controls
 - A count written as a word stops matching `\w+` at twenty-one
@@ -27662,3 +27667,83 @@ input's effect before the next step** (the tab's *Unsaved changes* marker after 
 dialog gone after the answer), because a press that lands nowhere is silent; and **make the
 step after a missed press harmless** (the proxy paces and cuts from the first press, so an
 offer pressed with nothing unsaved cannot finish an install).
+
+### lopdf reads `/DecodeParms` only when it is direct, and hands back a failed inflate's partial output as success
+
+Read in lopdf 0.46.0's `object.rs` on 2026-11-19. `decode_filters` uses `/DecodeParms` only
+when it is a dictionary or an array of dictionaries written in place; a reference gives no
+parameters, and `decompress_predictor` then returns the inflated bytes with the predictor
+still applied. `/Predictor` given by reference falls back to 1. `decompress_zlib` logs a
+zlib error and returns whatever it had produced, as `Ok`. PDFium resolves the references and
+draws the page.
+
+For a reader of bytes that is two ways to search something that is not the text and find
+nothing: `verify::scan` read row-differenced bytes, and the front part of a stream, and
+called both scanned. An `Err` arm written for "would not decode" never fires for either.
+`verify::as_drawn` now asks first whether every key the decoder consults is direct, and
+inflates each Flate stage a second time with `flate2` to learn whether it ended. LZW and
+ASCII85 have the same partial-output behaviour and no second decoder here (threat model,
+residual 42). Read this function again when the lopdf pin moves.
+
+### A report nobody asked for, said through the message bar, replaces the one the reader has not read
+
+`App.svelte` has one message bar, and `say()` replaces its text, its buttons and its tone.
+Until 2026-11-19 the links read, which runs after every mount and one first paint, called
+`say()` with "some links are missing" whenever a link limit was reached. A redaction in
+place says its verdict right after the reopen, so on such a document the verdict, *not
+verified* included, was on screen for about a second. A redacted copy keeps the original's
+links, so the document that did it once did it every time. Three more callers had the same
+shape: the form read's error, a file shortened while open, and the tabs a launch could not
+reopen.
+
+The rule is in `src/lib/unasked.ts`: a report the reader did not ask for takes the bar only
+while it is empty, and goes to the header's notice line otherwise. It is never dropped. The
+disk-change prompt carries buttons the notice line cannot show, so it waits instead
+(`promptUnaskedNow`): the watch looks again a second later, and an unasked reload waits with
+it, because a reload clears the bar. Anything new that speaks after an `await` the reader
+did not start belongs behind one of the two.
+
+### A reply enum crosses the boundary as JSON, so the TypeScript union is a claim
+
+`integrity.ts` worded a trust answer with `DOUBT[trust.why](computer)`: a record of
+functions, indexed by a value the type says is one of its keys. A backend one version ahead
+sends another value, the lookup is `undefined`, and the call throws inside the signature
+panel. A `switch` over the same union falls out of its end and a row shows the text
+`undefined`. Neither is reachable in one build, which is why no test met it; both are
+reachable across an update, and a signature panel is where a wrong word costs most.
+
+Since 2026-11-19 every enum a row is worded from goes through `isKnown` first, and an
+unknown value is said as *not known to this version*, with the warning state: never as a
+verdict and never as a throw. `signing.ts` goes through the same guard (`unknownVerdict`,
+`whyClause`). Unguarded lookups of the kind remain where the value names a kind of mark or
+link and not a judgement: `comments.ts` (`labelFor`), `markpopup.ts` (`NAMES`),
+`markcolors.ts`, `markband.ts`, `outline.ts` (`reasonFor`) and `links.ts` (`linkTitle`).
+
+### A fix written for the reported spelling leaves the neighbouring spellings open
+
+On 2026-11-10 a review found that `verify::scan` read a stream whose `/Filter` was an
+indirect reference as unfiltered. The fix made exactly that case blind. Nine days later the
+next review found the same hole one key over: an indirect `/DecodeParms`, an indirect
+`/Predictor`, an indirect `/Subtype` on a font. Each had the property the first one had (the
+library reads the key only when it is direct, the viewer resolves it), and none was looked
+for, because the finding named `/Filter`.
+
+A finding names one instance. Before writing the fix, state the property that made it a
+defect, in words that do not contain the instance, and search for everything else with that
+property: here, "a key the decoder consults that the library reads only when direct". The
+second fix is one helper that asks that question, where the first was one `match` arm. The
+same thing happened to the tile read that was unchecked at five lines, which was fixed at
+all five only because the review had listed the other four.
+
+### lopdf's `Content::decode` stops silently at trailing garbage, so only a structural break makes it fail
+
+A fixture for "this page's content cannot be decoded" written as valid operators followed by
+junk bytes does not produce an error: `Content::decode` returns the operations before the
+junk and drops the rest. A test built on it exercises the ordinary path and passes for the
+wrong reason. What does fail is a structural break, for example an inline image with no
+`EI`. Found 2026-11-19 while testing that a smaller copy leaves a picture alone when a page
+that draws it could not be followed (`compress.rs`).
+
+The other half is a residual and not only a fixture note: a picture drawn after such junk is
+still invisible to the walk that measures how large pictures are shown, and nothing reports
+that the walk stopped early.

@@ -1433,8 +1433,8 @@ ROWS += [
         # always says *drawn once*, which is what the module did before.
         "shared: report every drawing as repeated",
         "src/redact.rs",
-        "                .and_then(|id| drawn_more_than_once(doc, page, id, names, name))",
-        "                .and_then(|id| drawn_more_than_once(doc, page, id, names, name).or(Some(2)))",
+        "                .and_then(|id| drawn_more_than_once_in(doc, page, id, names, name, draws))",
+        "                .and_then(|id| drawn_more_than_once_in(doc, page, id, names, name, draws).or(Some(2)))",
         "a_picture_this_page_alone_draws_is_not_reported_as_shared",
     ),
     Mutation(

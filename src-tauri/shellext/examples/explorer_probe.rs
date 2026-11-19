@@ -199,7 +199,7 @@ mod probe {
     /// few, a rendered page many.
     fn distinct(pixels: &[u8]) -> usize {
         let mut seen = std::collections::HashSet::new();
-        for p in pixels.chunks_exact(4) {
+        for p in pixels.as_chunks::<4>().0 {
             seen.insert((p[0], p[1], p[2]));
         }
         seen.len()
@@ -291,9 +291,10 @@ mod probe {
     }
 
     fn white_share(pixels: &[u8]) -> f64 {
-        let count = pixels.chunks_exact(4).count().max(1);
+        let pixels = pixels.as_chunks::<4>().0;
+        let count = pixels.len().max(1);
         let white = pixels
-            .chunks_exact(4)
+            .iter()
             .filter(|p| p[0] > 240 && p[1] > 240 && p[2] > 240)
             .count();
         white as f64 / count as f64
@@ -302,8 +303,10 @@ mod probe {
     fn changed_share(a: &[u8], b: &[u8]) -> f64 {
         let count = a.len().min(b.len()) / 4;
         let changed = a
-            .chunks_exact(4)
-            .zip(b.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(b.as_chunks::<4>().0)
             .filter(|(x, y)| x[..3] != y[..3])
             .count();
         changed as f64 / count.max(1) as f64

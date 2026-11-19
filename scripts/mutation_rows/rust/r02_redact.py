@@ -831,8 +831,8 @@ ROWS += [
         # form PDF 2.0 prefers.
         "save: strip /Info and leave the XMP packet beside it",
         "src/save.rs",
-        "        doomed.insert(metadata);",
-        "        let _ = metadata;",
+        "            doomed.insert(*metadata);",
+        "            let _ = metadata;",
         "a_redaction_removes_the_documents_own_description_of_itself",
     ),
     Mutation(
@@ -840,8 +840,8 @@ ROWS += [
         # still shows in its properties panel.
         "save: strip the XMP packet and leave /Info beside it",
         "src/save.rs",
-        "        doomed.insert(info);",
-        "        let _ = info;",
+        "            doomed.insert(*info);",
+        "            let _ = info;",
         "a_redaction_removes_the_documents_own_description_of_itself",
     ),
     Mutation(
@@ -1038,8 +1038,8 @@ ROWS += [
         # nothing -- so only the subtree walk can reach it.
         "redact: take a matched outline entry without its subtree",
         "src/redact.rs",
-        "        collect_subtree(doc, id, &mut all);",
-        "        if !all.contains(&id) {\n            all.push(id);\n        }",
+        "        if !collect_subtree(doc, id, &mut cover.entries) {\n            cover.cut = true;\n        }",
+        "        if !cover.entries.contains(&id) {\n            cover.entries.push(id);\n        }",
         "a_redaction_takes_the_outline_entry_naming_what_it_removed",
     ),
     Mutation(

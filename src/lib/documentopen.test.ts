@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import app from "../App.svelte?raw";
 import {
-  dropAbandoned, dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
+  abandonedBy, documentsBusy, dropAbandoned, dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
   tabToKeep, toldAfterFallback,
   type OpenFound,
 } from "./documentopen";
@@ -21,7 +21,7 @@ import type { DocumentInfo } from "./ipc";
 import { pageId } from "./pages";
 import { Panes } from "./panes";
 import type { Place } from "./session";
-import { functionIn, missingFrom } from "./sourcetext";
+import { functionIn, missingFrom, withoutComments } from "./sourcetext";
 
 const size = (width_pt: number) => ({ width_pt, height_pt: 800 });
 
@@ -268,6 +268,191 @@ describe("the views a failed open leaves without a document", () => {
   });
 });
 
+describe("a reopen after a write that fails", () => {
+  /** `/twice.pdf` shown as tabs 2 and 3, beside `/other.pdf` as tab 1; one model each. */
+  const written = () => {
+    const tabs = new DocumentTabs<{ view: number; path: string; edits: string }>();
+    tabs.keep({ view: 1, path: "/other.pdf", edits: "other" });
+    tabs.keep({ view: 2, path: "/twice.pdf", edits: "twice" });
+    tabs.keep({ view: 3, path: "/twice.pdf", edits: "twice" });
+    const panes = new Panes<number>();
+    panes.fronted(2);
+    panes.move(3, "right", [1, 2, 3]);
+    return { tabs, panes, tab: tabs.find(2)!, twin: tabs.find(3)! };
+  };
+
+  it("a reopen that fails after a write drops the view", () => {
+    // The save closed the handle and the window forgot it; the open then
+    // failed at its first step, before tearing anything down itself.
+    const { tabs, panes, tab, twin } = written();
+    const left = abandonedBy(tabs.all, tab, false, []);
+    expect(left).toEqual({ replaced: true, twins: [tab, twin] });
+    dropAbandoned(panes, tabs, { own: undefined, ...left }, () => {});
+    expect(tabs.all.map((each) => each.view)).toEqual([1]);
+    expect(panes.split).toBe(false);
+    expect(panes.front("left")).toBe(1);
+  });
+
+  it("takes out the written tab too when it failed after its own teardown", () => {
+    // A failed reload mounts its tab again on the handle it still has; a
+    // write's handle is closed, so its tab goes with the other views.
+    const { tabs, tab, twin } = written();
+    expect(abandonedBy(tabs.all, tab, true, [twin])).toEqual({ replaced: true, twins: [tab, twin] });
+  });
+
+  it("does not take out a tab the open already took out of the row", () => {
+    const { tabs, tab, twin } = written();
+    tabs.remove(2);
+    expect(abandonedBy(tabs.all, tab, true, [twin])).toEqual({ replaced: true, twins: [twin] });
+  });
+
+  it("is any other open left as it recorded itself", () => {
+    const { tabs, twin } = written();
+    expect(abandonedBy(tabs.all, undefined, false, [])).toEqual({ replaced: false, twins: [] });
+    expect(abandonedBy(tabs.all, undefined, true, [twin])).toEqual({ replaced: true, twins: [twin] });
+  });
+
+  it("is named and taken down by the open, and only a write's reopen skips the wait for tasks", () => {
+    expect(missingFrom(functionIn(app, "async function reopenAfterWrite("), [
+      "await openPath(path, false, place, true);",
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "function openPath("), [
+      "const ready = afterWrite ? Promise.resolve() : documentTasks.idle();",
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "function abandonOpen("), [
+      "for (const twin of twins) { asDocument(twin.view, () => unmountDocument()); panes.unmounted(twin.view); }",
+    ])).toEqual([]);
+  });
+});
+
+/**
+ * The tasks that settle nothing first, by the function that runs them, and
+ * why. Every other `documentTasks.run(` commits what the reader is still
+ * typing before its first wait: a form answer commits when its control loses
+ * the keyboard, a task's first wait is usually a panel that takes it, and the
+ * commit then lands inside the running task, where `applyEdit` refuses it in
+ * silence. Print, Save a copy, a redacted copy, Extract, Split and Merge each
+ * left it out, so the answer on screen was missing from the paper or the file.
+ */
+const SETTLES_NOTHING: Record<string, string> = {
+  compareWith: "`moveTab` settled both documents just before the task, and a comparison writes nothing",
+  fromPictures: "needs no open document and reads none: it builds a new file from pictures",
+};
+
+/** Each `documentTasks.run(` in `code`, with the function it is in and its argument. */
+function tasksIn(code: string): { name: string; body: string }[] {
+  const found: { name: string; body: string }[] = [];
+  const opener = "documentTasks.run(";
+  for (let at = code.indexOf(opener); at >= 0; at = code.indexOf(opener, at + 1)) {
+    const named = [...code.slice(0, at).matchAll(/function (\w+)\(/g)].at(-1);
+    let depth = 0;
+    let end = at + opener.length - 1;
+    for (; end < code.length; end++) {
+      if (code[end] === "(") depth++;
+      else if (code[end] === ")" && --depth === 0) break;
+    }
+    found.push({ name: named?.[1] ?? "", body: code.slice(at + opener.length, end) });
+  }
+  return found;
+}
+
+/** Whether `body` settles the drafts before, or as part of, its first wait. */
+function settlesFirst(body: string): boolean {
+  const settle = body.indexOf("settleDrafts");
+  if (settle < 0) return false;
+  const wait = body.search(/\bawait\b/);
+  if (wait < 0 || settle < wait) return true;
+  // `await settleDrafts()` itself, or `await signing.signDocument({ settle:
+  // settleDrafts, ... })`, which hands it to the call it waits on.
+  const between = body.slice(wait, settle);
+  return between.trim() === "await" || (!between.includes(";") && between.includes("settle:"));
+}
+
+describe("the document tasks in App.svelte", () => {
+  const tasks = tasksIn(withoutComments(app));
+
+  it("are found, so the rule below is about something", () => {
+    // Fifteen and more on the day this was written; a parser that found none
+    // would pass every task.
+    expect(tasks.length).toBeGreaterThanOrEqual(15);
+    expect(tasks.every((task) => task.name !== "")).toBe(true);
+  });
+
+  it("settle the drafts before their first wait", () => {
+    const unsettled = tasks
+      .filter((task) => !(task.name in SETTLES_NOTHING) && !settlesFirst(task.body))
+      .map((task) => task.name);
+    expect(unsettled).toEqual([]);
+  });
+
+  it("name no exemption that is not a task", () => {
+    const names = new Set(tasks.map((task) => task.name));
+    expect(Object.keys(SETTLES_NOTHING).filter((name) => !names.has(name))).toEqual([]);
+  });
+
+  it("reads a task that waits before settling as one that does not settle", () => {
+    expect(settlesFirst("async () => { const chosen = await saveDialog({}); await settleDrafts(); }")).toBe(false);
+    expect(settlesFirst("async () => { await print(); }")).toBe(false);
+    expect(settlesFirst("async () => { await settleDrafts(); await saveDialog({}); }")).toBe(true);
+    expect(settlesFirst("async () => { const said = await flow({ settle: settleDrafts, dirty }); }")).toBe(true);
+    expect(settlesFirst("async () => { await other(); const s = await flow({ settle: settleDrafts }); }")).toBe(false);
+  });
+});
+
+describe("the comment-word walk in App.svelte", () => {
+  it("hands the walk this document's comments, its set and its viewer", () => {
+    // The walk and the set it keeps are `commentwalk.ts`, tested there.
+    expect(missingFrom(functionIn(app, "async function fillCommentWords("), [
+      "const id = openView, reader = viewer, walk = commentWords;",
+      "await walk.fill({",
+      "comments: () => asDocument(id, () => rawComments === source ? commentsIn(source.items, edits?.map ?? NO_PAGES, edits?.state.notes) : null) ?? null,",
+      "if (rawComments !== source) return false;",
+      "if (words.size > 0) sidebar?.setCommentWords(words);",
+    ])).toEqual([]);
+  });
+});
+
+describe("whether anything may be started on a document", () => {
+  const idle = { opening: false, documentBusy: false, copyTaskBusy: false };
+
+  it("is refused while an open, a task or a hold, or a copy task is running", () => {
+    expect(documentsBusy({ ...idle, opening: true })).toBe(true);
+    expect(documentsBusy({ ...idle, documentBusy: true })).toBe(true);
+    expect(documentsBusy({ ...idle, copyTaskBusy: true })).toBe(true);
+  });
+
+  it("is allowed when none is", () => {
+    expect(documentsBusy(idle)).toBe(false);
+  });
+
+  it("greys the menu, the message bar's buttons and refuses a reload by that one answer", () => {
+    expect(missingFrom(app, [
+      "const busyNow = $derived(documentsBusy({ opening, documentBusy, copyTaskBusy }));",
+      "busyDocument: () => busyNow,",
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "function reloadAnyway("), ["if (!path || busyNow) return;"])).toEqual([]);
+    expect(missingFrom(functionIn(app, "function focusSide("), ["if (busyNow || !stage.parked.includes(id)) return false;"]))
+      .toEqual([]);
+    for (const offer of ["open-redacted-copy", "offer-saveCopy", "offer-reload", "offer-rasterCopy", "offer-redact"]) {
+      expect(missingFrom(app, [`<button data-testid="${offer}" disabled={busyNow}`])).toEqual([]);
+    }
+  });
+
+  it("names the absence of a view by NO_VIEW, never by null", () => {
+    // A view is a number: a comparison with null is always true, and "Close
+    // other tabs" with no view in front counted every tab as another.
+    expect(withoutComments(app)).not.toMatch(/\b(openView|from)\s*[!=]==?\s*null\b/);
+  });
+
+  it("is read off the one `opening` flag, which no local or parameter hides", () => {
+    // `const opening = adoptModel(...)` inside `openDocument`'s try made the
+    // flag unreadable in the rest of that block.
+    const code = withoutComments(app);
+    expect(code.match(/\b(?:const|let|var)\s+opening\b/g)).toEqual(["let opening"]);
+    expect(code).not.toMatch(/function\s+\w+\([^)]*\bopening\s*:/);
+  });
+});
+
 describe("what a failed open says", () => {
   it("is the refusal's own sentence, and anything else as it is", () => {
     expect(openFailure({ reason: "The file is not a PDF.", locked: false }, false)).toBe("The file is not a PDF.");
@@ -306,7 +491,7 @@ describe("what the reader is told once the window has gone back to another tab",
       "return failed;",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "function openPath("), [
-      "const failed = await openDocument(path, resuming, resume);",
+      "const failed = await openDocument(path, resuming, resume, undefined, afterWrite);",
       "try { await showPanes(failed); }",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "async function showPanes("), [
@@ -324,7 +509,9 @@ describe("the open's wiring in App.svelte", () => {
     expect(missingFrom(functionIn(app, "async function openDocument("), [
       "const pages = pageTable(doc);",
       "const resume = placeToResume(retained?.place, override, session.places, path, retained?.edits.state.pages.length ?? doc.page_count);",
-      "abandonOpen(acquired, replaced, twins);",
+      "const written = afterWrite ? tabs.forPath(path, tabs.active) : undefined;",
+      "const left = abandonedBy(tabs.all, written, replaced, twins);",
+      "abandonOpen(acquired, left.replaced, left.twins);",
       "const said = openFailure(e, resuming);",
       "if (said !== null) say(said);",
     ])).toEqual([]);

@@ -109,6 +109,36 @@ describe("label", () => {
   });
 });
 
+describe("matches and AltGr", () => {
+  /** An event that also answers `getModifierState("AltGraph")`. */
+  function altGr(key: string, held: boolean, { meta = false } = {}): KeyboardEvent {
+    return {
+      ...event(key, { ctrl: true, alt: true, accel: meta }),
+      getModifierState: (name: string) => name === "AltGraph" && held,
+    } as KeyboardEvent;
+  }
+
+  it("refuses an accel+Alt chord when the browser says the key was AltGr", () => {
+    // AltGr+C on US-International types `©` and reaches the page as Ctrl+Alt+c.
+    expect(matches("find.matchCase", altGr("c", true))).toBe(false);
+    expect(matches("nav.goToPage", altGr("g", true))).toBe(false);
+  });
+
+  it("still takes the chord from Ctrl and Alt pressed as themselves", () => {
+    // The control: the same event without AltGraph is the Windows chord.
+    expect(matches("find.matchCase", altGr("c", false))).toBe(true);
+    // An event with no getModifierState at all, as older engines send.
+    expect(matches("find.matchCase", event("c", { ctrl: true, alt: true }))).toBe(true);
+  });
+
+  it("leaves the macOS Option chords alone, whatever Option is reported as", () => {
+    // ⌘ is never part of AltGr, and the alternates Option produces are in
+    // the same bindings.
+    expect(matches("find.matchCase", altGr("ç", true, { meta: true }))).toBe(true);
+    expect(matches("nav.goToPage", altGr("©", true, { meta: true }))).toBe(true);
+  });
+});
+
 describe("matches", () => {
   it("accepts an event built from the binding's own declaration", () => {
     // The round trip this module exists for. A label is rendered from the same

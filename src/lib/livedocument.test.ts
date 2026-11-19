@@ -295,19 +295,55 @@ describe("a blank live document", () => {
   it("shares no collection with the one before it", () => {
     const first = blankLive();
     const second = blankLive();
-    first.covered.set(1, "words");
-    first.wordsAsked.add(1);
+    first.covered.note(1, "words");
+    first.commentWords.asked.add(1);
+    first.commentWords.words.set(1, "words");
+    first.commentWords.filling = true;
+    first.redactionWords.words.set(1, "words");
+    first.redactionWords.plans.set(1, {} as never);
+    first.redactionWords.filling = true;
     first.offers.push({} as never);
     first.formNames.push("name");
     expect(second.covered.size).toBe(0);
-    expect(second.wordsAsked.size).toBe(0);
+    expect(second.commentWords.asked.size).toBe(0);
+    expect(second.commentWords.words.size).toBe(0);
+    expect(second.commentWords.filling).toBe(false);
+    expect(second.redactionWords.words.size).toBe(0);
+    expect(second.redactionWords.plans.size).toBe(0);
+    expect(second.redactionWords.filling).toBe(false);
     expect(second.offers).toEqual([]);
     expect(second.formNames).toEqual([]);
     expect(second.importedLinks).not.toBe(first.importedLinks);
     expect(second.degradedGate).not.toBe(first.degradedGate);
-    expect(second.commentWords).not.toBe(first.commentWords);
-    expect(second.redactionWords).not.toBe(first.redactionWords);
-    expect(second.redactionPlans).not.toBe(first.redactionPlans);
+  });
+});
+
+describe("a walk's state in the window", () => {
+  it("is one slot per walk, so a change of side takes its set, its answers and its flag together", () => {
+    // `Slots<LiveDocument>` makes the window name a variable for every field,
+    // so what the walks keep moves between sides as the fields it is. A walk's
+    // flag left in a variable of its own stayed with the window when the walk
+    // went with its document, and the other side's walk then stood down.
+    const fields = Object.keys(blankLive());
+    for (const gone of ["wordsAsked", "redactionPlans", "fillingWords", "fillingRedactionWords"]) {
+      expect(fields).not.toContain(gone);
+    }
+    expect(missingFrom(app, [
+      "covered: { get: () => covered, set: (value) => { covered = value; } },",
+      "commentWords: { get: () => commentWords, set: (value) => { commentWords = value; } },",
+      "redactionWords: { get: () => redactionWords, set: (value) => { redactionWords = value; } },",
+    ])).toEqual([]);
+  });
+
+  it("is held by each walk for its length, not read from the variables again after a wait", () => {
+    expect(missingFrom(functionIn(app, "async function fillCommentWords("), [
+      "const id = openView, reader = viewer, walk = commentWords;",
+      "await walk.fill({",
+    ])).toEqual([]);
+    expect(missingFrom(functionIn(app, "async function fillRedactionWords("), [
+      "const id = openView, reader = viewer, panel = sidebar, walk = redactionWords;",
+      "await walk.fill({",
+    ])).toEqual([]);
   });
 });
 

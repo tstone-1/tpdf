@@ -431,10 +431,19 @@ class ClientTests(unittest.TestCase):
         report = self.pdf.redact(source, patterns=['PRIVATE-[0-9]+'], dry_run=True)
         self.assertIsNone(report['output'])
         self.assertIsNone(report['verified'])
-        report = self.pdf.redact(source, output, texts=['private-731'], case_sensitive=True, force=True)
+        # Nothing matched and nothing is under the name: not an error.
+        fresh = self.root / 'fresh.pdf'
+        report = self.pdf.redact(source, fresh, texts=['private-731'], case_sensitive=True)
         self.assertEqual(report['searches'][0]['matches'], 0)
         self.assertFalse(report['written'])
         self.assertIsNone(report['verified'])
+        self.assertFalse(fresh.exists())
+        # Nothing matched over an earlier output with force: refused, so a
+        # caller cannot take the earlier file for this run's copy.
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.redact(source, output, texts=['private-731'], case_sensitive=True, force=True)
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertIn("is not this run's copy", str(caught.exception))
         self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
 
     def test_redaction_verification_failure_retains_report_and_written_copy(self):
@@ -906,6 +915,18 @@ class ClientTests(unittest.TestCase):
                 with self.assertRaises(ProtocolError):
                     self.pdf.help()
 
+    def test_a_protocol_error_keeps_what_the_tool_said(self):
+        with patch('tpdf_client.subprocess.Popen') as popen:
+            process = popen.return_value
+            process.returncode = 4
+            process.communicate.return_value = (
+                b'', b'tpdf: could not work out where tpdf is installed\n')
+            with self.assertRaises(ProtocolError) as raised:
+                self.pdf.help()
+        self.assertEqual(raised.exception.exit_code, 4)
+        self.assertIn('could not work out where tpdf is installed', raised.exception.stderr)
+        self.assertIn('could not work out where tpdf is installed', str(raised.exception))
+
     def test_timeout_closes_parent_and_child_output_pipes(self):
         # Real descendants inherit stdout/stderr. Killing only the coordinator
         # leaves communicate() blocked on the child's pipes for 60 seconds.
@@ -927,6 +948,58 @@ class ClientTests(unittest.TestCase):
                 Tpdf(BINARY, timeout=0.5).help()
         self.assertLess(time.monotonic() - start, 10)
         self.assertIsNotNone(processes[0].poll())
+
+
+class ExecutableLookupTests(unittest.TestCase):
+    """The client finds the tool on PATH and never in the current directory.
+
+    A script run in a folder of received documents must not start a
+    `tpdf-cli.bat` somebody put beside them, which `shutil.which` would on
+    Windows before Python 3.12.
+    """
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix='tpdf-lookup-')
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        self.received = root / 'received'
+        self.installed = root / 'installed'
+        self.empty = root / 'empty'
+        for folder in (self.received, self.installed, self.empty):
+            folder.mkdir()
+        name = 'tpdf-cli.bat' if os.name == 'nt' else 'tpdf-cli'
+        for folder in (self.received, self.installed):
+            planted = folder / name
+            planted.write_text('@echo off\n' if os.name == 'nt' else '#!/bin/sh\n', encoding='ascii')
+            planted.chmod(0o755)
+        self.here = os.getcwd()
+        os.chdir(self.received)
+        self.addCleanup(os.chdir, self.here)
+
+    def found(self, path: str) -> str:
+        with patch.dict(os.environ, {'PATH': path}):
+            return Tpdf().executable
+
+    def test_a_tool_in_the_current_directory_is_not_found(self):
+        with patch.dict(os.environ, {'PATH': str(self.empty)}):
+            with self.assertRaises(FileNotFoundError):
+                Tpdf()
+            with self.assertRaises(FileNotFoundError):
+                Tpdf('tpdf-cli')
+        # A relative PATH entry names the current directory too.
+        with patch.dict(os.environ, {'PATH': os.pathsep.join(['.', str(self.empty)])}):
+            with self.assertRaises(FileNotFoundError):
+                Tpdf()
+
+    def test_a_tool_on_path_is_found_and_the_current_directory_is_passed_over(self):
+        # The control: the same tool in a PATH folder is found, and it is that
+        # one, not the copy in the folder the script was started in.
+        found = Path(self.found(os.pathsep.join([str(self.empty), str(self.installed)])))
+        self.assertEqual(found.parent, self.installed.resolve())
+        # An explicit path to the current directory's copy is the caller's choice.
+        name = 'tpdf-cli.bat' if os.name == 'nt' else 'tpdf-cli'
+        explicit = Path(Tpdf('.' + os.sep + name).executable)
+        self.assertEqual(explicit.parent, self.received.resolve())
 
 
 if __name__ == '__main__':

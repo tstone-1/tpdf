@@ -174,6 +174,9 @@ FILTERS = [
     # thing this harness most reliably forgets, and the guard is the thing that
     # most reliably catches it.
     "tests::",
+    # Added 2026-11-19 with the bound on the codes read from a page. Its row was
+    # visible only through `tests::` above, which matches by accident.
+    "codes::",
     # Added 2026-08-19 with the external-modification check. Sixth time, and this
     # one was found by looking rather than by the guard: no mutation named a
     # `fingerprint::` test, so nothing refused to start --- a module whose tests

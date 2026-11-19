@@ -1707,6 +1707,7 @@ fn what_follows_the_last_signature_decides_strict_and_is_said() {
         path: "signed.pdf".into(),
         error: None,
         signatures: vec![signature_report(&holds)],
+        signatures_complete: true,
     };
     for (after, passes, said) in [
         (After::Unchanged, true, None),

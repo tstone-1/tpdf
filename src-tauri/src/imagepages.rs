@@ -424,7 +424,11 @@ pub fn placement(
             let fit = (MAX_PAGE_PT / w.max(h)).min(1.0);
             let grow = (MIN_PAGE_PT / w.min(h)).max(1.0);
             let scale = if fit < 1.0 { fit } else { grow };
-            (w * scale, h * scale)
+            // A picture more than 4,800 times as long as it is wide cannot
+            // keep its shape inside both bounds: its page keeps them instead,
+            // and the picture is fitted onto it below.
+            let side = |length: f64| (length * scale).clamp(MIN_PAGE_PT, MAX_PAGE_PT);
+            (side(w), side(h))
         }
     };
     // Down to fit, never up.

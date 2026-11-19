@@ -17,6 +17,9 @@ from . import (
     f07_unaimed_suites,
     f08_syncfollow_benchtable,
     f09_holds_and_restores,
+    f10_app_wiring,
+    f11_viewer_properties,
+    f12_live_state,
 )
 
 #: Every part, in the order its rows run.
@@ -30,6 +33,9 @@ PARTS = (
     f07_unaimed_suites,
     f08_syncfollow_benchtable,
     f09_holds_and_restores,
+    f10_app_wiring,
+    f11_viewer_properties,
+    f12_live_state,
 )
 
 ROWS = [row for part in PARTS for row in part.ROWS]

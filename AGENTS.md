@@ -196,7 +196,7 @@ in-process. `--json` output is a contract, `report::SCHEMA`: the samples in
 `README.md` and the Python types (`api/python/test_reports.py`). Four rules exist in Rust and
 TypeScript (`words.rs`, `cli/verify.rs`, `reading.rs`, `cli/regions.rs`), and
 `src/lib/cli{wording,reading,regions}.test.ts` hold each to its original through the samples.
-Commands: `BUILD.md`, *The command-line tool*.
+Commands: `docs/build/running.md`, *The command-line tool*.
 
 The **shell is settled**, and since 2026-07-27 so is the **PDF layer** — Phase 0 proved
 each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` §9).

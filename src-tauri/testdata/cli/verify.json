@@ -199,7 +199,8 @@
           "pades_level": null,
           "pades": null
         }
-      ]
+      ],
+      "signatures_complete": true
     },
     {
       "path": "locked.pdf",
@@ -207,7 +208,8 @@
         "kind": "locked",
         "message": "locked.pdf is encrypted with a password, and its signatures cannot be read without it --- open it in tpdf to check them"
       },
-      "signatures": []
+      "signatures": [],
+      "signatures_complete": false
     }
   ]
 }

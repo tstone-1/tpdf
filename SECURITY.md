@@ -46,6 +46,35 @@ If you redacted a document with 26.11.5 or earlier, redact the original again wi
 or later and use the new file. If the earlier copy was already sent, assume that it can
 still hold what was redacted.
 
+## Redactions made with 26.11.9 or earlier
+
+Up to 26.11.9, three more kinds of redacted file could read *verified* while a copy of what
+was redacted was still in them.
+
+- **A document with a picture stored losslessly or without compression**: a PNG-derived
+  image, the output of img2pdf, many 1-bit scans, an inline image. The check searched the
+  picture's samples as if they were text, found nothing, and did not say that the picture
+  had not been read. A JPEG was already reported. Words visible only as pixels in such a
+  picture were never looked at.
+- **A document whose streams name their decoding parameters indirectly** (`/DecodeParms 9 0
+  R`), or whose compressed data stops part way. The check searched bytes that were not the
+  text a viewer draws, and passed them.
+- **An image-only redacted copy of a document with a QR or other 2D code.** That copy always
+  reported success. A code beside a redacted name can hold the name too (a payment code
+  holds the payee and the account), and it came through intact.
+
+26.11.10 reads the first two as *not verified*, with the reason, and reads the codes on an
+image-only copy as it does on the other copies. It also removes copies it used to leave:
+the replacement text of a span inside a form XObject or around a removed picture, a
+document information dictionary written straight into the file's trailer, a form field
+written inline in the field list, and an inline reply to a removed note.
+
+If you redacted a document with 26.11.9 or earlier and it matches one of these, redact the
+original again with 26.11.10 or later and use the new file. If the earlier copy was already
+sent, assume that it can still hold what was redacted. A result of *not verified* from the
+new version on a document that read *verified* before is the corrected answer, not a
+regression.
+
 ## Reporting a vulnerability
 
 Use **GitHub's private vulnerability reporting** on this repository

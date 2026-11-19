@@ -1688,6 +1688,7 @@ element that span belongs to, reached by `/MCID` through the parent tree, togeth
 ancestors. An **annotation whose `/Rect` overlaps a region**, with its popup and its replies,
 removed together with every reference to it rather than unlinked from the page. And the
 document's own description of itself — `/Info` and the catalog's `/Metadata` — taken whole,
+whether referenced or, since 2026-11-19, written straight into the trailer or the catalog,
 because a title that paraphrases a redacted line is reachable by no rule that matches text.
 And the **outline entries whose title names what went**, with the subtree under each: a
 bookmark title *is* the heading it points at, measured at 163 of 165 verbatim page text
@@ -1730,6 +1731,25 @@ compressed bytes), for embedded files (`/EmbeddedFiles`, `/EF`, `/AF`) and for a
 application's private data (`/PieceInfo`), none of which it reads. A redaction also removes an
 annotation written inline in `/Annots` over the region, and the page's `/Thumb`. None of that makes the answer *wrong* — it makes the answer *not verified*, which is
 what the reader is told.
+
+Since 2026-11-19 `verify::as_drawn` asks one question of every stream, whether it was read
+the way a viewer reads it, and the verdict is withheld where the answer is no: for a picture
+whatever its filter (`/Subtype /Image`, followed through a reference; a deflated or
+uncompressed picture was searched as text until then) and for an inline image in a content
+stream; for a stream whose `/DecodeParms` is a reference, or holds a key the decoder reads
+only as a direct integer, or names a predictor above 15; and for a Flate stream whose data
+stops before its end. A composite font whose `/Subtype` is a reference counts as composite,
+and a `/Info` written directly into a classic trailer is searched. The three redaction
+commands (copy, in place, image-only copy) take their verdict from one function,
+`redaction_steps::read_back`; until then the image-only copy returned *verified* without
+running a reader.
+
+The removal reaches further since the same day: shadow text inside a Form XObject (the span
+and the structure element, through the form's own `/StructParents`) and around a removed
+page picture; a field dictionary written inline in `/Fields` or `/Kids`; an inline reply or
+popup of a removed annotation. An outline too large to read through (past 20,000 entries,
+or with a subtree the bound cut) is taken whole rather than entry by entry, because an
+entry nobody compared may name what went.
 
 #### T6.12 — Redacting the reader's own file, added 2026-08-27
 
@@ -3560,7 +3580,9 @@ So the code that runs there is kept to what cannot parse a PDF:
   Explorer, which then shows its generic icon or an empty pane.
 - **The preview pane does not wait on the renderer.** The handler shows its window at once and
   paints the page when a background thread has it, so a document that runs out its time leaves
-  the pane empty and `prevhost.exe` answering.
+  the pane empty and `prevhost.exe` answering. When the pane is reset to another file or
+  closed, the render it has out is ended with its job (`render::Cancel`, since 2026-11-19),
+  so arrowing through a folder leaves at most one `tpdf-cli` and its worker running.
 - **Registration is the user's own and is undone completely.** The keys are written under
   `HKCU\Software\Classes` and `HKCU\...\PreviewHandlers`, with no administrator rights. A
   handler another program had registered for the current user is kept and put back when tpdf's
@@ -4772,7 +4794,7 @@ clipboard text and replaced it, and the parent read the replacement back. Under 
 renders pixel-identical; `ocr-worker-probe` still passes 11 of 11. `EmptyClipboard` still
 succeeds, which is residual 39.
 
-**What a compromised worker's replies can do to the app is bounded in four more places as of
+**What a compromised worker's replies can do to the app is bounded in five more places as of
 2026-11-10.** Tile and pixel payloads are read and written with positional file I/O
 (`Shm::copy_front`, `Shm::fill_front`), so a worker that truncates its shared file gets an
 error and not a fault in the app. An open reply's page count is held to PDFium's page-tree
@@ -5776,6 +5798,45 @@ because the arm it ran was the one written for "any other platform".
     Also unread: linear barcodes, and a removed text of one character. Until 2026-11-18 only
     the pages a redaction changed were read; the cost that argued for it was measured that
     day at 16 to 48 ms a page (Windows x64, release) and did not hold.
+42. **Three carriers of the class §T6.11 closed on 2026-11-19 are still read as whole**, added
+    that day. An LZW or ASCII85 stream cut short is searched up to the cut, since lopdf
+    returns its partial output as success and this build has no second decoder for either.
+    A simple font with a custom `/Encoding /Differences` writes bytes that are not the
+    characters searched for, the same gap a composite font had. And the image-only copy
+    turns a second visible copy of a removed text on an unmarked page into pixels nobody
+    reads, without saying so.
+
+    What closing the picture gap costs, measured the same day with
+    `examples/picture_verdict_probe.rs`: every picture in a written redaction withholds
+    *verified*, wherever it is drawn, and the OCR gate reads only the marked regions, so
+    nothing resolves such a reason. Of 40 real-world documents 19 hold a picture and all 19
+    are withheld, 9 of them before the change. A one-word redaction on a picture-free page
+    of 12 of them was verified in none, against 4 under the rule before; the other 8 were
+    already withheld for a composite font, `/PieceInfo` or the gate. Reading the pictures
+    with the recogniser was considered and not built: "the recogniser did not return the
+    word" is weaker evidence than the gate accepts for a marked region, a page render is not
+    the picture object (clipped, covered or undrawn pixels and the soft mask are in the
+    file too), and a raw picture has no control word.
+43. **A worker is given no file-size limit**, added 2026-11-19. A unix worker inherits a
+    read-write descriptor to its tile file and can grow it until the temporary volume is
+    full. `RLIMIT_FSIZE` would bound that, but a worker also inherits the parent's stderr
+    when that is not a terminal, and when it is a regular file a zero limit would kill the
+    worker on its first diagnostic line. File creation is denied by the sandbox profile; the
+    limit would be a second layer, and needs stderr always piped first.
+44. **One worker that stops reading delays withdrawals for every document**, added
+    2026-11-19. Withdrawals to all workers are written by one thread, so a worker that stops
+    reading its stdin holds them until it reads or dies. The cost is wasted renders whose
+    replies are discarded; nothing renders wrong.
+45. **A field tree past 20,000 nodes leaves the remaining values unjudged by a redaction**,
+    added 2026-11-19. An outline cut at its bound is taken whole since that day;
+    `redact::covered_fields` ignores the same cut in its own walk.
+46. **The end of a superseded Explorer preview render is tested below the pane, not in it**,
+    added 2026-11-19. The render in flight when the pane is reset or closed is ended through
+    its job object, and that is held by tests of the state machine and of a real child and
+    grandchild in a job. The call from the pane's own `destroy` runs only inside
+    `prevhost.exe`, which no test starts; it was last checked by hand as
+    `docs/build/running.md` describes. No gate runs the handler's tests either: the gate
+    list selects the root package only.
 
 ## 8. How to re-verify any of this
 

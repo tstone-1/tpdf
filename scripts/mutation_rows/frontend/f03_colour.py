@@ -1307,7 +1307,7 @@ ROWS += [
         # Leave the reason out of an unchecked row.
         "integrity: refuse without the reason",
         "src/lib/integrity.ts",
-        "  const why = integrity.why ? WHY[integrity.why] : said.noReason;",
+        "  const why = reasonFrom(WHYS, WHY, integrity.why, (words) => words);",
         "  const why = said.noReason;",
         "gives each reason its own sentence, and says an unchecked one means nothing",
     ),
@@ -1392,7 +1392,7 @@ ROWS += [
         # Read the doubt from the wrong table entry: every reason the same.
         "trust: give every doubt the same sentence",
         "src/lib/integrity.ts",
-        "  const why = trust.why ? DOUBT[trust.why](computer) : said.noReason;",
+        "  const why = reasonFrom(DOUBTS, DOUBT, trust.why, (doubt) => doubt(computer));",
         "  const why = DOUBT.rejected(computer);",
         "gives each doubt its own sentence",
     ),

@@ -203,12 +203,7 @@ pub fn parse(args: &[String]) -> Result<Search, String> {
 
 /// `--color`'s value: `r,g,b`, each from 0 to 1.
 fn color(raw: &str) -> Result<[f32; 3], String> {
-    let parts: Vec<f32> = raw
-        .split(',')
-        .filter_map(|part| part.trim().parse::<f32>().ok())
-        .filter(|channel| (0. ..=1.).contains(channel))
-        .collect();
-    <[f32; 3]>::try_from(parts).map_err(|_| {
+    super::args::rgb(raw).ok_or_else(|| {
         format!(
             "`--color {raw}` is not red, green and blue from 0 to 1 --- yellow is `--color 1,0.9,0.2`"
         )
@@ -369,6 +364,7 @@ impl Subcommand for Search {
             // line `say` writes would be.
             let text = plain(&report);
             if !text.is_empty() {
+                // A failed write is kept by `cli::run`, which ends the run 3.
                 let _ = out.write_all(super::printable(&text).as_bytes());
                 let _ = out.flush();
             }

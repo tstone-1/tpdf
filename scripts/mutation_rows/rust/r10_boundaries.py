@@ -79,8 +79,8 @@ ROWS += [
         # it stays over the region with its contents unless this takes it.
         "redaction: an inline annotation over the region left in place",
         "src/save.rs",
-        "        done.annots += redact::take_inline_annots(doc, page, &redaction.areas);",
-        "        let _ = &redaction.areas;",
+        "        done.annots += redact::take_inline_annots(doc, page, &redaction.areas, &mut taken);",
+        "        let _ = (&redaction.areas, &mut taken);",
         "a_redacted_page_does_not_keep_its_thumbnail",
     ),
     Mutation(
@@ -95,8 +95,8 @@ ROWS += [
     Mutation(
         "redaction: every inline annotation taken, over the region or not",
         "src/redact.rs",
-        "                matches!(rect_of(doc, annot), Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)))",
-        "                true || matches!(rect_of(doc, annot), Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)))",
+        "                let keep = matches!(rect_of(doc, annot), Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)))",
+        "                let keep = false && matches!(rect_of(doc, annot), Some(rect) if !areas.iter().any(|area| overlaps(rect, *area)))",
         "an_annotation_written_inline_in_annots_over_a_region_is_taken",
     ),
     Mutation(
@@ -199,7 +199,7 @@ ROWS += [
     Mutation(
         "compress: a sample whose size is not its pixels accepted",
         "src/commands/compress.rs",
-        "    sized(sample)?;\n",
+        "    sample.checked()?;\n",
         "",
         "a_sample_whose_size_is_not_its_pixels_is_refused",
     ),
@@ -459,16 +459,16 @@ ROWS += [
     Mutation(
         "commit: a refused rename tried again for ever",
         "src/save.rs",
-        "                    && attempt < COMMIT_RETRIES =>",
-        "                    && attempt < u32::MAX =>",
+        "                    && e.kind() == std::io::ErrorKind::PermissionDenied\n                    && attempt < COMMIT_RETRIES =>",
+        "                    && e.kind() == std::io::ErrorKind::PermissionDenied\n                    && attempt < u32::MAX =>",
         "a_target_held_open_briefly_is_still_replaced",
         only_on="windows",
     ),
     Mutation(
         "commit: a refused rename never tried again",
         "src/save.rs",
-        "                    && attempt < COMMIT_RETRIES =>",
-        "                    && attempt > COMMIT_RETRIES =>",
+        "                    && e.kind() == std::io::ErrorKind::PermissionDenied\n                    && attempt < COMMIT_RETRIES =>",
+        "                    && e.kind() == std::io::ErrorKind::PermissionDenied\n                    && attempt > COMMIT_RETRIES =>",
         "a_target_held_open_briefly_is_still_replaced",
         only_on="windows",
     ),

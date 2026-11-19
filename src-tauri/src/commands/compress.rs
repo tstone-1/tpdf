@@ -73,42 +73,15 @@ fn data_url(rgba: &[u8], width: u32, height: u32) -> Result<String, String> {
     ))
 }
 
-/// A sample's stated size held to its pixels, before either reaches the
-/// encoder: the worker says both, and the encoder trusts the size it is
-/// given. Each side at most [`crate::compress::SAMPLE_SIDE`], which is what
-/// the worker cuts a sample to, and each picture exactly that many RGB
-/// pixels, the product checked rather than wrapped.
-fn sized(sample: &Sample) -> Result<(), String> {
-    let side = 1..=crate::compress::SAMPLE_SIDE;
-    let (width, height) = (sample.width, sample.height);
-    if !side.contains(&width) || !side.contains(&height) {
-        return Err(said!(
-            "the worker described a sample of {width} by {height} pixels, which no sample is"
-        ));
-    }
-    let bytes = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|pixels| pixels.checked_mul(3));
-    for (which, pixels) in [("before", &sample.before), ("after", &sample.after)] {
-        if bytes != Some(pixels.len()) {
-            return Err(said!(
-                "the worker's sample {which} holds {held} bytes, and {width} by {height} RGB \
-                 pixels are not that many",
-                held = pixels.len()
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// A sample as two pictures the webview can show.
 ///
 /// # Errors
 ///
-/// A size the pixels do not have ([`sized`]), or a picture that will not
-/// encode.
+/// A size the pixels do not have ([`Sample::checked`]), held before either
+/// picture reaches the encoder, which trusts the size it is given; or a
+/// picture that will not encode.
 pub(crate) fn view(sample: &Sample) -> Result<SampleView, String> {
-    sized(sample)?;
+    sample.checked()?;
     Ok(SampleView {
         width: sample.width,
         height: sample.height,

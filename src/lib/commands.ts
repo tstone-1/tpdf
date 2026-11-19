@@ -199,6 +199,24 @@ function scoreOf(title: string, positions: readonly number[]): number {
 }
 
 /**
+ * `text` in lower case, one UTF-16 unit for each one of `text`.
+ *
+ * `toLowerCase` can lengthen a string --- `İ` becomes `i` and a combining dot
+ * --- and the positions {@link fuzzyMatch} answers are indices into the title
+ * as the palette shows it, which emboldens the letters at them. So a character
+ * whose lower case is longer is kept as it is: the indices then stay the
+ * title's, and only that one character is compared without folding.
+ */
+function foldCase(text: string): string {
+  let folded = "";
+  for (const character of text) {
+    const lower = character.toLowerCase();
+    folded += lower.length === character.length ? lower : character;
+  }
+  return folded;
+}
+
+/**
  * Where `needle` stands in `hay` as written, letter after letter, or null.
  *
  * The occurrence that starts a word if there is one, and the first otherwise.
@@ -235,8 +253,8 @@ export function fuzzyMatch(
   query: string,
   title: string,
 ): { score: number; positions: number[] } | null {
-  const needle = query.toLowerCase();
-  const hay = title.toLowerCase();
+  const needle = foldCase(query);
+  const hay = foldCase(title);
   if (needle.length === 0) return { score: 0, positions: [] };
 
   const greedy: number[] = [];
