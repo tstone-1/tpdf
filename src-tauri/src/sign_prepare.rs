@@ -444,6 +444,66 @@ impl FieldLock {
     }
 }
 
+/// Enforces a signed field selection, including descendants of each named field.
+pub(crate) fn permit_field(
+    document: &Document,
+    field: &Dictionary,
+    signature: &Dictionary,
+    name: &str,
+) -> Result<(), String> {
+    let unreadable = || said!("An earlier signature has a field lock that tpdf cannot read.");
+    let check = |params: &Object| {
+        let lock = field_lock_of(document, resolve(document, params)).ok_or_else(unreadable)?;
+        let listed = lock.fields.iter().any(|field| {
+            let Object::String(raw, _) = field else {
+                return false;
+            };
+            let parent = crate::annots::decode_text_string(raw);
+            name == parent
+                || name
+                    .strip_prefix(&parent)
+                    .is_some_and(|suffix| suffix.starts_with('.'))
+        });
+        if lock.action == "All" || (lock.action == "Include") == listed {
+            return Err(said!("An earlier signature locked the field {name}."));
+        }
+        Ok(())
+    };
+    if let Ok(lock) = field.get(b"Lock") {
+        if !matches!(resolve(document, lock), Object::Null) {
+            check(lock)?;
+        }
+    }
+    if let Ok(refs) = signature.get(b"Reference") {
+        let refs = resolve(document, refs)
+            .as_array()
+            .map_err(|_| unreadable())?;
+        if refs.len() > MAX_LOCKED_FIELDS {
+            return Err(unreadable());
+        }
+        for entry in refs {
+            let reference = resolve(document, entry)
+                .as_dict()
+                .map_err(|_| unreadable())?;
+            let method = reference
+                .get(b"TransformMethod")
+                .map_err(|_| unreadable())?;
+            if resolve(document, method)
+                .as_name()
+                .map_err(|_| unreadable())?
+                == b"FieldMDP"
+            {
+                check(
+                    reference
+                        .get(b"TransformParams")
+                        .map_err(|_| unreadable())?,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Reads what the field's author asked of its signer, and refuses what this
 /// writer does not do.
 ///
@@ -677,7 +737,7 @@ fn build(
     // says, and a further signature breaks it the same way. A document
     // timestamp is not a change in that sense (PDF 32000-2 §12.8.2.2.2), and is
     // what keeps a locked signature verifiable.
-    if !details.document_timestamp && crate::docinfo::locked(&prev)? {
+    if !details.document_timestamp && crate::docinfo::locked_for(&prev, details.field.as_deref())? {
         return Err(said!(
             "A signature locked this document with no changes permitted, so a further \
              signature would break that lock."

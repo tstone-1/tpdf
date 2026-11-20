@@ -20,6 +20,7 @@
  * they are handled.
  */
 
+import { spokenError } from "./said";
 import { catalog, UI_LOCALE, type UiLocale } from "./i18n";
 
 /**
@@ -30,6 +31,7 @@ import { catalog, UI_LOCALE, type UiLocale } from "./i18n";
 const TEXT = catalog({
   "en-US": {
     ctrl: "Ctrl",
+    clipboardFailed: "Could not write to the clipboard",
     alt: "Alt",
     shift: "Shift",
     home: "Home",
@@ -47,6 +49,7 @@ const TEXT = catalog({
   },
   "de-DE": {
     ctrl: "Strg",
+    clipboardFailed: "Konnte nicht in die Zwischenablage schreiben",
     alt: "Alt",
     shift: "Umschalt",
     home: "Pos1",
@@ -557,7 +560,10 @@ export function matches(id: BoundCommand, event: KeyboardEvent): boolean {
   const binding: Binding = BINDINGS[id];
   const accel = event.metaKey || event.ctrlKey;
   if (binding.ctrl ? (!event.ctrlKey || event.metaKey) : accel !== (binding.accel ?? false)) return false;
-  if (event.shiftKey !== (binding.shift ?? false)) return false;
+  // On a US keyboard Shift produces the advertised plus. Unshifted plus
+  // on other layouts and the equals shortcut still match normally.
+  const shiftedPlus = id === "view.zoomIn" && event.key === "+";
+  if (!shiftedPlus && event.shiftKey !== (binding.shift ?? false)) return false;
   if (event.altKey !== (binding.alt ?? false)) return false;
   // AltGr on a Windows layout arrives as Ctrl and Alt together, so a reader
   // typing `©` or `@` with it would otherwise run an accel+Alt chord, from
@@ -666,6 +672,10 @@ export function nativeCopy(event: KeyboardEvent): boolean {
   return true;
 }
 
+export function clipboardError(error: unknown): string {
+  return `${TEXT().clipboardFailed}: ${spokenError(error)}`;
+}
+
 /**
  * Copies selected interface text when {@link nativeCopy} says the chord is
  * for it, and answers whether it was.
@@ -680,12 +690,13 @@ export function nativeCopy(event: KeyboardEvent): boolean {
 export function copyInterfaceText(
   event: KeyboardEvent,
   write: (text: string) => Promise<void>,
+  onError: (message: string) => void,
 ): boolean {
   if (!nativeCopy(event)) return false;
   const text = (event.target as Node).ownerDocument?.getSelection()?.toString() ?? "";
   if (text) {
     event.preventDefault();
-    void write(text).catch(() => {});
+    void write(text).catch((error: unknown) => onError(clipboardError(error)));
   }
   return true;
 }

@@ -4846,3 +4846,18 @@ fn print_needs_one_document_a_printer_and_pages_that_count_from_one() {
         Ok(Line::Run(_))
     ));
 }
+
+#[test]
+fn signing_preserves_a_destination_created_after_preflight_unless_forced() {
+    let dir = crate::testutil::TempDir::new("signed-publication");
+    let source = dir.join("input.pdf");
+    let output = dir.join("output.pdf");
+    std::fs::write(&source, b"source").unwrap();
+    assert!(!output.exists());
+    std::fs::write(&output, b"other signer").unwrap();
+    assert!(sign::publish_signed(&source, &output, b"signed", false).is_err());
+    assert_eq!(std::fs::read(&output).unwrap(), b"other signer");
+    sign::publish_signed(&source, &output, b"signed", true).unwrap();
+    assert_eq!(std::fs::read(&output).unwrap(), b"signed");
+    assert_eq!(std::fs::read(&source).unwrap(), b"source");
+}

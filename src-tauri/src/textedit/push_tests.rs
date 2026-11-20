@@ -870,6 +870,12 @@ fn a_push_stops_at_text_under_an_annotation() {
     let plain = pair(100.);
     let rect = around_second(&plain, 1.5);
     let highlight = dictionary! { "Type" => "Annot", "Subtype" => "Highlight" };
+    let (partial, _) = annotated(
+        highlight.clone(),
+        [101., rect[1] + 2., 117., rect[3] - 2.],
+        false,
+    );
+    assert!(refusal(&partial, 0, "FIRSTFIRSTF").contains("a picture or a drawing"));
     let (doc, _) = annotated(highlight.clone(), rect, false);
     // Eleven characters push the second run 22.2 pt, past the 1.5 its
     // highlight leaves it.
@@ -1001,4 +1007,17 @@ fn text_on_the_next_line_does_not_stop_a_push() {
         "{}",
         third.matrix[4]
     );
+}
+
+#[test]
+fn growing_text_cannot_push_an_oppositely_directed_run() {
+    let doc = synthetic(
+        "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf -1 0 0 -1 136 186 Tm (FIRST) Tj ET",
+    );
+    assert_eq!(scan(&doc, 0).unwrap().runs.len(), 2);
+    refusal(&doc, 0, "FIRSTFIRSTF");
+    let mut upright = pair(100.);
+    let change = in_default_box(&upright, 0, "FIRSTFIRSTF");
+    write(&mut upright, &[change]).unwrap();
+    assert!((find(&upright, "FIRST").matrix[4] - 122.2).abs() < 0.001);
 }

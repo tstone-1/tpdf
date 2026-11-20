@@ -539,6 +539,7 @@ fn tile_of(service: &RenderService, doc: u32, rid: u64, at: Placement) -> Result
     service.tile(
         TileRequest {
             annotations: true,
+            printing: false,
             crop: None,
             rid,
             doc,

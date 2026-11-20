@@ -168,6 +168,10 @@ fn main() {
     let checks: &[Check] = &[
         ("verify agrees with the in-process reader", verify_agrees),
         (
+            "print intent selects printable annotation appearances",
+            print_intent_annotations,
+        ),
+        (
             "verify reports what was appended after each signature",
             verify_appendix::says_what_was_appended,
         ),
@@ -2050,6 +2054,76 @@ fn synctex_agrees_with_the_text(report: &mut Report) {
             code == 0 && inside,
             &format!("synctex {found:?}; search exit {code}, page {page:?}, rect {rect:?} {err}"),
         );
+    }
+}
+
+fn print_intent_annotations(report: &mut Report) {
+    use lopdf::{dictionary, Document, Object, Stream};
+    use tpdf_lib::worker::{Request, Worker};
+    let path = scratch("print-intent").join("visibility.pdf");
+    let mut doc = Document::with_version("1.7");
+    let tree = doc.new_object_id();
+    let bounds =
+        |left: i64, right: i64| vec![left.into(), 0.into(), right.into(), Object::Integer(20)];
+    let mut annots = Vec::new();
+    for (left, flags) in [(0, 0), (20, 4 | 32)] {
+        let appearance = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Form", "BBox" => bounds(0, 20),
+                "Resources" => dictionary! {},
+            },
+            b"0 g 0 0 20 20 re f".to_vec(),
+        ));
+        let mark = doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Stamp", "F" => flags, "Rect" => bounds(left, left+20),
+            "AP" => dictionary! { "N" => appearance },
+        });
+        annots.push(Object::Reference(mark));
+    }
+    let page = doc.add_object(dictionary! { "Type" => "Page", "Parent" => tree,
+    "MediaBox" => bounds(0, 40), "Annots" => annots, "Resources" => dictionary! {} });
+    doc.objects.insert(
+        tree,
+        dictionary! { "Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1 }
+            .into(),
+    );
+    let root = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+    doc.trailer.set("Root", root);
+    doc.save(&path).unwrap();
+    let mut worker = Worker::spawn(&path, &library_dir()).expect("print-intent worker");
+    let opened = worker
+        .call(&Request::Open {
+            lazy_geometry: false,
+        })
+        .unwrap();
+    assert!(opened.ok, "{}", opened.error);
+    for (printing, annotations, expected) in [
+        (false, true, [0, 255]),
+        (true, true, [255, 0]),
+        (true, false, [255, 255]),
+    ] {
+        let reply = worker
+            .call(&Request::Tile {
+                rid: 0,
+                page: 0,
+                scale: 1.,
+                turns: 0,
+                invert: false,
+                x: 0,
+                y: 0,
+                width: 40,
+                height: 20,
+                png: false,
+                crop: None,
+                annotations,
+                printing,
+            })
+            .unwrap();
+        assert!(reply.ok && reply.bytes == 3200, "{}", reply.error);
+        let pixels = worker.tile.as_slice();
+        let values = [10, 30].map(|x| pixels[4 * (400 + x)]);
+        report.check("print and screen draw only the chosen appearances", values == expected,
+            &format!("printing={printing}, marks={annotations}, pixels={values:?}, expected={expected:?}"));
     }
 }
 

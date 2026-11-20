@@ -1473,6 +1473,7 @@ impl Workers {
                 request.doc,
                 Request::Tile {
                     annotations: request.annotations,
+                    printing: request.printing,
                     rid: request.rid,
                     page: request.page,
                     crop: request.crop,
@@ -3216,6 +3217,7 @@ mod tests {
     fn request(width: u16, height: u16, format: TileFormat) -> TileRequest {
         TileRequest {
             annotations: true,
+            printing: false,
             rid: 1,
             doc: 0,
             page: 0,

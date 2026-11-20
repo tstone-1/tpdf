@@ -259,8 +259,9 @@ def build(path: str) -> dict:
         b"<< /Type /XObject /Subtype /Form /BBox [ 0 0 120 60 ] >>",
         b"1 0 0 RG 4 w 2 2 116 56 re S",
     )
+    # The print probe compares this explicit printable appearance with marks disabled.
     ordinary.annot(
-        b"<< /Type /Annot /Subtype /Square /Rect [ 380 500 500 560 ] "
+        b"<< /Type /Annot /Subtype /Square /F 4 /Rect [ 380 500 500 560 ] "
         b"/AP << /N %d 0 R >> /C [ 1 0 0 ] " % appearance
         + b"/Contents " + literal(b"Boxed for discussion.") + b" "
         b"/T " + literal(b"Timo") + b" /M (D:20260812101700Z) >>"

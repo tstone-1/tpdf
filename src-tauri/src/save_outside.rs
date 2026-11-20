@@ -579,6 +579,7 @@ impl Session {
             let response = worker
                 .call(&Request::Tile {
                     annotations: request.annotations,
+                    printing: request.printing,
                     rid: 0,
                     page: request.page,
                     scale: request.scale,

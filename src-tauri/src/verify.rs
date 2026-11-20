@@ -1418,7 +1418,9 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                         }
                         for (needle, spelled) in needles.iter().zip(&spellings) {
                             let hit = find(&drawn.decoded, needle.as_bytes())
-                                || decoded_text.is_some_and(|text| find(text, needle.as_bytes()))
+                                || decoded_text.is_some_and(|readings| {
+                                    readings.iter().any(|text| find(text, needle.as_bytes()))
+                                })
                                 || {
                                     let shown =
                                         shown.get_or_insert_with(|| strings_shown(&drawn.decoded));

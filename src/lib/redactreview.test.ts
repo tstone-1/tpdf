@@ -40,7 +40,7 @@ describe("reviewLines", () => {
     expect(laid.map((line) => line.label)).toEqual([
       null, "Still in the file", "Not read in pictures", "Could not be checked",
     ]);
-    expect(laid[1]!.value).toBe("mark it where named and redact the original again");
+    expect(laid[1]!.value).toBe("check the details below; if you can locate the content on a page, mark it for redaction");
     expect(laid[1]!.detail).toBe(`${why[1]}; ${why[3]}`);
   });
 
@@ -67,6 +67,17 @@ describe("the verdict sentences", () => {
       "Still in the file", "Not read in pictures", "Could not be checked",
     ]);
     for (const reason of why) expect(said).toContain(reason);
+  });
+
+  it("keeps an unplaced finding actionable without assuming a page or a preserved original", () => {
+    const reason = "A name is still in the file, in something no page of it reaches";
+    const result = { ...applied, why: [reason], kinds: ["found"] };
+    for (const message of [afterRedaction(result), afterRedactionCopy(result).message]) {
+      const line = messageLines(message)[1]!;
+      expect(line.detail).toBe(reason);
+      expect(line.value).toContain("if you can locate the content on a page");
+      expect(line.value).not.toContain("original");
+    }
   });
 
   it("put a changed original on the first line", () => {

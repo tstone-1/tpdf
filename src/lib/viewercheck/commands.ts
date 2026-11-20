@@ -594,6 +594,7 @@ export async function appCommandChecks(
   registerAppCommands(registry, actions);
   const palette = new Palette(registry);
   const deps: WindowKeyDeps = {
+    onError: (message) => fired.push(message),
     actions,
     palette: () => palette,
     hasDocument: () => hasDocument,

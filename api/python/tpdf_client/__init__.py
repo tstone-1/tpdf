@@ -113,8 +113,14 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
     # The group belongs to this invocation, never to the calling test runner.
     # On Windows taskkill must see the live parent to enumerate its descendants.
     if os.name == 'nt':
+        import ctypes
+
+        directory = ctypes.create_unicode_buffer(32768)
+        size = ctypes.windll.kernel32.GetSystemDirectoryW(directory, len(directory))
+        if not 0 < size < len(directory):
+            raise OSError('could not resolve the Windows system directory')
         subprocess.run(
-            ['taskkill', '/PID', str(process.pid), '/T', '/F'],
+            [os.path.join(directory.value, 'taskkill.exe'), '/PID', str(process.pid), '/T', '/F'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
             timeout=10,
         )
@@ -384,8 +390,9 @@ class Tpdf:
     ) -> reports.OcrReport:
         """Write a copy whose scanned pages can be searched and selected.
 
-        Pages without text are read by the operating system's text recogniser;
-        pages that already have text are left as they are. `languages` are
+        The operating system's text recogniser reads pages without text and
+        scanned pages with some typed text. It adds the words those pages
+        lack and leaves other pages alone. `languages` are
         BCP-47 tags such as "de-DE", most preferred first.
         """
         args = ['-o', os.fspath(output)]
@@ -677,7 +684,7 @@ class Tpdf:
     ) -> reports.PagesReport:
         """Write groups as output-1.pdf, output-2.pdf, etc.; report lists actual paths.
 
-        A publication failure can leave some parts written. CommandError.typed
+        A publication failure can leave some parts written. CommandError.report
         retains those paths; do not interpret an exception as a rollback.
         """
         return self._pages('split', [source], output, ['--every', str(every)], force=force,
@@ -732,7 +739,8 @@ class Tpdf:
 
         A written but unverified copy raises CommandError with exit_code=1;
         its report and file remain available. check=False returns that report
-        directly: inspect written, verified and reasons. Exit 0 alone does not
+        directly: inspect written, verified and reasons. Other failures still
+        raise CommandError. Exit 0 alone does not
         prove a redaction: no matches also writes nothing with verified=None.
         """
         if fill not in ('black', 'white', 'red'):
@@ -761,8 +769,11 @@ class Tpdf:
                               (force, '--force'), (invalidate_signatures, '--invalidate-signatures')]:
             if enabled:
                 args.append(flag)
-        return self.run('redact', *args, '--', source, input_json=payload,
-                        password=password, check=check).typed
+        result = self.run('redact', *args, '--', source, input_json=payload,
+                          password=password, check=check)
+        if result.exit_code not in (0, 1):
+            raise CommandError(result)
+        return result.typed
 
     def identities(self) -> reports.IdentitiesReport:
         """List usable OS-held signing certificates and rejected ones with reasons.

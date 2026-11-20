@@ -178,9 +178,7 @@ impl Subcommand for LongTerm {
                 env.now,
                 &worker,
                 asking,
-                &|bytes| {
-                    save::write_signed(&self.input, &self.output, bytes).map_err(|why| why.message)
-                },
+                &|bytes| super::sign::publish_signed(&self.input, &self.output, bytes, self.force),
             )
         })
         .map_err(|stopped| stopped_failure(&stopped, &name_of(&self.output)))?;

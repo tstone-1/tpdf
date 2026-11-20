@@ -1087,6 +1087,7 @@ impl Found {
             stroke,
             size,
             scale: page_matrix[0].hypot(page_matrix[1]),
+            direction: [page_matrix[0], page_matrix[1]],
             transform: state.page_transform,
         };
         if read_only {

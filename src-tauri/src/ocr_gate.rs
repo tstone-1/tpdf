@@ -1095,6 +1095,7 @@ fn strip(
     })?;
     let request = crate::render::TileRequest {
         annotations: true,
+        printing: false,
         rid: 0,
         doc,
         page,

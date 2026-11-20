@@ -3499,6 +3499,7 @@ export function relabelCommands(registry: CommandRegistry): void {
 
 /** What {@link handleWindowKey} reaches for. */
 export interface WindowKeyDeps {
+  onError(message: string): void;
   actions: AppActions;
   /** The palette, or null before the shell has built one. */
   palette(): PaletteLike | null;
@@ -3559,7 +3560,7 @@ export function handleWindowKey(
   event: KeyboardEvent,
   deps: WindowKeyDeps,
 ): void {
-  if (copyInterfaceText(event, async (text) => navigator.clipboard.writeText(text))) return;
+  if (copyInterfaceText(event, async (text) => navigator.clipboard.writeText(text), deps.onError)) return;
   const palette = deps.palette();
   const { actions } = deps;
   const title = deps.hasDocument();

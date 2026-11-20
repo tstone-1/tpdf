@@ -305,6 +305,20 @@ impl Session {
         .with_ocr_language(session.ocr_language)
     }
 
+    /// A legacy relative filename lost its launch directory when the process
+    /// exited. Keep its saved record, but never open another file by that name.
+    pub fn restorable(mut self) -> Self {
+        self.places
+            .retain(|place| Path::new(&place.path).is_absolute());
+        self.favourites
+            .retain(|entry| Path::new(&entry.path).is_absolute());
+        let mut tabs = std::mem::take(&mut self.tabs);
+        tabs.retain(|path| Path::new(path).is_absolute());
+        let active = self.active_tab.take();
+        let sides = self.sides.take();
+        self.with_tabs(tabs, active, sides)
+    }
+
     /// Records the language to recognise text in, or `None` for the engine's
     /// own choice.
     ///
@@ -496,6 +510,33 @@ mod tests {
         fn file(&self) -> PathBuf {
             self.join("session.json")
         }
+    }
+
+    #[test]
+    fn restore_skips_legacy_relative_paths_even_when_an_absolute_tab_is_available() {
+        let dir = crate::testutil::TempDir::new("restore-absolute");
+        let absolute = dir.join("report.pdf").display().to_string();
+        let relative = "report.pdf".to_owned();
+        let mut state = Session::default();
+        state.remember(place(&absolute));
+        state.remember(place(&relative));
+        state.favourites.push(Favourite {
+            path: relative.clone(),
+            page: 0,
+            name: String::new(),
+        });
+        state.set_tabs(
+            vec![absolute.clone(), relative.clone()],
+            Some(relative),
+            None,
+        );
+        let session_file = dir.join("session.json");
+        state.save(&session_file).unwrap();
+        let restored = Session::load(&session_file).restorable();
+        assert_eq!(restored.tabs.as_slice(), std::slice::from_ref(&absolute));
+        assert_eq!(restored.places.len(), 1);
+        assert_eq!(restored.places[0].path, absolute);
+        assert!(restored.favourites.is_empty() && restored.active_tab.is_none());
     }
 
     fn place(path: &str) -> Place {

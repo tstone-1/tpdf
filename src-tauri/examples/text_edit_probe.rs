@@ -404,6 +404,7 @@ fn run() -> Result<(), String> {
     let original_bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
     let tile = Request::Tile {
         annotations: true,
+        printing: false,
         rid: 91,
         page,
         scale: 1.0,

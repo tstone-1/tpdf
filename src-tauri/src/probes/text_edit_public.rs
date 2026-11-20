@@ -59,6 +59,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
     };
     let tile = Request::Tile {
         annotations: true,
+        printing: false,
         rid: 91,
         page: 0,
         scale: 1.,

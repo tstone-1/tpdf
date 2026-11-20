@@ -140,32 +140,76 @@ fn stage(bytes: &[u8]) -> Result<(std::path::PathBuf, std::fs::File), String> {
 /// in the user's own temporary folder, under a name made new each time.
 #[cfg(target_os = "macos")]
 fn stage(bytes: &[u8]) -> Result<(std::path::PathBuf, std::fs::File), String> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT: AtomicU64 = AtomicU64::new(0);
     let folder = crate::secondlaunch::user_temp_dir().unwrap_or_else(std::env::temp_dir);
-    let path = folder.join(format!(
-        "tpdf-print-{}-{}.pdf",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let written = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
-        .and_then(|mut file| file.write_all(bytes));
-    if let Err(e) = written {
-        let _ = std::fs::remove_file(&path);
-        return Err(format!("the print job could not be written: {e}"));
+    stage_in(&folder, bytes)
+}
+
+/// Creates a private print file without claiming a name owned by another job.
+#[cfg(unix)]
+pub(crate) fn stage_in(
+    folder: &std::path::Path,
+    bytes: &[u8],
+) -> Result<(std::path::PathBuf, std::fs::File), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    stage_named(bytes, || {
+        folder.join(format!(
+            "tpdf-print-{}-{}.pdf",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    })
+}
+
+#[cfg(unix)]
+fn stage_named(
+    bytes: &[u8],
+    mut candidate: impl FnMut() -> std::path::PathBuf,
+) -> Result<(std::path::PathBuf, std::fs::File), String> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    for _ in 0..128 {
+        let path = candidate();
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(said!("the print job could not be written: {e}")),
+        };
+        if let Err(e) = file.write_all(bytes) {
+            let _ = std::fs::remove_file(&path);
+            return Err(said!("the print job could not be written: {e}"));
+        }
+        let reader = std::fs::File::open(&path).map_err(|e| {
+            let _ = std::fs::remove_file(&path);
+            said!("the print job could not be read back: {e}")
+        })?;
+        return Ok((path, reader));
     }
-    let file = std::fs::File::open(&path).map_err(|e| {
-        let _ = std::fs::remove_file(&path);
-        format!("the print job could not be read back: {e}")
-    })?;
-    Ok((path, file))
+    let e = std::io::ErrorKind::AlreadyExists;
+    Err(said!("the print job could not be written: {e}"))
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn staging_keeps_a_colliding_file_and_reads_back_the_owned_file() {
+    use std::io::Read as _;
+    let dir = crate::testutil::TempDir::new("print-stage");
+    let first = dir.join("old.pdf");
+    let second = dir.join("new.pdf");
+    std::fs::write(&first, b"earlier job").unwrap();
+    let mut names = [first.clone(), second.clone()].into_iter();
+    let (path, mut file) = stage_named(b"new job", || names.next().unwrap()).unwrap();
+    let mut read = Vec::new();
+    file.read_to_end(&mut read).unwrap();
+    assert_eq!(read, b"new job");
+    assert!(std::io::Write::write_all(&mut file, b"x").is_err());
+    assert_eq!(path, second);
+    assert_eq!(std::fs::read(first).unwrap(), b"earlier job");
 }
 
 /// CUPS, loaded by name when a job is sent.

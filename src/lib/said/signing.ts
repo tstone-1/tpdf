@@ -238,6 +238,8 @@ export default {
     "tpdf speichert unter Linux noch keine Unterschrift; zeichne oder importiere sie jedes Mal",
 
   // docinfo.rs
+  "An earlier signature has a field lock that tpdf cannot read.": "Eine frühere Signatur enthält eine Feldsperre, die tpdf nicht lesen kann.",
+  "An earlier signature locked the field {name}.": "Eine frühere Signatur hat das Feld {name} gesperrt.",
   "this form has more fields, or groups nested deeper, than tpdf reads, so it cannot tell whether a signature locked the document":
     "dieses Formular hat mehr Felder oder tiefer verschachtelte Gruppen, als tpdf liest, daher kann es nicht sagen, ob eine Signatur das Dokument gesperrt hat",
 
@@ -602,6 +604,7 @@ export default {
     "Es gibt keinen Benutzerordner, in dem die Liste der Zertifikatsdateien liegen könnte.",
   "{subject} can sign now: choose it when you sign a document.":
     "{subject} kann jetzt signieren: Wähle es, wenn du ein Dokument signierst.",
+  "Certificate file added. It cannot sign: {why}": "Zertifikatsdatei hinzugefügt. Sie kann nicht signieren: {why}",
   "adding the certificate file did not run: {e}": "das Hinzufügen der Zertifikatsdatei ist nicht gelaufen: {e}",
   "Certificate files are added to tpdf on Linux; on macOS and Windows, import the file into your keychain or certificate store, and tpdf finds it there.":
     "Zertifikatsdateien werden unter Linux zu tpdf hinzugefügt; unter macOS und Windows importierst du die Datei in deinen Schlüsselbund oder Zertifikatspeicher, und tpdf findet sie dort.",

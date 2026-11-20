@@ -201,7 +201,7 @@ where
 {
     let (rest, place) = split_place(args);
     let place = place.resolved(cwd);
-    paths_from_launch(rest, is_file)
+    paths_in(rest, cwd, is_file)
         .into_iter()
         .map(|path| Opening {
             path,
@@ -313,7 +313,18 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let cwd = std::path::Path::new(cwd);
+    paths_in(args, std::path::Path::new(cwd), is_file)
+}
+
+fn paths_in<I, S>(
+    args: I,
+    cwd: &std::path::Path,
+    is_file: impl Fn(&std::path::Path) -> bool,
+) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
     paths_from_launch(args, |path| is_file(&cwd.join(path)))
         .into_iter()
         .map(|path| cwd.join(path))
@@ -571,7 +582,7 @@ mod tests {
         assert_eq!(
             openings,
             vec![Opening {
-                path: PathBuf::from("a.pdf"),
+                path: Path::new("/").join("a.pdf"),
                 place: place(Some("12"), None)
             }]
         );
@@ -624,12 +635,12 @@ mod tests {
                 "Documents/x.pdf",
             ],
             Path::new("/"),
-            |path| path == whole,
+            |path| path == Path::new("/").join(&whole),
         );
         assert_eq!(
             openings,
             vec![Opening {
-                path: whole.clone(),
+                path: Path::new("/").join(whole),
                 place: place(Some("3"), None)
             }]
         );

@@ -673,6 +673,7 @@ fn draw_sheet(held: &mut Drawer, index: u32, width: u32, marks: bool) -> Result<
                 .tile_within(
                     crate::render::TileRequest {
                         annotations: marks,
+                        printing: true,
                         rid: 0,
                         doc: 0,
                         page: index,
@@ -788,27 +789,34 @@ fn print_chosen(
     let reading = print_win::read(&bytes)
         .ok_or_else(|| said!("the print job could not be read back, so it will not be printed"))?;
     print::expect_pages(reading.pages.len(), expected)?;
-    let mut pages = chosen_pages(settings, reading.pages.len())?;
+    let pages = chosen_pages(settings, reading.pages.len())?;
     let copies = settings.copies.max(1);
     let layout = settings.layout();
-    // Laid out here as well as on the print thread, for the count the
-    // progress line says, from the sizes the preview's worker read: the
-    // read-back's are `Windows.Data.Pdf`'s, in DIPs rather than points.
-    let mut sheets = crate::print_layout::lay_out(sizes, &pages, &printer.paper()?, layout)?.len();
-    if copies > printer.describe().most_copies {
-        pages = pages.repeat(usize::from(copies));
-        sheets *= usize::from(copies);
+    let software_copies = if copies > printer.describe().most_copies {
         printer.choose(None, None, 1, None, None)?;
-    }
+        copies
+    } else {
+        1
+    };
+    let sheets = crate::print_layout::lay_out(sizes, &pages, &printer.paper()?, layout)?;
+    let job = print_win::PrintJob::begin()?;
     // Crosses to the print thread as an integer, as the owner window does: a
     // DC is a process-wide handle, and only that thread uses it from here.
     let dc = printer.dc()?.0 as isize;
     let marks = settings.marks;
     let library = crate::pdfium_library_dir(app);
-    on_print_thread(app, move |owner, progress| {
+    on_print_thread(app, job, move |owner, progress| {
         let dc = windows::Win32::Graphics::Gdi::HDC(dc as *mut std::ffi::c_void);
         print_win::print_on(
-            dc, &bytes, &title, owner, progress, &library, &pages, layout, sheets, marks,
+            dc,
+            &bytes,
+            &title,
+            owner,
+            progress,
+            &library,
+            sheets,
+            software_copies,
+            marks,
         )
     });
     Ok(())
@@ -831,6 +839,7 @@ pub fn print_cancel() {
 #[cfg(windows)]
 fn on_print_thread(
     app: &tauri::AppHandle,
+    job: print_win::PrintJob,
     print: impl FnOnce(Option<windows::Win32::Foundation::HWND>, &dyn Fn(u32, u32)) -> Result<bool, String>
         + Send
         + 'static,
@@ -838,6 +847,7 @@ fn on_print_thread(
     let owner = owner_of(app);
     let app = app.clone();
     std::thread::spawn(move || {
+        let _job = job;
         use tauri::Emitter;
         let owner = owner.map(|h| windows::Win32::Foundation::HWND(h as *mut std::ffi::c_void));
         let last = std::cell::Cell::new((0, 0));
@@ -1000,7 +1010,8 @@ fn present_job(
     // side rather than smuggled through a wrapper type, so the one
     // unsound-looking step is one line and is where the reasoning is written down.
     let library = crate::pdfium_library_dir(app);
-    on_print_thread(app, move |owner, progress| {
+    let job = print_win::PrintJob::begin()?;
+    on_print_thread(app, job, move |owner, progress| {
         print_win::present(&bytes, &title, owner, progress, &library)
     });
     Ok(())
@@ -1023,7 +1034,7 @@ struct Printing {
     sent: u32,
     /// Sheets in the job.
     of: u32,
-    /// `printing`, `sent` or `failed`.
+    /// One of `printing`, `sent`, `stopped`, `failed`.
     state: &'static str,
 }
 

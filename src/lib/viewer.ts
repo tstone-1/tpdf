@@ -36,7 +36,7 @@ import { redrawn, type FieldEdited } from "./savedfields";
 
 import { AccessibleText } from "./a11y";
 import type { FocusClock } from "./livetext";
-import { forgetPageSurface, inTextField, isMac, matches, namePageSurface, nativeCopy } from "./keys";
+import { clipboardError, forgetPageSurface, inTextField, isMac, matches, namePageSurface, nativeCopy } from "./keys";
 import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSignature, type SignatureImage } from "./signature";
 import { PictureCache, pictureCanvas, rotatePixels, visible, type PicturePixels } from "./picture";
 import type { TileSource } from "./tiles";
@@ -186,7 +186,6 @@ import {
   type FitMode,
   type Fitted,
 } from "./zoom";
-import { spokenError } from "./said";
 
 /** What the viewer says to the reader through `onError` and thrown errors. */
 const TEXT = catalog({
@@ -201,7 +200,6 @@ const TEXT = catalog({
     pageChanged: "The page changed during recognition. Try again.",
     noWordsRecognised: "No words could be recognized on this page.",
     notCopied: "Some of the selected pages' text could not be read, so nothing was copied.",
-    clipboard: (error: string) => `Could not write to the clipboard: ${error}`,
   },
   "en-GB": {
     nothingToRecognise: "This page has no saved content to recognise.",
@@ -218,7 +216,6 @@ const TEXT = catalog({
     pageChanged: "Die Seite hat sich während der Texterkennung geändert. Versuche es erneut.",
     noWordsRecognised: "Auf dieser Seite konnten keine Wörter erkannt werden.",
     notCopied: "Der Text einiger ausgewählter Seiten konnte nicht gelesen werden, daher wurde nichts kopiert.",
-    clipboard: (error: string) => `Konnte nicht in die Zwischenablage schreiben: ${error}`,
   },
   "de-DE-formal": {
     nothingMarked: "Sie haben in diesem Dokument nichts markiert.",
@@ -7192,7 +7189,7 @@ export class Viewer {
       // know the clipboard does not hold what they asked for. The webview can
       // reject this --- permission, or a window that is not focused --- and
       // every caller here voids the promise, so nothing else would ever see it.
-      this.opts.onError?.(TEXT().clipboard(spokenError(e)));
+      this.opts.onError?.(clipboardError(e));
       return null;
     }
     return text;

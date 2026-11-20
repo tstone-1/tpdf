@@ -457,7 +457,7 @@ pub(crate) fn concluded(
         now,
         worker,
         asking,
-        &|bytes| save::write_signed(&sign.input, &sign.output, bytes).map_err(|why| why.message),
+        &|bytes| publish_signed(&sign.input, &sign.output, bytes, sign.force),
     )
     .map_err(|stopped| match stopped {
         Stopped::Unstamped { why, .. } => {
@@ -915,9 +915,15 @@ fn wording(
                 Part::Date => (date, words) = (true, true),
                 Part::Reason | Part::Location => {
                     let (word, given) = if part == Part::Reason {
-                        ("reason", reason.is_some())
+                        (
+                            "reason",
+                            reason.as_deref().is_some_and(|s| !s.trim().is_empty()),
+                        )
                     } else {
-                        ("location", location.is_some())
+                        (
+                            "location",
+                            location.as_deref().is_some_and(|s| !s.trim().is_empty()),
+                        )
                     };
                     if !given {
                         return Err(format!(
@@ -967,6 +973,22 @@ impl Subcommand for Sign {
     ) -> Result<Exit, Failure> {
         run_sign(env, self, out, err)
     }
+}
+
+pub(super) fn publish_signed(
+    input: &std::path::Path,
+    output: &std::path::Path,
+    bytes: &[u8],
+    force: bool,
+) -> Result<(), String> {
+    use super::pages::Temporary;
+    if save::same_file(input, output) {
+        return Err("the output is the input under another name".into());
+    }
+    let temporary = Temporary::beside(output).map_err(|e| e.message)?;
+    let staged = temporary.0.join("signed.pdf");
+    save::write_signed(input, &staged, bytes).map_err(|e| e.message)?;
+    Temporary::publish(&staged, output, force).map_err(|e| e.message)
 }
 
 fn run_sign(

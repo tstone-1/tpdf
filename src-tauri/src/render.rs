@@ -162,6 +162,8 @@ pub struct TileRequest {
     /// and drawings. Form fields are drawn either way. Always set but for a
     /// print that leaves the comments out (`print_layout::Settings::marks`).
     pub annotations: bool,
+    /// Apply PDFium print visibility for print preview and spooling.
+    pub printing: bool,
 }
 
 /// A rendered tile plus the timings that make spike 0.1 answerable.
@@ -1997,7 +1999,10 @@ pub(crate) fn render_tile_into(
         pixels,
         None,
         cancel,
-        req.annotations,
+        progressive::RenderOptions {
+            annotations: req.annotations,
+            printing: req.printing,
+        },
     )?;
     let render_us = t0.elapsed().as_micros() as u64;
 
@@ -2119,6 +2124,7 @@ pub(crate) fn text_edit_runs(
                 .min(512. / (rect[3] - rect[1]).max(1.));
             let request = TileRequest {
                 annotations: true,
+                printing: false,
                 rid: 0,
                 doc: 0,
                 page,
@@ -2893,6 +2899,7 @@ pub fn run_signature_preview(
     };
     let request = TileRequest {
         annotations: true,
+        printing: false,
         rid: 0,
         doc: 0,
         page: 0,
@@ -3060,6 +3067,7 @@ pub(crate) fn run_codes(
     );
     let request = TileRequest {
         annotations: true,
+        printing: false,
         rid: 0,
         doc: 0,
         page,
@@ -3110,6 +3118,7 @@ fn page_sample(
     );
     let request = TileRequest {
         annotations: true,
+        printing: false,
         rid: 0,
         doc: 0,
         page: focus.page,

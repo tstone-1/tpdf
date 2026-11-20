@@ -171,6 +171,7 @@ pub fn recognise_one(
     .ok_or_else(|| said!("This page is too large to recognise."))?;
     let request = TileRequest {
         annotations: false,
+        printing: false,
         rid: 0,
         doc,
         page,
@@ -333,6 +334,7 @@ fn read(
         // and under `MAX_EDGE` a side, which fits the request's 16 bits.
         let request = TileRequest {
             annotations: true,
+            printing: false,
             rid: 0,
             doc,
             page,

@@ -223,6 +223,7 @@ fn main() {
     // ------------------------------------------------------------ the pixels
     let request = Request::Tile {
         annotations: true,
+        printing: false,
         crop: None,
         rid: 1,
         page: 0,
@@ -308,6 +309,7 @@ fn main() {
     // (printed below) against three pipe writes, which is microseconds.
     let tile_at = |rid: u64| Request::Tile {
         annotations: true,
+        printing: false,
         crop: None,
         rid,
         page: 0,

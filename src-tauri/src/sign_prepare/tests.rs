@@ -2893,3 +2893,40 @@ fn with_no_field_named_the_signature_still_makes_its_own() {
         crate::forms::Control::Signature { signed: false }
     ));
 }
+
+#[test]
+fn an_earlier_field_selection_is_enforced_when_signing_another_field() {
+    use lopdf::dictionary;
+    for (action, protects_witness) in [("Include", true), ("Exclude", false), ("All", true)] {
+        let lock =
+            dictionary! { "Action" => action, "Fields" => vec![Object::string_literal("Witness")] };
+        let source = asking("Lock", lock.into());
+        let first = prepare_noted(source.clone(), NOW, None, None, &into("Approved")).unwrap();
+        let mut after = reread(&source, &first);
+        // Only the signed transform remains. A reader of the field's /Lock alone misses it.
+        let widget = scanned(&after, "Approved").widget;
+        after.get_dictionary_mut(widget).unwrap().remove(b"Lock");
+        let third = scanned(&after, "Name").widget;
+        after.get_dictionary_mut(third).unwrap().set("FT", "Sig");
+        let mut bytes = Vec::new();
+        after.save_to(&mut bytes).unwrap();
+        let third_signature = prepare_noted(bytes.clone(), NOW, None, None, &into("Name"));
+        assert_eq!(third_signature.is_ok(), action == "Include", "{action}");
+        let next = prepare_noted(bytes, NOW, None, None, &into("Witness"));
+        if protects_witness {
+            assert!(next.unwrap_err().contains("locked the field Witness"));
+        } else {
+            next.unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_visible_template_must_leave_ink_after_substitution() {
+    let mut mark = visible(0, [20., 30., 170., 90.], None);
+    mark.options.text = vec!["{reason} {location}".into()];
+    mark.options.reason = "  ".into();
+    assert!(appearance::check(&mark).unwrap_err().contains("no words"));
+    mark.options.location = "Berlin".into();
+    appearance::check(&mark).unwrap();
+}

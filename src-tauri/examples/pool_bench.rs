@@ -433,6 +433,7 @@ fn screenful(
         service.tile(
             TileRequest {
                 annotations: true,
+                printing: false,
                 crop: None,
                 rid: *rid,
                 doc: doc.id,

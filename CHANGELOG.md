@@ -17,6 +17,23 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.12] - Unreleased
+
+### Fixed
+
+- CLI signing and long-term validation preserve a destination created while the command was running unless `--force` was supplied. Signing respects field locks set by earlier approvals and checks that a visible signature has words or an image. Linux certificate import reports why a certificate cannot sign.
+- Print preview and Windows printing use print visibility. Windows keeps software copies on separate sheets and Stop applies to the active job. Linux reports delayed print failures in the window. Unix print staging preserves files left by earlier jobs.
+- Growing text respects the writing direction and fixed annotations of neighbouring runs. Wrapping text on rotated pages keeps labels and drawings aligned with their rows.
+- Documents opened by relative filename are saved with their launch directory for session restore. Bash completion preserves spaces in filenames.
+
+- Redaction verification accounts for the font inherited each time a shared form is
+  drawn. The font reader enforces its token limit while reading. The window also gives
+  usable advice when retained content has no page or a redaction was saved in place.
+- Zoom in accepts the Shift needed to type a plus sign. Copying selected interface
+  text reports a clipboard failure.
+- The Python client's redaction error contract, Windows process cleanup, and the
+  documentation for partial split results and mixed-page OCR have been corrected.
+
 ## [26.11.11] - 2026-11-20
 
 ### Changed

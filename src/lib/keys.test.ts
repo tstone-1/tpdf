@@ -226,6 +226,9 @@ describe("matches", () => {
     // keyboard, which is not a failure any test on this machine would show.
     expect(matches("view.zoomIn", event("+", { accel: true }))).toBe(true);
     expect(matches("view.zoomIn", event("=", { accel: true }))).toBe(true);
+    expect(matches("view.zoomIn", event("+", { ctrl: true, shift: true }))).toBe(true);
+    expect(matches("view.zoomIn", event("=", { ctrl: true, shift: true }))).toBe(false);
+    expect(matches("file.open", event("o", { ctrl: true, shift: true }))).toBe(false);
     expect(
       matches("view.invertPages", event("I", { accel: true, shift: true })),
     ).toBe(true);
@@ -603,7 +606,7 @@ describe("copyInterfaceText", () => {
     const { event: chord, prevented } = pressed("Range", "Cannot edit this text");
     const taken = copyInterfaceText(chord, async (text) => {
       written.push(text);
-    });
+    }, expect.fail);
     expect(taken).toBe(true);
     expect(written).toEqual(["Cannot edit this text"]);
     expect(prevented).toEqual(["default"]);
@@ -613,7 +616,7 @@ describe("copyInterfaceText", () => {
     const written: string[] = [];
     for (const type of ["Caret", "None"]) {
       const { event: chord, prevented } = pressed(type, "");
-      expect(copyInterfaceText(chord, async (text) => void written.push(text))).toBe(false);
+      expect(copyInterfaceText(chord, async (text) => void written.push(text), expect.fail)).toBe(false);
       expect(prevented).toEqual([]);
     }
     expect(written).toEqual([]);
@@ -621,12 +624,15 @@ describe("copyInterfaceText", () => {
 
   it("is about the copy chord only", () => {
     const { event: chord } = pressed("Range", "words", "v");
-    expect(copyInterfaceText(chord, async () => {})).toBe(false);
+    expect(copyInterfaceText(chord, async () => {}, expect.fail)).toBe(false);
   });
 
-  it("does not let a clipboard that refuses become an unhandled rejection", () => {
+  it("reports a failed interface copy to the reader", async () => {
     const { event: chord } = pressed("Range", "words");
-    expect(copyInterfaceText(chord, () => Promise.reject(new Error("denied")))).toBe(true);
+    const errors: string[] = [];
+    expect(copyInterfaceText(chord, async () => { throw new Error("denied"); }, (error) => errors.push(error))).toBe(true);
+    await Promise.resolve();
+    expect(errors).toEqual(["Could not write to the clipboard: denied"]);
   });
 });
 
@@ -674,7 +680,7 @@ describe("the copy chord pressed on a page", () => {
     const written: string[] = [];
     const { event: pressed, prevented } = chord(message, message);
     expect(nativeCopy(pressed)).toBe(false);
-    expect(copyInterfaceText(pressed, async (text) => void written.push(text))).toBe(false);
+    expect(copyInterfaceText(pressed, async (text) => void written.push(text), expect.fail)).toBe(false);
     expect(written).toEqual([]);
     // Not taken, so the viewer's own handler copies the page's selection.
     expect(prevented).toEqual([]);
@@ -689,7 +695,7 @@ describe("the copy chord pressed on a page", () => {
     namePageSurface(surface, () => selected);
     const written: string[] = [];
     const { event: pressed, prevented } = chord(message, message);
-    expect(copyInterfaceText(pressed, async (text) => void written.push(text))).toBe(true);
+    expect(copyInterfaceText(pressed, async (text) => void written.push(text), expect.fail)).toBe(true);
     expect(written).toEqual(["Cannot edit this text"]);
     expect(prevented).toEqual(["default"]);
     // The answer is asked for at each press and not kept from the naming.

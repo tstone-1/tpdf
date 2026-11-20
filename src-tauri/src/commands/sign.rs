@@ -402,12 +402,7 @@ pub async fn sign_add_certificate_file(path: String) -> Result<Option<String>, S
                 return Ok(None);
             };
             let entry = crate::certfiles::add(&store, &path, password.expose_secret())?;
-            let certificate = entry.certificate();
-            let subject = sign_cms::usable(&certificate, now())
-                .map_or_else(|_| sign_cms::named(&certificate), |offer| offer.subject);
-            Ok(Some(said!(
-                "{subject} can sign now: choose it when you sign a document."
-            )))
+            Ok(Some(import_feedback(&entry.certificate(), now())))
         })
         .await
         .map_err(|e| said!("adding the certificate file did not run: {e}"))?
@@ -641,6 +636,17 @@ pub fn sign_discard(held: tauri::State<'_, Pending>, pending: u64) {
     drop(held.take(pending));
 }
 
+#[cfg(any(test, target_os = "linux"))]
+fn import_feedback(certificate: &[u8], at: u64) -> String {
+    match sign_cms::usable(certificate, at) {
+        Ok(offer) => {
+            let subject = offer.subject;
+            said!("{subject} can sign now: choose it when you sign a document.")
+        }
+        Err(why) => said!("Certificate file added. It cannot sign: {why}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,6 +654,20 @@ mod tests {
         asking, finished, scratch, sealed, test_archive, test_vouch, Rewording,
     };
     use crate::sign_finish::ReadBack;
+
+    #[test]
+    fn certificate_import_reports_the_same_eligibility_as_the_chooser() {
+        use crate::sign_cms::testkeys::{certificate, Soft, Spec, NOW};
+        let spec = Spec::new("Test Signer");
+        let cert = certificate(&Soft::p256(42), &spec);
+        assert!(import_feedback(&cert, NOW).contains("Test Signer can sign now"));
+        let at = spec.not_after + 1;
+        let why = sign_cms::usable(&cert, at).unwrap_err();
+        assert_eq!(
+            import_feedback(&cert, at),
+            format!("Certificate file added. It cannot sign: {why}")
+        );
+    }
 
     /// A placement as `signing.ts` sends it reaches the worker with the
     /// reader's choices, and one sent without them means the three lines a

@@ -239,6 +239,7 @@ fn parse(path: &str, query: Option<&str>) -> Result<TileRequest, String> {
 
     Ok(TileRequest {
         annotations: true,
+        printing: false,
         rid,
         doc: doc as u32,
         page: page_index as u32,

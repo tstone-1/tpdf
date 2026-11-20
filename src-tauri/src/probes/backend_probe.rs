@@ -562,6 +562,7 @@ pub fn main() {
         workers.tile(
             TileRequest {
                 annotations: true,
+                printing: false,
                 crop: None,
                 page: worker_doc.page_count as u32,
                 ..request(worker_doc.id, 21, at)
@@ -1937,6 +1938,7 @@ fn clamp_side(pixels: f32) -> u16 {
 fn request(doc: u32, rid: u64, at: Placement) -> TileRequest {
     TileRequest {
         annotations: true,
+        printing: false,
         crop: None,
         rid,
         doc,
@@ -1959,6 +1961,7 @@ fn request(doc: u32, rid: u64, at: Placement) -> TileRequest {
 fn view_state_request(doc: u32, rid: u64, at: Placement) -> TileRequest {
     TileRequest {
         annotations: true,
+        printing: false,
         turns: 1,
         invert: true,
         ..request(doc, rid, at)

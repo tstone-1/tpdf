@@ -208,6 +208,19 @@ describe("Viewer lifetime", () => {
     dom.restore();
   });
 
+  it("zooms in on the shifted plus of a US keyboard", () => {
+    const viewer = build(dom);
+    const before = viewer.currentZoom;
+    const preventDefault = vi.fn();
+    dom.root.dispatch("keydown", {
+      key: "+", code: "Equal", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true,
+      target: dom.root, preventDefault,
+    });
+    expect(viewer.currentZoom).toBeGreaterThan(before);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    viewer.destroy();
+  });
+
   it("does not steal native copying when focus remains on the PDF surface", () => {
     const viewer = build(dom);
     const copy = vi.spyOn(viewer, "copySelection").mockResolvedValue(null);

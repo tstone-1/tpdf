@@ -156,7 +156,7 @@ fn bash(names: &[&str]) -> String {
     format!(
         "# tpdf completion for bash. Load it with:  source <(tpdf completions bash)\n\
          _tpdf() {{\n\
-         \x20   local current=\"${{COMP_WORDS[COMP_CWORD]}}\" options=\"\"\n\
+         \x20   local candidate current=\"${{COMP_WORDS[COMP_CWORD]}}\" options=\"\"\n\
          \x20   if [ \"$COMP_CWORD\" -eq 1 ]; then\n\
          \x20       COMPREPLY=( $(compgen -W \"{commands} --version\" -- \"$current\") )\n\
          \x20       return\n\
@@ -171,7 +171,8 @@ fn bash(names: &[&str]) -> String {
          \x20           if [ \"${{COMP_WORDS[1]}}\" = help ]; then\n\
          \x20               COMPREPLY=( $(compgen -W \"$options\" -- \"$current\") )\n\
          \x20           else\n\
-         \x20               COMPREPLY=( $(compgen -f -- \"$current\") )\n\
+         \x20               COMPREPLY=()\n\
+         \x20               while IFS= read -r candidate; do COMPREPLY+=(\"$candidate\"); done < <(compgen -f -- \"$current\")\n\
          \x20           fi ;;\n\
          \x20   esac\n\
          }}\n\
@@ -307,4 +308,21 @@ fn powershell(names: &[&str]) -> String {
         programs = PROGRAMS.join(", "),
         commands = quoted.join(", "),
     )
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn bash_completes_a_filename_with_spaces_as_one_argument() {
+    use std::process::Command;
+    let dir = crate::testutil::TempDir::new("bash-completion");
+    let document = dir.join("Quarterly Report.pdf");
+    std::fs::write(&document, []).unwrap();
+    let mut script = bash(&["render"]);
+    script.push_str("\nCOMP_WORDS=(tpdf render Quart)\nCOMP_CWORD=2\n_tpdf\n[[ ${#COMPREPLY[@]} == 1 && ${COMPREPLY[0]} == 'Quarterly Report.pdf' ]]");
+    let status = Command::new("bash")
+        .args(["--noprofile", "--norc", "-c", &script])
+        .current_dir(document.parent().unwrap())
+        .status()
+        .unwrap();
+    assert!(status.success());
 }

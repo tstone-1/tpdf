@@ -135,8 +135,8 @@ names each picture as a reason, wherever in the document it is. Look at those pi
 yourself, or make the image-only copy and check what it shows.
 
 From 26.11.11 on, a result that is not verified groups its reasons under three headings,
-each with its next step: *Still in the file* (a copy was found; mark it where named and
-redact the original again), *Not read in pictures*, and *Could not be checked* (a part of
+with guidance for each: *Still in the file* (the check found content marked for removal,
+possibly outside any page), *Not read in pictures*, and *Could not be checked* (a part of
 the file the check cannot read; the marked regions were still removed).
 
 ![Two regions marked for removal and listed for review](docs/img/redact.png)

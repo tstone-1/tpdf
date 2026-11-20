@@ -360,6 +360,7 @@ export default {
     "Diese Seite ließ sich nicht übernehmen: {e}",
   "could not build the update section: {e}":
     "Der Aktualisierungsabschnitt konnte nicht erstellt werden: {e}",
+  "A print job is already running.": "Ein Druckauftrag läuft bereits.",
   "the print job could not be read back: {e}":
     "Der Druckauftrag konnte nicht zurückgelesen werden: {e}",
   "the rewritten document could not be written: {e}":

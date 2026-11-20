@@ -372,6 +372,13 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(caught.exception.exit_code, 1)
         self.assertEqual(caught.exception.report['files'][0]['path'], '--json')
 
+    def test_unchecked_redaction_still_raises_on_missing_input(self):
+        with self.assertRaises(CommandError) as raised:
+            self.pdf.redact(self.root / 'missing.pdf', self.root / 'out.pdf',
+                            texts=['synthetic'], check=False)
+        self.assertEqual(raised.exception.exit_code, 3)
+        self.assertEqual(raised.exception.report['error']['kind'], 'refused')
+
     def redaction_source(self, *, retained_secret=False):
         source = self.root / '-private.pdf'
         fixture(source, retained_secret=retained_secret, content=(
@@ -943,9 +950,12 @@ class ClientTests(unittest.TestCase):
             if argv[0] == str(BINARY.resolve()):
                 return fake_tool(argv, **kwargs)
             return original_popen(argv, **kwargs)
-        with patch('tpdf_client.subprocess.Popen', side_effect=launch):
+        with patch('tpdf_client.subprocess.Popen', side_effect=launch) as launches:
             with self.assertRaises(CommandTimeout):
                 Tpdf(BINARY, timeout=0.5).help()
+        if os.name == 'nt':
+            cleanup = launches.call_args_list[1].args[0]
+            self.assertEqual(Path(cleanup[0]), Path(os.environ['SystemRoot']) / 'System32' / 'taskkill.exe')
         self.assertLess(time.monotonic() - start, 10)
         self.assertIsNotNone(processes[0].poll())
 

@@ -5832,7 +5832,10 @@ because the arm it ran was the one written for "any other platform".
     `Identity-V`, a map that is missing, does not parse, lacks a code that is shown, or sends
     a glyph to a private-use or control character), when a string in a file with a
     composite font is shown through a font its resources do not hold, or when a stream that
-    shows text was reached by no walk. Measured over 82 local documents against the same
+    shows text was reached by no walk. A form can inherit a different font or resource
+    dictionary on every invocation. The scan keeps each distinct reading of that stream
+    and searches them separately. Recursion or an exhausted traversal budget leaves
+    composite-font coverage incomplete. Measured over 82 local documents against the same
     build with the refusal forced on: 14 had been withheld for a composite font and 1 still
     is; 7 more are *verified* (5 of them real-world), 6 stay withheld for other reasons, and
     none went from *verified* to withheld. A removed text outside ASCII was not found in a

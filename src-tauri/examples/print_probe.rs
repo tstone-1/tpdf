@@ -1015,6 +1015,7 @@ mod imp {
         let pages: Vec<u32> = (0..u32::try_from(expected).unwrap_or(0)).collect();
         let done = std::sync::atomic::AtomicBool::new(false);
         let dc = open_printer(printer)?;
+        let _job = print_win::PrintJob::begin()?;
         let spooled = std::thread::scope(|scope| {
             scope.spawn(|| {
                 while !done.load(std::sync::atomic::Ordering::SeqCst) {

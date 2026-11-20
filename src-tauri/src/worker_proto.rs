@@ -70,6 +70,9 @@ pub enum Request {
         /// print without its comments wants.
         #[serde(default = "drawn")]
         annotations: bool,
+        /// Use print visibility for annotations and optional content.
+        #[serde(default)]
+        printing: bool,
     },
     /// Abandon a tile request, whether or not it has started.
     ///
@@ -1270,6 +1273,7 @@ mod tests {
     fn text_view_keeps_tile_cancellation_identity_and_rejects_nesting() {
         let tile = Request::Tile {
             annotations: true,
+            printing: false,
             rid: 19,
             page: 0,
             scale: 1.0,
@@ -1334,6 +1338,7 @@ mod tests {
             },
             Request::Tile {
                 annotations: true,
+                printing: false,
                 rid: 7,
                 page: 3,
                 scale: 1.5,

@@ -1992,6 +1992,7 @@ describe("opening the palette", () => {
       preventDefault: () => {},
     } as unknown as KeyboardEvent;
     handleWindowKey(event, {
+      onError: (message) => events.push(message),
       actions: {} as unknown as AppActions,
       palette: () => handle as never,
       hasDocument: () => false,
@@ -2085,6 +2086,7 @@ describe("the window shortcuts for editing", () => {
       },
     } as unknown as KeyboardEvent;
     handleWindowKey(event, {
+      onError: (message) => fired.push(message),
       actions,
       palette: () => null,
       hasDocument: () => !modifiers.noDocument,

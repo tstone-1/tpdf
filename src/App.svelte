@@ -5634,6 +5634,7 @@
     const focused = document.activeElement;
     if (!title && (focused === null || focused === document.body) && startPageKey(event, -1)) return;
     handleWindowKey(event, {
+      onError: say,
       actions: appActions,
       palette: () => palette,
       hasDocument: () => title !== "",

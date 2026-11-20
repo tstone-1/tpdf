@@ -1096,6 +1096,7 @@ fn render(
         png,
         crop,
         annotations,
+        printing,
     } = *request
     else {
         return Response::err("not a tile request");
@@ -1114,6 +1115,7 @@ fn render(
 
     let req = TileRequest {
         annotations,
+        printing,
         rid,
         doc: 0,
         page,
@@ -1289,6 +1291,7 @@ fn warm_fonts(bindings: progressive::Bindings) {
     // path a real tile takes, or it warms something adjacent to what is measured.
     let request = TileRequest {
         annotations: true,
+        printing: false,
         rid: 0,
         doc: 0,
         page: 0,

@@ -227,6 +227,7 @@ impl Subcommand for Render {
                 let th = (height - y).min(1024) as u16;
                 let tile = session.tile(TileRequest {
                     annotations: true,
+                    printing: false,
                     rid: 0,
                     doc: 0,
                     page: self.page - 1,

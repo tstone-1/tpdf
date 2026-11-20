@@ -76,6 +76,8 @@ Signing that field repeats it in the signature as one `/FieldMDP` transform over
 as pyHanko's `fieldmdp_reference_dictionary` does: the action, the list unless the action is
 `All`, `/V /1.2`, and `/P` when the lock gives one (`sign_prepare::FieldLock`). The field's
 `/Lock` stays as written, and the fields are not made read-only, as pyHanko does not. A lock
+on a signed field also governs later attempts to sign named fields. Include and Exclude apply
+to the fully qualified name and its descendants, even when /P is absent. A lock
 that cannot be read is refused rather than half repeated, and so is one in a certified
 document, for the reason above. A field lock at `/P 1` locks the document, so
 `Unsigned::locked` is set and the read-back looks for it. With the signer's own lock as well,

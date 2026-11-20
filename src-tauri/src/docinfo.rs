@@ -2644,7 +2644,13 @@ pub(crate) fn lock_of(document: &Document, field: &Dictionary, sig: &Dictionary)
 /// `/FT` and `/V` are read through `/Parent` as well, since a field may take
 /// both from the node above it; until the same day `/FT` was read on the node
 /// alone, so a signature whose type its parent stated locked nothing here.
+#[cfg(test)]
 pub(crate) fn locked(document: &Document) -> Result<bool, String> {
+    locked_for(document, None)
+}
+
+/// Also refuses a change to a named field protected by an earlier approval.
+pub(crate) fn locked_for(document: &Document, target: Option<&str>) -> Result<bool, String> {
     let bounds = fields::Bounds {
         nodes: MAX_FIELD_NODES,
         depth: Some(32),
@@ -2653,6 +2659,7 @@ pub(crate) fn locked(document: &Document) -> Result<bool, String> {
         order: fields::Order::Document,
     };
     let mut locked = false;
+    let mut field_permission = Ok(());
     let cut = fields::walk(document, &bounds, |node| {
         let Some(field) = node.dict else {
             return fields::Flow::Leaf;
@@ -2665,6 +2672,12 @@ pub(crate) fn locked(document: &Document) -> Result<bool, String> {
                 inherited(document, field, b"V").and_then(|o| resolve(document, o).as_dict().ok())
             {
                 locked |= lock_of(document, field, sig) == 1;
+                if let Some(name) = target {
+                    if field_permission.is_ok() {
+                        field_permission =
+                            crate::sign_prepare::permit_field(document, field, sig, name);
+                    }
+                }
             }
         }
         fields::Flow::Descend
@@ -2675,6 +2688,7 @@ pub(crate) fn locked(document: &Document) -> Result<bool, String> {
              cannot tell whether a signature locked the document"
         ));
     }
+    field_permission?;
     Ok(locked)
 }
 

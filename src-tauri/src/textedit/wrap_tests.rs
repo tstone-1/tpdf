@@ -649,6 +649,21 @@ fn text_beside_a_line_that_moves_refuses_the_wrap_on_an_untagged_page() {
         "{error}"
     );
     wrapped(&ruled(200.), WIDEST, LONGER);
+    for turn in [90, 180, 270] {
+        for (make, expected) in [(beside as fn(f64) -> Document, "text"), (ruled, "drawing")] {
+            for (baseline, blocked) in [(172., true), (200., false)] {
+                let mut doc = make(baseline);
+                let page = crate::pagetree::ordered_pages(&doc)[0];
+                doc.get_dictionary_mut(page).unwrap().set("Rotate", turn);
+                if blocked {
+                    let why = refusal(&doc, WIDEST, LONGER);
+                    assert!(why.contains("out of line"), "{expected}, {turn}: {why}");
+                } else {
+                    wrapped(&doc, WIDEST, LONGER);
+                }
+            }
+        }
+    }
     let tagged = tagged(
         &content(52., "200 52 Td /P <</MCID 4>> BDC (SIDE) Tj EMC "),
         &[&[0, 1, 2], &[3], &[4]],

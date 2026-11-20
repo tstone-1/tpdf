@@ -630,6 +630,7 @@ fn judge_service(checks: &mut Checks, fixture: &Path, work: &Path, library_dir: 
         service.tile(
             TileRequest {
                 annotations: true,
+                printing: false,
                 crop: None,
                 rid: 0,
                 doc: opened.id,
@@ -903,6 +904,7 @@ fn settle(worker: &mut Worker) -> String {
 fn tile(worker: &mut Worker, page: u32) -> Result<Vec<u8>, String> {
     let request = Request::Tile {
         annotations: true,
+        printing: false,
         crop: None,
         rid: 0,
         page,

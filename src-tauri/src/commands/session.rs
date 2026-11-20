@@ -40,7 +40,7 @@ fn session_file(app: &tauri::AppHandle) -> PathBuf {
 #[tauri::command]
 pub fn session_load(app: tauri::AppHandle) -> session::Loaded {
     session::Loaded {
-        session: session::Session::load(&session_file(&app)),
+        session: session::Session::load(&session_file(&app)).restorable(),
         home: app
             .path()
             .home_dir()

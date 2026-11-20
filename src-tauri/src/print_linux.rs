@@ -79,34 +79,10 @@ extern "C" {
 ///
 /// The file could not be written.
 pub fn stage(bytes: &[u8]) -> Result<(PathBuf, std::fs::File), String> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT: AtomicU64 = AtomicU64::new(0);
     let folder = std::env::var_os("XDG_RUNTIME_DIR")
         .filter(|v| !v.is_empty())
         .map_or_else(std::env::temp_dir, PathBuf::from);
-    let path = folder.join(format!(
-        "tpdf-print-{}-{}.pdf",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let written = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
-        .and_then(|mut file| file.write_all(bytes));
-    if let Err(e) = written {
-        let _ = std::fs::remove_file(&path);
-        return Err(said!("the print job could not be written: {e}"));
-    }
-    let file = std::fs::File::open(&path).map_err(|e| {
-        let _ = std::fs::remove_file(&path);
-        said!("the print job could not be read back: {e}")
-    })?;
-    Ok((path, file))
+    crate::printer::stage_in(&folder, bytes)
 }
 
 /// Shows the print dialog over `parent` and, on Print, sends the file at
@@ -114,8 +90,8 @@ pub fn stage(bytes: &[u8]) -> Result<(PathBuf, std::fs::File), String> {
 /// sent, or at once if the reader cancels.
 ///
 /// Must run on GTK's thread: the dialog runs a nested main loop. Returns when
-/// the dialog closes; the job is sent afterwards, on the main loop, and its
-/// outcome is noted in the diagnostics log, as on the other two platforms.
+/// the dialog closes; the job is sent afterwards, on the main loop. A
+/// submission error is logged and shown over the parent window.
 ///
 /// # Errors
 ///
@@ -142,7 +118,13 @@ pub fn present(path: PathBuf, title: &str, parent: Option<&gtk::Window>) -> Resu
         // SAFETY: `raw` is the dialog.
         unsafe { gtk_print_unix_dialog_set_manual_capabilities(raw, 0) };
         let chosen = if dialog.run() == gtk::ResponseType::Ok {
-            send(raw, &path, title)
+            let parent = parent.cloned();
+            send(
+                raw,
+                &path,
+                title,
+                report_failure(move |why| tell(parent.as_ref(), &why)),
+            )
         } else {
             Ok(false)
         };
@@ -181,17 +163,33 @@ pub fn tell(parent: Option<&gtk::Window>, why: &str) {
     unsafe { message.destroy() };
 }
 
-/// What the job's completion needs: the file to remove, the job to let go,
-/// and, for [`print_to`], where to say how it went.
+type Completion = Box<dyn FnOnce(Result<(), String>)>;
+
+/// A submission can finish before the print dialog is destroyed. Show a failure
+/// on the next GTK iteration, after the dialog has closed.
+fn report_failure(report: impl FnOnce(String) + 'static) -> Completion {
+    Box::new(move |answer| {
+        if let Err(why) = answer {
+            gtk::glib::idle_add_local_once(move || report(why));
+        }
+    })
+}
+
+/// The file and GTK job remain owned until GTK releases them after the callback.
 struct Sending {
     path: PathBuf,
     job: *mut c_void,
-    outcome: Option<std::sync::mpsc::Sender<Result<(), String>>>,
+    outcome: Option<Completion>,
 }
 
 /// Makes the job for the dialog's choices and sends it. `Ok(true)` once it is
 /// on its way, after which the file belongs to [`released`].
-fn send(dialog: *mut GtkWidget, path: &Path, title: &str) -> Result<bool, String> {
+fn send(
+    dialog: *mut GtkWidget,
+    path: &Path,
+    title: &str,
+    completion: Completion,
+) -> Result<bool, String> {
     // SAFETY: `dialog` is a live GtkPrintUnixDialog; the printer and page
     // setup are borrowed from it (transfer none), the settings are ours
     // (transfer full) and released below.
@@ -201,7 +199,7 @@ fn send(dialog: *mut GtkWidget, path: &Path, title: &str) -> Result<bool, String
     }
     let settings = unsafe { gtk_print_unix_dialog_get_settings(dialog) };
     let setup = unsafe { gtk_print_unix_dialog_get_page_setup(dialog) };
-    let submitted = submit(printer, settings, setup, path, title, None);
+    let submitted = submit(printer, settings, setup, path, title, completion);
     if !settings.is_null() {
         // SAFETY: the settings were ours, and a job holds its own reference.
         unsafe { gtk::glib::gobject_ffi::g_object_unref(settings.cast()) };
@@ -217,7 +215,7 @@ fn submit(
     setup: *mut GtkPageSetup,
     path: &Path,
     title: &str,
-    outcome: Option<std::sync::mpsc::Sender<Result<(), String>>>,
+    outcome: Completion,
 ) -> Result<(), String> {
     // SAFETY: `printer` is live for the call.
     if unsafe { gtk_printer_accepts_pdf(printer) } == 0 {
@@ -254,7 +252,7 @@ fn submit(
     let state = Box::into_raw(Box::new(Sending {
         path: path.to_path_buf(),
         job,
-        outcome,
+        outcome: Some(outcome),
     }));
     // SAFETY: `job` is live; `state` stays valid until `released` frees it,
     // which GTK calls once, after `sent`.
@@ -373,8 +371,8 @@ unsafe extern "C" fn sent(_job: *mut c_void, state: gpointer, error: *const GErr
         crate::diag::note(&format!("[print] {why}"));
     }
     // SAFETY: `state` is the box `submit` leaked; `released` has not run yet.
-    if let Some(outcome) = unsafe { &(*state.cast::<Sending>()).outcome } {
-        let _ = outcome.send(answer);
+    if let Some(outcome) = unsafe { (*state.cast::<Sending>()).outcome.take() } {
+        outcome(answer);
     }
 }
 
@@ -428,7 +426,9 @@ pub fn print_to(
             setup.to_glib_none().0,
             path,
             title,
-            Some(tx),
+            Box::new(move |answer| {
+                let _ = tx.send(answer);
+            }),
         );
         // SAFETY: the reference `find_printer` took; the job holds its own.
         unsafe { gtk::glib::gobject_ffi::g_object_unref(found.cast()) };
@@ -522,6 +522,22 @@ fn gerror_message(error: *const GError) -> String {
 #[cfg(test)]
 mod tests {
     use super::cups_page_ranges;
+
+    #[test]
+    fn the_window_receives_a_delayed_submission_error_once_and_success_is_quiet() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let messages = Rc::new(RefCell::new(Vec::new()));
+        let context = gtk::glib::MainContext::default();
+        let _guard = context.acquire().unwrap();
+        for answer in [Ok(()), Err("queue unavailable".to_string())] {
+            let messages = messages.clone();
+            super::report_failure(move |why| messages.borrow_mut().push(why))(answer);
+        }
+        assert!(messages.borrow().is_empty());
+        while context.iteration(false) {}
+        assert_eq!(*messages.borrow(), ["queue unavailable"]);
+    }
 
     #[test]
     fn the_dialogs_ranges_become_cups_page_ranges() {

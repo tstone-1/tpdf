@@ -122,6 +122,7 @@ pub(super) fn render(
             let th = (height - y).min(TILE) as u16;
             let tile = session.tile(TileRequest {
                 annotations: true,
+                printing: false,
                 rid: 0,
                 doc: 0,
                 page,

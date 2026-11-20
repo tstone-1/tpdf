@@ -7055,6 +7055,18 @@ Windows desktop, screen locked, so the dialog was not seen in the application it
   finishes a picture after Print or Cancel is not kept. Each of those three guards was removed
   in turn and a test went red each time; so did removing the clamp at `PREVIEW_MAX_WIDTH`.
 
+## Print annotation visibility, verified 2026-11-20
+
+The worker regression renders a page with two stamp appearances. One is screen-only and one
+has the Print and NoView flags. Sampling their centres shows only the first stamp on screen,
+only the second in print mode, and neither with print marks disabled.
+
+The Windows print probe also compares rasterized output from Microsoft Print to PDF. Its
+comments fixture now sets the Print flag on the square annotation. Previously every comment
+on that page was screen-only, so a conforming print produced identical sheets with either
+marks setting. Disabling marks now removes 663 inked pixels and adds none. The form fixture
+keeps every pixel. All 15 checks passed, including cancellation before a file was written.
+
 ## The print preview as the Windows print dialog — verified 2026-10-20
 
 Windows desktop, six printers installed, Microsoft Print to PDF as the printer for every print.

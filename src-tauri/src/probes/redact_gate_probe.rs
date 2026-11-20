@@ -419,6 +419,7 @@ fn render_region(
         .ok_or_else(|| "the region is not on the page".to_string())?;
     let request = tpdf_lib::render::TileRequest {
         annotations: true,
+        printing: false,
         rid: 0,
         doc,
         page: 0,

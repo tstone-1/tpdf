@@ -160,6 +160,7 @@ impl Pages for Held<'_> {
             &mut |x, y, tw, th| {
                 let request = TileRequest {
                     annotations: true,
+                    printing: false,
                     rid: 0,
                     doc,
                     page,

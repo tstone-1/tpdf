@@ -45,9 +45,9 @@ const MAX_CODES: usize = 1 << 17;
 /// What the walk read.
 #[derive(Debug, Default)]
 pub(crate) struct Read {
-    /// The decoded text each content stream showed, as UTF-8 joined with
-    /// nothing between strings, keyed by the stream's object.
-    pub text: BTreeMap<ObjectId, Vec<u8>>,
+    /// Distinct readings of each stream under its callers' font and resources.
+    /// Strings are joined within one invocation only.
+    pub text: BTreeMap<ObjectId, BTreeSet<Vec<u8>>>,
     /// Whether every string a composite font showed was read: see the module
     /// documentation for the conditions.
     pub composite_read: bool,
@@ -74,17 +74,21 @@ enum Font {
 /// composite font anywhere, which decides what a string shown through an
 /// unknown font costs.
 pub(crate) fn read(doc: &Document, composite: bool) -> Read {
+    read_with_budget(doc, composite, MAX_TOKENS)
+}
+
+fn read_with_budget(doc: &Document, composite: bool, tokens_left: usize) -> Read {
     let mut walk = Walk {
         doc,
         fonts: HashMap::new(),
         out: Read::default(),
-        tokens: 0,
+        tokens_left,
         stopped: false,
         lost: false,
-        visited: BTreeSet::new(),
+        active_forms: BTreeSet::new(),
         composite,
     };
-    for (_, page) in doc.get_pages() {
+    'pages: for (_, page) in doc.get_pages() {
         let Ok(dict) = doc.get_dictionary(page) else {
             walk.lost = true;
             continue;
@@ -93,8 +97,14 @@ pub(crate) fn read(doc: &Document, composite: bool) -> Read {
         let mut state = State::default();
         for content in doc.get_page_contents(page) {
             walk.stream(content, resources.as_ref(), &mut state, 0);
+            if walk.stopped {
+                break 'pages;
+            }
         }
         walk.annotations(dict, resources.as_ref());
+        if walk.stopped {
+            break;
+        }
     }
     walk.out.composite_read = !walk.stopped && !walk.lost;
     walk.out
@@ -116,11 +126,11 @@ struct Walk<'a> {
     doc: &'a Document,
     fonts: HashMap<ObjectId, Font>,
     out: Read,
-    tokens: usize,
+    tokens_left: usize,
     stopped: bool,
     /// Something the walk needed was missing or could not be read.
     lost: bool,
-    visited: BTreeSet<ObjectId>,
+    active_forms: BTreeSet<ObjectId>,
     composite: bool,
 }
 
@@ -164,6 +174,9 @@ impl Walk<'_> {
                 }
                 for id in appearances {
                     self.form(id, resources, &State::default(), 0);
+                    if self.stopped {
+                        return;
+                    }
                 }
             }
         }
@@ -176,12 +189,13 @@ impl Walk<'_> {
             self.stopped = true;
             return;
         }
-        if !self.visited.insert(id) {
-            return;
-        }
         let Ok(Object::Stream(stream)) = self.doc.get_object(id) else {
             return;
         };
+        if !self.active_forms.insert(id) {
+            self.lost = true;
+            return;
+        }
         let own = match resolve(self.doc, stream.dict.get(b"Resources").ok()) {
             Some(Object::Dictionary(own)) => Some(own.clone()),
             _ => None,
@@ -194,6 +208,7 @@ impl Walk<'_> {
             saved: Vec::new(),
         };
         self.stream(id, resources, &mut state, depth);
+        self.active_forms.remove(&id);
     }
 
     /// Reads one content stream under `resources`, carrying `state`.
@@ -214,16 +229,15 @@ impl Walk<'_> {
             // Unreadable streams are the scan's reason already.
             Err(_) => return,
         };
-        let tokens = tokenize(&content);
-        self.tokens = self.tokens.saturating_add(tokens.len());
-        if self.tokens > MAX_TOKENS {
-            self.stopped = true;
-            return;
-        }
         let mut text = Vec::new();
         let mut operands: Vec<Token> = Vec::new();
         let mut in_array: Option<Vec<Vec<u8>>> = None;
-        for token in tokens {
+        for token in tokenize(&content) {
+            let Some(left) = self.tokens_left.checked_sub(1) else {
+                self.stopped = true;
+                return;
+            };
+            self.tokens_left = left;
             match token {
                 Token::ArrayStart => in_array = Some(Vec::new()),
                 Token::ArrayEnd => {
@@ -239,6 +253,9 @@ impl Walk<'_> {
                 Token::Op(op) => {
                     in_array = None;
                     self.operator(&op, &operands, resources, state, &mut text, depth);
+                    if self.stopped {
+                        return;
+                    }
                     operands.clear();
                 }
                 other => {
@@ -248,7 +265,7 @@ impl Walk<'_> {
                 }
             }
         }
-        self.out.text.entry(id).or_default().extend(text);
+        self.out.text.entry(id).or_default().insert(text);
     }
 
     fn operator(
@@ -448,7 +465,17 @@ fn to_unicode(doc: &Document, dict: &Dictionary) -> Option<ToUnicode> {
 /// than [`MAX_CODES`]. A map read in part would decode some strings and miss
 /// others, which is the shape of answer this module exists to refuse.
 pub(crate) fn parse_cmap(bytes: &[u8]) -> Option<ToUnicode> {
-    let tokens = tokenize(bytes);
+    // A map can express one code per block, including its count and delimiters.
+    // Limit syntax as well as mapped codes before collecting the entire input.
+    const MAX_CMAP_TOKENS: usize = 8 * MAX_CODES;
+    parse_cmap_with_budget(bytes, MAX_CMAP_TOKENS)
+}
+
+fn parse_cmap_with_budget(bytes: &[u8], budget: usize) -> Option<ToUnicode> {
+    let tokens: Vec<_> = tokenize(bytes).take(budget + 1).collect();
+    if tokens.len() > budget {
+        return None;
+    }
     let mut width: Option<usize> = None;
     let mut map = HashMap::new();
     let mut at = 0;
@@ -578,7 +605,7 @@ fn utf16(bytes: &[u8]) -> Option<String> {
 
 /// Lexes content-stream syntax into the tokens text needs. Inline image data
 /// is passed over from `ID` to `EI`.
-fn tokenize(content: &[u8]) -> Vec<Token> {
+fn tokenize(content: &[u8]) -> impl Iterator<Item = Token> + '_ {
     let delimiter = |byte: u8| {
         byte.is_ascii_whitespace()
             || byte == 0
@@ -587,83 +614,84 @@ fn tokenize(content: &[u8]) -> Vec<Token> {
                 b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
             )
     };
-    let mut out = Vec::new();
     let mut at = 0;
-    while at < content.len() {
-        let byte = content[at];
-        match byte {
-            b'%' => {
-                while at < content.len() && !matches!(content[at], b'\n' | b'\r') {
-                    at += 1;
-                }
-            }
-            b'(' => {
-                let mut bytes = Vec::new();
-                at = literal_string(content, at + 1, &mut bytes);
-                out.push(Token::Str(bytes));
-            }
-            b'<' if content.get(at + 1) == Some(&b'<') => {
-                out.push(Token::Other);
-                at += 2;
-            }
-            b'>' if content.get(at + 1) == Some(&b'>') => {
-                out.push(Token::Other);
-                at += 2;
-            }
-            b'<' => {
-                let mut bytes = Vec::new();
-                at = hex_string(content, at + 1, &mut bytes);
-                out.push(Token::Str(bytes));
-            }
-            b'[' => {
-                out.push(Token::ArrayStart);
-                at += 1;
-            }
-            b']' => {
-                out.push(Token::ArrayEnd);
-                at += 1;
-            }
-            b'/' => {
-                let start = at + 1;
-                at = start;
-                while at < content.len() && !delimiter(content[at]) {
-                    at += 1;
-                }
-                out.push(Token::Name(content[start..at].to_vec()));
-            }
-            _ if delimiter(byte) => at += 1,
-            _ => {
-                let start = at;
-                while at < content.len() && !delimiter(content[at]) {
-                    at += 1;
-                }
-                let word = &content[start..at];
-                let is_number = word
-                    .iter()
-                    .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'+'));
-                if is_number {
-                    out.push(Token::Other);
-                } else if word == b"ID" {
-                    // Inline image data: skip to an `EI` standing alone.
-                    let mut end = at;
-                    while end + 2 <= content.len() {
-                        if &content[end..end + 2] == b"EI"
-                            && content[end - 1].is_ascii_whitespace()
-                            && content.get(end + 2).is_none_or(|b| delimiter(*b))
-                        {
-                            break;
-                        }
-                        end += 1;
+    std::iter::from_fn(move || {
+        while at < content.len() {
+            let byte = content[at];
+            match byte {
+                b'%' => {
+                    while at < content.len() && !matches!(content[at], b'\n' | b'\r') {
+                        at += 1;
                     }
-                    at = (end + 2).min(content.len());
-                    out.push(Token::Op(b"EI".to_vec()));
-                } else {
-                    out.push(Token::Op(word.to_vec()));
+                }
+                b'(' => {
+                    let mut bytes = Vec::new();
+                    at = literal_string(content, at + 1, &mut bytes);
+                    return Some(Token::Str(bytes));
+                }
+                b'<' if content.get(at + 1) == Some(&b'<') => {
+                    at += 2;
+                    return Some(Token::Other);
+                }
+                b'>' if content.get(at + 1) == Some(&b'>') => {
+                    at += 2;
+                    return Some(Token::Other);
+                }
+                b'<' => {
+                    let mut bytes = Vec::new();
+                    at = hex_string(content, at + 1, &mut bytes);
+                    return Some(Token::Str(bytes));
+                }
+                b'[' => {
+                    at += 1;
+                    return Some(Token::ArrayStart);
+                }
+                b']' => {
+                    at += 1;
+                    return Some(Token::ArrayEnd);
+                }
+                b'/' => {
+                    let start = at + 1;
+                    at = start;
+                    while at < content.len() && !delimiter(content[at]) {
+                        at += 1;
+                    }
+                    return Some(Token::Name(content[start..at].to_vec()));
+                }
+                _ if delimiter(byte) => at += 1,
+                _ => {
+                    let start = at;
+                    while at < content.len() && !delimiter(content[at]) {
+                        at += 1;
+                    }
+                    let word = &content[start..at];
+                    let is_number = word
+                        .iter()
+                        .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'+'));
+                    if is_number {
+                        return Some(Token::Other);
+                    } else if word == b"ID" {
+                        // Inline image data: skip to an `EI` standing alone.
+                        let mut end = at;
+                        while end + 2 <= content.len() {
+                            if &content[end..end + 2] == b"EI"
+                                && content[end - 1].is_ascii_whitespace()
+                                && content.get(end + 2).is_none_or(|b| delimiter(*b))
+                            {
+                                break;
+                            }
+                            end += 1;
+                        }
+                        at = (end + 2).min(content.len());
+                        return Some(Token::Op(b"EI".to_vec()));
+                    } else {
+                        return Some(Token::Op(word.to_vec()));
+                    }
                 }
             }
         }
-    }
-    out
+        None
+    })
 }
 
 /// Follows a value through one reference.
@@ -698,6 +726,81 @@ fn xobject(doc: &Document, resources: Option<&Dictionary>, name: &[u8]) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::{dictionary, Stream};
+
+    fn page_with_resources(doc: &mut Document, contents: &[ObjectId], resources: Dictionary) {
+        let pages = doc.new_object_id();
+        let contents = contents.iter().copied().map(Object::Reference).collect();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages,
+            "Resources" => resources, "Contents" => Object::Array(contents),
+        });
+        doc.objects.insert(
+            pages,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page)],
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", catalog);
+    }
+
+    #[test]
+    fn a_reused_form_has_a_separate_reading_for_each_inherited_font() {
+        let mut doc = Document::with_version("1.7");
+        let mut fonts = Dictionary::new();
+        for (name, letter) in [("One", "0041"), ("Two", "0042")] {
+            let cmap = format!(
+                "1 begincodespacerange <0000> <FFFF> endcodespacerange \
+                                1 beginbfchar <0001> <{letter}> endbfchar"
+            );
+            let cmap = doc.add_object(Stream::new(dictionary! {}, cmap.into_bytes()));
+            let font = doc.add_object(dictionary! {
+                "Type" => "Font", "Subtype" => "Type0", "Encoding" => "Identity-H", "ToUnicode" => cmap,
+            });
+            fonts.set(name, font);
+        }
+        let form = doc.add_object(Stream::new(
+            dictionary! {"Subtype" => "Form"},
+            b"BT <0001> Tj ET".to_vec(),
+        ));
+        let page = doc.add_object(Stream::new(
+            dictionary! {},
+            b"BT /One 10 Tf ET /X Do BT /Two 10 Tf ET /X Do /X Do".to_vec(),
+        ));
+        page_with_resources(
+            &mut doc,
+            &[page],
+            dictionary! {"Font" => fonts, "XObject" => dictionary! {"X" => form}},
+        );
+        let result = read(&doc, true);
+        assert!(result.composite_read);
+        assert_eq!(
+            result.text[&form],
+            BTreeSet::from([b"A".to_vec(), b"B".to_vec()])
+        );
+    }
+
+    #[test]
+    fn reaching_the_token_budget_stops_before_the_next_content_stream() {
+        let mut doc = Document::with_version("1.7");
+        let first = doc.add_object(Stream::new(dictionary! {}, b"q Q".to_vec()));
+        let next = doc.add_object(Stream::new(dictionary! {}, vec![]));
+        page_with_resources(&mut doc, &[first, next], dictionary! {});
+        let short = read_with_budget(&doc, true, 1);
+        assert!(!short.composite_read);
+        assert!(!short.text.contains_key(&next));
+        let enough = read_with_budget(&doc, true, 2);
+        assert!(enough.composite_read);
+        assert!(enough.text.contains_key(&next));
+    }
+
+    #[test]
+    fn cmap_syntax_counts_against_its_token_budget() {
+        let bytes = b"1 begincodespacerange <00> <FF> endcodespacerange";
+        assert!(parse_cmap_with_budget(bytes, 5).is_some());
+        assert!(parse_cmap_with_budget(bytes, 4).is_none());
+    }
 
     #[test]
     fn a_cmap_reads_its_code_space_chars_and_both_range_forms() {

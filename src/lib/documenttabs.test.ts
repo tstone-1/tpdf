@@ -331,7 +331,10 @@ describe("tab commands", () => {
       key, ctrlKey: true, metaKey: false, altKey: false, shiftKey,
       preventDefault() {},
     }) as KeyboardEvent;
-    const deps = { actions, palette: () => null, hasDocument: () => true, refreshRecents() {} };
+    const deps = {
+      actions, palette: () => null, hasDocument: () => true, refreshRecents() {},
+      onError(message: string) { throw new Error(message); },
+    };
     handleWindowKey(key("w"), deps);
     handleWindowKey(key("Tab"), deps);
     handleWindowKey(key("Tab", true), deps);

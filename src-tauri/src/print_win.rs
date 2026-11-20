@@ -981,6 +981,7 @@ impl Painter {
                 .tile_within(
                     crate::render::TileRequest {
                         annotations: marks,
+                        printing: true,
                         rid: 0,
                         doc: 0,
                         page: index,
@@ -1047,6 +1048,7 @@ pub fn spool(
         true,
         beat,
         library_dir,
+        1,
         |sizes, paper| {
             // `print::sheets` has already validated these against a count --- but
             // a *different* count, from the OS parser's read of the same bytes a
@@ -1089,12 +1091,42 @@ pub fn spool_laid_out(
         marks,
         beat,
         library_dir,
+        1,
         |sizes, paper| crate::print_layout::lay_out(sizes, pages, paper, layout),
     )
 }
 
-/// Set by [`stop`], read before every sheet and every band of one.
-static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn collated(sheets: &[Vec<Placement>], copies: u16) -> impl Iterator<Item = &Vec<Placement>> {
+    (0..copies).flat_map(move |_| sheets)
+}
+
+// One desktop progress indicator and Stop command belong to one job until its final event.
+static JOB: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+const IDLE: u8 = 0;
+const PRINTING: u8 = 1;
+const CANCELLED: u8 = 2;
+
+/// Owns the Windows print progress indicator and cancellation until the job finishes.
+pub struct PrintJob(());
+
+impl PrintJob {
+    /// Reserves the print slot before starting any background work.
+    ///
+    /// # Errors
+    /// Another job is still printing.
+    pub fn begin() -> Result<Self, String> {
+        use std::sync::atomic::Ordering::SeqCst;
+        JOB.compare_exchange(IDLE, PRINTING, SeqCst, SeqCst)
+            .map(|_| Self(()))
+            .map_err(|_| said!("A print job is already running."))
+    }
+}
+
+impl Drop for PrintJob {
+    fn drop(&mut self) {
+        JOB.store(IDLE, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 /// What a print that was stopped fails with; [`print_on`] reads it as a
 /// stop rather than a failure.
@@ -1104,12 +1136,13 @@ pub const STOPPED: &str = "the print was stopped";
 /// has are discarded with the job (`OpenDocument`); a sheet already on the
 /// printer is not called back.
 pub fn stop() {
-    STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+    use std::sync::atomic::Ordering::SeqCst;
+    let _ = JOB.compare_exchange(PRINTING, CANCELLED, SeqCst, SeqCst);
 }
 
 /// [`STOPPED`] once [`stop`] has been called.
 fn stopped() -> Result<(), String> {
-    if STOP.load(std::sync::atomic::Ordering::SeqCst) {
+    if JOB.load(std::sync::atomic::Ordering::SeqCst) == CANCELLED {
         Err(STOPPED.to_owned())
     } else {
         Ok(())
@@ -1130,12 +1163,12 @@ fn spool_planned(
     marks: bool,
     beat: Option<&crate::print::Beat<'_>>,
     library_dir: &std::path::Path,
+    copies: u16,
     plan: impl FnOnce(&[PageSize], &Paper) -> Result<Vec<Vec<Placement>>, String>,
 ) -> Result<u32, String> {
     use windows::Win32::Storage::Xps::{EndPage, StartDocW, StartPage, DOCINFOW};
 
-    // A Stop pressed for an earlier print does not stop this one.
-    STOP.store(false, std::sync::atomic::Ordering::SeqCst);
+    stopped()?;
     let mut painter = ours(beat, || Painter::start(bytes, library_dir))?;
     let paper = paper_of(dc);
     let sheets = plan(&painter.sizes, &paper)?;
@@ -1187,7 +1220,7 @@ fn spool_planned(
     let density = PRINT_DPI.min(dpi_x.min(dpi_y).max(1) as f32);
     let area = (paper.printable_width, paper.printable_height);
 
-    for (number, sheet) in sheets.iter().enumerate() {
+    for (number, sheet) in collated(&sheets, copies).enumerate() {
         let number = number + 1;
         stopped()?;
         // SAFETY: a live DC inside an open document.
@@ -1221,7 +1254,7 @@ fn spool_planned(
     // What was spooled, not what the job holds: a reader who asked for two sheets
     // of forty should see two here, and the caller compares this against the
     // request rather than against the document.
-    Ok(u32::try_from(sheets.len()).unwrap_or(u32::MAX))
+    Ok(u32::try_from(sheets.len() * usize::from(copies)).unwrap_or(u32::MAX))
 }
 
 /// Runs tpdf's own part of a spool with the watchdog's clock stopped, when
@@ -1323,10 +1356,8 @@ unsafe extern "system" fn classic_dialog(_: HWND, _: u32, _: WPARAM, _: LPARAM) 
     0
 }
 
-/// Prints a job on a DC the preview's printer settings made, laid out as the
-/// preview showed it: `pages` of it, placed as `layout` says, which `sheets`
-/// sheets of paper hold, with the marks when `marks` is set. Deletes the DC
-/// whatever the outcome.
+/// Prints the preview's sheet placements on its configured DC.
+/// Each software copy starts at the first sheet. Deletes the DC on return.
 ///
 /// `progress` hears `(sent, of)` before the first sheet and after each, as in
 /// [`present`], and a stuck queue is reported the same way. A print stopped
@@ -1343,31 +1374,30 @@ pub fn print_on(
     owner: Option<HWND>,
     progress: &dyn Fn(u32, u32),
     library_dir: &std::path::Path,
-    pages: &[u32],
-    layout: crate::print_layout::Layout,
-    sheets: usize,
+    sheets: Vec<Vec<Placement>>,
+    copies: u16,
     marks: bool,
 ) -> Result<bool, String> {
-    let result = if pages.is_empty() {
+    let result = if sheets.is_empty() {
         Err(said!("this print job has no pages in it"))
     } else {
-        let of = u32::try_from(sheets).unwrap_or(u32::MAX);
+        let of = u32::try_from(sheets.len() * usize::from(copies)).unwrap_or(u32::MAX);
         let shown = owner.map(|h| h.0 as isize);
         progress(0, of);
         crate::print::watched(
             crate::print::STALL,
             |sent| progress(sent, of),
             |beat| {
-                spool_laid_out(
+                spool_planned(
                     dc,
                     bytes,
                     title,
                     None,
-                    pages,
-                    layout,
                     marks,
                     Some(beat),
                     library_dir,
+                    copies,
+                    |_, _| Ok(sheets),
                 )
             },
             move |sent| {
@@ -1838,6 +1868,34 @@ mod tests {
                 full.len()
             );
         }
+    }
+
+    #[test]
+    fn stop_remains_with_its_job_until_the_final_event() {
+        let first = super::PrintJob::begin().unwrap();
+        super::stop();
+        assert!(super::PrintJob::begin().is_err());
+        assert_eq!(super::stopped().unwrap_err(), super::STOPPED);
+        drop(first);
+        let _next = super::PrintJob::begin().unwrap();
+        super::stopped().unwrap();
+    }
+
+    #[test]
+    fn software_copies_repeat_complete_sheets() {
+        let page = |page| super::Placement {
+            page,
+            x: 0.,
+            y: 0.,
+            width: 1.,
+            height: 1.,
+            turned: false,
+        };
+        let sheets = vec![vec![page(0), page(1)], vec![page(2)]];
+        let actual: Vec<Vec<_>> = super::collated(&sheets, 2)
+            .map(|s| s.iter().map(|p| p.page).collect())
+            .collect();
+        assert_eq!(actual, [vec![0, 1], vec![2], vec![0, 1], vec![2]]);
     }
 
     #[test]

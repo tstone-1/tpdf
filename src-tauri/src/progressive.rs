@@ -56,6 +56,8 @@ mod raw {
     /// Render annotations that need no user interaction. On by default in
     /// `PdfRenderConfig`, so it is on here.
     pub const FPDF_ANNOT: c_int = 1;
+    /// Render optional content and annotation appearances for a printer.
+    pub const FPDF_PRINTING: c_int = 0x800;
     /// Ask PDFium to emit RGBA rather than BGRA. Also a `PdfRenderConfig`
     /// default, and the reason the safe path's `as_rgba_bytes()` is a no-op
     /// rather than a swizzle.
@@ -85,11 +87,29 @@ const RENDER_FLAGS: c_int = raw::FPDF_ANNOT | raw::FPDF_REVERSE_BYTE_ORDER;
 /// highlights, stamps, drawings. Form fields are drawn either way, by
 /// `FPDF_FFLDraw` after the page, which is what a print without the comments
 /// wants (`print_layout::Settings::marks`).
-const fn flags(annotations: bool) -> c_int {
-    if annotations {
-        RENDER_FLAGS
-    } else {
-        raw::FPDF_REVERSE_BYTE_ORDER
+#[derive(Clone, Copy)]
+pub struct RenderOptions {
+    pub annotations: bool,
+    pub printing: bool,
+}
+
+impl RenderOptions {
+    const SCREEN: Self = Self {
+        annotations: true,
+        printing: false,
+    };
+
+    const fn flags(self) -> c_int {
+        let base = if self.annotations {
+            RENDER_FLAGS
+        } else {
+            raw::FPDF_REVERSE_BYTE_ORDER
+        };
+        if self.printing {
+            base | raw::FPDF_PRINTING
+        } else {
+            base
+        }
     }
 }
 
@@ -1349,7 +1369,14 @@ pub fn render(
     slice: Option<Duration>,
     cancel: &CancelToken,
 ) -> Progress {
-    render_with(bitmap, page, placement, slice, cancel, true)
+    render_with(
+        bitmap,
+        page,
+        placement,
+        slice,
+        cancel,
+        RenderOptions::SCREEN,
+    )
 }
 
 /// [`render`], drawing the page's annotations only when `annotations` is set.
@@ -1359,10 +1386,10 @@ pub fn render_with(
     placement: Placement,
     slice: Option<Duration>,
     cancel: &CancelToken,
-    annotations: bool,
+    options: RenderOptions,
 ) -> Progress {
     let bindings = bitmap.bindings;
-    let render_flags = flags(annotations);
+    let render_flags = options.flags();
     let started = Instant::now();
 
     // Match `render_into_bitmap_with_settings`: fill the *page* rect, not the
@@ -1527,7 +1554,15 @@ pub fn render_tile_into(
     slice: Option<Duration>,
     cancel: &CancelToken,
 ) -> Result<Progress, String> {
-    render_tile_into_with(bindings, page, spec, buffer, slice, cancel, true)
+    render_tile_into_with(
+        bindings,
+        page,
+        spec,
+        buffer,
+        slice,
+        cancel,
+        RenderOptions::SCREEN,
+    )
 }
 
 /// [`render_tile_into`], drawing the page's annotations only when
@@ -1543,7 +1578,7 @@ pub fn render_tile_into_with(
     buffer: &mut [u8],
     slice: Option<Duration>,
     cancel: &CancelToken,
-    annotations: bool,
+    options: RenderOptions,
 ) -> Result<Progress, String> {
     let TileSpec {
         scale,
@@ -1567,7 +1602,7 @@ pub fn render_tile_into_with(
         placement,
         slice,
         cancel,
-        annotations,
+        options,
     ))
 }
 

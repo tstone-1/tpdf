@@ -321,7 +321,7 @@ ROWS += [
     Mutation(
         "textedit push: annotations do not stop the push",
         "src/textedit/layout.rs",
-        "            None => fixed.push((rect, Room::Drawn)),",
+        "            None => fixed.push((rect, Room::Annotation)),",
         "            None => {}",
         "a_push_stops_at_text_under_an_annotation",
     ),

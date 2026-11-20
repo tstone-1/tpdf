@@ -484,16 +484,16 @@ fn check_text(visible: &Visible) -> Result<(), String> {
     }
     let mut drawn = options.text.is_empty();
     for line in &options.text {
-        let own: String = parts(line)?
-            .into_iter()
-            .map(|part| match part {
-                Part::Words(words) => words,
-                _ => {
-                    drawn = true;
-                    String::new()
-                }
-            })
-            .collect();
+        let mut own = String::new();
+        for part in parts(line)? {
+            match part {
+                Part::Words(words) => own.push_str(&words),
+                Part::Reason => drawn |= options.reason().is_some(),
+                Part::Location => drawn |= options.location().is_some(),
+                // The date always expands to text. The name gets its own check below.
+                Part::Date | Part::Name => drawn = true,
+            }
+        }
         drawn |= !own.trim().is_empty();
         if own.chars().count() > MAX_NOTE_CHARS {
             return Err(said!(
@@ -509,7 +509,7 @@ fn check_text(visible: &Visible) -> Result<(), String> {
             ));
         }
     }
-    if !drawn {
+    if !drawn && visible.image.is_none() {
         return Err(said!(
             "the text has no words in it, so there is nothing to draw"
         ));

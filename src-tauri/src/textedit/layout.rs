@@ -29,6 +29,7 @@ pub(super) struct Context {
     // the show's own size and scale rather than the edited run's.
     pub size: f64,
     pub scale: f64,
+    pub direction: [f64; 2],
     // The page transform in force at this show (the CTM), which a wrap needs to
     // turn a distance measured down the edited run's page into a `Tm` operand
     // in this show's own space.
@@ -175,6 +176,8 @@ pub(super) enum Room {
     /// reads (see `Inspection::graphics`), and an annotation, which the push
     /// stops at as it does at those (`free_width`).
     Drawn,
+    /// A fixed annotation must stay over the same text.
+    Annotation,
     /// The edge of the page as the reader sees it.
     Page,
     /// A clip the document has in force over the space after the run.
@@ -194,7 +197,7 @@ impl Room {
         match self {
             Room::Line => said!("There is no room for more text on this line: other text follows it. Shorten the text or reduce the font size."),
             Room::Fixed => said!("There is no room for more text on this line: the text after it cannot be moved. Shorten the text or reduce the font size."),
-            Room::Drawn => said!("There is no room for more text on this line: a picture or a drawing follows it. Shorten the text or reduce the font size."),
+            Room::Drawn | Room::Annotation => said!("There is no room for more text on this line: a picture or a drawing follows it. Shorten the text or reduce the font size."),
             Room::Page => said!("There is no room for more text on this line: it reaches the edge of the page. Shorten the text or reduce the font size."),
             Room::Clip => said!("There is no room for more text on this line: the document clips the space after it. Shorten the text or reduce the font size."),
             Room::Table => said!("There is no room for more text on this line: the table states its bounds, and the text would leave them. Shorten the text or reduce the font size."),
@@ -504,7 +507,15 @@ fn reach(
         let mut best = (limit - far, kind);
         let span = (rect[axis.cross()], rect[axis.cross() + 2]);
         for (other, kind) in fixed {
-            if !axis.beside(span, *other) || axis.at(axis.edge(*other, true)) <= far {
+            if *kind == Room::Annotation {
+                let cross = axis.cross();
+                if other[cross] >= span.1
+                    || other[cross + 2] <= span.0
+                    || axis.at(axis.edge(*other, true)) <= axis.at(axis.edge(*rect, false))
+                {
+                    continue;
+                }
+            } else if !axis.beside(span, *other) || axis.at(axis.edge(*other, true)) <= far {
                 continue;
             }
             // A drawing that starts behind the run holds it -- a frame, a
@@ -603,7 +614,12 @@ struct Free {
 fn pushable(page: &Inspection, run: &Run, other: u32) -> bool {
     let shows = shows_of(page, other);
     other > run.operator
-        && shows.iter().all(|show| page.contexts.contains_key(show))
+        && shows.iter().all(|show| {
+            page.contexts.get(show).is_some_and(|context| {
+                let [x, y] = context.direction;
+                x * run.matrix[1] == y * run.matrix[0] && x * run.matrix[0] + y * run.matrix[1] > 0.
+            })
+        })
         && shows.iter().all(|show| {
             !page.actual_text.contains_key(show) && !page.compound_run_clips.contains_key(show)
         })
@@ -920,7 +936,7 @@ fn free_width(
         });
         match under {
             Some((link, _)) => links.push(link),
-            None => fixed.push((rect, Room::Drawn)),
+            None => fixed.push((rect, Room::Annotation)),
         }
     }
     let (shift, pushed_stop) = reach(&axis, sheet, &pushed, &fixed);
@@ -1869,9 +1885,10 @@ const COLUMN_LINES: usize = 3;
 
 /// Whether two hit rectangles are on one line: they share more than half of the
 /// shorter of the two heights, the rule the push along a line uses.
-fn level(rect: [f64; 4], other: [f64; 4]) -> bool {
-    let shared = rect[3].min(other[3]) - rect[1].max(other[1]);
-    let height = (rect[3] - rect[1]).min(other[3] - other[1]);
+fn level(rect: [f64; 4], other: [f64; 4], cross: usize) -> bool {
+    let end = cross + 2;
+    let shared = rect[end].min(other[end]) - rect[cross].max(other[cross]);
+    let height = (rect[end] - rect[cross]).min(other[end] - other[cross]);
     height > 0.1 && shared > height / 2.
 }
 
@@ -1987,10 +2004,13 @@ fn wrap_room(
         }
         if geometric
             && (hits.iter().any(|(other, moves)| {
-                !*moves && !columns.contains(other) && level(*old, *other) != level(new, *other)
+                !*moves
+                    && !columns.contains(other)
+                    && level(*old, *other, rule.1) != level(new, *other, rule.1)
             }) || page.graphics.iter().enumerate().any(|(index, drawing)| {
                 let drawing = drawing.map(f64::from);
-                !carried.contains_key(&index) && level(*old, drawing) != level(new, drawing)
+                !carried.contains_key(&index)
+                    && level(*old, drawing, rule.1) != level(new, drawing, rule.1)
             }))
         {
             return Err(wrap::beside());

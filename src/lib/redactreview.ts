@@ -51,7 +51,7 @@ export interface ReviewGroup {
 const TEXT = catalog({
   "en-US": {
     foundLabel: "Still in the file",
-    foundAdvice: "mark it where named and redact the original again",
+    foundAdvice: "check the details below; if you can locate the content on a page, mark it for redaction",
     picturesLabel: "Not read in pictures",
     picturesAdvice:
       "check these pictures yourself; an image-only copy removes everything inside the marked regions",
@@ -61,7 +61,7 @@ const TEXT = catalog({
   },
   "de-DE": {
     foundLabel: "Noch in der Datei",
-    foundAdvice: "markiere es an den genannten Stellen und schwärze das Original erneut",
+    foundAdvice: "prüfe die Angaben unten; wenn du den Inhalt auf einer Seite findest, markiere ihn zum Schwärzen",
     picturesLabel: "In Bildern nicht gelesen",
     picturesAdvice:
       "prüfe diese Bilder selbst; eine Kopie nur aus Bildern entfernt alles in den markierten Bereichen",
@@ -70,7 +70,7 @@ const TEXT = catalog({
       "die markierten Bereiche wurden entfernt, aber diesen Teil der Datei kann die Prüfung nicht lesen",
   },
   "de-DE-formal": {
-    foundAdvice: "markieren Sie es an den genannten Stellen und schwärzen Sie das Original erneut",
+    foundAdvice: "prüfen Sie die Angaben unten; wenn Sie den Inhalt auf einer Seite finden, markieren Sie ihn zum Schwärzen",
     picturesAdvice:
       "prüfen Sie diese Bilder selbst; eine Kopie nur aus Bildern entfernt alles in den markierten Bereichen",
   },
