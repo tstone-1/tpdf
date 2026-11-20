@@ -388,6 +388,8 @@ fn builtin<'a>(first: Token<'a>, tokens: &mut Tokens<'a>) -> Result<Builtin, Str
     Ok(Builtin::Custom(names))
 }
 
+type CharStrings = Vec<(Vec<u8>, Vec<u8>)>;
+
 struct Private {
     len_iv: Option<usize>,
     // Decrypted when read. A glyph may call one Subr tens of thousands of
@@ -395,7 +397,7 @@ struct Private {
     // two sizes. None is an entry shorter than lenIV: calling it fails the
     // glyph, as it always did, and the rest of the font is still offered.
     subrs: Vec<Option<Vec<u8>>>,
-    charstrings: Vec<(Vec<u8>, Vec<u8>)>,
+    charstrings: CharStrings,
 }
 
 impl Private {
@@ -403,75 +405,45 @@ impl Private {
     // `dup <index> <length> RD <binary> NP` and CharStrings entries are
     // `/<name> <length> RD <binary> ND`, with RD/NP/ND spelled either way.
     fn read(bytes: &[u8]) -> Result<Self, String> {
-        let len_iv = match find_token(bytes, b"/lenIV") {
-            None => Some(4),
-            Some(at) => {
-                let mut tokens = Tokens::new(&bytes[at..]);
-                match (tokens.next(), tokens.next()) {
-                    (Some(Token::Number(-1.)), Some(Token::Word(b"def"))) => None,
-                    (Some(Token::Number(value)), Some(Token::Word(b"def")))
-                        if value.fract() == 0. && (0. ..=4.).contains(&value) =>
-                    {
-                        Some(value as usize)
-                    }
-                    _ => return Err(invalid()),
-                }
-            }
-        };
-        let mut subrs = Vec::new();
-        let charstrings_at = find_token(bytes, b"/CharStrings").ok_or_else(invalid)?;
-        if let Some(at) = find_token(&bytes[..charstrings_at], b"/Subrs") {
-            let mut cursor = Cursor { bytes, at };
-            let count = cursor.count(b"array", MAX_SUBRS)?;
-            subrs = vec![None; count];
-            let mut seen = vec![false; count];
-            for _ in 0..count {
-                cursor.word(b"dup")?;
-                let index = cursor.integer()?;
-                if index >= count || std::mem::replace(&mut seen[index], true) {
-                    return Err(invalid());
-                }
-                subrs[index] = plain(len_iv, cursor.binary()?).ok();
-                cursor.word_of(&[b"NP", b"|"], Some(b"noaccess put"))?;
-            }
-            if cursor.at > charstrings_at {
-                return Err(invalid());
-            }
-        }
-        let mut cursor = Cursor {
-            bytes,
-            at: charstrings_at,
-        };
-        let count = cursor.count(b"dict", MAX_GLYPHS)?;
-        cursor.word(b"dup")?;
-        cursor.word(b"begin")?;
-        let mut charstrings = Vec::with_capacity(count);
-        let mut names = std::collections::BTreeSet::new();
-        loop {
-            let token = cursor.token()?;
+        let mut cursor = Cursor { bytes, at: 0 };
+        let mut len_iv = Some(4);
+        let mut subrs = None;
+        let mut charstrings = None;
+        while let Some(token) = cursor.next() {
             match token {
-                Token::Word(b"end") => break,
-                Token::Name(name) => {
-                    if name.is_empty() || name.len() > 127 || !names.insert(name.to_vec()) {
-                        return Err(invalid());
-                    }
-                    let program = cursor.binary()?.to_vec();
-                    cursor.word_of(&[b"ND", b"|-"], Some(b"noaccess def"))?;
-                    charstrings.push((name.to_vec(), program));
-                    if charstrings.len() > count {
-                        return Err(invalid());
-                    }
+                Token::Name(b"lenIV") => {
+                    len_iv = match cursor.token()? {
+                        Token::Number(-1.) => None,
+                        Token::Number(value)
+                            if value.fract() == 0. && (0. ..=4.).contains(&value) =>
+                        {
+                            Some(value as usize)
+                        }
+                        _ => return Err(invalid()),
+                    };
+                    cursor.word(b"def")?;
                 }
-                _ => return Err(invalid()),
+                Token::Name(b"Subrs") if subrs.is_none() => {
+                    subrs = Some(cursor.subrs()?);
+                }
+                Token::Name(b"CharStrings") if charstrings.is_none() => {
+                    charstrings = Some(cursor.charstrings()?);
+                }
+                Token::Name(b"Subrs" | b"CharStrings") => return Err(invalid()),
+                _ => {}
             }
         }
-        if !names.contains(b".notdef".as_slice()) {
-            return Err(invalid());
-        }
+        // lenIV can follow Subrs. The structural pass skips each binary entry
+        // by its declared length, so its contents can never name a declaration.
+        let subrs = subrs
+            .unwrap_or_default()
+            .into_iter()
+            .map(|bytes| plain(len_iv, bytes).ok())
+            .collect();
         Ok(Self {
             len_iv,
             subrs,
-            charstrings,
+            charstrings: charstrings.ok_or_else(invalid)?,
         })
     }
 }
@@ -493,37 +465,67 @@ fn plain(len_iv: Option<usize>, bytes: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-// The first occurrence of `key` as a whole token, outside binary data only in
-// the sense that the caller parses structurally from it and refuses on any
-// disagreement: a match inside a charstring cannot produce a valid entry list.
-fn find_token(bytes: &[u8], key: &[u8]) -> Option<usize> {
-    let mut from = 0;
-    while let Some(offset) = bytes[from..].windows(key.len()).position(|w| w == key) {
-        let at = from + offset;
-        let end = at + key.len();
-        if bytes
-            .get(end)
-            .is_none_or(|&b| b.is_ascii_whitespace() || Tokens::delimiter(b))
-        {
-            return Some(at + key.len());
-        }
-        from = at + 1;
-    }
-    None
-}
-
 struct Cursor<'a> {
     bytes: &'a [u8],
     at: usize,
 }
 
 impl<'a> Cursor<'a> {
-    fn token(&mut self) -> Result<Token<'a>, String> {
+    fn next(&mut self) -> Option<Token<'a>> {
         let mut tokens = Tokens::new(self.bytes);
         tokens.at = self.at;
-        let token = tokens.next().ok_or_else(invalid)?;
+        let token = tokens.next();
         self.at = tokens.at;
-        Ok(token)
+        token
+    }
+
+    fn token(&mut self) -> Result<Token<'a>, String> {
+        self.next().ok_or_else(invalid)
+    }
+
+    fn subrs(&mut self) -> Result<Vec<&'a [u8]>, String> {
+        let count = self.count(b"array", MAX_SUBRS)?;
+        let mut subrs = vec![&[][..]; count];
+        let mut seen = vec![false; count];
+        for _ in 0..count {
+            self.word(b"dup")?;
+            let index = self.integer()?;
+            if index >= count || std::mem::replace(&mut seen[index], true) {
+                return Err(invalid());
+            }
+            subrs[index] = self.binary()?;
+            self.word_of(&[b"NP", b"|"], Some(b"noaccess put"))?;
+        }
+        Ok(subrs)
+    }
+
+    fn charstrings(&mut self) -> Result<CharStrings, String> {
+        let count = self.count(b"dict", MAX_GLYPHS)?;
+        self.word(b"dup")?;
+        self.word(b"begin")?;
+        let mut charstrings = Vec::with_capacity(count);
+        let mut names = std::collections::BTreeSet::new();
+        loop {
+            match self.token()? {
+                Token::Word(b"end") => break,
+                Token::Name(name) => {
+                    if name.is_empty() || name.len() > 127 || !names.insert(name.to_vec()) {
+                        return Err(invalid());
+                    }
+                    let program = self.binary()?.to_vec();
+                    self.word_of(&[b"ND", b"|-"], Some(b"noaccess def"))?;
+                    charstrings.push((name.to_vec(), program));
+                    if charstrings.len() > count {
+                        return Err(invalid());
+                    }
+                }
+                _ => return Err(invalid()),
+            }
+        }
+        if !names.contains(b".notdef".as_slice()) {
+            return Err(invalid());
+        }
+        Ok(charstrings)
     }
 
     fn word(&mut self, word: &[u8]) -> Result<(), String> {
@@ -845,6 +847,7 @@ impl<'a> Interpreter<'a> {
                             if self.flex.replace(Vec::new()).is_some() {
                                 return Err(invalid());
                             }
+                            self.pending = Some(self.point);
                         }
                         (2, []) => {
                             if self.flex.is_none() {
@@ -856,9 +859,9 @@ impl<'a> Interpreter<'a> {
                             if points.len() != 7 {
                                 return Err(invalid());
                             }
-                            // Point 0 is the reference point; the six after
-                            // it are two curves' controls and end points.
-                            self.pending = Some(points[0]);
+                            // Point 0 is an auxiliary reference. The first
+                            // curve starts where flex began; the six remaining
+                            // points are the two curves' controls and ends.
                             self.draw(&points[1..])?;
                             // Returned for `pop pop setcurrentpoint`.
                             self.returns = vec![*y, *x];

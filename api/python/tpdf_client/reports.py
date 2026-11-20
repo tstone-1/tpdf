@@ -1448,7 +1448,7 @@ class ComparedFile(TypedDict):
     path: str
     # Pages read.
     pages: int
-    # Pages, counted from 1, that held no text at all.
+    # Pages, counted from 1, that yielded no words after tokenization.
     pages_without_text: list[int]
     # Words read.
     words: int
@@ -1490,7 +1490,7 @@ class CompareReport(TypedDict):
     added_words: int
     # More than len(changes) only when the list was cut at 10,000.
     total_changes: int
-    # Stretches too far apart to align word by word, each listed as one replacement.
+    # Compared stretches too large to align word by word, each counted as one replacement.
     unaligned: int
     changes: list[CompareChange]
 

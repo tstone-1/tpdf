@@ -332,6 +332,7 @@ export default {
   "the document is too large to read": "Das Dokument ist zu groß zum Lesen",
   "the worker said {count} bytes and the file holds {held}":
     "Der Worker hat {count} Bytes gemeldet, und die Datei enthält {held}",
+  "Reopen the document before saving an attachment": "Vor dem Speichern eines Anhangs muss das Dokument erneut geöffnet werden",
   "The attachment was not saved to {path}: {why}": "Der Anhang wurde nicht unter {path} gespeichert: {why}",
 
   // imagepages.rs: each `it ...` is the reason after "{label} cannot be used:"

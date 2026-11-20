@@ -839,8 +839,6 @@ impl Outside for InWorker {}
 // A mapped source can change underneath a renderer. Raster redaction instead
 // hands the worker an immutable snapshot of exactly the bytes that were opened.
 fn raster_snapshot(source: &mut std::fs::File, len: usize, plan: &Plan) -> Result<Shm, Refusal> {
-    use sha2::{Digest, Sha256};
-    use std::io::{Read, Seek, SeekFrom};
     let expected = plan.opened_as.as_ref().ok_or_else(|| {
         Refusal::from(said!(
             "Reopen the source before creating an image-only redaction"
@@ -849,6 +847,25 @@ fn raster_snapshot(source: &mut std::fs::File, len: usize, plan: &Plan) -> Resul
     if len > 512 * 1024 * 1024 || len as u64 != expected.len {
         return Err(said!("The source is too large or has changed since it was opened").into());
     }
+    verified_snapshot(source, len, expected)
+}
+
+/// Copies and checks the bytes handed to a worker even if the source is rewritten in place.
+pub(crate) fn verified_snapshot(
+    source: &mut std::fs::File,
+    len: usize,
+    expected: &crate::fingerprint::Fingerprint,
+) -> Result<Shm, Refusal> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Seek, SeekFrom};
+    let changed = || {
+        Refusal::changed(said!(
+            "The source changed. Reopen the document and try again"
+        ))
+    };
+    if len as u64 != expected.len {
+        return Err(changed());
+    }
     let mut mapped = Shm::create(len)?;
     source.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
     source
@@ -856,9 +873,7 @@ fn raster_snapshot(source: &mut std::fs::File, len: usize, plan: &Plan) -> Resul
         .map_err(|e| e.to_string())?;
     let digest: [u8; 32] = Sha256::digest(mapped.as_slice()).into();
     if digest != expected.digest {
-        return Err(Refusal::changed(said!(
-            "The source changed. Reopen it and mark the regions again"
-        )));
+        return Err(changed());
     }
     Ok(mapped)
 }
@@ -1044,16 +1059,14 @@ impl Rewriter for InWorker {
 
     fn attachment(
         &self,
-        source: &mut std::fs::File,
-        len: usize,
+        source: crate::worker_shm::Shm,
         out: &mut std::fs::File,
         index: usize,
         password: Option<&str>,
     ) -> Result<usize, Refusal> {
         // `write_range`'s route: a worker spawned for this one answer, with the
         // staged file's descriptor, asked on a thread.
-        let mapped = Shm::map_open_file(source, len)?;
-        let worker = Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir)?;
+        let worker = Worker::spawn_writing(std::sync::Arc::new(source), out, &self.library_dir)?;
         let pid = worker.pid();
         let password = password.map(str::to_string);
         let rx = asked_on_a_thread(worker, move |worker| {

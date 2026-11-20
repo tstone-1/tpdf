@@ -14,10 +14,10 @@
     "path": "survey-v2.pdf",
     "pages": 2,
     "pages_without_text": [],
-    "words": 398,
+    "words": 446,
     "words_not_compared": 37
   },
-  "removed_words": 16,
+  "removed_words": 5,
   "added_words": 2,
   "total_changes": 3,
   "unaligned": 0,

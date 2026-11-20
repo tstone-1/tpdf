@@ -815,10 +815,10 @@ fn samples() -> BTreeMap<&'static str, String> {
     put(
         "Comparison",
         &crate::compare::Comparison {
-            left_words: 412,
-            right_words: 398,
-            removed_words: 16,
-            added_words: 2,
+            left_words: 9,
+            right_words: 16,
+            removed_words: 1,
+            added_words: 1,
             changes: vec![crate::compare::Change {
                 kind: crate::compare::Kind::Replaced,
                 left: vec![crate::compare::Span {
@@ -838,10 +838,12 @@ fn samples() -> BTreeMap<&'static str, String> {
                 before: "Payment is due within".into(),
                 after: "days of the invoice".into(),
             }],
-            total_changes: 3,
+            total_changes: 1,
             unaligned: 0,
             left_unread: 0,
             right_unread: 7,
+            left_without_words: vec![1],
+            right_without_words: Vec::new(),
         },
     );
 

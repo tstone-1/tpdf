@@ -10,6 +10,7 @@
 //! Run with `cargo test --test cli -- --filter compare`.
 use super::{scratch, tool, Report};
 use lopdf::{dictionary, Document, Object, Stream};
+use std::fmt::Write;
 use std::path::Path;
 
 /// A document of `pages`, each a list of lines set in Helvetica 12 from the
@@ -24,7 +25,15 @@ fn document(path: &Path, pages: &[&[&str]]) {
     for lines in pages {
         let mut content = String::from("BT /F1 12 Tf 14 TL 72 770 Td\n");
         for line in *lines {
-            content.push_str(&format!("({line}) Tj T*\n"));
+            if line.is_ascii() {
+                writeln!(content, "({line}) Tj T*").unwrap();
+            } else {
+                content.push_str("/Span <</ActualText <FEFF");
+                for unit in line.encode_utf16() {
+                    write!(content, "{unit:04X}").unwrap();
+                }
+                content.push_str(">>> BDC (X) Tj EMC T*\n");
+            }
         }
         content.push_str("ET");
         let stream = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
@@ -45,8 +54,61 @@ fn document(path: &Path, pages: &[&[&str]]) {
     doc.save(path).unwrap();
 }
 
+fn nearby_changes_and_wordless_pages(dir: &Path, report: &mut Report) {
+    let old = dir.join("nearby-old.pdf");
+    let new = dir.join("nearby-new.pdf");
+    let compare = || {
+        let (exit, out, err) = tool(
+            &[
+                "compare",
+                old.to_str().unwrap(),
+                new.to_str().unwrap(),
+                "--json",
+            ],
+            &[],
+        );
+        (
+            exit,
+            serde_json::from_str::<serde_json::Value>(&out).unwrap_or_default(),
+            err,
+        )
+    };
+    document(&old, &[&["Fee 10 and tax 5 due"]]);
+    document(&new, &[&["Fee 20 and tax 9 due"]]);
+    let (exit, changed, err) = compare();
+    report.check(
+        "compare: context stops before a neighboring change",
+        exit == 1
+            && changed["total_changes"] == 2
+            && changed["changes"][0]["after"] == "and tax"
+            && changed["changes"][1]["before"] == "and tax",
+        &format!("exit {exit}: {changed} {err}"),
+    );
+
+    document(&old, &[&["Header"], &["Terms changed"]]);
+    document(&new, &[&["Header"], &["\u{ad}"]]);
+    let (exit, incomplete, err) = compare();
+    report.check(
+        "compare: a page with only a soft hyphen has no comparable words",
+        exit == 1
+            && incomplete["total_changes"] == 0
+            && incomplete["old"]["words_not_compared"] == 2
+            && incomplete["new"]["pages_without_text"] == serde_json::json!([2])
+            && err.contains("page 2 has no text"),
+        &format!("exit {exit}: {incomplete} {err}"),
+    );
+    document(&new, &[&["\u{ad}"]]);
+    let (exit, _, err) = compare();
+    report.check(
+        "compare: a whole document of separators has no words to compare",
+        exit == 3 && err.contains("none of its pages has text"),
+        &format!("exit {exit}: {err}"),
+    );
+}
+
 pub(super) fn finds_what_changed_in_the_words(report: &mut Report) {
     let dir = scratch("compare");
+    nearby_changes_and_wordless_pages(&dir, report);
     let old = dir.join("old.pdf");
     let reflowed = dir.join("reflowed.pdf");
     let edited = dir.join("edited.pdf");

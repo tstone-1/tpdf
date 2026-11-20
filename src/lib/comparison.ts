@@ -69,6 +69,9 @@ export interface Comparison {
   left_unread: number;
   /** Right words not compared, against a page of the left. */
   right_unread: number;
+  /** Slots with no words after the backend tokenizer removed separators and soft hyphens. */
+  left_without_words: number[];
+  right_without_words: number[];
 }
 
 /** Which of the two documents. The left is the older: what was removed is on it. */
@@ -79,8 +82,6 @@ export interface Compared {
   result: Comparison;
   /** The two file names, as their tabs show them. */
   names: Record<Side, string>;
-  /** How many of each document's pages held no characters. */
-  withoutText: Record<Side, number>;
 }
 
 /** A count as the window writes it: `1,234` in English, `1.234` in German. */
@@ -108,8 +109,8 @@ const TEXT = catalog({
     fromTo: (left: string, right: string) => `From ${left}, in red, to ${right}, in green.`,
     showing: (rows: number, total: number) => `Showing the first ${count(rows, "en-US")} of ${count(total, "en-US")}.`,
     unaligned: (passages: number) =>
-      `${count(passages, "en-US")} ${passages === 1 ? "passage was" : "passages were"} too different to match word ` +
-      "by word, and each is listed as one replacement.",
+      `${count(passages, "en-US")} ${passages === 1 ? "passage" : "passages"} could not be matched word by word. ` +
+      "Each counts as one replacement.",
     pagesWithoutText: (name: string, pages: number) =>
       `${name} has ${count(pages, "en-US")} ${pages === 1 ? "page" : "pages"} with no text, which ` +
       `${pages === 1 ? "was" : "were"} not compared. A scanned page has to be recognized first.`,
@@ -153,8 +154,8 @@ const TEXT = catalog({
     fromTo: (left: string, right: string) => `Von ${left}, in Rot, zu ${right}, in Grün.`,
     showing: (rows: number, total: number) => `Die ersten ${count(rows, "de-DE")} von ${count(total, "de-DE")} werden gezeigt.`,
     unaligned: (passages: number) =>
-      `${count(passages, "de-DE")} ${passages === 1 ? "Abschnitt war" : "Abschnitte waren"} zu verschieden, um Wort ` +
-      "für Wort zugeordnet zu werden, und jeder ist als eine Ersetzung aufgeführt.",
+      `${count(passages, "de-DE")} ${passages === 1 ? "Abschnitt konnte" : "Abschnitte konnten"} nicht Wort für Wort ` +
+      "zugeordnet werden. Jeder zählt als eine Ersetzung.",
     pagesWithoutText: (name: string, pages: number) =>
       `${name} hat ${count(pages, "de-DE")} ${pages === 1 ? "Seite" : "Seiten"} ohne Text, ` +
       `die nicht verglichen ${pages === 1 ? "wurde" : "wurden"}. ` +
@@ -200,18 +201,20 @@ export const MAX_ROWS = 2000;
  * numbers stay those of the document shown.
  */
 export async function gather(
+  name: string,
   slots: number,
   load: (slot: number) => Promise<PageText | null>,
-): Promise<{ pages: PageCodes[]; withoutText: number }> {
+): Promise<PageCodes[]> {
   const pages: PageCodes[] = [];
-  let withoutText = 0;
-  for (let slot = 0; slot < slots; slot++) {
-    const text = await load(slot);
-    const codes = text?.codes ?? [];
-    if (codes.length === 0) withoutText++;
-    pages.push({ page: slot, codes });
+  try {
+    for (let slot = 0; slot < slots; slot++) {
+      const text = await load(slot);
+      pages.push({ page: slot, codes: text?.codes ?? [] });
+    }
+  } catch (error) {
+    throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
-  return { pages, withoutText };
+  return pages;
 }
 
 /**
@@ -222,13 +225,10 @@ export async function gather(
  */
 export function refusal(
   names: Record<Side, string>,
-  gathered: Record<Side, { pages: PageCodes[]; withoutText: number }>,
+  result: Comparison,
 ): string | null {
-  for (const side of ["left", "right"] as const) {
-    if (gathered[side].withoutText === gathered[side].pages.length) {
-      return TEXT().noText(names[side]);
-    }
-  }
+  if (result.left_words === 0) return TEXT().noText(names.left);
+  if (result.right_words === 0) return TEXT().noText(names.right);
   return null;
 }
 
@@ -249,12 +249,13 @@ export const SAME_AS_FAR_AS_READ = TEXT().sameAsFarAsRead;
  * scans never open with a sentence a reader takes for "identical".
  */
 export function sentences(compared: Compared): string[] {
-  const { result, names, withoutText } = compared;
+  const { result, names } = compared;
+  const withoutText = { left: result.left_without_words.length, right: result.right_without_words.length };
   const said: string[] = [];
   if (result.total_changes === 0) {
     if (result.left_words === 0 && result.right_words === 0) {
       said.push(NOTHING_COMPARED);
-    } else if (withoutText.left + withoutText.right > 0) {
+    } else if (result.left_unread > 0 || result.right_unread > 0 || withoutText.left + withoutText.right > 0) {
       said.push(SAME_AS_FAR_AS_READ);
     } else {
       said.push(TEXT().sameWords);

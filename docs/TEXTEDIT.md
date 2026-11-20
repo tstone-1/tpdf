@@ -603,6 +603,10 @@ correction) is *opaque*: it measures source text at its PDF width, marks it
 with U+FFFD, and its run stays read-only with its ink reserved, up to 4 em from
 the origin (`OPAQUE_REACH`; TeX's largest delimiters hang 2.4 em down). `type1/tests.rs` builds
 its fonts in the test, charstrings and eexec encryption included.
+For aliased Type 1 codes, source spacing uses the original byte and replacement spacing
+uses the emitted byte. Only byte 32 receives word spacing. An alias with a different PDF
+width remains measurable at that width but read-only. Flex bounds include the pre-flex
+current point and the six curve points. The first flex coordinate is an auxiliary reference.
 
 In a font that cannot write a space, a `TJ` displacement of at least 0.18 em
 between two strings reads as a space and a replacement writes each space as a

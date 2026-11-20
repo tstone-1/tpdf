@@ -3102,8 +3102,7 @@ pub trait Rewriter: Send {
     /// What `attachments::content` refuses, the password, and the write.
     fn attachment(
         &self,
-        source: &mut std::fs::File,
-        len: usize,
+        source: crate::worker_shm::Shm,
         out: &mut std::fs::File,
         index: usize,
         password: Option<&str>,
@@ -3205,16 +3204,14 @@ impl Rewriter for Here {
 
     fn attachment(
         &self,
-        source: &mut std::fs::File,
-        len: usize,
+        source: crate::worker_shm::Shm,
         out: &mut std::fs::File,
         index: usize,
         password: Option<&str>,
     ) -> Result<usize, Refusal> {
         use std::io::Write as _;
 
-        let original = read_whole(source, len).map_err(|e| e.to_string())?;
-        let document = crate::encoding::load(&original, password)?;
+        let document = crate::encoding::load(source.as_slice(), password)?;
         let bytes = crate::attachments::content(&document, index)?;
         out.write_all(&bytes)
             .and_then(|()| out.flush())
@@ -4240,7 +4237,16 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // see `pagetree::materialise`, which carries why the outline is repaired for
     // a deletion and untouched by a move, and why turning pages is *not* part of it.
     let order: Vec<lopdf::ObjectId> = turns.iter().map(|(id, _)| *id).collect();
-    pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;
+    let sources = plan.pages.iter().map(|page| match page.source {
+        PageSource::Baseline(index) => Some(index),
+        PageSource::Blank(_) | PageSource::Imported { .. } => None,
+    });
+    pagetree::materialise(
+        &mut doc,
+        &dropped,
+        moved.then_some(order.as_slice()),
+        sources,
+    )?;
 
     // Before `apply_turns`, and the order is load-bearing rather than tidy: a
     // mark was made against the rotation the file had when it was opened, and

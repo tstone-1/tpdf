@@ -92,8 +92,9 @@ pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
 ///
 /// `outside` decodes it, in a worker wherever there is one, into a file beside
 /// `dest`; that file's size is held to the count the worker gives, then it is
-/// renamed over `dest`, so a save that fails leaves whatever was there. A
-/// destination that is the document itself is refused: the rename would put an
+/// renamed over `dest`. The worker receives bytes verified against the fingerprint
+/// taken at open, so replacing the source cannot change the selected attachment.
+/// A failed save preserves the existing destination. A destination that is the document itself is refused: the rename would put an
 /// attachment where the open document is.
 ///
 /// # Errors
@@ -101,6 +102,7 @@ pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
 /// The destination, the source, what `outside` refuses, or the write.
 pub fn save(
     source: &std::path::Path,
+    expected: &crate::fingerprint::Fingerprint,
     index: usize,
     dest: &std::path::Path,
     password: Option<&str>,
@@ -135,8 +137,10 @@ pub fn save(
             std::fs::File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
         let len = usize::try_from(from.metadata().map_err(|e| e.to_string())?.len())
             .map_err(|_| said!("the document is too large to read"))?;
+        let snapshot = crate::save_outside::verified_snapshot(&mut from, len, expected)
+            .map_err(|why| why.message)?;
         let count = outside
-            .attachment(&mut from, len, &mut out, index, password)
+            .attachment(snapshot, &mut out, index, password)
             .map_err(|why| why.message)?;
         let held = out.metadata().map_err(|e| e.to_string())?.len();
         if held != count as u64 {
@@ -452,10 +456,32 @@ mod tests {
             false,
         );
         let source = written(&dir, &mut doc);
+        let expected = crate::fingerprint::Fingerprint::of(&source).expect("fingerprint");
         let dest = dir.join("out.bin");
-        assert_eq!(save(&source, 1, &dest, None, &crate::save::Here), Ok(11));
+        assert_eq!(
+            save(&source, &expected, 1, &dest, None, &crate::save::Here),
+            Ok(11)
+        );
         assert_eq!(std::fs::read(&dest).expect("read"), b"second file");
         assert_eq!(dir.names(), ["carrier.pdf", "out.bin"]);
+    }
+
+    #[test]
+    fn a_replaced_carrier_cannot_supply_another_attachment_at_the_same_index() {
+        let dir = crate::testutil::TempDir::new("attachment-changed");
+        let mut original = carrying(&[("a", "first.txt", b"original", false)], false);
+        let source = written(&dir, &mut original);
+        let expected = crate::fingerprint::Fingerprint::of(&source).expect("opened");
+        let mut replacement = carrying(&[("a", "other.txt", b"replaced", false)], false);
+        // Matching name and payload lengths exercise the digest check.
+        replacement.save(&source).expect("replace");
+        let dest = dir.join("first.txt");
+        std::fs::write(&dest, b"kept").expect("seed");
+        let error = save(&source, &expected, 0, &dest, None, &crate::save::Here)
+            .expect_err("different document");
+        assert!(error.contains("source changed"), "{error}");
+        assert_eq!(std::fs::read(&dest).expect("read"), b"kept");
+        assert_eq!(dir.names(), ["carrier.pdf", "first.txt"]);
     }
 
     #[test]
@@ -463,8 +489,10 @@ mod tests {
         let dir = crate::testutil::TempDir::new("attachments-self");
         let mut doc = carrying(&[("a", "a.txt", b"first", false)], false);
         let source = written(&dir, &mut doc);
+        let expected = crate::fingerprint::Fingerprint::of(&source).expect("fingerprint");
         let before = std::fs::read(&source).expect("read");
-        let refused = save(&source, 0, &source, None, &crate::save::Here).expect_err("over itself");
+        let refused = save(&source, &expected, 0, &source, None, &crate::save::Here)
+            .expect_err("over itself");
         assert!(refused.contains("the document it comes from"), "{refused}");
         assert_eq!(std::fs::read(&source).expect("read"), before);
     }
@@ -474,9 +502,11 @@ mod tests {
         let dir = crate::testutil::TempDir::new("attachments-fail");
         let mut doc = carrying(&[("a", "a.txt", b"first", false)], false);
         let source = written(&dir, &mut doc);
+        let expected = crate::fingerprint::Fingerprint::of(&source).expect("fingerprint");
         let dest = dir.join("kept.txt");
         std::fs::write(&dest, b"kept").expect("seed");
-        let refused = save(&source, 5, &dest, None, &crate::save::Here).expect_err("no sixth");
+        let refused =
+            save(&source, &expected, 5, &dest, None, &crate::save::Here).expect_err("no sixth");
         assert!(refused.contains("no attachment 6"), "{refused}");
         assert_eq!(std::fs::read(&dest).expect("read"), b"kept");
         assert_eq!(dir.names(), ["carrier.pdf", "kept.txt"]);
@@ -498,13 +528,17 @@ mod tests {
         let dir = crate::testutil::TempDir::new("attachments-link");
         let mut doc = carrying(&[("a", "a.txt", b"first", false)], false);
         let source = written(&dir, &mut doc);
+        let expected = crate::fingerprint::Fingerprint::of(&source).expect("fingerprint");
         let victim = dir.join("victim.txt");
         std::fs::write(&victim, b"do not overwrite me").expect("seed");
         let dest = dir.join("invoice.xml");
         let planted = staged_name(&dest);
         std::os::unix::fs::symlink(&victim, &planted).expect("plant the link");
 
-        assert_eq!(save(&source, 0, &dest, None, &crate::save::Here), Ok(5));
+        assert_eq!(
+            save(&source, &expected, 0, &dest, None, &crate::save::Here),
+            Ok(5)
+        );
 
         assert_eq!(
             std::fs::read(&victim).expect("read"),
@@ -520,11 +554,13 @@ mod tests {
         let dir = crate::testutil::TempDir::new("attachments-left");
         let mut doc = carrying(&[("a", "a.txt", b"first", false)], false);
         let source = written(&dir, &mut doc);
+        let expected = crate::fingerprint::Fingerprint::of(&source).expect("fingerprint");
         let dest = dir.join("kept.txt");
         let left = staged_name(&dest);
         std::fs::write(&left, b"somebody else's").expect("leave it");
 
-        let refused = save(&source, 5, &dest, None, &crate::save::Here).expect_err("no sixth");
+        let refused =
+            save(&source, &expected, 5, &dest, None, &crate::save::Here).expect_err("no sixth");
 
         assert!(refused.contains("no attachment 6"), "{refused}");
         assert_eq!(std::fs::read(&left).expect("read"), b"somebody else's");
@@ -542,11 +578,15 @@ mod tests {
         let dir = crate::testutil::TempDir::new("attachments-mode");
         let mut doc = carrying(&[("a", "a.txt", b"first", false)], false);
         let source = written(&dir, &mut doc);
+        let expected = crate::fingerprint::Fingerprint::of(&source).expect("fingerprint");
         let dest = dir.join("tool");
         std::fs::write(&dest, b"old").expect("seed");
         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 
-        assert_eq!(save(&source, 0, &dest, None, &crate::save::Here), Ok(5));
+        assert_eq!(
+            save(&source, &expected, 0, &dest, None, &crate::save::Here),
+            Ok(5)
+        );
 
         assert_eq!(std::fs::read(&dest).expect("read"), b"first");
         let mode = std::fs::metadata(&dest).expect("stat").permissions().mode();

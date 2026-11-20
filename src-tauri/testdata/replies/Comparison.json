@@ -1,8 +1,8 @@
 {
-  "left_words": 412,
-  "right_words": 398,
-  "removed_words": 16,
-  "added_words": 2,
+  "left_words": 9,
+  "right_words": 16,
+  "removed_words": 1,
+  "added_words": 1,
   "changes": [
     {
       "kind": "replaced",
@@ -34,8 +34,12 @@
       "after": "days of the invoice"
     }
   ],
-  "total_changes": 3,
+  "total_changes": 1,
   "unaligned": 0,
   "left_unread": 0,
-  "right_unread": 7
+  "right_unread": 7,
+  "left_without_words": [
+    1
+  ],
+  "right_without_words": []
 }

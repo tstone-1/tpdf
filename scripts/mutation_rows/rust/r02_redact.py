@@ -1532,8 +1532,8 @@ ROWS += [
         # is covered once; each caller's wiring to it is covered where it is.
         "save: tell the page-tree writer that nothing was dropped",
         "src/save.rs",
-        "    pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;",
-        "    pagetree::materialise(&mut doc, &[], moved.then_some(order.as_slice()))?;",
+        "    pagetree::materialise(\n        &mut doc,\n        &dropped,\n        moved.then_some(order.as_slice()),\n        sources,\n    )?;",
+        "    pagetree::materialise(\n        &mut doc,\n        &[],\n        moved.then_some(order.as_slice()),\n        sources,\n    )?;",
         "deleting_a_page_keeps_the_bookmarks_of_the_pages_that_stay",
     ),
     Mutation(

@@ -200,6 +200,7 @@ const TEXT = catalog({
     pageChanged: "The page changed during recognition. Try again.",
     noWordsRecognised: "No words could be recognized on this page.",
     notCopied: "Some of the selected pages' text could not be read, so nothing was copied.",
+    comparisonReadFailed: (page: number) => `Could not read the text on page ${page}. The comparison stopped.`,
   },
   "en-GB": {
     nothingToRecognise: "This page has no saved content to recognise.",
@@ -216,6 +217,7 @@ const TEXT = catalog({
     pageChanged: "Die Seite hat sich während der Texterkennung geändert. Versuche es erneut.",
     noWordsRecognised: "Auf dieser Seite konnten keine Wörter erkannt werden.",
     notCopied: "Der Text einiger ausgewählter Seiten konnte nicht gelesen werden, daher wurde nichts kopiert.",
+    comparisonReadFailed: (page: number) => `Der Text auf Seite ${page} konnte nicht gelesen werden. Der Vergleich wurde abgebrochen.`,
   },
   "de-DE-formal": {
     nothingMarked: "Sie haben in diesem Dokument nichts markiert.",
@@ -8712,8 +8714,12 @@ export class Viewer {
    * A page's text as the view shows it, fetched when it is not here; `null`
    * for a page tpdf made, which has none. What a comparison is made from.
    */
-  loadText(slot: number): Promise<PageText | null> {
-    return this.loadOn(slot);
+  async loadText(slot: number): Promise<PageText | null> {
+    const at = this.textAt(slot);
+    if (!at) return null;
+    const text = await at.cache.load(at.page);
+    if (!text) throw new Error(TEXT().comparisonReadFailed(slot + 1));
+    return text;
   }
 
   /**

@@ -289,26 +289,12 @@ fn aim_of(doc: &Document, names: &links::Destinations<'_>, item: &Dictionary) ->
 fn destination(doc: &Document, names: &links::Destinations<'_>, dest: &Object) -> Aim {
     match resolve(doc, dest) {
         Object::Array(array) => page_of(array),
-        Object::Name(name) => named(doc, names, name),
-        Object::String(bytes, _) => named(doc, names, bytes),
+        key @ (Object::Name(_) | Object::String(_, _)) => match names.lookup(key) {
+            Ok(Some(value)) => follow(doc, value),
+            Ok(None) => Aim::Other,
+            Err(links::GaveUp) => Aim::Unsafe,
+        },
         _ => Aim::Other,
-    }
-}
-
-/// A named destination, from `/Dests` or from the `/Names` tree.
-fn named(doc: &Document, names: &links::Destinations<'_>, key: &[u8]) -> Aim {
-    let Ok(catalog) = doc.catalog() else {
-        return Aim::Other;
-    };
-    if let Ok(dests) = catalog.get(b"Dests") {
-        if let Ok(found) = resolve(doc, dests).as_dict().and_then(|dict| dict.get(key)) {
-            return follow(doc, found);
-        }
-    }
-    match names.tree().map_or(Ok(None), |tree| tree.get(key)) {
-        Ok(Some(value)) => follow(doc, value),
-        Ok(None) => Aim::Other,
-        Err(links::GaveUp) => Aim::Unsafe,
     }
 }
 
@@ -622,6 +608,43 @@ mod tests {
         );
         keep_for(&mut doc, &doomed(&[kids[1]])).expect("repair");
         assert_eq!(shape(&doc), ["kept", "unknown"]);
+    }
+
+    #[test]
+    fn deleting_a_page_preserves_the_other_named_destination_with_the_same_spelling() {
+        for (drop_index, survivor) in [(0, "string"), (1, "name")] {
+            let (mut doc, kids) = pages(2);
+            let to_page = |page| Object::Array(vec![Object::Reference(page), "Fit".into()]);
+            let string = Object::string_literal("Chapter");
+            let catalog = doc.catalog_mut().expect("catalog");
+            catalog.set("Dests", dictionary! { "Chapter" => to_page(kids[0]) });
+            catalog.set(
+                "Names",
+                dictionary! {
+                    "Dests" => dictionary! { "Names" => vec![string.clone(), to_page(kids[1])] },
+                },
+            );
+            outline(
+                &mut doc,
+                vec![
+                    entry("name", dictionary! { "Dest" => "Chapter" }, vec![]),
+                    entry("string", dictionary! { "Dest" => string }, vec![]),
+                ],
+            );
+            pagetree::materialise(&mut doc, &[drop_index + 1], None, [Some(1 - drop_index)])
+                .expect("delete page");
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).expect("save");
+            let reopened = Document::load_mem(&bytes).expect("reopen");
+            assert_eq!(shape(&reopened), [survivor]);
+            let page = reopened.get_pages()[&1];
+            let root = redact::outline_root(&reopened).expect("outline");
+            let item = reopened
+                .get_dictionary(redact::first_child(&reopened, root).unwrap())
+                .unwrap();
+            let names = links::Destinations::of(&reopened);
+            assert!(matches!(aim_of(&reopened, &names, item), Aim::Page(id) if id == page));
+        }
     }
 
     /// Moving up works through more than one level, and a heading that leads

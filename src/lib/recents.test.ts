@@ -53,6 +53,12 @@ describe("labelsFor", () => {
     expect(labelsFor(["/a/x.pdf", "/a/x.pdf"])).toEqual(["a/x.pdf", "a/x.pdf"]);
   });
 
+  it("keeps a literal backslash in an absolute POSIX path", () => {
+    expect(labelsFor([String.raw`/notes/a\b/report.pdf`, "/notes/a/b/report.pdf"])).toEqual([
+      String.raw`a\b/report.pdf`, "b/report.pdf",
+    ]);
+  });
+
   it("labels a path with one segment", () => {
     expect(labelsFor(["x.pdf"])).toEqual(["x.pdf"]);
     expect(labelsFor([""])).toEqual([""]);

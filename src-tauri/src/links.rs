@@ -437,45 +437,15 @@ fn destination(
 ) -> Target {
     match resolve(document, dest) {
         Object::Array(array) => place(array, document, numbers, geometry),
-        Object::Name(name) => named(name, document, numbers, geometry, limits, names),
-        Object::String(bytes, _) => named(bytes, document, numbers, geometry, limits, names),
-        _ => Target::Broken,
-    }
-}
-
-/// Looks a named destination up in both of the places one can live.
-fn named(
-    key: &[u8],
-    document: &Document,
-    numbers: &HashMap<ObjectId, u32>,
-    geometry: &[PageBox],
-    limits: &mut Limits,
-    names: &Destinations<'_>,
-) -> Target {
-    let Ok(catalog) = document.catalog() else {
-        return Target::Broken;
-    };
-
-    // The PDF 1.1 form first: a flat dictionary keyed by name. Cheap, and a
-    // document carrying both should agree.
-    if let Ok(dests) = catalog.get(b"Dests") {
-        if let Ok(dict) = resolve(document, dests).as_dict() {
-            if let Ok(found) = dict.get(key) {
-                return follow(found, document, numbers, geometry);
+        named @ (Object::Name(_) | Object::String(_, _)) => match names.lookup(named) {
+            Ok(Some(found)) => follow(found, document, numbers, geometry),
+            Ok(None) => Target::Broken,
+            Err(GaveUp) => {
+                limits.unresolved_names += 1;
+                Target::Broken
             }
-        }
-    }
-
-    // The 1.2 form: a name tree under `/Names`. With none, no named
-    // destinations anywhere: broken rather than unresolved, since the document
-    // names a destination and then does not define the mechanism.
-    match names.tree().map_or(Ok(None), |tree| tree.get(key)) {
-        Ok(Some(object)) => follow(object, document, numbers, geometry),
-        Ok(None) => Target::Broken,
-        Err(GaveUp) => {
-            limits.unresolved_names += 1;
-            Target::Broken
-        }
+        },
+        _ => Target::Broken,
     }
 }
 
@@ -507,6 +477,25 @@ impl<'a> Destinations<'a> {
         Self {
             document,
             tree: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// Names select the legacy dictionary, strings select the name tree
+    /// (ISO 32000-1 12.3.2.3). Keep accepting the other store when the
+    /// selected one has no such key, as older readers did.
+    pub(crate) fn lookup(&self, key: &Object) -> Result<Option<&'a Object>, GaveUp> {
+        let flat = |key: &[u8]| {
+            let dests = self.document.catalog().ok()?.get(b"Dests").ok()?;
+            resolve(self.document, dests).as_dict().ok()?.get(key).ok()
+        };
+        let tree = |key: &[u8]| self.tree().map_or(Ok(None), |tree| tree.get(key));
+        match key {
+            Object::Name(key) => match flat(key) {
+                Some(value) => Ok(Some(value)),
+                None => tree(key),
+            },
+            Object::String(key, _) => Ok(tree(key)?.or_else(|| flat(key))),
+            _ => Ok(None),
         }
     }
 

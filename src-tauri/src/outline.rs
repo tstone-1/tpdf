@@ -645,24 +645,12 @@ impl Walk<'_> {
             return self.top_from_view(dest, page);
         }
 
-        let (width, height) = self.size_of(page)?;
         let turns = self.turns_of(page);
         if turns % 2 == 1 && has_x == 0 {
             return None;
         }
 
-        // A degenerate box, so the one mapping in `text.rs` places this too. Its
-        // `top` is the display's vertical coordinate under every turn.
-        let placed = crate::text::to_device(
-            turns,
-            width,
-            height,
-            [x as f64, y as f64, x as f64, y as f64],
-        );
-        // Clamped because the coordinates are read from the file: a destination
-        // at y = -1e9 would otherwise scroll to a place the document does not
-        // have.
-        Some(placed[1].clamp(0.0, height))
+        self.display_top(page, turns, x, y)
     }
 
     /// The vertical coordinate of a fit that is not `/XYZ`.
@@ -709,13 +697,28 @@ impl Walk<'_> {
             return None;
         }
 
-        let (width, height) = self.size_of(page)?;
         let turns = self.turns_of(page);
         if turns % 2 == 1 {
             return None;
         }
-        let placed =
-            crate::text::to_device(turns, width, height, [0.0, raw as f64, 0.0, raw as f64]);
+        self.display_top(page, turns, 0.0, raw)
+    }
+
+    /// A PDF destination is absolute in page space. The displayed dimensions
+    /// and the transform start at the visible box's lower-left corner.
+    fn display_top(&mut self, page: u32, turns: u8, x: f32, y: f32) -> Option<f32> {
+        let (width, height) = self.size_of(page)?;
+        let origin = self
+            ._borrow
+            .graph()
+            .sheet(page, self.page_count as usize)
+            .map(|[left, bottom, _, _]| (left, bottom))
+            .or_else(|| self._borrow.page(page).ok().map(|page| page.origin_pt()))?;
+        let (x, y) = (
+            f64::from(x) - f64::from(origin.0),
+            f64::from(y) - f64::from(origin.1),
+        );
+        let placed = crate::text::to_device(turns, width, height, [x, y, x, y]);
         Some(placed[1].clamp(0.0, height))
     }
 
@@ -837,6 +840,7 @@ pub fn decode_title(bytes: &[u8]) -> String {
 /// forty blanks in a row otherwise.
 pub fn sanitize_title(title: &str, limit: usize) -> (String, bool) {
     let mut out = String::new();
+    let mut length = 0;
     let mut pending_space = false;
     let mut clipped = false;
 
@@ -848,7 +852,8 @@ pub fn sanitize_title(title: &str, limit: usize) -> (String, bool) {
             pending_space = !out.is_empty();
             continue;
         }
-        if out.chars().count() >= limit {
+        let needed = 1 + usize::from(pending_space);
+        if needed > limit - length {
             clipped = true;
             break;
         }
@@ -857,6 +862,7 @@ pub fn sanitize_title(title: &str, limit: usize) -> (String, bool) {
             pending_space = false;
         }
         out.push(ch);
+        length += needed;
     }
 
     (out, clipped)
@@ -1006,6 +1012,15 @@ mod tests {
         let (title, clipped) = sanitize_title("abc   ", 3);
         assert_eq!(title, "abc");
         assert!(!clipped);
+    }
+
+    #[test]
+    fn a_separator_and_following_character_must_both_fit() {
+        assert_eq!(sanitize_title("ab c", 3), ("ab".into(), true));
+        assert_eq!(
+            sanitize_title("ab \u{4e09}", 4),
+            ("ab \u{4e09}".into(), false)
+        );
     }
 
     #[test]

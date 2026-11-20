@@ -6303,8 +6303,7 @@ impl Rewriter for FakeWriter {
 
     fn attachment(
         &self,
-        _source: &mut std::fs::File,
-        len: usize,
+        source: crate::worker_shm::Shm,
         out: &mut std::fs::File,
         _index: usize,
         password: Option<&str>,
@@ -6315,7 +6314,7 @@ impl Rewriter for FakeWriter {
         // the same check of the staged file's size.
         self.asked
             .borrow_mut()
-            .push((len, password.map(str::to_string)));
+            .push((source.len(), password.map(str::to_string)));
         let bytes = self.answer.clone()?;
         out.write_all(&bytes).map_err(|e| e.to_string())?;
         Ok(bytes.len() + self.overstate_by)
@@ -14087,12 +14086,13 @@ fn an_attachment_claimed_longer_than_written_is_not_saved() {
     let dir = crate::testutil::TempDir::new("attachment-claim");
     let source = dir.join("doc.pdf");
     std::fs::write(&source, b"%PDF-1.7 not parsed by the fake").expect("source");
+    let expected = crate::fingerprint::Fingerprint::of(&source).expect("opened");
     let dest = dir.join("kept.txt");
     std::fs::write(&dest, b"kept").expect("seed");
     let mut lying = FakeWriter::writing(Ok(b"four".to_vec()));
     lying.overstate_by = 1;
-    let refused =
-        crate::attachments::save(&source, 0, &dest, Some("pw"), &lying).expect_err("short");
+    let refused = crate::attachments::save(&source, &expected, 0, &dest, Some("pw"), &lying)
+        .expect_err("short");
     assert!(
         refused.contains("said 5 bytes and the file holds 4"),
         "{refused}"
@@ -14110,7 +14110,7 @@ fn an_attachment_claimed_longer_than_written_is_not_saved() {
     );
     let honest = FakeWriter::writing(Ok(b"four".to_vec()));
     assert_eq!(
-        crate::attachments::save(&source, 0, &dest, None, &honest),
+        crate::attachments::save(&source, &expected, 0, &dest, None, &honest),
         Ok(4)
     );
     assert_eq!(std::fs::read(&dest).expect("read"), b"four");

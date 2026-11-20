@@ -41,6 +41,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { gather } from "./comparison";
 import { pageId, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { type PageText } from "./text";
@@ -188,6 +189,24 @@ describe("Reading a page's text, and asking for it again", () => {
     ];
     viewer.setPages(pages);
   }
+
+  it("keeps a created blank page but stops comparison when a file page cannot be read", async () => {
+    const viewer = build();
+    try {
+      viewer.setPages([
+        { id: pageId(9), source: { blank: { width: 600, height: 800 } }, turns: 0 },
+        { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      ]);
+      expect(await viewer.loadText(0)).toBeNull();
+      expect(await viewer.loadText(1)).toEqual(expect.objectContaining({ codes: [97, 98] }));
+      viewer.setPages([{ id: pageId(2), source: { baseline: 1 }, turns: 0 }]);
+      core.invoke.mockRejectedValue(new Error("worker read failed"));
+      await expect(gather("revised/report.pdf", viewer.slotCount, slot => viewer.loadText(slot)))
+        .rejects.toThrow("revised/report.pdf: Could not read the text on page 1. The comparison stopped.");
+    } finally {
+      viewer.destroy();
+    }
+  });
 
   /** Presses inside a slot's first glyph, left of its midpoint. */
   function press(viewer: Viewer, slot: number): void {

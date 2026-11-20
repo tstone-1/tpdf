@@ -341,7 +341,13 @@ pub fn build_update(original: &[u8], job: &Job) -> Result<Vec<u8>, String> {
     // resolved while `save` is told it by the model; the action below is shared.
     let order: Vec<_> = plan.iter().map(|(id, _)| *id).collect();
     let moved = wanted.windows(2).any(|two| two[0].number >= two[1].number);
-    crate::pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;
+    let sources = wanted.iter().map(|page| Some(page.number - 1));
+    crate::pagetree::materialise(
+        &mut doc,
+        &dropped,
+        moved.then_some(order.as_slice()),
+        sources,
+    )?;
 
     // Per page rather than per document, because an edit turns one page and the
     // view turns all of them --- and the two add. Applied per *object*, since a

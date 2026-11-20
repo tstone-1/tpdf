@@ -1254,8 +1254,8 @@ ROWS += [
         # calls it is offered with an outline nobody read.
         "type1: run a Subr shorter than lenIV as an empty one",
         "src/textedit/fonts/type1/program.rs",
-        "                subrs[index] = plain(len_iv, cursor.binary()?).ok();",
-        "                subrs[index] = plain(len_iv, cursor.binary()?).ok().or(Some(Vec::new()));",
+        "            .map(|bytes| plain(len_iv, bytes).ok())",
+        "            .map(|bytes| Some(plain(len_iv, bytes).unwrap_or_default()))",
         "a_subr_shorter_than_leniv_fails_only_the_glyph_that_calls_it",
     ),
 ]
@@ -2320,15 +2320,15 @@ ROWS += [
     Mutation(
         'bookmarks: do not look a name up',
         'src/outline_repair.rs',
-        '        Object::Name(name) => named(doc, names, name),',
-        '        Object::Name(_) => Aim::Other,',
+        'key @ (Object::Name(_) | Object::String(_, _)) => match names.lookup(key)',
+        'key @ Object::String(_, _) => match names.lookup(key)',
         'deleting_a_page_removes_only_the_entries_that_led_to_it',
     ),
     Mutation(
         'bookmarks: do not look a string up',
         'src/outline_repair.rs',
-        '        Object::String(bytes, _) => named(doc, names, bytes),',
-        '        Object::String(..) => Aim::Other,',
+        '(Object::Name(_) | Object::String(_, _)) => match names.lookup(key)',
+        'Object::Name(_) => match names.lookup(key)',
         'a_name_in_the_name_tree_is_followed_to_its_page',
     ),
     Mutation(

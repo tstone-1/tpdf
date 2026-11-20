@@ -176,6 +176,7 @@ export class Sidebar {
   private visibleNow = true;
 
   private outline: Outline | null = null;
+  private outlineSource: Outline | null = null;
   /** Whether an answer has arrived, as distinct from an empty one having. */
   private loaded = false;
   private expansion = new Expansion();
@@ -536,13 +537,16 @@ export class Sidebar {
    * makes a slow document look like an outline-less one for as long as it takes
    * to arrive, which is exactly when someone would be looking.
    */
-  setOutline(outline: Outline | null): void {
+  setOutline(outline: Outline | null, source = outline): void {
     this.loaded = true;
     this.outline = outline;
-    this.expansion = new Expansion();
+    if (source !== this.outlineSource) {
+      this.outlineSource = source;
+      this.expansion = new Expansion();
+      this.focused = null;
+    }
     this.ordered = outline ? allRows(outline.items) : [];
     this.reach = reachOrder(this.ordered);
-    this.focused = null;
     this.current = null;
     this.asked = { page: -1, top: -1 };
     this.paint();
@@ -589,6 +593,7 @@ export class Sidebar {
   }
 
   private paint(): void {
+    const hadFocus = this.tree.contains(document.activeElement);
     this.tree.replaceChildren();
     this.elements.clear();
 
@@ -622,7 +627,7 @@ export class Sidebar {
     // The roving tabindex has to land somewhere before the first Tab, and the
     // row the reader is in beats the first row when there is one.
     if (!this.focused || !this.rows.some((row) => row.id === this.focused)) {
-      this.focused = this.current ?? this.rows[0]?.id ?? null;
+      this.focused = this.rows.find((row) => row.id === this.current)?.id ?? this.rows[0]?.id ?? null;
     }
 
     for (const row of this.rows) {
@@ -631,6 +636,7 @@ export class Sidebar {
       this.tree.appendChild(element);
     }
     if (this.current) this.mark(this.current, true);
+    if (hadFocus && this.focused) this.elements.get(this.focused)?.focus({ preventScroll: true });
   }
 
   private build(row: Row): HTMLElement {

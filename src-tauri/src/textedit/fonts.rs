@@ -522,14 +522,15 @@ impl Metrics {
         };
         bytes
             .iter()
-            .map(|byte| {
-                codes
-                    .iter()
-                    .position(|value| value.as_ref() == Some(byte))
-                    .map(|code| code as u8)
-                    .ok_or_else(|| said!("the font has no validated glyph for this character"))
-            })
+            .map(|&slot| Self::single_code(codes, slot).ok_or_else(missing_glyph))
             .collect()
+    }
+
+    fn single_code(codes: &[Option<u8>; 256], slot: u8) -> Option<u8> {
+        codes
+            .iter()
+            .position(|&value| value == Some(slot))
+            .map(|code| code as u8)
     }
 
     fn width(&self, byte: u8) -> Result<f64, String> {
@@ -607,11 +608,10 @@ impl Metrics {
         }
         let text = self.decode(bytes)?;
         let (advance, bounds) = if let Some(Codes::Single(codes)) = &self.codes {
-            let word_slot = codes[32];
             let glyphs = bytes
                 .iter()
                 .map(|&code| match codes[code as usize] {
-                    Some(slot) => self.glyph(slot, word_slot == Some(slot)),
+                    Some(slot) => self.glyph(slot, code == 32),
                     None => self
                         .opaque(code)
                         .map(|glyph| (glyph.width, glyph.overhang, code == 32))
@@ -670,7 +670,11 @@ impl Metrics {
         // regardless of its Unicode mapping. Identity-H has no such code.
         let word_slot = match &self.codes {
             None => Some(32),
-            Some(Codes::Single(codes)) => codes[32],
+            // A slot can have several source codes. For a replacement only
+            // the code the encoder actually chooses can receive Tw.
+            Some(Codes::Single(codes)) => {
+                codes[32].filter(|&slot| Self::single_code(codes, slot) == Some(32))
+            }
             Some(Codes::Double(_) | Codes::Opaque(_)) => None,
         };
         let glyphs = slots

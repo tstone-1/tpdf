@@ -43,11 +43,10 @@ export const RECENT_PREFIX = "file.recent.";
 
 /** A path split into its segments, with the separator it was written with. */
 function split(path: string): { segments: string[]; separator: string } {
-  // Both separators, because a session file is not necessarily written by the
-  // platform reading it: these are absolute paths recorded on whichever machine
-  // last opened the document.
+  // An absolute POSIX path can contain a literal backslash. Drive-letter and
+  // backslash UNC paths accept either separator, regardless of the host OS.
   const separator = path.includes("\\") && !path.includes("/") ? "\\" : "/";
-  return { segments: path.split(/[\\/]+/).filter(Boolean), separator };
+  return { segments: path.split(path.startsWith("/") ? /\/+/ : /[\\/]+/).filter(Boolean), separator };
 }
 
 /** The last `depth` segments of a path, joined as they were written. */

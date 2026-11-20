@@ -2193,8 +2193,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
 - `compare`: `old` and `new`, the two documents, each with `path`, `pages`,
   `pages_without_text` (counted from 1) and `words`; `removed_words` and `added_words`;
   `total_changes`, which is more than `changes` holds only past 10,000; `unaligned`, the
-  stretches that share no word occurring once on each side and are too long to align word by
-  word, each listed as one replacement; and `changes`, in reading order. Each change has
+  number of compared stretches too large to align word by word. Each counts as one replacement,
+  including any beyond the list limit. `changes` follows reading order. Each change has
   `kind` (`removed`, `added` or `replaced`), `old_page` and `new_page` (counted from 1: where
   the change is on each side, or where words added or removed would stand), `removed` and
   `added` (the words, joined by single spaces), `before` and `after` (up to four shared words

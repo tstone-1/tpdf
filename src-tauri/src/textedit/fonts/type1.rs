@@ -507,7 +507,6 @@ fn measured(
                 {
                     vertical_bounds[0] = vertical_bounds[0].min(bottom);
                     vertical_bounds[1] = vertical_bounds[1].max(top);
-                    overhangs[slot as usize] = [left.min(0.), (right - width).max(0.)];
                     true
                 }
                 None => slot == b' ',
@@ -522,10 +521,17 @@ fn measured(
                     }
                     _ => {}
                 }
-                slot_names[slot as usize] = Some(name);
-                result[slot as usize] = Some(width);
-                codes[code] = Some(slot);
-                continue;
+                // One slot has one advance. An alias with a different PDF
+                // width still measures its own source runs as an opaque code.
+                if result[slot as usize].is_none_or(|previous| previous == width) {
+                    slot_names[slot as usize] = Some(name);
+                    result[slot as usize] = Some(width);
+                    if let Some([left, _, right, _]) = glyph.bounds {
+                        overhangs[slot as usize] = [left.min(0.), (right - width).max(0.)];
+                    }
+                    codes[code] = Some(slot);
+                    continue;
+                }
             }
         }
         // Validated but not writable: measures read-only text. It reserves ink

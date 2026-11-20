@@ -21,6 +21,17 @@ have the binary.)
 
 ### Fixed
 
+- Saving an attachment checks that it came from the document open in the viewer.
+- Page labels follow their pages after a save. Deleting pages preserves bookmarks
+  to surviving named destinations, and bookmarks on cropped pages land at the correct height.
+- Refreshing the outline preserves expanded branches. Collapsing the current entry
+  leaves a visible bookmark reachable by keyboard. Recent-file labels distinguish POSIX
+  filenames containing literal backslashes.
+- Document comparison reports an extraction failure, distinguishes unread text from
+  matching text, and shows shared context and replacement counts consistently.
+- Type 1 text editing respects the encoded byte's spacing and width, measures the start
+  of flex curves, and reads fonts whose comments mention private dictionary entries.
+
 - CLI signing and long-term validation preserve a destination created while the command was running unless `--force` was supplied. Signing respects field locks set by earlier approvals and checks that a visible signature has words or an image. Linux certificate import reports why a certificate cannot sign.
 - Print preview and Windows printing use print visibility. Windows keeps software copies on separate sheets and Stop applies to the active job. Linux reports delayed print failures in the window. Unix print staging preserves files left by earlier jobs.
 - Growing text respects the writing direction and fixed annotations of neighbouring runs. Wrapping text on rotated pages keeps labels and drawings aligned with their rows.

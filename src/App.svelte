@@ -3446,7 +3446,7 @@
       sidebar?.setOutline({
         ...rawOutline,
         items: outlineIn(rawOutline.items, pages),
-      });
+      }, rawOutline);
     }
   }
 
@@ -4113,29 +4113,29 @@
     if (home !== panes.focused) focusSide(home);
     await documentTasks.run(async () => {
       const left = asDocument(older, () => viewer), right = asDocument(newer, () => viewer);
-      const names = { left: basename(tabs.find(older)?.path ?? ""), right: basename(tabs.find(newer)?.path ?? "") };
+      const names = { left: tabLabelOf.get(older) ?? "", right: tabLabelOf.get(newer) ?? "" };
       if (!left || !right || copyTaskBusy) return;
       copyTaskBusy = true;
       blockingTask = COMPARE_STARTING;
       refreshMenu();
       try {
         const [a, b] = await Promise.all([
-          gather(left.slotCount, (slot) => left.loadText(slot)),
-          gather(right.slotCount, (slot) => right.loadText(slot)),
+          gather(names.left, left.slotCount, (slot) => left.loadText(slot)),
+          gather(names.right, right.slotCount, (slot) => right.loadText(slot)),
         ]);
-        const refused = refusal(names, { left: a, right: b });
+        blockingTask = COMPARING;
+        const result = await call("compare_texts", { left: a, right: b });
+        const refused = refusal(names, result);
         if (refused) {
           say(refused);
           return;
         }
-        blockingTask = COMPARING;
-        const result = await call("compare_texts", { left: a.pages, right: b.pages });
         // Either side may have been closed or replaced inside the wait.
         if (asDocument(older, () => viewer) !== left || asDocument(newer, () => viewer) !== right) return;
         // A comparison already on screen is replaced; the documents it was
         // about and this one is not are cleared of it.
         const before = comparisons.views;
-        comparisons.start(older, newer, { result, names, withoutText: { left: a.withoutText, right: b.withoutText } });
+        comparisons.start(older, newer, { result, names });
         for (const view of before ? [before.left, before.right] : []) {
           if (view !== older && view !== newer) asDocument(view, () => showComparisonHere());
         }

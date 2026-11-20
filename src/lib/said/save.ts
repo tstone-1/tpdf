@@ -11,6 +11,8 @@ const n = (count: string | undefined, one: string, many: string): string =>
   count === "1" ? one : many;
 
 export default {
+  "the document's page labels could not be remapped":
+    "Die Seitenbezeichnungen des Dokuments konnten nicht neu zugeordnet werden",
   // redact.rs: what stays, and why.
   "object {at} is a picture this document draws {times} time(s). It was taken off this page; it is still in the file, and on every other place that draws it":
     "Objekt {at} ist ein Bild, das dieses Dokument {times}-mal zeichnet. Es wurde von dieser Seite entfernt; es ist aber noch in der Datei und an jeder anderen Stelle, die es zeichnet",
@@ -557,8 +559,8 @@ export default {
     "Öffne die Quelle neu, bevor du eine Schwärzung als Bild erstellst",
   "The source is too large or has changed since it was opened":
     "Die Quelle ist zu groß oder hat sich seit dem Öffnen geändert",
-  "The source changed. Reopen it and mark the regions again":
-    "Die Quelle hat sich geändert. Öffne sie neu und markiere die Bereiche noch einmal",
+  "The source changed. Reopen the document and try again":
+    "Die Quelle hat sich geändert. Öffne das Dokument erneut und versuche es noch einmal",
   "the worker answered the pictures with {reply}":
     "Der Arbeitsprozess hat auf die Bilder mit {reply} geantwortet",
   "the worker answered the picture with something else":
@@ -762,8 +764,8 @@ export const sie = {
     "Das signierte Dokument wird als neue Datei geschrieben - wählen Sie einen anderen Namen als den des Originals",
   "Reopen the source before creating an image-only redaction":
     "Öffnen Sie die Quelle neu, bevor Sie eine Schwärzung als Bild erstellen",
-  "The source changed. Reopen it and mark the regions again":
-    "Die Quelle hat sich geändert. Öffnen Sie sie neu und markieren Sie die Bereiche noch einmal",
+  "The source changed. Reopen the document and try again":
+    "Die Quelle hat sich geändert. Öffnen Sie das Dokument erneut und versuchen Sie es noch einmal",
   "pages {first} and {second} are the same page in this file, so they cannot be turned differently. Turn them the same way, or leave both as they are.":
     "Die Seiten {first} und {second} sind in dieser Datei dieselbe Seite und lassen sich daher nicht unterschiedlich drehen. Drehen Sie beide gleich oder lassen Sie beide, wie sie sind.",
   "page {n} has a {kind} that still carries \"{first}\", which the redaction removed; redact the code too":

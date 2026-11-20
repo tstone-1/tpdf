@@ -175,8 +175,8 @@ pub struct Comparison {
     /// How many changes there were; more than `changes.len()` only when the
     /// list was cut at [`MAX_CHANGES`].
     pub total_changes: u32,
-    /// Stretches too large to align word by word, each reported as one
-    /// replacement. Zero for any two versions of one text.
+    /// Compared stretches too large to align word by word, each counted as one
+    /// replacement, including changes beyond the list limit.
     pub unaligned: u32,
     /// Left words not compared: they stand where the right document has a page
     /// with no text, so whether that page holds them cannot be known. Not in
@@ -184,6 +184,9 @@ pub struct Comparison {
     pub left_unread: u32,
     /// Right words not compared, likewise against a page of the left.
     pub right_unread: u32,
+    /// Caller-supplied page numbers that yielded no words after tokenization.
+    pub left_without_words: Vec<u32>,
+    pub right_without_words: Vec<u32>,
 }
 
 /// Compares the words of two documents.
@@ -206,12 +209,12 @@ pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, St
         a: &a,
         b: &b,
         pairs: Vec::new(),
-        unaligned: 0,
+        fallback_starts: Vec::new(),
     };
     aligner.align(0..a.len(), 0..b.len(), 0);
     let Aligner {
         mut pairs,
-        unaligned,
+        fallback_starts,
         ..
     } = aligner;
     pairs.sort_unstable();
@@ -222,11 +225,15 @@ pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, St
     let mut added_words = 0usize;
     let mut left_unread = 0usize;
     let mut right_unread = 0usize;
-    // Walk the pairs, with a sentinel past both ends so the tail is one more gap.
+    // Each gap lies between consecutive runs of shared words. Only those runs
+    // can supply shared context, even when another edit lies a few words away.
+    let mut unaligned = 0;
+    let mut previous_run = 0;
     let mut ai = 0usize;
     let mut bi = 0usize;
-    let end = (a.len(), b.len());
-    for (pa, pb) in pairs.iter().copied().chain(std::iter::once(end)) {
+    let runs = pairs.chunk_by(|&(a1, b1), &(a2, b2)| a2 == a1 + 1 && b2 == b1 + 1);
+    for run in runs.chain(std::iter::once(&[][..])) {
+        let (pa, pb) = run.first().copied().unwrap_or((a.len(), b.len()));
         // Words with no match, where the other side has a page with no text
         // in the same place, may be on that page: they are not compared, and
         // listing them as removed or added would say something nobody read.
@@ -238,13 +245,26 @@ pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, St
         } else if pa > ai || pb > bi {
             removed_words += pa - ai;
             added_words += pb - bi;
+            if fallback_starts.binary_search(&ai).is_ok() {
+                unaligned += 1;
+            }
             total += 1;
             if changes.len() < MAX_CHANGES {
-                changes.push(change(&left_words, ai..pa, &right_words, bi..pb));
+                changes.push(change(
+                    &left_words,
+                    ai..pa,
+                    &right_words,
+                    bi..pb,
+                    previous_run,
+                    run.len(),
+                ));
             }
         }
-        ai = pa + 1;
-        bi = pb + 1;
+        if let Some(&(last_a, last_b)) = run.last() {
+            ai = last_a + 1;
+            bi = last_b + 1;
+        }
+        previous_run = run.len();
     }
 
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
@@ -258,6 +278,8 @@ pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, St
         unaligned,
         left_unread: count(left_unread),
         right_unread: count(right_unread),
+        left_without_words: left_pages.unread.iter().map(|&i| left[i].page).collect(),
+        right_without_words: right_pages.unread.iter().map(|&i| right[i].page).collect(),
     })
 }
 
@@ -433,14 +455,16 @@ fn change(
     a: std::ops::Range<usize>,
     right: &[Word],
     b: std::ops::Range<usize>,
+    previous_run: usize,
+    next_run: usize,
 ) -> Change {
     let kind = match (a.is_empty(), b.is_empty()) {
         (false, true) => Kind::Removed,
         (true, false) => Kind::Added,
         _ => Kind::Replaced,
     };
-    let before = a.start.saturating_sub(CONTEXT_WORDS)..a.start;
-    let after = a.end..(a.end + CONTEXT_WORDS).min(left.len());
+    let before = a.start - previous_run.min(CONTEXT_WORDS)..a.start;
+    let after = a.end..a.end + next_run.min(CONTEXT_WORDS);
     Change {
         kind,
         left: spans(left, a.clone()),
@@ -460,7 +484,8 @@ struct Aligner<'s> {
     b: &'s [u32],
     /// `(left index, right index)` of each word the two sides share.
     pairs: Vec<(usize, usize)>,
-    unaligned: u32,
+    /// Left start of each unaligned gap, in traversal order.
+    fallback_starts: Vec<usize>,
 }
 
 impl Aligner<'_> {
@@ -499,7 +524,7 @@ impl Aligner<'_> {
         if a.len().saturating_mul(b.len()) <= MAX_TABLE_CELLS {
             self.table(a, b);
         } else {
-            self.unaligned += 1;
+            self.fallback_starts.push(a.start);
         }
     }
 
@@ -772,12 +797,41 @@ mod tests {
     }
 
     #[test]
+    fn an_unaligned_gap_facing_an_unread_page_is_not_a_replacement() {
+        let left = "old ".repeat(2100);
+        let right = "new ".repeat(2100);
+        let c = run(
+            &[(0, "header"), (1, &left)],
+            &[(0, "header"), (1, "\u{ad}"), (2, &right)],
+        );
+        assert_eq!((c.total_changes, c.unaligned), (0, 0));
+        assert_eq!((c.left_unread, c.right_unread), (2100, 2100));
+        assert_eq!(c.right_without_words, vec![1]);
+        assert!(c.left_without_words.is_empty());
+    }
+
+    #[test]
     fn a_quote_is_cut_with_an_ellipsis() {
         let long = "w".repeat(QUOTE_CHARS + 10);
         let c = run(&[(0, "a b")], &[(0, &format!("a {long} b"))]);
         let added = &c.changes[0].added;
         assert_eq!(added.chars().count(), QUOTE_CHARS + 1);
         assert!(added.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn an_unaligned_replacement_beyond_the_list_limit_is_still_counted() {
+        let mut old: String = (0..MAX_CHANGES).map(|i| format!("k{i} x ")).collect();
+        let mut new: String = (0..MAX_CHANGES).map(|i| format!("k{i} y ")).collect();
+        old.push_str("appendix ");
+        new.push_str("appendix ");
+        old.push_str(&"old ".repeat(2100));
+        new.push_str(&"new ".repeat(2100));
+        let c = run(&[(0, &old)], &[(0, &new)]);
+        assert_eq!(c.total_changes as usize, MAX_CHANGES + 1);
+        assert_eq!(c.changes.len(), MAX_CHANGES);
+        assert!(c.changes.iter().all(|ch| ch.removed == "x"));
+        assert_eq!(c.unaligned, 1);
     }
 
     #[test]

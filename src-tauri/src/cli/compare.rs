@@ -103,8 +103,6 @@ struct Read {
     shown: String,
     /// Every page's text, counted from 0.
     texts: Vec<PageText>,
-    /// Pages, counted from 1, that held no characters.
-    without_text: Vec<u32>,
 }
 
 /// Reads every page of `path` through a worker.
@@ -145,18 +143,13 @@ fn read(env: &Env<'_>, path: &Path, password: Option<&str>) -> Result<Read, Fail
         }
     };
     let mut texts = Vec::new();
-    let mut without_text = Vec::new();
+
     for page in 0..count {
         match session
             .ask(Request::Text { page, crop: None })
             .map_err(declined)?
         {
-            Reply::Text(text) => {
-                if text.codes.is_empty() {
-                    without_text.push(page + 1);
-                }
-                texts.push(text);
-            }
+            Reply::Text(text) => texts.push(text),
             other => {
                 return Err(Failure::new(
                     Exit::Internal,
@@ -169,11 +162,7 @@ fn read(env: &Env<'_>, path: &Path, password: Option<&str>) -> Result<Read, Fail
             }
         }
     }
-    Ok(Read {
-        shown,
-        texts,
-        without_text,
-    })
+    Ok(Read { shown, texts })
 }
 
 impl Subcommand for Compare {
@@ -186,18 +175,7 @@ impl Subcommand for Compare {
         let password = password(self.password_env.as_deref())?;
         let old = read(env, &self.old, password.as_deref())?;
         let new = read(env, &self.new, password.as_deref())?;
-        for side in [&old, &new] {
-            if side.without_text.len() == side.texts.len() {
-                return Err(Failure::new(
-                    Exit::Refused,
-                    format!(
-                        "{}: none of its pages has text, so there are no words to compare --- \
-                         a scan has to be read by OCR first",
-                        side.shown
-                    ),
-                ));
-            }
-        }
+
         let codes = |side: &Read| -> Vec<PageCodes> {
             side.texts
                 .iter()
@@ -210,6 +188,21 @@ impl Subcommand for Compare {
         };
         let comparison = compare::compare(&codes(&old), &codes(&new))
             .map_err(|why| Failure::new(Exit::Refused, why))?;
+        for (side, words) in [
+            (&old, comparison.left_words),
+            (&new, comparison.right_words),
+        ] {
+            if words == 0 {
+                return Err(Failure::new(
+                    Exit::Refused,
+                    format!(
+                        "{}: none of its pages has text, so there are no words to compare --- \
+                         a scan has to be read by OCR first",
+                        side.shown
+                    ),
+                ));
+            }
+        }
         let report = compared(&old, &new, &comparison);
 
         say(
@@ -219,7 +212,7 @@ impl Subcommand for Compare {
                 env.program
             ),
         );
-        for side in [&old, &new] {
+        for side in [&report.old, &report.new] {
             if let Some(note) = textless(side) {
                 say(err, &format!("{}: {note}", env.program));
             }
@@ -239,9 +232,14 @@ impl Subcommand for Compare {
             say(
                 err,
                 &format!(
-                    "{}: {} stretches share no word that occurs once in each, and are each \
-                     listed as one replacement",
-                    env.program, report.unaligned
+                    "{}: {} {} could not be matched word by word. Each counts as one replacement.",
+                    env.program,
+                    report.unaligned,
+                    if report.unaligned == 1 {
+                        "passage"
+                    } else {
+                        "passages"
+                    }
                 ),
             );
         }
@@ -282,30 +280,39 @@ impl Subcommand for Compare {
     }
 }
 
-/// The sentence for a document some of whose pages held no characters. One
-/// with none on any page was refused in `run` before the comparison.
-fn textless(side: &Read) -> Option<String> {
-    match side.without_text.as_slice() {
+/// The sentence for a document some of whose pages yielded no words.
+fn textless(side: &report::ComparedFile) -> Option<String> {
+    match side.pages_without_text.as_slice() {
         [] => None,
-        [one] => Some(format!("{}: page {one} has no text", side.shown)),
-        many => Some(format!("{}: {} pages have no text", side.shown, many.len())),
+        [one] => Some(format!("{}: page {one} has no text", side.path)),
+        many => Some(format!("{}: {} pages have no text", side.path, many.len())),
     }
 }
 
 /// The report for `comparison` of `old` against `new`.
 fn compared(old: &Read, new: &Read, comparison: &Comparison) -> report::Compared {
-    let file = |side: &Read, words: u32, unread: u32| report::ComparedFile {
+    let file = |side: &Read, words: u32, unread: u32, empty: &[u32]| report::ComparedFile {
         path: side.shown.clone(),
         pages: u32::try_from(side.texts.len()).unwrap_or(u32::MAX),
-        pages_without_text: side.without_text.clone(),
+        pages_without_text: empty.iter().map(|&page| page + 1).collect(),
         words,
         words_not_compared: unread,
     };
     report::Compared {
         schema: SCHEMA,
         command: "compare".into(),
-        old: file(old, comparison.left_words, comparison.left_unread),
-        new: file(new, comparison.right_words, comparison.right_unread),
+        old: file(
+            old,
+            comparison.left_words,
+            comparison.left_unread,
+            &comparison.left_without_words,
+        ),
+        new: file(
+            new,
+            comparison.right_words,
+            comparison.right_unread,
+            &comparison.right_without_words,
+        ),
         removed_words: comparison.removed_words,
         added_words: comparison.added_words,
         total_changes: comparison.total_changes,

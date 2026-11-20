@@ -389,7 +389,7 @@ fn textedit_type1_interpreter_follows_curves_subrs_flex_and_hints() {
         ENDCHAR,
     ]);
     font.glyphs.push(("flex".into(), flex));
-    assert_eq!(glyph(&font, "flex"), (600., Some([250., 0., 450., 20.])));
+    assert_eq!(glyph(&font, "flex"), (600., Some([100., 0., 450., 20.])));
     // A curve's hull is its control points' too: this one bulges to 500 and
     // ends where it began.
     font.glyphs.push((
@@ -413,6 +413,40 @@ fn textedit_type1_interpreter_follows_curves_subrs_flex_and_hints() {
         ],
     ));
     assert_eq!(glyph(&font, "bulge"), (300., Some([0., 0., 100., 500.])));
+}
+
+#[test]
+fn textedit_type1_flex_start_can_put_ink_beyond_the_editable_envelope() {
+    // Adobe Type 1 Font Format 8.3, Figure 8e, shifted 360 units left. The
+    // start lies outside the permitted 250-unit overhang; all six controls
+    // and endpoints and the auxiliary reference point lie inside it.
+    let mut flex = vec![N(0), N(600), HSBW, N(-260), N(-10), RMOVETO, N(1), CALLSUBR];
+    for (dx, dy) in [
+        (50, 0),
+        (-35, 0),
+        (10, 10),
+        (25, 0),
+        (25, 0),
+        (10, -10),
+        (15, 0),
+    ] {
+        flex.extend([N(dx), N(dy), RMOVETO, N(2), CALLSUBR]);
+    }
+    flex.extend([N(50), N(-160), N(-10), N(0), CALLSUBR, ENDCHAR]);
+    let mut font = Font::new();
+    font.glyphs
+        .iter_mut()
+        .find(|(name, _)| name == "A")
+        .unwrap()
+        .1 = flex;
+    assert_eq!(glyph(&font, "A"), (600., Some([-260., -10., -160., 0.])));
+    let doc = page(
+        &font,
+        Object::Name(b"StandardEncoding".to_vec()),
+        None,
+        "BT /F1 10 Tf 40 180 Td (A) Tj ET BT /F1 10 Tf 40 140 Td (B) Tj ET",
+    );
+    assert_eq!(texts(&doc), ["B"]);
 }
 
 #[test]
@@ -599,6 +633,25 @@ fn a_subr_shorter_than_leniv_fails_only_the_glyph_that_calls_it() {
     let short = parsed(true);
     assert!(!short.glyphs.contains_key(b"calls".as_slice()));
     assert!(short.glyphs.contains_key(b"A".as_slice()));
+}
+
+#[test]
+fn textedit_type1_private_declarations_ignore_comments_strings_and_binary_entries() {
+    let mut font = Font::new();
+    font.len_iv = -1;
+    let mut subr = vec![RETURN];
+    subr.extend(b" /CharStrings /Subrs /lenIV 4 def ".iter().copied().map(C));
+    font.subrs.push(subr);
+    let (bytes, length1, length2) = font.program_with(|private| {
+        let private = swap(private, b"/lenIV -1 def", b"% /CharStrings entries follow\n% /Subrs and /lenIV\n/notice (about /lenIV 4 def and /CharStrings) def");
+        swap(private, b"ND\n2 index /CharStrings", b"ND\n/lenIV -1 def\n2 index /CharStrings")
+    });
+    let parsed = program::parse(&bytes, length1, length2, 0).unwrap();
+    assert_eq!(parsed.glyphs.len(), font.glyphs.len());
+    assert_eq!(
+        parsed.glyphs[b"A".as_slice()].bounds,
+        Some([20., 0., 560., 700.])
+    );
 }
 
 #[test]
@@ -1206,6 +1259,46 @@ fn set_widths(doc: &mut Document, widths: &[(usize, i64)]) {
         array[code] = width.into();
     }
     doc.get_dictionary_mut(id).unwrap().set("Widths", array);
+}
+
+#[test]
+fn textedit_type1_word_spacing_follows_the_source_and_emitted_codes() {
+    let mut doc = page(
+        &Font::new(),
+        differences(&[(31, "A"), (32, "A"), (160, "A")]),
+        None,
+        "BT /F1 10 Tf 5 Tw 40 180 Td <A0201F> Tj (B) Tj ET",
+    );
+    set_widths(&mut doc, &[(31, 600), (32, 600), (160, 600)]);
+    let scan = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(scan.runs[0].text, "AAA");
+    assert_eq!(scan.runs[1].text, "B");
+    // Three six-point advances; only the original byte 32 also advances by Tw.
+    assert_eq!(scan.runs[1].matrix[4], 63.);
+    let metrics = embedded(&doc, doc.get_dictionary(font_id(&doc)).unwrap()).unwrap();
+    assert_eq!(metrics.encode("A").unwrap(), [31]);
+    assert_eq!(metrics.spaced_layout("A", 10., 0., 5.).unwrap().0, 6.);
+}
+
+#[test]
+fn textedit_type1_aliases_with_different_pdf_widths_keep_their_own_advances() {
+    let mut doc = page(
+        &Font::new(),
+        differences(&[(1, "A"), (2, "A"), (65, ".notdef")]),
+        None,
+        "BT /F1 10 Tf 40 180 Td <01> Tj <02> Tj (B) Tj ET",
+    );
+    set_widths(&mut doc, &[(1, 599), (2, 601)]);
+    let scan = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(texts(&doc), ["A", "B"]);
+    assert!((scan.runs[1].matrix[4] - 52.).abs() < 1e-9);
+    let metrics = embedded(&doc, doc.get_dictionary(font_id(&doc)).unwrap()).unwrap();
+    assert_eq!(metrics.encode("A").unwrap(), [1]);
+    for (code, expected) in [(1, 5.99), (2, 6.01)] {
+        let (_, advance, _) = metrics.source_layout(&[code], 10., 0., 0.).unwrap();
+        assert!((advance - expected).abs() < 1e-9);
+    }
+    assert!((metrics.spaced_layout("A", 10., 0., 0.).unwrap().0 - 5.99).abs() < 1e-9);
 }
 
 #[test]

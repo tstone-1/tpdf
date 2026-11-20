@@ -721,24 +721,29 @@ pub async fn page_copy_powerpoint(
 /// Saves the embedded file at `index` of the open document to `path`
 /// (*Save an attachment*), and answers how many bytes it holds.
 ///
-/// From the file as it is on disk, which is `source`, the frontend's record of
-/// what it opened, as *Save a copy* takes it. A worker decodes it with the
-/// document's password and writes it into a file beside `path`
-/// (`attachments::save`); tpdf never opens it.
+/// The selected index belongs to the open document. Only a snapshot that matches
+/// its opening fingerprint can supply the bytes sent to the attachment worker.
 #[tauri::command]
 pub async fn attachment_save(
     app: tauri::AppHandle,
+    edits: tauri::State<'_, edits::Edits>,
     service: tauri::State<'_, crate::render::RenderService>,
     doc: u32,
     source: String,
     index: usize,
     path: String,
 ) -> Result<usize, String> {
+    let edits = edits.inner().clone();
     let password = super::password_for(&service, doc, "attachment_save").await;
     let outside = super::outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || {
+        let expected = edits
+            .opened_as(doc)
+            .flatten()
+            .ok_or_else(|| said!("Reopen the document before saving an attachment"))?;
         crate::attachments::save(
             std::path::Path::new(&source),
+            &expected,
             index,
             std::path::Path::new(&path),
             password.as_deref(),

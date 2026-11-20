@@ -288,6 +288,8 @@ const SCHEMA = {
     unaligned: ["number"],
     left_unread: ["number"],
     right_unread: ["number"],
+    left_without_words: ["array"],
+    right_without_words: ["array"],
   } satisfies Shape<Comparison>,
   Shrinkage: {
     bytesBefore: ["number"],

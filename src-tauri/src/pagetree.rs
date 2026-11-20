@@ -32,6 +32,8 @@ use lopdf::{Dictionary, Document, Object, ObjectId};
 
 use crate::sweep;
 
+mod labels;
+
 /// How far up a `/Parent` chain anything here will walk.
 ///
 /// A cycle in a malformed file would otherwise spin, and every walk in this
@@ -951,6 +953,10 @@ fn forget_in_dictionary(
 /// the numbers it resolved. Those are genuinely different questions, so the
 /// predicate stays at the call site and only the action is shared.
 ///
+/// `source_pages` gives the zero-based original position of each output page
+/// (None for an inserted page). Labels belong to positions, even when two
+/// positions share a page object.
+///
 /// **Turning pages is deliberately not here.** `print` turns immediately after
 /// this; `save` cannot, because a mark was made against the rotation the file
 /// had when it was opened and the mapping that places it reads the rotation the
@@ -965,7 +971,11 @@ pub fn materialise(
     doc: &mut Document,
     dropped: &[u32],
     reorder_to: Option<&[ObjectId]>,
+    source_pages: impl IntoIterator<Item = Option<u32>>,
 ) -> Result<(), String> {
+    if !dropped.is_empty() || reorder_to.is_some() {
+        labels::remap(doc, source_pages)?;
+    }
     if !dropped.is_empty() {
         // Before the pages go: `drop_pages` takes the page out of every
         // destination array, and the repair reads those arrays.
@@ -1136,7 +1146,7 @@ mod tests {
     fn materialising_a_deletion_keeps_the_bookmarks_of_the_pages_that_stay() {
         let (mut doc, _) = three_pages_with_outline();
         assert_eq!(bookmarks(&doc), ["page 1", "page 2", "page 3"]);
-        materialise(&mut doc, &[2], None).expect("materialise");
+        materialise(&mut doc, &[2], None, [Some(0), Some(2)]).expect("materialise");
         assert_eq!(doc.get_pages().len(), 2, "the page went");
         assert_eq!(bookmarks(&doc), ["page 1", "page 3"]);
     }
@@ -1174,7 +1184,7 @@ mod tests {
             root.set("Count", 1);
         }
         assert_eq!(bookmarks(&doc), ["page 1"]);
-        materialise(&mut doc, &[1], None).expect("materialise");
+        materialise(&mut doc, &[1], None, [Some(1), Some(2)]).expect("materialise");
         assert!(!has_outline(&doc), "nothing was left to list");
     }
 
@@ -1188,7 +1198,7 @@ mod tests {
     fn materialising_a_move_keeps_the_outline() {
         let (mut doc, kids) = three_pages_with_outline();
         let order = vec![kids[2], kids[0], kids[1]];
-        materialise(&mut doc, &[], Some(&order)).expect("materialise");
+        materialise(&mut doc, &[], Some(&order), [Some(2), Some(0), Some(1)]).expect("materialise");
         assert_eq!(doc.get_pages().len(), 3, "nothing was dropped");
         assert_eq!(
             bookmarks(&doc),
@@ -1333,7 +1343,7 @@ mod tests {
         doc.trailer.set("Root", catalog);
         let order: Vec<ObjectId> = doc.get_pages().into_values().collect();
 
-        materialise(&mut doc, &[], None).expect("materialise");
+        materialise(&mut doc, &[], None, [Some(0), Some(1), Some(2)]).expect("materialise");
 
         assert_eq!(doc.get_pages().len(), 3, "every page is still there");
         assert_eq!(

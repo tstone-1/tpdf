@@ -1312,8 +1312,8 @@ pub struct TextAdded {
 /// `tpdf compare --json`: the changes in the words from `old` to `new`. Page
 /// numbers are one-based.
 ///
-/// Text only: an empty `changes` says the two documents have the same words,
-/// not that they are the same document.
+/// Text only. If either side has uncompared words, an empty list of changes
+/// covers only the words that could be compared.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Compared {
     /// Always [`SCHEMA`].
@@ -1331,8 +1331,8 @@ pub struct Compared {
     /// How many changes there are; more than `changes` lists only when the
     /// list was cut at `compare::MAX_CHANGES`.
     pub total_changes: u32,
-    /// Stretches too far apart to align word by word, each listed as one
-    /// replacement.
+    /// Compared stretches too large to align word by word, each counted as one
+    /// replacement, including changes beyond the list limit.
     pub unaligned: u32,
     /// The changes, in reading order.
     pub changes: Vec<ComparedChange>,
@@ -1345,7 +1345,7 @@ pub struct ComparedFile {
     pub path: String,
     /// Pages read.
     pub pages: u32,
-    /// Pages that held no characters.
+    /// Pages that yielded no words after tokenization.
     pub pages_without_text: Vec<u32>,
     /// Words read.
     pub words: u32,

@@ -225,8 +225,8 @@ ROWS += [
         # tell a hostile tree from an honest typo.
         "links: report an exhausted name tree as a missing name",
         "src/links.rs",
-        "        Err(GaveUp) => {\n            limits.unresolved_names += 1;\n            Target::Broken\n        }",
-        "        Err(GaveUp) => Target::Broken,",
+        "            Err(GaveUp) => {\n                limits.unresolved_names += 1;\n                Target::Broken\n            }",
+        "            Err(GaveUp) => Target::Broken,",
         "a_cyclic_name_tree_is_given_up_on_and_counted",
     ),
     Mutation(
@@ -245,8 +245,8 @@ ROWS += [
         # in whichever half of the corpus uses the other.
         "links: forget the PDF 1.1 /Dests dictionary",
         "src/links.rs",
-        '    if let Ok(dests) = catalog.get(b"Dests") {',
-        '    if let (false, Ok(dests)) = (true, catalog.get(b"Dests")) {',
+        'let dests = self.document.catalog().ok()?.get(b"Dests").ok()?;',
+        'let dests = self.document.catalog().ok()?.get(b"Absent").ok()?;',
         "a_named_destination_resolves_through_the_flat_dictionary",
     ),
     Mutation(

@@ -288,6 +288,10 @@ fn main() {
         ),
         ("info agrees with the in-process reader", info_agrees),
         (
+            "navigation on cropped and reordered pages",
+            pages::navigation,
+        ),
+        (
             "plain output carries no escape from a document string",
             escapes_stay_out_of_plain_output,
         ),
@@ -1986,15 +1990,17 @@ fn attachment_in_a_worker(report: &mut Report) {
     doc.trailer.set("Root", catalog);
     let source = dir.join("carrier.pdf");
     doc.save(&source).expect("carrier");
+    let expected = tpdf_lib::fingerprint::Fingerprint::of(&source).expect("opened");
     let dest = dir.join("orders.csv");
     let outside = tpdf_lib::save::InWorker::at(library_dir());
-    let saved = tpdf_lib::attachments::save(&source, 0, &dest, None, &outside);
+    let saved = tpdf_lib::attachments::save(&source, &expected, 0, &dest, None, &outside);
     report.check(
         "an attachment saved through a worker holds the bytes that were put in",
         saved == Ok(carried.len()) && std::fs::read(&dest).ok().as_deref() == Some(&carried[..]),
         &format!("{saved:?}"),
     );
-    let missing = tpdf_lib::attachments::save(&source, 3, &dir.join("none.csv"), None, &outside);
+    let missing =
+        tpdf_lib::attachments::save(&source, &expected, 3, &dir.join("none.csv"), None, &outside);
     report.check(
         "an attachment the document does not have is refused in the reader's words",
         missing

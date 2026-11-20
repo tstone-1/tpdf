@@ -227,6 +227,31 @@ describe("Sidebar keyboard activation", () => {
     };
   }
 
+  it("keeps a branch collapsed when the same document's destinations refresh", () => {
+    const bar = tree([]);
+    const source = nested(2);
+    bar.setOutline(source);
+    bar.setAllExpanded(false);
+    bar.setOutline({ ...source, items: [...source.items] }, source);
+    expect(bar.elementFor("0.0")).toBeNull();
+    bar.setOutline(nested(2));
+    expect(bar.elementFor("0.0")).not.toBeNull();
+    bar.destroy();
+  });
+
+  it("leaves a visible tab stop when the current child is collapsed", () => {
+    const bar = tree([]);
+    bar.setOutline(nested(2));
+    bar.setPosition(1, 0);
+    bar.revealCurrent();
+    expect(bar.elementFor("0.0")?.tabIndex).toBe(0);
+    bar.setAllExpanded(false);
+    expect(bar.elementFor("0.0")).toBeNull();
+    expect(bar.elementFor("0")?.tabIndex).toBe(0);
+    expect(bar.elementFor("1")?.tabIndex).toBe(-1);
+    bar.destroy();
+  });
+
   function nestedTree(): Sidebar {
     const bar = new Sidebar(dom.root as unknown as HTMLElement, {
       onNavigate: () => {},

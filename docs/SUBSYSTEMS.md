@@ -356,6 +356,16 @@ the installed application may be running alongside the test build.
 
 ## What the worker writes and reads, and the password
 
+The attachment picker lists files from the open document graph. At extraction, the parent
+copies the source into anonymous shared memory and checks the snapshot against the
+document's opening fingerprint. The worker decodes the selected index from that snapshot.
+An external replacement during the save dialog therefore cannot supply a different attachment.
+
+On structural page saves, page labels follow the original slots. A numbering range split
+by a move retains its starting number and its prefix as a direct PDF text string.
+PDFium also reads an indirect prefix, but pypdf discards that rule and falls back to a
+physical page number. The writer bounds the total prefix bytes copied across new runs.
+
 **Since 2026-08-22 the worker also *writes* with `lopdf`.** `Request::Append` builds the update
 section for a save that only adds marks, because doing so is a pure function of the document's
 bytes and the plan — and those bytes are the attacker's. It runs where every other parse of
@@ -758,7 +768,10 @@ of the shared words just before and after it, both included. Its words are count
 `left_unread` and `right_unread` and listed nowhere. Before 2026-10-19 they were listed as
 removed, and the user-test kit's inspection report, whose final page 2 is a scan, read as
 "1 change: the whole of page 2 removed" with the real change, *passed* to *failed*, invisible.
-A document with no text on any page is refused before this by both callers.
+Both callers refuse a document with no words on any page. The tokenizer identifies the pages
+without words, including pages whose only extracted characters are separators or soft hyphens.
+A failed extraction stops the comparison. A change gets context only from the adjacent matched
+runs, and an unaligned gap contributes to the replacement count only if it was compared.
 
 In the window `comparison.ts` holds the state (`ComparisonState`): which two views, the
 current change, and whether either document has been edited since, which takes the paint off

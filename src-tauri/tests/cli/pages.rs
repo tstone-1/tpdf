@@ -455,3 +455,134 @@ pub(super) fn operations(report: &mut Report) {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// PDFium reads the saved results, independent of the page-tree and link writers.
+pub(super) fn navigation(report: &mut Report) {
+    let bindings = super::bindings().expect("PDFium for navigation checks");
+    let dir = scratch("page-navigation");
+    let path = dir.join("input.pdf");
+    fixture(&path, &["Front", "Contents", "Body"]);
+    let mut doc = Document::load(&path).expect("fixture");
+    let ids = tpdf_lib::pagetree::ordered_pages(&doc);
+    let roman = doc.add_object(dictionary! {
+        "Nums" => vec![0.into(), Object::Dictionary(dictionary! { "S" => "r" })],
+        "Limits" => vec![0.into(), 0.into()],
+    });
+    let body = doc.add_object(dictionary! {
+        "Nums" => vec![2.into(), Object::Dictionary(dictionary! {
+            "S" => "D", "P" => Object::string_literal("Body-"), "St" => 3,
+        })],
+        "Limits" => vec![2.into(), 2.into()],
+    });
+    doc.catalog_mut().unwrap().set(
+        "PageLabels",
+        dictionary! {
+            "Kids" => vec![Object::Reference(roman), Object::Reference(body)],
+        },
+    );
+    let outline = doc.new_object_id();
+    let mut bookmarks = Vec::new();
+    let mut links = Vec::new();
+    for fit in ["XYZ", "FitH"] {
+        let mut destination = vec![
+            Object::Reference(ids[0]),
+            Object::Name(fit.as_bytes().into()),
+        ];
+        if fit == "XYZ" {
+            destination.extend([Object::Null, 600.into(), Object::Null]);
+        } else {
+            destination.push(600.into());
+        }
+        let bookmark = doc.add_object(dictionary! {
+            "Title" => Object::string_literal(fit), "Parent" => outline, "Dest" => destination.clone(),
+        });
+        if let Some(&prev) = bookmarks.last() {
+            doc.get_dictionary_mut(prev).unwrap().set("Next", bookmark);
+            doc.get_dictionary_mut(bookmark).unwrap().set("Prev", prev);
+        }
+        bookmarks.push(bookmark);
+        links.push(Object::Reference(doc.add_object(dictionary! {
+            "Subtype" => "Link", "Rect" => vec![90.into(), 650.into(), 120.into(), 680.into()],
+            "Dest" => destination,
+        })));
+    }
+    doc.objects.insert(
+        outline,
+        dictionary! {
+            "Type" => "Outlines", "First" => bookmarks[0], "Last" => bookmarks[1], "Count" => 2,
+        }
+        .into(),
+    );
+    doc.catalog_mut().unwrap().set("Outlines", outline);
+    let page = doc.get_dictionary_mut(ids[0]).unwrap();
+    page.set("MediaBox", vec![0.into(), 0.into(), 595.into(), 842.into()]);
+    page.set("Annots", links);
+    page.remove(b"CropBox");
+    for (inset, expected) in [(false, 242.0), (true, 142.0)] {
+        if inset {
+            doc.get_dictionary_mut(ids[0]).unwrap().set(
+                "CropBox",
+                vec![50.into(), 50.into(), 545.into(), 742.into()],
+            );
+        }
+        doc.save(&path).unwrap();
+        let opened = tpdf_lib::document::OpenDocument::open(bindings, &path, None).unwrap();
+        let read = tpdf_lib::outline::read(&opened);
+        let scanned = tpdf_lib::links::scan_from(&doc, 3).unwrap();
+        let target = tpdf_lib::outline::Target::Page {
+            page: 0,
+            top_pt: Some(expected),
+        };
+        report.check(
+            "FitH and XYZ links and bookmarks agree with the visible box",
+            read.items.len() == 2
+                && scanned.items.len() == 2
+                && read.items.iter().all(|item| item.target == target)
+                && scanned.items.iter().all(|item| item.target == target),
+            &format!("inset={inset}, expected={expected}"),
+        );
+        assert_eq!(read.page_labels, ["i", "ii", "Body-3"]);
+    }
+
+    // Drop the first page, insert an unlabeled one, and move the body ahead
+    // of the remaining front matter. All three changes affect a different run.
+    let inserted = doc.add_object(dictionary! {
+        "Type" => "Page", "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+    });
+    let order = [ids[2], inserted, ids[1]];
+    tpdf_lib::pagetree::materialise(&mut doc, &[1], Some(&order), [Some(2), None, Some(1)])
+        .expect("remap labels");
+    doc.save(&path).unwrap();
+    let opened = tpdf_lib::document::OpenDocument::open(bindings, &path, None).unwrap();
+    let labels = tpdf_lib::outline::read(&opened).page_labels;
+    let saved = Document::load(&path).unwrap();
+    let rules = saved
+        .catalog()
+        .unwrap()
+        .get(b"PageLabels")
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"Nums")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    report.check(
+        "a reader can read the prefix directly from the remapped numbering rule",
+        rules[1]
+            .as_dict()
+            .unwrap()
+            .get(b"P")
+            .and_then(Object::as_str)
+            .ok()
+            == Some(b"Body-"),
+        "the numbered body starts the saved page sequence",
+    );
+    report.check(
+        "labels follow surviving pages after reorder, insert and delete",
+        labels == ["Body-3", "", "ii"],
+        &format!("{labels:?}"),
+    );
+    drop(opened);
+    std::fs::remove_dir_all(dir).unwrap();
+}

@@ -4375,10 +4375,10 @@ fn compare_sample() -> report::Compared {
             path: "survey-v2.pdf".into(),
             pages: 2,
             pages_without_text: Vec::new(),
-            words: 398,
+            words: 446,
             words_not_compared: 37,
         },
-        removed_words: 16,
+        removed_words: 5,
         added_words: 2,
         total_changes: 3,
         unaligned: 0,
@@ -4406,6 +4406,38 @@ fn compare_sample() -> report::Compared {
             ),
         ],
     }
+}
+
+#[test]
+fn compare_sample_accounts_for_every_word_and_change() {
+    let sample = compare_sample();
+    let matched =
+        |side: &report::ComparedFile, changed| side.words - changed - side.words_not_compared;
+    assert_eq!(
+        matched(&sample.old, sample.removed_words),
+        matched(&sample.new, sample.added_words)
+    );
+    assert_eq!(sample.total_changes as usize, sample.changes.len());
+    let words = |quote: &str| {
+        assert!(!quote.ends_with('…'), "sample quotes are complete");
+        quote.split_whitespace().count()
+    };
+    assert_eq!(
+        sample.removed_words as usize,
+        sample
+            .changes
+            .iter()
+            .map(|c| words(&c.removed))
+            .sum::<usize>()
+    );
+    assert_eq!(
+        sample.added_words as usize,
+        sample
+            .changes
+            .iter()
+            .map(|c| words(&c.added))
+            .sum::<usize>()
+    );
 }
 
 #[test]
