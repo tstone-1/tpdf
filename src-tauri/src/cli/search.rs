@@ -218,6 +218,8 @@ fn color(raw: &str) -> Result<[f32; 3], String> {
 pub struct Plan {
     /// `edit`'s schema, 1.
     pub schema: u32,
+    /// SHA-256 of the immutable input used to locate the marks.
+    pub source_sha256: String,
     /// One `annotate` per rectangle.
     pub operations: Vec<PlanOperation>,
 }
@@ -246,6 +248,7 @@ pub struct PlanOperation {
 /// or more rectangles than one plan may hold.
 pub fn plan(
     file: &report::SearchedFile,
+    digest: &[u8; 32],
     kind: Markup,
     color: Option<[f32; 3]>,
 ) -> Result<Plan, String> {
@@ -278,6 +281,7 @@ pub fn plan(
     }
     Ok(Plan {
         schema: 1,
+        source_sha256: crate::encoding::hex_lower(digest),
         operations,
     })
 }
@@ -321,6 +325,35 @@ impl Subcommand for Search {
     ) -> Result<Exit, Failure> {
         let password = password(self.password_env.as_deref())?;
         let queries = queries(self).map_err(|why| Failure::new(Exit::Usage, why))?;
+        let mut digest = None;
+        let files = self
+            .files
+            .iter()
+            .map(|path| {
+                let opened = super::opened_or_stdin(path).and_then(|(file, len)| {
+                    if self.annotate.is_none() {
+                        return Ok((file, len));
+                    }
+                    // A pathname can be replaced and an open file can change in place.
+                    // Search and hash the same private copy. Stdin is already spooled.
+                    let file = if path == Path::new("-") {
+                        file
+                    } else {
+                        use std::io::Read;
+                        let mut copy = super::unnamed_file().map_err(|e| e.to_string())?;
+                        let bytes = std::io::copy(&mut file.take(len as u64), &mut copy)
+                            .map_err(|e| format!("could not snapshot {}: {e}", path.display()))?;
+                        if bytes != len as u64 {
+                            return Err(format!("{} changed while being read", path.display()));
+                        }
+                        copy
+                    };
+                    digest = Some(crate::fingerprint::Fingerprint::of_open(&file, path)?.digest);
+                    Ok((file, len))
+                });
+                search_one(env, self, path, &queries, password.as_deref(), opened)
+            })
+            .collect();
         let report = report::Searched {
             schema: SCHEMA,
             command: "search".into(),
@@ -331,11 +364,7 @@ impl Subcommand for Search {
                     query: query.clone(),
                 })
                 .collect(),
-            files: self
-                .files
-                .iter()
-                .map(|path| search_one(env, self, path, &queries, password.as_deref()))
-                .collect(),
+            files,
         };
         for file in &report.files {
             if let Some(error) = &file.error {
@@ -351,7 +380,10 @@ impl Subcommand for Search {
             // the document and report success for a search that found nothing.
             let exit = search_exit(&report);
             if exit == Exit::Ok {
-                let plan = plan(&report.files[0], kind, self.color)
+                let digest = digest.ok_or_else(|| {
+                    Failure::new(Exit::Internal, "the searched revision is missing")
+                })?;
+                let plan = plan(&report.files[0], &digest, kind, self.color)
                     .map_err(|why| Failure::new(Exit::Refused, why))?;
                 json(out, &plan);
             }
@@ -503,6 +535,7 @@ fn search_one(
     path: &Path,
     queries: &[(SearchKind, String, Prepared)],
     password: Option<&str>,
+    opened: Result<(std::fs::File, usize), String>,
 ) -> report::SearchedFile {
     let shown = path.display().to_string();
     let failed = |kind: ErrorKind, message: String| report::SearchedFile {
@@ -524,7 +557,7 @@ fn search_one(
         Declined::Refused(why) => failed(ErrorKind::Refused, format!("{shown}: {why}")),
         Declined::Failed(why) => failed(ErrorKind::Failed, format!("{shown}: {why}")),
     };
-    let (file, len) = match super::opened_or_stdin(path) {
+    let (file, len) = match opened {
         Ok(opened) => opened,
         Err(why) => return failed(ErrorKind::Unreadable, why),
     };

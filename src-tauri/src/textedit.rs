@@ -1645,6 +1645,7 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
 /// the first and last of its operators, and the transform in force at them.
 #[derive(Clone, Copy, Debug)]
 struct DrawnPath {
+    clip: Option<[f32; 4]>,
     operations: (usize, usize),
     transform: [f64; 6],
 }

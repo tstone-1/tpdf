@@ -836,7 +836,7 @@ fn unnamed_file() -> std::io::Result<std::fs::File> {
         use std::os::windows::fs::OpenOptionsExt;
         // FILE_FLAG_DELETE_ON_CLOSE: Windows cannot unlink an open file, so
         // the removal is asked for at the open instead.
-        options.custom_flags(0x0400_0000);
+        options.share_mode(0).custom_flags(0x0400_0000);
     }
     // A counter and the process id, not the clock: two files made in the same
     // microsecond collide on a timestamp (`docs/TRAPS.md`), and `create_new`

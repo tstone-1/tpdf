@@ -144,14 +144,8 @@ pub fn append(into: &mut Document, from: &Document) -> Result<usize, String> {
 /// placement, but because the alternative is an imported page pointing up into
 /// a document it is no longer part of, and a tree rebuild overwrites it anyway.
 ///
-/// **A page you did not ask for is a wall, not a door.** The walk that decides
-/// what an incoming page needs cannot enter a page left behind, so a `/Dest` or
-/// a `/Link` naming one is shifted with everything else and left dangling. That
-/// is the module's existing position --- a destination reached by name does not
-/// survive a merge --- arriving for a page reached by *reference*, and it is the
-/// only shape available: importing the page would bring content the caller did
-/// not ask for, which is the leak `docs/TRAPS.md` records under a shipped
-/// extract carrying all eight pages' streams.
+/// References to pages or fields left behind and absent objects become PDF null.
+/// This preserves their unresolved meaning when a later import allocates more objects.
 ///
 /// # Errors
 ///
@@ -238,29 +232,25 @@ pub fn import(
     // Sorted, so that a document with two objects that both refuse produces the
     // same message twice running. A `HashSet`'s order is not a fact about the
     // input, and a failure that moves is one nobody can reproduce.
-    let mut needed: Vec<ObjectId> = needed(from, &walked, &left)?.into_iter().collect();
+    let mut copied = needed(from, &walked, &left)?;
+    copied.retain(|id| from.objects.contains_key(id));
+    let mut needed: Vec<ObjectId> = copied.iter().copied().collect();
     needed.sort_unstable();
 
     for id in needed {
         let object = match detached.get(&id) {
             Some(dictionary) => {
-                let mut dictionary = shifted_dictionary(dictionary, by, 0)?;
+                let mut dictionary = shifted_dictionary(dictionary, by, &copied, 0)?;
                 // The destination's root, not the shifted source's: the tree
                 // above this page is not coming with it.
                 dictionary.set("Parent", Object::Reference(root));
                 Object::Dictionary(dictionary)
             }
             None => match widgets.get(&id) {
-                Some(dictionary) => Object::Dictionary(shifted_dictionary(dictionary, by, 0)?),
-                None => match from.objects.get(&id) {
-                    Some(object) => shifted(object, by, 0)?,
-                    // A dangling reference, which `sweep::reachable` also steps
-                    // over: it names no object, so it carries no content. Left
-                    // dangling rather than repaired --- shifting it would be a
-                    // guess, and dropping the reference that names it would mean
-                    // editing an object the reader did not ask to change.
-                    None => continue,
-                },
+                Some(dictionary) => {
+                    Object::Dictionary(shifted_dictionary(dictionary, by, &copied, 0)?)
+                }
+                None => shifted(&from.objects[&id], by, &copied, 0)?,
             },
         };
         into.objects.insert(shifted_id(id, by)?, object);
@@ -561,7 +551,12 @@ fn shifted_id(id: ObjectId, by: u32) -> Result<ObjectId, String> {
 /// recursive. A document `lopdf` will load cannot reach the bound --- its own
 /// parser stops at 100 levels --- so this guards a change to that constant
 /// rather than any input.
-fn shifted(object: &Object, by: u32, depth: usize) -> Result<Object, String> {
+fn shifted(
+    object: &Object,
+    by: u32,
+    copied: &HashSet<ObjectId>,
+    depth: usize,
+) -> Result<Object, String> {
     if depth > sweep::MAX_NESTING {
         return Err(said!(
             "an object nests deeper than {limit} levels",
@@ -569,15 +564,17 @@ fn shifted(object: &Object, by: u32, depth: usize) -> Result<Object, String> {
         ));
     }
     Ok(match object {
-        Object::Reference(id) => Object::Reference(shifted_id(*id, by)?),
+        Object::Reference(id) if copied.contains(id) => Object::Reference(shifted_id(*id, by)?),
+        // An undefined indirect reference is PDF null. Its number may be allocated later.
+        Object::Reference(_) => Object::Null,
         Object::Array(items) => Object::Array(
             items
                 .iter()
-                .map(|item| shifted(item, by, depth + 1))
+                .map(|item| shifted(item, by, copied, depth + 1))
                 .collect::<Result<_, _>>()?,
         ),
         Object::Dictionary(dictionary) => {
-            Object::Dictionary(shifted_dictionary(dictionary, by, depth + 1)?)
+            Object::Dictionary(shifted_dictionary(dictionary, by, copied, depth + 1)?)
         }
         Object::Stream(stream) => {
             // Cloned whole and then rewritten, so that everything a stream
@@ -585,7 +582,7 @@ fn shifted(object: &Object, by: u32, depth: usize) -> Result<Object, String> {
             // `allows_compression`, which decides whether a font stream survives
             // a later `compress()`.
             let mut stream = stream.clone();
-            stream.dict = shifted_dictionary(&stream.dict, by, depth + 1)?;
+            stream.dict = shifted_dictionary(&stream.dict, by, copied, depth + 1)?;
             // The position it was parsed from, which is a fact about the file it
             // came out of and is about to be false. `lopdf` reads it back when
             // it decodes a stream whose `/Length` is an indirect reference.
@@ -600,11 +597,12 @@ fn shifted(object: &Object, by: u32, depth: usize) -> Result<Object, String> {
 fn shifted_dictionary(
     dictionary: &Dictionary,
     by: u32,
+    copied: &HashSet<ObjectId>,
     depth: usize,
 ) -> Result<Dictionary, String> {
     let mut out = Dictionary::new();
     for (key, value) in dictionary.iter() {
-        out.set(key.to_vec(), shifted(value, by, depth + 1)?);
+        out.set(key.to_vec(), shifted(value, by, copied, depth + 1)?);
     }
     Ok(out)
 }
@@ -961,7 +959,7 @@ mod tests {
             Object::Reference((1, 0)),
             Object::Dictionary(dictionary! { "K" => Object::Reference((2, 5)) }),
         ]);
-        let moved = shifted(&object, 40, 0).expect("shift");
+        let moved = shifted(&object, 40, &HashSet::from([(1, 0), (2, 5)]), 0).expect("shift");
         let items = moved.as_array().expect("array");
         assert_eq!(items[0].as_reference().expect("reference"), (41, 0));
         assert_eq!(
@@ -986,7 +984,7 @@ mod tests {
     #[test]
     fn the_shift_clears_a_streams_recorded_position() {
         let stream = Object::Stream(Stream::new(dictionary! { "Length" => 4 }, b"data".to_vec()));
-        let moved = shifted(&stream, 10, 0).expect("shift");
+        let moved = shifted(&stream, 10, &HashSet::new(), 0).expect("shift");
         assert!(
             moved.as_stream().expect("stream").start_position.is_none(),
             "a position in the file it came from is about to be false"
@@ -1126,12 +1124,10 @@ mod tests {
             .expect("its destination")
             .clone();
 
-        // The wall: the destination still names a page, and that page is not in
-        // this document. Dangling rather than repaired --- see `import`.
-        let named = dest[0].as_reference().expect("a page reference");
-        assert!(
-            into.get_object(named).is_err(),
-            "the page it names did not come across"
+        assert_eq!(
+            dest[0],
+            Object::Null,
+            "a later import cannot reuse this destination"
         );
         assert!(
             !streams(&into).contains(&b"three".to_vec()),

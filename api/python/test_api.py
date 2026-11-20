@@ -279,6 +279,26 @@ class ClientTests(unittest.TestCase):
                 self.pdf.mark_matches(self.source, nothing, texts=['synthetic'], **bad)
         self.assertFalse(nothing.exists())
 
+    def test_cli_highlight_plan_binds_the_bytes_searched(self):
+        import hashlib
+        data = self.source.read_bytes()
+        plan = subprocess.check_output([BINARY, 'search', '-', '--text', 'ORIGINAL',
+                                        '--annotate', 'highlight'], input=data)
+        named = subprocess.check_output([BINARY, 'search', self.source, '--text', 'ORIGINAL',
+                                         '--annotate', 'highlight'])
+        self.assertEqual(json.loads(plan), json.loads(named))
+        self.assertEqual(json.loads(plan)['source_sha256'], hashlib.sha256(data).hexdigest())
+        output = self.root / 'highlighted.pdf'
+        edit = [BINARY, 'edit', self.source, '--plan', '-', '-o', output, '--force']
+        subprocess.run(edit, input=plan, check=True, capture_output=True)
+        self.assertEqual(self.pdf.comments(output)['comments'][0]['kind'], 'highlight')
+        previous = output.read_bytes()
+        fixture(self.source, content=b'BT /F1 12 Tf 90 260 Td (SYNTHETIC ORIGINAL) Tj ET')
+        refused = subprocess.run(edit, input=plan, capture_output=True)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(b'searched revision', refused.stderr)
+        self.assertEqual(output.read_bytes(), previous)
+
     def test_mark_matches_refuses_a_different_revision_at_the_same_path(self):
         client = Tpdf(BINARY, cwd=self.root, timeout=30)
         search = client.search
@@ -297,6 +317,24 @@ class ClientTests(unittest.TestCase):
             with self.assertRaisesRegex(CommandError, 'searched revision'):
                 client.mark_matches(self.source.name, output.name, texts=['ORIGINAL'], force=True)
         self.assertEqual(output.read_bytes(), b'prior output')
+
+    def test_render_and_crop_use_physical_points(self):
+        import struct
+        for unit in (1, 2):
+            width, height = 400 // unit, 600 // unit
+            write_pdf(self.source, [
+                b'<< /Type /Catalog /Pages 2 0 R >>',
+                b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+                f'<< /Type /Page /Parent 2 0 R /UserUnit {unit} /Resources << >> '
+                f'/MediaBox [0 0 {width} {height}] >>'.encode(),
+            ])
+            png = self.root / 'page.png'
+            self.pdf.render(self.source, png, dpi=72, force=True)
+            self.assertEqual(struct.unpack('>II', png.read_bytes()[16:24]), (400, 600))
+            cropped = self.root / 'crop.pdf'
+            self.pdf.crop(self.source, cropped, rect=[20, 30, 80, 90], force=True)
+            self.pdf.render(cropped, png, dpi=72, force=True)
+            self.assertEqual(struct.unpack('>II', png.read_bytes()[16:24]), (80, 90))
 
     def test_page_helpers_merge_extract_and_split_read_back(self):
         second = self.root / 'second.pdf'

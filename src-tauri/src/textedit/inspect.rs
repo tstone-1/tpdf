@@ -83,20 +83,11 @@ impl<'a> Graphics<'a> {
             if content.operations[index + rectangles_consumed - 1].operator != "n" {
                 tags.paint();
             }
-            if let Some(bounds) = clipping::drawn(
-                &content.operations[index..],
-                rectangles_consumed,
-                self.page_transform,
-            )? {
-                found.paths.insert(
-                    found.graphics.len(),
-                    DrawnPath {
-                        operations: (index, index + rectangles_consumed - 1),
-                        transform: self.page_transform,
-                    },
-                );
-                found.graphics.push(found.to_display(bounds));
-            }
+            self.record_path(
+                &content.operations[index..index + rectangles_consumed],
+                index,
+                found,
+            )?;
             path_until = index + rectangles_consumed;
         } else if !diagonal(self.page_transform) {
             return Err(said!("non-diagonal clips are not editable yet"));
@@ -150,19 +141,66 @@ impl<'a> Graphics<'a> {
         if content.operations[index + consumed - 1].operator != "n" {
             tags.paint();
         }
-        if let Some(bounds) =
-            clipping::drawn(&content.operations[index..], consumed, self.page_transform)?
-        {
-            found.paths.insert(
-                found.graphics.len(),
-                DrawnPath {
-                    operations: (index, index + consumed - 1),
-                    transform: self.page_transform,
-                },
-            );
+        self.record_path(&content.operations[index..index + consumed], index, found)?;
+        Ok(index + consumed)
+    }
+
+    fn record_path(
+        &self,
+        ops: &[Operation],
+        index: usize,
+        found: &mut Found,
+    ) -> Result<(), String> {
+        let (paint, path) = ops
+            .split_last()
+            .ok_or_else(|| said!("invalid painted path"))?;
+        if paint.operator == "n" {
+            return Ok(());
+        }
+        let stroked = matches!(paint.operator.as_str(), "S" | "s" | "B" | "B*" | "b" | "b*");
+        let starts: Vec<usize> = path
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| matches!(op.operator.as_str(), "re" | "m").then_some(i))
+            .chain(std::iter::once(path.len()))
+            .collect();
+        for pair in starts.windows(2) {
+            let subpath = &path[pair[0]..pair[1]];
+            let Some(mut bounds) = clipping::drawn(subpath, self.page_transform)? else {
+                continue;
+            };
+            if stroked {
+                let [a, b, c, d, ..] = self.page_transform;
+                let radius = self.line_width * 0.5;
+                let dx = radius * (a.abs() + c.abs());
+                let dy = radius * (b.abs() + d.abs());
+                bounds = [
+                    bounds[0] - dx,
+                    bounds[1] - dy,
+                    bounds[2] + dx,
+                    bounds[3] + dy,
+                ];
+            }
+            // Translating one subpath would translate its siblings as well.
+            let simple_line =
+                subpath.len() == 2 && subpath[1].operator == "l" && self.line_width > 0.;
+            if starts.len() == 2
+                && (!stroked || simple_line)
+                && !self.turned_clip
+                && self.compound_clips.is_empty()
+            {
+                found.paths.insert(
+                    found.graphics.len(),
+                    DrawnPath {
+                        operations: (index, index + path.len()),
+                        transform: self.page_transform,
+                        clip: self.clip.map(|clip| found.to_display(clip)),
+                    },
+                );
+            }
             found.graphics.push(found.to_display(bounds));
         }
-        Ok(index + consumed)
+        Ok(())
     }
 
     pub fn concatenate(&mut self, values: &[Object]) -> Result<(), String> {

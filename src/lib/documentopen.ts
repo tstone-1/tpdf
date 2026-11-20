@@ -12,7 +12,7 @@
  */
 
 import { isOpenRefusal, type DocumentInfo, type PageSize } from "./ipc";
-import { freshState, twinsOf, type DocumentTab, type FreshState, type KeptScope } from "./documenttabs";
+import { freshState, twinsOf, type DocumentTab, type FreshState } from "./documenttabs";
 import type { Edits } from "./edits";
 import { clampPlace, type Place } from "./session";
 
@@ -75,6 +75,14 @@ export function placeToResume(
   return remembered ? clampPlace(remembered, pageCount) : null;
 }
 
+/** The current slot of the page this view last showed in the same edit model. */
+export function retainedPlace(tab: DocumentTab | undefined): Place | null {
+  const place = tab?.place;
+  if (!tab || !place || place.pageId === undefined) return place ?? null;
+  const page = tab.edits.state.pages.findIndex((entry) => entry.id === place.pageId);
+  return page < 0 ? place : { ...place, page };
+}
+
 /**
  * Points the other views of a document at what a save or a reload made of it.
  *
@@ -90,7 +98,7 @@ export function placeToResume(
  * The words and how they are matched stay.
  */
 export function repoint<D, E>(
-  twins: readonly { doc: D; edits: E; searchScope: KeptScope | null }[],
+  twins: readonly ({ doc: D; edits: E } & Pick<DocumentTab, "searchScope" | "measures" | "place">)[],
   doc: D,
   edits: E,
 ): void {
@@ -98,6 +106,8 @@ export function repoint<D, E>(
     twin.doc = doc;
     twin.edits = edits;
     twin.searchScope = null;
+    twin.measures.clear();
+    if (twin.place) delete twin.place.pageId;
   }
 }
 

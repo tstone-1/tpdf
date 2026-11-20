@@ -1842,6 +1842,16 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
 
       report.emit("[views] editing in one view");
       const firstPage = host.edits()?.state.pages[0]?.id ?? -1;
+      // Park the view reading page C, then remove A through its twin.
+      await host.activate(b.id);
+      await host.activate(twin.id);
+      await host.apply((edits) => edits.delete(firstPage));
+      await host.activate(a.id);
+      await settled("the hidden view remounts on C", () => host.status()?.page === 2);
+      check("the remounted view follows its original page", host.viewer()?.position.page === 1);
+      host.run("edit.undo");
+      await settled("the original pages return", () => drawnHere() === pages && drawnBeside() === pages);
+      await host.activate(twin.id);
       await host.apply((edits) => edits.delete(firstPage));
       await settled("the deletion", () => drawnHere() === pages - 1);
       check("an edit made in one view is drawn in the other", drawnBeside() === pages - 1);
@@ -1876,6 +1886,11 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (!again) throw new Error("the document has no second tab");
       check("a second view asked for again is a new tab on the same document",
         again.id !== twin.id && host.edits()?.doc === a.id && drawnHere() === pages - 1);
+      const measuredPage = host.edits()!.state.pages[0]!.id;
+      const measures = host.beside()!.measurements;
+      const line = measures.add(measuredPage, { x: 0, y: 0 }, { x: 10, y: 0 });
+      check("the other view has a calibrated line before saving",
+        measures.setScale(line, { value: 2, unit: "mm", decimals: 1 }) && measures.scaled(measuredPage));
       host.run("file.save");
       await host.idle();
       await settled("the save", () => host.edits()?.state.dirty === false && mountedAreas() === 2 &&
@@ -1884,6 +1899,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("a save leaves both views mounted, on the file as it is now",
         split() && host.tabs().length === 3 && drawnHere() === pages - 1 && drawnBeside() === pages - 1 &&
         host.tabs().filter((tab) => tab.path === first).every((tab) => tab.dirty === false));
+      check("both viewers start the new model without lines or calibration",
+        [host.viewer(), host.beside()].every((v) => v && v.measurements.count === 0 && !v.measurements.scaled(measuredPage)));
       check("the reader is still in the view they saved from", focusedSide() === "right");
       check("the handle from before the save is released", await released(a.id));
       host.run("view.focusOtherSide");

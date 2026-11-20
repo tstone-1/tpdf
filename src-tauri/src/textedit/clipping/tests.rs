@@ -129,6 +129,11 @@ fn textedit_clip_transform_is_fixed_at_creation_and_restored_by_q() {
 
 #[test]
 fn textedit_clips_refuse_partial_compound_painted_and_unbounded_paths() {
+    let paths = "3 3 m 4 3 l 4 4 l 3 4 l h ".repeat(33);
+    for (paint, editable) in [("f", true), ("W n", false)] {
+        let doc = page(format!("{paths}{paint} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes());
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), editable, "{paint}");
+    }
     for prefix in [
         "0 0 300 240 re",
         "0 0 300 240 re W",

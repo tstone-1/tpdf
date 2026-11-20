@@ -5069,22 +5069,26 @@ fn make_blank_pages(
                     page = at + 1
                 ))
             })?,
-            Slot::Made(size) => doc.add_object(lopdf::Dictionary::from_iter([
-                ("Type", Object::Name(b"Page".to_vec())),
-                (
-                    "MediaBox",
-                    Object::Array(vec![
-                        Object::Real(0.0),
-                        Object::Real(0.0),
-                        // `as f32` because that is what `lopdf` stores, which
-                        // is also what a PDF real is: the model carries `f64`
-                        // for the crop's sake and nothing here needs the range.
-                        Object::Real(size.width as f32),
-                        Object::Real(size.height as f32),
-                    ]),
-                ),
-                ("Resources", Object::Dictionary(lopdf::Dictionary::new())),
-            ])),
+            Slot::Made(size) => {
+                let mut page = lopdf::Dictionary::from_iter([
+                    ("Type", Object::Name(b"Page".to_vec())),
+                    (
+                        "MediaBox",
+                        Object::Array(vec![
+                            Object::Real(0.0),
+                            Object::Real(0.0),
+                            // `as f32` because that is what `lopdf` stores, which
+                            // is also what a PDF real is: the model carries `f64`
+                            // for the crop's sake and nothing here needs the range.
+                            Object::Real(size.width as f32),
+                            Object::Real(size.height as f32),
+                        ]),
+                    ),
+                    ("Resources", Object::Dictionary(lopdf::Dictionary::new())),
+                ]);
+                pagetree::page_defaults(&mut page);
+                doc.add_object(page)
+            }
         };
         out.push((id, turns));
     }

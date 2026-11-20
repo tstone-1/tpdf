@@ -62,6 +62,14 @@ pub(super) fn compound(
     ops: &[Operation],
     ctm: [f64; 6],
 ) -> Result<Option<(usize, Region)>, String> {
+    // Establish that this path clips before applying clip-only bounds.
+    if !ops
+        .iter()
+        .find(|op| !matches!(op.operator.as_str(), "m" | "l" | "h"))
+        .is_some_and(|op| matches!(op.operator.as_str(), "W" | "W*"))
+    {
+        return Ok(None);
+    }
     let mut rectangles = Vec::new();
     // Whether a rectangle was accepted only as nearly axis-aligned; see below.
     let mut inexact = false;
@@ -425,29 +433,11 @@ pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
     Err(invalid())
 }
 
-/// The page-space envelope of a path sequence `painted` or `path` has already
-/// accepted, or `None` when the sequence paints nothing.
-///
-/// Every coordinate is already known to be finite and in range -- both callers
-/// check each point before returning -- so this only takes extrema. A cubic's
-/// control-point hull bounds the curve, which is why the operands are taken as
-/// they are written rather than flattened. The sequence's own ending operator
-/// decides whether there is anything to bound: `n` ends a path without painting
-/// it, which is the same test `tags.paint()` is guarded by.
-pub(super) fn drawn(
-    ops: &[Operation],
-    consumed: usize,
-    ctm: [f64; 6],
-) -> Result<Option<Rect>, String> {
-    let end = consumed
-        .checked_sub(1)
-        .and_then(|last| ops.get(last))
-        .ok_or_else(|| said!("invalid painted path"))?;
-    if end.operator == "n" {
-        return Ok(None);
-    }
+/// The page-space envelope of one validated painted subpath. The control
+/// points of a cubic bound its curve.
+pub(super) fn drawn(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<Rect>, String> {
     let mut envelope: Option<Rect> = None;
-    for op in &ops[..consumed] {
+    for op in ops {
         let mut corners = Vec::new();
         if op.operator == "re" {
             let mut values = [0.; 4];

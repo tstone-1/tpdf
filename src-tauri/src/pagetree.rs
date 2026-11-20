@@ -107,7 +107,7 @@ pub fn rotations_from(document: &Document, page_count: usize) -> Result<Vec<u8>,
 /// does not --- which is the half nobody has a fixture for.
 pub fn effective_rotation(doc: &Document, page: ObjectId) -> i64 {
     inherited(doc, page, b"Rotate")
-        .and_then(|value| value.as_i64().ok())
+        .and_then(|value| crate::encoding::resolve(doc, &value).as_i64().ok())
         .unwrap_or(0)
 }
 
@@ -383,7 +383,7 @@ pub fn displayed_boxes_from(
 /// # Errors
 ///
 /// The page tree and the renderer counting different numbers of pages.
-fn pages_of(document: &Document, page_count: usize) -> Result<Vec<ObjectId>, String> {
+pub(crate) fn pages_of(document: &Document, page_count: usize) -> Result<Vec<ObjectId>, String> {
     let pages = document.get_pages();
     if pages.len() != page_count {
         return Err(said!(
@@ -506,7 +506,7 @@ pub fn apply_turns(doc: &mut Document, turns: &[(ObjectId, u8)]) -> Result<(), S
         if extra == 0 {
             continue;
         }
-        let composed = (effective_rotation(doc, *id) + extra * 90).rem_euclid(360);
+        let composed = (effective_rotation(doc, *id).rem_euclid(360) + extra * 90).rem_euclid(360);
         doc.get_object_mut(*id)
             .and_then(Object::as_dict_mut)
             .map_err(|e| said!("page {page:?} is not a dictionary: {e}", page = id))?
@@ -620,6 +620,9 @@ pub fn doomed_pages(
 /// page tree naming an object that is gone is a document that opens and prints
 /// blank pages.
 pub fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
+    if numbers.is_empty() {
+        return Ok(());
+    }
     let pages = doc.get_pages();
     let doomed = doomed_pages(&pages, numbers);
     if doomed.is_empty() {
@@ -837,10 +840,8 @@ pub fn reorder_pages(doc: &mut Document, order: &[ObjectId]) -> Result<(), Strin
 /// trees, and one that stops holding the moment either is edited. The page takes
 /// its size, box, resources and rotation with it.
 ///
-/// A page that has no value for a key anywhere above it is left without one, and
-/// will inherit whatever its new root supplies. That is a change, and it is only
-/// reachable on a document that never stated the key at all --- which for
-/// `/MediaBox` means a file no reader can lay out.
+/// Missing rotation, crop and resources take their PDF defaults here, before
+/// the destination can supply a different value.
 ///
 /// # Errors
 ///
@@ -859,8 +860,24 @@ pub fn detached_page(doc: &Document, page: ObjectId) -> Result<Dictionary, Strin
             dictionary.set(key.to_vec(), value);
         }
     }
+    page_defaults(&mut dictionary);
     dictionary.remove(b"Parent");
     Ok(dictionary)
+}
+
+/// Materialize the defaults a new parent could override.
+pub(crate) fn page_defaults(page: &mut Dictionary) {
+    if !page.has(b"Rotate") {
+        page.set("Rotate", 0);
+    }
+    if !page.has(b"CropBox") {
+        if let Ok(media) = page.get(b"MediaBox") {
+            page.set("CropBox", media.clone());
+        }
+    }
+    if !page.has(b"Resources") {
+        page.set("Resources", Dictionary::new());
+    }
 }
 
 /// Drops the outline of a document, whole.
@@ -966,12 +983,8 @@ fn forget_in_dictionary(
 ///
 ///   - **Drop before reorder.** `reorder_pages` flattens the tree, and doing
 ///     that to pages about to be deleted rewrites ancestry for nothing.
-///   - **The outline is repaired for a deletion and untouched by a move.** A
-///     deletion leaves destinations naming pages that are not in the file, so
-///     `outline_repair` removes those entries and keeps the rest; a move
-///     leaves none, because a destination names a page *object* and the
-///     object is still there --- a bookmark follows its page to wherever the
-///     reader put it, which is what somebody who rearranged a document means.
+///   - **Check destinations before positions change.** Object destinations
+///     follow their pages. Numeric destinations depend on the old order.
 ///   - **The outline is read before the pages are dropped.** `drop_pages`
 ///     takes a deleted page out of every destination array, after which a
 ///     bookmark to it cannot be told from a damaged one.
@@ -1004,7 +1017,9 @@ pub fn materialise(
     if !dropped.is_empty() || reorder_to.is_some() {
         labels::remap(doc, source_pages)?;
     }
-    if !dropped.is_empty() {
+    if !dropped.is_empty()
+        || reorder_to.is_some_and(|order| !order.starts_with(&ordered_pages(doc)))
+    {
         // Before the pages go: `drop_pages` takes the page out of every
         // destination array, and the repair reads those arrays.
         let doomed = doomed_pages(&doc.get_pages(), dropped);
@@ -1233,6 +1248,24 @@ mod tests {
             ["page 1", "page 2", "page 3"],
             "a move removes no page object, so every destination still names one"
         );
+    }
+
+    #[test]
+    fn a_move_cannot_leave_a_numeric_destination_pointing_at_another_page() {
+        let (mut doc, kids) = three_pages_with_outline();
+        let root = crate::redact::outline_root(&doc).unwrap();
+        let first = crate::redact::first_child(&doc, root).unwrap();
+        doc.get_dictionary_mut(first)
+            .unwrap()
+            .set("Dest", vec![Object::Integer(0), "Fit".into()]);
+        materialise(
+            &mut doc,
+            &[],
+            Some(&[kids[1], kids[0], kids[2]]),
+            [Some(1), Some(0), Some(2)],
+        )
+        .unwrap();
+        assert!(!has_outline(&doc));
     }
 
     /// A three-page tree whose root hangs under a node that hangs under it.

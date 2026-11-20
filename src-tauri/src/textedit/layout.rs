@@ -1945,7 +1945,7 @@ fn wrap_room(
         give,
     } = *moving;
     let rule = landing(moves, edge, down, give);
-    let carried = underlines(page, moves, rule.1);
+    let carried = underlines(page, moves, rule.1)?;
     let geometric = blocks::geometric_page(page);
     let columns: Vec<[f64; 4]> = if geometric {
         column_runs(page, paragraph, 1 - rule.1)
@@ -2102,7 +2102,7 @@ fn wrap_room(
 /// was the first drawing in the way of 1,809 of the 2,668 wraps a drawing
 /// refused on six files of the sample (`BUILD.md`, *Underlines move with their
 /// lines*).
-fn underlines(page: &Inspection, moves: &[Move], cross: usize) -> Carried {
+fn underlines(page: &Inspection, moves: &[Move], cross: usize) -> Result<Carried, String> {
     let height = |rect: [f64; 4]| rect[cross + 2] - rect[cross];
     // Each move's line, built once. It depends on the moves alone and not on
     // the drawing, so building it inside the drawing loop made this
@@ -2130,9 +2130,9 @@ fn underlines(page: &Inspection, moves: &[Move], cross: usize) -> Carried {
         .collect();
     let mut carried = BTreeMap::new();
     for (index, drawing) in page.graphics.iter().enumerate() {
-        if !page.paths.contains_key(&index) {
+        let Some(clip) = page.paths.get(&index).map(|path| path.clip) else {
             continue;
-        }
+        };
         let drawing = drawing.map(f64::from);
         for (line, by) in &lines {
             let slack = [
@@ -2142,12 +2142,18 @@ fn underlines(page: &Inspection, moves: &[Move], cross: usize) -> Carried {
                 line[3] + LINK_SLACK,
             ];
             if height(drawing) <= UNDERLINE * height(*line) && wrap::holds(slack, drawing) {
+                if clip.is_some_and(|clip| {
+                    let clip = clip.map(f64::from);
+                    !wrap::holds(clip, drawing) || !wrap::holds(clip, shift(drawing, *by))
+                }) {
+                    return Err(wrap::drawn_over());
+                }
                 carried.insert(index, *by);
                 break;
             }
         }
     }
-    carried
+    Ok(carried)
 }
 
 /// The underlines a wrap moves ([`underlines`]).

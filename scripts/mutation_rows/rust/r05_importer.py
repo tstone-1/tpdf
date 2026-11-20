@@ -458,8 +458,8 @@ ROWS += [
         # have pointed at a page.
         "pagetree: drop the outline for a move as well as a deletion",
         "src/pagetree.rs",
-        "    if !dropped.is_empty() {\n        // Before the pages go:",
-        "    drop_outline(doc)?;\n    if !dropped.is_empty() {\n        // Before the pages go:",
+        "        let doomed = doomed_pages(&doc.get_pages(), dropped);",
+        "        drop_outline(doc)?;\n        let doomed = doomed_pages(&doc.get_pages(), dropped);",
         "materialising_a_move_keeps_the_outline",
     ),
     Mutation(
@@ -610,8 +610,8 @@ ROWS += [
         # guesses one --- and they do not all guess the same.
         "save: make a blank page with no media box",
         "src/save.rs",
-        '                (\n                    "MediaBox",',
-        '                (\n                    "NotABox",',
+        '                    (\n                        "MediaBox",',
+        '                    (\n                        "NotABox",',
         "an_inserted_page_is_written_between_the_two_it_was_put_between",
     ),
     Mutation(
@@ -620,8 +620,8 @@ ROWS += [
         # every key a check counting them would look for.
         "save: make a blank page of no size",
         "src/save.rs",
-        "                        Object::Real(size.width as f32),\n                        Object::Real(size.height as f32),",
-        "                        Object::Real(0.0),\n                        Object::Real(0.0),",
+        "                            Object::Real(size.width as f32),\n                            Object::Real(size.height as f32),",
+        "                            Object::Real(0.0),\n                            Object::Real(0.0),",
         "an_inserted_page_is_written_between_the_two_it_was_put_between",
     ),
     Mutation(

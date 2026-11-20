@@ -392,7 +392,7 @@ describe("a search confined to a selection, kept by a tab", () => {
 describe("what a tab keeps across a switch", () => {
   /** A value for every kept field, none of them a default. */
   const touched = (): TabState => ({
-    edits: { journal: "edited" } as unknown as TabState["edits"],
+    edits: { state: { pages: [1, 2, 3, 4, 5].map((n) => ({ id: pageId(n) })) } } as unknown as TabState["edits"],
     place: { path: "/fixture/1.pdf", page: 4 } as unknown as TabState["place"],
     covered: coveredWith(3, "kept words"),
     query: "needle",
@@ -416,7 +416,7 @@ describe("what a tab keeps across a switch", () => {
     const { edits: _edits, place: _place, ...restorable } = state;
     expect(restoredState(tab)).toEqual(restorable);
     expect(tab.edits).toBe(state.edits);
-    expect(tab.place).toBe(state.place);
+    expect(tab.place).toEqual({ ...state.place, pageId: pageId(5) });
   });
 
   it("restores the fresh state for a document that was never kept", () => {

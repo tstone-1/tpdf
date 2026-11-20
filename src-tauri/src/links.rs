@@ -391,7 +391,10 @@ fn target_of(
         let Ok(action) = resolve(document, action).as_dict() else {
             return Target::Broken;
         };
-        let Ok(kind) = action.get(b"S").and_then(Object::as_name) else {
+        let Ok(kind) = action
+            .get(b"S")
+            .and_then(|kind| resolve(document, kind).as_name())
+        else {
             return Target::Broken;
         };
         return match kind {

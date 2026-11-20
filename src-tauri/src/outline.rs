@@ -628,7 +628,7 @@ impl Walk<'_> {
                 &mut zoom,
             )
         };
-        if ok == 0 || has_y == 0 {
+        if ok == 0 {
             // **`FPDFDest_GetLocationInPage` only answers for `/XYZ`.** PDFium
             // implements it over `CPDF_Dest::GetXYZ`, which returns false for
             // every other fit --- so a `/FitH top` destination, which names a
@@ -646,7 +646,7 @@ impl Walk<'_> {
         }
 
         let turns = self.turns_of(page);
-        if turns % 2 == 1 && has_x == 0 {
+        if (turns % 2 == 1 && has_x == 0) || (turns % 2 == 0 && has_y == 0) {
             return None;
         }
 

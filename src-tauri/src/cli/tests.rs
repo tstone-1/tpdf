@@ -4718,8 +4718,10 @@ fn a_search_plan_marks_every_rectangle_of_every_match_and_refuses_one_it_cannot_
     let report = search_sample();
     let file = &report.files[0];
     let value = |plan: &super::search::Plan| serde_json::to_value(plan).expect("json");
-    let made = value(&plan(file, Markup::Underline, Some([0.0, 0.5, 1.0])).expect("plan"));
+    let made =
+        value(&plan(file, &[7; 32], Markup::Underline, Some([0.0, 0.5, 1.0])).expect("plan"));
     assert_eq!(made["schema"], 1);
+    assert_eq!(made["source_sha256"], "07".repeat(32));
     let operations = made["operations"].as_array().expect("operations");
     // Three matches, the last over a page break: four rectangles.
     assert_eq!(operations.len(), 4);
@@ -4736,10 +4738,10 @@ fn a_search_plan_marks_every_rectangle_of_every_match_and_refuses_one_it_cannot_
         .collect();
     assert_eq!(pages, vec![1, 1, 1, 2]);
     // No colour asked for: `edit`'s own default applies, so none is written.
-    let plain = value(&plan(file, Markup::Highlight, None).expect("plan"));
+    let plain = value(&plan(file, &[7; 32], Markup::Highlight, None).expect("plan"));
     assert!(plain["operations"][0].get("color").is_none());
     // As the shortest decimal, not the float widened: 0.9, not 0.8999999761581421.
-    let yellow = plan(file, Markup::Highlight, Some([1.0, 0.9, 0.2])).expect("plan");
+    let yellow = plan(file, &[7; 32], Markup::Highlight, Some([1.0, 0.9, 0.2])).expect("plan");
     let text = serde_json::to_string(&yellow).expect("json");
     assert!(text.contains(r#""color":[1.0,0.9,0.2]"#), "{text}");
     assert_eq!(plain["operations"][0]["kind"], "highlight");
@@ -4747,7 +4749,7 @@ fn a_search_plan_marks_every_rectangle_of_every_match_and_refuses_one_it_cannot_
     // A match with no position would be silently left unmarked.
     let mut placeless = file.clone();
     placeless.matches[1].rects.clear();
-    let why = plan(&placeless, Markup::Highlight, None).expect_err("refused");
+    let why = plan(&placeless, &[7; 32], Markup::Highlight, None).expect_err("refused");
     assert!(
         why.contains("have no position") && why.contains("4.82 m"),
         "{why}"
@@ -4757,10 +4759,10 @@ fn a_search_plan_marks_every_rectangle_of_every_match_and_refuses_one_it_cannot_
     let mut many = file.clone();
     let one = many.matches[0].clone();
     many.matches = vec![one; MAX_PLAN_OPERATIONS + 1];
-    let why = plan(&many, Markup::Highlight, None).expect_err("too many");
+    let why = plan(&many, &[7; 32], Markup::Highlight, None).expect_err("too many");
     assert!(why.contains("1001 rectangles"), "{why}");
     many.matches.truncate(MAX_PLAN_OPERATIONS);
-    assert!(plan(&many, Markup::Highlight, None).is_ok());
+    assert!(plan(&many, &[7; 32], Markup::Highlight, None).is_ok());
 }
 
 #[test]

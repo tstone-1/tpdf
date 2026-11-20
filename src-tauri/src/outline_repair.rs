@@ -274,7 +274,10 @@ fn aim_of(doc: &Document, names: &links::Destinations<'_>, item: &Dictionary) ->
         let Ok(action) = resolve(doc, action).as_dict() else {
             return Aim::Other;
         };
-        return match action.get(b"S").and_then(Object::as_name) {
+        return match action
+            .get(b"S")
+            .and_then(|kind| resolve(doc, kind).as_name())
+        {
             Ok(b"GoTo") => action
                 .get(b"D")
                 .map_or(Aim::Other, |dest| destination(doc, names, dest)),
@@ -485,7 +488,10 @@ mod tests {
                 "D" => vec![Object::Reference(kids[1]), "Fit".into()],
             },
         };
-        let go_to_parent = go_to.clone();
+        let indirect = doc.add_object(Object::Name(b"GoTo".to_vec()));
+        let go_to_parent = dictionary! { "A" => dictionary! {
+            "S" => indirect, "D" => vec![Object::Reference(kids[1]), "Fit".into()],
+        } };
         let web = dictionary! {
             "A" => dictionary! { "S" => "URI", "URI" => Object::string_literal("https://example.org/") },
         };

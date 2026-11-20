@@ -122,8 +122,16 @@ fn parse(args: &[String]) -> Result<Render, String> {
 // Bound allocation and work before rendering. Match the viewer's rounded page
 // placement exactly; rounding up instead adds an unpainted edge at some DPIs.
 fn dimensions(size: PageSize, scale: f32) -> Result<(u32, u32), Failure> {
-    let width = (size.width_pt * scale).round();
-    let height = (size.height_pt * scale).round();
+    let pixels = |points: f32| {
+        let value = points * scale;
+        if value > 0.0 {
+            value.round().max(1.0)
+        } else {
+            value
+        }
+    };
+    let width = pixels(size.width_pt);
+    let height = pixels(size.height_pt);
     if !width.is_finite()
         || !height.is_finite()
         || width < 1.0
@@ -142,10 +150,10 @@ fn dimensions(size: PageSize, scale: f32) -> Result<(u32, u32), Failure> {
 
 impl Render {
     /// `--fit`'s scale for a page of `size`, else `--dpi`'s.
-    fn scale(&self, size: PageSize) -> f32 {
+    fn scale(&self, size: PageSize, unit: f32) -> f32 {
         match self.fit {
             Some(fit) => fit_scale(size, fit),
-            None => self.dpi as f32 / 72.0,
+            None => self.dpi as f32 / 72.0 * unit,
         }
     }
 }
@@ -208,7 +216,13 @@ impl Subcommand for Render {
                 "--page names a page past the end of the document",
             )
         })?;
-        let scale = self.scale(*size);
+        let unit = if self.fit.is_some() && stdout {
+            // A pixel box needs no physical scale when no DPI report is written.
+            1.0
+        } else {
+            super::pages::page_units(&mut session, &[self.page], &self.input, key.is_some())?[0]
+        };
+        let scale = self.scale(*size, unit);
         let (width, height) = dimensions(*size, scale)?;
         if let Some((w, h)) = self.fit {
             // Rounding the other side may not overshoot the box; the page's
@@ -275,7 +289,7 @@ impl Subcommand for Render {
             input: self.input.display().to_string(),
             output: self.output.display().to_string(),
             page: self.page,
-            dpi: (scale * 72.0).round() as u32,
+            dpi: (scale / unit * 72.0).round() as u32,
             width_px: width,
             height_px: height,
         };
@@ -290,7 +304,7 @@ impl Subcommand for Render {
                     self.output.display(),
                     width,
                     height,
-                    (scale * 72.0).round()
+                    (scale / unit * 72.0).round()
                 ),
             );
         }
@@ -365,12 +379,12 @@ mod tests {
             height_pt: 792.0,
         };
         assert_eq!(
-            dimensions(letter, command.scale(letter)).unwrap(),
+            dimensions(letter, command.scale(letter, 1.0)).unwrap(),
             (99, 128)
         );
         let at_dpi = parse(&["a.pdf", "-o", "a.png", "--dpi", "36"].map(str::to_owned)).unwrap();
         assert_eq!(
-            dimensions(letter, at_dpi.scale(letter)).unwrap(),
+            dimensions(letter, at_dpi.scale(letter, 1.0)).unwrap(),
             (306, 396)
         );
     }
@@ -385,6 +399,8 @@ mod tests {
             (size(792.0, 612.0), (256, 256), (256, 198)),
             (size(595.0, 842.0), (400, 300), (212, 300)),
             (size(100.0, 100.0), (1, 1), (1, 1)),
+            (size(600.0, 200.0), (1, 1), (1, 1)),
+            (size(200.0, 600.0), (1, 1), (1, 1)),
             (size(612.0, 792.0), (4096, 4096), (3165, 4096)),
         ] {
             assert_eq!(

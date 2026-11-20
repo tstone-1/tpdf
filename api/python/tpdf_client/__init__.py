@@ -604,8 +604,8 @@ class Tpdf:
         """Highlight, underline, strike out or squiggle every match, into output.
 
         search() finds the matches and edit() marks each of their rectangles.
-        Returns the edit report, or None when nothing matched: no file is
-        written then, so an output that exists means something was marked.
+        Returns the edit report, or None when nothing matched. A zero-match
+        search leaves an existing output untouched.
         color is red, green and blue from 0 to 1; without it edit's default applies.
 
         A match whose characters have no position on the page raises ValueError

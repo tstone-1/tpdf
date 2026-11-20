@@ -73,6 +73,10 @@ describe("positionsFor", () => {
   it("names the positions of printed numbers, singly, in ranges and with a hyphen in a label", () => {
     expect(of("ii")).toBe("Printed as ii: type 2");
     expect(of("i-ii, App-A")).toBe("Printed as i-ii, App-A: type 1-2,7");
+    const labels = ["A", "A-B", "B-C", "C"];
+    expect(of("A-B-C", labels)).toBeNull();
+    expect(positionsFor("A-B-C", 4, (slot) => labels[slot]!, (range) => range === "2-4"))
+      .toBe("Printed as A-B-C: type 2-4");
     expect(of("App-A-App-B")).toBe("Printed as App-A-App-B: type 7-8");
     expect(of("ii-4, 8")).toBe("Printed as ii-4, 8: type 2-4,8");
   });

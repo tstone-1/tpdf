@@ -21,7 +21,7 @@ export interface DocumentTab {
   doc: DocumentInfo;
   path: string;
   edits: Edits;
-  place: Place | null;
+  place: (Place & { pageId?: PageId }) | null;
   covered: CoveredWords;
   query: string;
   findShown: boolean;
@@ -122,6 +122,8 @@ export function freshState(): FreshState {
 /** Records what the reader leaves behind when they switch away from `tab`. */
 export function keepState(tab: DocumentTab, state: TabState): void {
   Object.assign(tab, state);
+  const page = state.place && state.edits.state.pages[state.place.page];
+  if (page && state.place) tab.place = { ...state.place, pageId: page.id };
 }
 
 /**

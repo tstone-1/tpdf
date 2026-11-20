@@ -24,14 +24,27 @@ export async function closingCheck(host: OpenCheckHost, expected: string, report
   await host.idle();
   report.check("three tabs are open", names() === "1,2,3", names());
 
+  host.viewer()!.restore({ page: 1, top_pt: 72, zoom: 1.5, fit: "none", turns: 0 });
+  report.check("the third document was left partway down page two",
+    await settle(() => host.status()?.page === 2 && (host.viewer()?.position.top ?? 0) > 50, SETTLE_MS),
+    `page ${host.status()?.page}, offset ${host.viewer()?.position.top}`);
+  const leftAt = host.viewer()!.position;
   const middle = host.tabs()[1]!;
   await host.activate(middle.id);
   await host.idle();
   host.run("file.closeTabsRight");
   report.check("Close tabs to the right closes the one after the middle tab", await until("1,2"), names());
 
+  await host.openings();
+  await host.idle();
   host.run("file.reopenClosedTab");
   report.check("Reopen closed tab opens it again", await until("1,2,3"), names());
+  await host.openings();
+  report.check("reopening restores the page and offset left in the closed tab",
+    await settle(() => {
+      const position = host.viewer()?.position;
+      return position?.page === leftAt.page && Math.abs(position.top - leftAt.top) < 2;
+    }, SETTLE_MS), `left ${leftAt.page}/${leftAt.top}, reopened ${host.viewer()?.position.page}/${host.viewer()?.position.top}`);
 
   await host.activate(host.tabs()[1]!.id);
   await host.idle();
@@ -45,8 +58,12 @@ export async function closingCheck(host: OpenCheckHost, expected: string, report
 
   // Closed in order: the first (to the left), then the third (the others).
   // The third is the one closed last, and the first comes back after it.
+  await host.openings();
+  await host.idle();
   host.run("file.reopenClosedTab");
   report.check("Reopen closed tab brings back the one closed last", await until("2,3"), names());
+  await host.openings();
+  await host.idle();
   host.run("file.reopenClosedTab");
   report.check("and again, the one closed before it", await until("2,3,1"), names());
 

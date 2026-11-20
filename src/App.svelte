@@ -600,7 +600,7 @@
   import { Viewer, type PageClick, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import {
-    abandonedBy, documentsBusy, dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint,
+    abandonedBy, documentsBusy, dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, retainedPlace, readerIsIn, repoint,
     sharedByTwin, tabToKeep, toldAfterFallback,
     type OpenFound,
   } from "./lib/documentopen";
@@ -1333,6 +1333,7 @@
   async function reopenClosedTab(): Promise<void> {
     const path = closedTabs.latest((one) => tabs.forPath(one) !== undefined);
     if (path === null) return;
+    await refreshStartPage();
     closedTabs.reopened(path);
     await openPath(path);
   }
@@ -6245,7 +6246,7 @@
    * the open failed and something else is in front.
    */
   function placeOpened(given: Opening): void {
-    if (!hasPlace(given) || !viewer || openPathName !== given.path) return;
+    if (!hasPlace(given) || !viewer || tabs.forPath(given.path, openView)?.view !== openView) return;
     const problem = applyPlace(viewer, given, edits?.state.pages.length ?? openPageCount);
     if (problem !== null) say(problem);
     if (given.forward !== null) void searchForward(viewer, given.path, given.forward);
@@ -7153,7 +7154,7 @@
       openPageCount = doc.page_count;
       startPage.opened(path);
 
-      const resume = placeToResume(retained?.place, override, session.places, path,
+      const resume = placeToResume(retainedPlace(retained), override, session.places, path,
         retained?.edits.state.pages.length ?? doc.page_count);
       sidebarShown = resume ? resume.sidebar : sidebarShown;
 

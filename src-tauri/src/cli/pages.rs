@@ -231,6 +231,26 @@ fn unexpected(reply: &Reply) -> Failure {
     )
 }
 
+pub(super) fn page_units(
+    session: &mut Session,
+    pages: &[u32],
+    path: &Path,
+    has_password: bool,
+) -> Result<Vec<f32>, Failure> {
+    let request = Request::PageUnits {
+        pages: pages.iter().map(|page| page - 1).collect(),
+    };
+    match ask(session, request, path, has_password)? {
+        Reply::PageUnits(units)
+            if units.len() == pages.len()
+                && units.iter().all(|unit| unit.is_finite() && *unit > 0.0) =>
+        {
+            Ok(units)
+        }
+        other => Err(unexpected(&other)),
+    }
+}
+
 pub(super) fn read_input(
     env: &Env<'_>,
     path: &Path,
@@ -551,9 +571,10 @@ impl Pages {
                 }
             }
             Kind::Crop => {
-                for n in selection {
+                let units = page_units(session, &selection, path, has_password)?;
+                for (n, unit) in selection.into_iter().zip(units) {
                     let at = n as usize - 1;
-                    let rect = self.rect.expect("parser requires rect");
+                    let rect = self.rect.expect("parser requires rect").map(|v| v / unit);
                     if rect[0] + rect[2] > input.sizes[at].width_pt
                         || rect[1] + rect[3] > input.sizes[at].height_pt
                     {

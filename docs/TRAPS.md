@@ -3191,9 +3191,9 @@ walk changed, no assertion moved, and `append`'s own tests — which are the rig
 the whole-document path and the reason the refactor was safe — pass identically either way,
 because `append` passes an empty barrier and cannot reach the case.
 
-The fix is one set: the pages staying behind, which the walk steps over rather than into. The
-reference to one is shifted with everything else and left dangling, which is the module's
-existing position for a destination reached by name, arriving for one reached by reference.
+The walk skips pages that stay behind. References to skipped or absent objects become PDF
+null on import. Leaving a shifted object number there let a later import silently turn a
+broken link into a link to a page of another document.
 
 **Two things worth copying rather than the specific bug.** When a function that took
 everything learns to take some, list what used to be true *by construction* — this repository

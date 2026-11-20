@@ -1289,7 +1289,8 @@ tpdf search report.pdf --text "North Pier" --annotate highlight --color 1,0.9,0.
 ```
 
 `--color` is red, green and blue from 0 to 1; without it the marks take `edit`'s default.
-The plan is for one document, and holds at most 1,000 marks. Nothing is printed when
+The plan holds at most 1,000 marks and includes the SHA-256 of the searched document.
+If the input bytes change before `edit`, it refuses the plan and leaves the output untouched. Nothing is printed when
 nothing matched, and a match whose characters have no position on the page stops the plan
 with a refusal, since it would otherwise be left unmarked with nothing said.
 

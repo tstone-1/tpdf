@@ -134,22 +134,22 @@ export function positionsFor(
     return String(slots[0]! + 1);
   };
   const parts = raw.split(",").map((part) => part.trim());
-  const typed: string[] = [];
+  let candidates = [""];
   for (const part of parts) {
+    const choices = new Set<string>();
     const whole = one(part);
-    if (whole !== null) {
-      typed.push(whole);
-      continue;
-    }
-    let joined: string | null = null;
-    for (let at = part.indexOf("-"); at > 0 && joined === null; at = part.indexOf("-", at + 1)) {
+    if (whole !== null) choices.add(whole);
+    for (let at = part.indexOf("-"); at > 0; at = part.indexOf("-", at + 1)) {
       const from = one(part.slice(0, at).trim());
       const to = from === null ? null : one(part.slice(at + 1).trim());
-      if (from !== null && to !== null) joined = `${from}-${to}`;
+      if (from !== null && to !== null) choices.add(`${from}-${to}`);
     }
-    if (joined === null) return null;
-    typed.push(joined);
+    // Decline a hint if proving uniqueness would require an unbounded search.
+    if (choices.size === 0 || choices.size * candidates.length > 64) return null;
+    candidates = candidates.flatMap((prefix) =>
+      [...choices].map((choice) => prefix ? `${prefix},${choice}` : choice));
   }
-  const positions = typed.join(",");
-  return usedLabel && accepts(positions) ? TEXT().typePositions(parts.join(", "), positions) : null;
+  if (!usedLabel) return null;
+  const accepted = candidates.filter(accepts);
+  return accepted.length === 1 ? TEXT().typePositions(parts.join(", "), accepted[0]!) : null;
 }

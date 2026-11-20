@@ -173,6 +173,9 @@ has the glyph, and until this change such a missing letter refused the automatic
 rather than reaching Noto. `fonts/installed/tests.rs` and `sysfont/tests.rs` use generated
 fonts (`testdata/make_installed_fonts.py`); `scripts/text_installed_check.py` and
 `text_edit_pdfkit.swift --installed` read a saved result back independently.
+A moved underline must fit its own clip at both positions. Stroke width contributes to
+its bounds. Disconnected painted subpaths count as separate obstacles to moving text.
+
 New text must fit the page, active clips and the selected box without colliding
 with other source text. Draft previews use the worker's save path and a bounded
 PNG crop; cancelling a preview creates no journal entry. Independent synthetic

@@ -1590,7 +1590,12 @@ fn an_underline_moves_with_its_line() {
     let saved = wrapped(&untagged, WIDEST, LONGER);
     assert!((drawings(&saved)[0][1] - drawings(&untagged)[0][1] - 14.).abs() < 0.01);
     // As deep as a highlight, or past the line's end.
-    for rule in ["20 171 21.6 6 re f", "20 170 60 0.8 re f"] {
+    for rule in [
+        "20 171 21.6 6 re f",
+        "20 170 60 0.8 re f",
+        "q 19 169 25 3 re W n 20 170 21.6 0.8 re f Q",
+        "q 6 w 20 170 m 41.6 170 l S Q",
+    ] {
         let error = refusal(&underlined(rule, &format!("({LAST}) Tj")), WIDEST, LONGER);
         assert!(
             error.contains("a drawing or an annotation"),

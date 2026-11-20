@@ -174,6 +174,15 @@ fn a_drawing_after_the_run_that_moves_stops_the_push_but_not_the_box() {
         error.contains("a picture or a drawing follows it"),
         "{error}"
     );
+    for bars in [
+        "30 170 10 30 re 260 170 20 30 re f",
+        "30 170 10 30 re f 260 170 20 30 re f",
+    ] {
+        let doc = synthetic(&format!(
+            "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 200 180 Td (FIRST) Tj ET {bars}"
+        ));
+        assert!(refusal(&doc, 0, &"F".repeat(26)).contains("a picture or a drawing follows it"));
+    }
     // The same rule does not stop the box itself: with nothing to push, 26 of
     // the run's own characters grow straight over it.
     let alone = synthetic("0 g 260 170 10 30 re f BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");

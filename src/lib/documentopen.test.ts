@@ -9,12 +9,12 @@ import { describe, expect, it } from "vitest";
 
 import app from "../App.svelte?raw";
 import {
-  abandonedBy, documentsBusy, dropAbandoned, dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, sharedByTwin,
+  abandonedBy, documentsBusy, dropAbandoned, dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, retainedPlace, sharedByTwin,
   tabToKeep, toldAfterFallback,
   type OpenFound,
 } from "./documentopen";
 import {
-  DocumentTabs, freshState, keepScope, restoredState, scopeToRestore, type DocumentTab,
+  DocumentTabs, freshState, keepScope, keepState, restoredState, scopeToRestore, type DocumentTab,
 } from "./documenttabs";
 import type { Edits } from "./edits";
 import type { DocumentInfo } from "./ipc";
@@ -63,9 +63,19 @@ describe("where an open puts the reader", () => {
   });
 });
 
+it("reads the settled session before opening the last closed document", () => {
+  const reopen = functionIn(app, "async function reopenClosedTab(");
+  expect(reopen).toMatch(/await refreshStartPage\(\);[\s\S]*await openPath\(path\)/);
+  expect(functionIn(app, "async function refreshStartPage(")).toContain("await behindWrites(places, refreshRecents)");
+});
+
+it("applies an external location to the view found by the shared path lookup", () => {
+  expect(functionIn(app, "function placeOpened(")).toContain("tabs.forPath(given.path, openView)?.view !== openView");
+});
+
 describe("the other views of a document that was saved", () => {
   it("are pointed at the new handle and the new model, every one of them", () => {
-    const twin = () => ({ doc: "old", edits: 1, path: "/a.pdf", searchScope: null });
+    const twin = () => ({ doc: "old", edits: 1, path: "/a.pdf", searchScope: null, place: null, measures: freshState().measures });
     const twins = [twin(), twin()];
     repoint(twins, "new", 2);
     expect(twins).toEqual([{ ...twin(), doc: "new", edits: 2 }, { ...twin(), doc: "new", edits: 2 }]);
@@ -111,6 +121,14 @@ describe("a search confined to a selection, when the file is opened again", () =
     kept: freshState(), ...more,
   });
 
+  it("remounts a hidden view on the same page after a deletion in its twin", () => {
+    const tab = scoped(3);
+    const state = { pages: pages(1, 2, 3, 4) };
+    keepState(tab, { ...tab, edits: { state } as unknown as Edits, place: place(tab.path, 2, { top_pt: 75 }) });
+    state.pages.shift();
+    expect(retainedPlace(tab)).toMatchObject({ page: 1, top_pt: 75 });
+  });
+
   it("is gone from the tab a save or a reload opens the file again in", () => {
     const old = scoped(1);
     // The control, and the defect: by the page ids alone the scope goes back.
@@ -125,7 +143,12 @@ describe("a search confined to a selection, when the file is opened again", () =
   it("is gone from the document's other views too, and their words stay", () => {
     const twin = scoped(3);
     expect(scopeToRestore(twin.searchScope, pages(1, 2, 3))).toBe(ranges);
+    const line = twin.measures.add(pageId(1), { x: 0, y: 0 }, { x: 10, y: 0 });
+    twin.measures.setScale(line, { value: 3, unit: "mm", decimals: 1 });
+    expect(restoredState(twin).measures.scaled(pageId(1))).toBe(true);
     repoint([twin], info(2), after);
+    expect(twin.measures.scaled(pageId(1))).toBe(false);
+    expect(twin.measures.count).toBe(0);
     expect(twin.edits).toBe(after);
     expect(twin.searchScope).toBeNull();
     // What mounting the twin again reads back.
@@ -508,7 +531,7 @@ describe("the open's wiring in App.svelte", () => {
   it("asks this module for each decision, in the function that needs it", () => {
     expect(missingFrom(functionIn(app, "async function openDocument("), [
       "const pages = pageTable(doc);",
-      "const resume = placeToResume(retained?.place, override, session.places, path, retained?.edits.state.pages.length ?? doc.page_count);",
+      "const resume = placeToResume(retainedPlace(retained), override, session.places, path, retained?.edits.state.pages.length ?? doc.page_count);",
       "const written = afterWrite ? tabs.forPath(path, tabs.active) : undefined;",
       "const left = abandonedBy(tabs.all, written, replaced, twins);",
       "abandonOpen(acquired, left.replaced, left.twins);",

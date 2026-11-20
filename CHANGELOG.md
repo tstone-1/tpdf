@@ -21,6 +21,10 @@ have the binary.)
 
 ### Fixed
 
+- Extracting and moving pages handle indirect and positional bookmarks. Blank and imported pages retain their intended crop and rotation, and imported links to missing pages stay unresolved.
+- CLI search highlight plans verify the source revision. Crop and render honor the physical page scale, and fitting a narrow page to one pixel produces a usable image.
+- Text reflow checks underline clips, stroke widths and individual painted subpaths before moving text. Tabs restore the page being read after a reorder and discard measurements when the document is replaced.
+
 - Saving a smaller copy includes unsaved edits in the estimate and checks the final size before replacing a file. Compression respects physical page scale and shared transparency masks. The preview shows a visibly changed picture, and the CLI rejects a preview path that also names the output PDF.
 - OCR excludes comments and editable fields from permanent page text. Its Unicode map covers the characters actually written. Right-to-left words are checked for reading order and position, and a page-only operation refuses to change another slot that shares the same page object.
 - Cut keeps the original selection and clipboard intact when the selection changes or some of its pictures cannot be read. Clipboard refusal messages follow the interface language.

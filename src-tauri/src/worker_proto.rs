@@ -169,6 +169,8 @@ pub enum Request {
     /// space; the answer is in the page's own, which is the space a crop box is
     /// stored and saved in.
     CropBox { page: u32, rect: [f32; 4] },
+    /// Physical points per native coordinate unit for each requested page.
+    PageUnits { pages: Vec<u32> },
     /// What removing each of one page's marked regions would take.
     ///
     /// **A parse, so it belongs here rather than in the coordinator**, and it is
@@ -648,6 +650,8 @@ pub enum Reply {
     Geometry(crate::render::CropGeometry),
     /// The rectangle a proposed crop would actually produce.
     CropBox([f32; 4]),
+    /// Physical points per native coordinate unit, in request order.
+    PageUnits(Vec<f32>),
     RedactPlans(Vec<crate::redact::RegionPlan>),
     /// The document's bookmarks.
     Outline(crate::outline::Outline),
@@ -1069,6 +1073,10 @@ mod tests {
         /// Variants that reach a worker by another route, and why.
         const UNCARRIED: &[(&str, &str)] = &[
             (
+                "PageUnits",
+                "the CLI requests physical units from its private worker",
+            ),
+            (
                 "TextView",
                 "wraps only rendering and text reads with the current worker-owned revision",
             ),
@@ -1461,6 +1469,7 @@ mod tests {
                 rect: None,
             }),
             Reply::CropBox([1.0, 2.0, 3.0, 4.0]),
+            Reply::PageUnits(vec![1.0, 2.0]),
             Reply::Geometry(crate::render::CropGeometry {
                 width_pt: 595.0,
                 height_pt: 842.0,
@@ -1564,6 +1573,7 @@ mod tests {
                 | Reply::PageCopy(_)
                 | Reply::Graphic(_)
                 | Reply::CropBox(_)
+                | Reply::PageUnits(_)
                 | Reply::RedactPlans(_)
                 | Reply::Geometry(_)
                 | Reply::Outline(_)

@@ -1293,8 +1293,8 @@ impl Placement {
     /// it, so passing the upright size would squeeze a landscape page into a
     /// portrait box rather than turning it.
     pub fn tile(page: &RawPage<'_>, scale: f32, turns: u8, x: i32, y: i32) -> Self {
-        let width = (page.width_pt() * scale).round() as i32;
-        let height = (page.height_pt() * scale).round() as i32;
+        let width = (page.width_pt() * scale).round().max(1.0) as i32;
+        let height = (page.height_pt() * scale).round().max(1.0) as i32;
         let (size_x, size_y) = match turns % 2 {
             0 => (width, height),
             _ => (height, width),
