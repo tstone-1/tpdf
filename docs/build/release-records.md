@@ -2,7 +2,7 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
-**26.11.10 verification, 2026-11-20:** prepared on the Windows development machine. The release
+**26.11.10 verification and publication, 2026-11-20:** prepared on the Windows development machine. The release
 is the fixes from a read-through of the whole tree on 2026-11-19: a redaction's verdict is
 withheld for a picture however it is stored, for a stream the check could not decode as a viewer
 does and for the image-only copy of a document with a 2D code, the three redaction commands take
@@ -33,6 +33,22 @@ comparable sample. The local installer carried `tpdf_shell.dll`, `tpdf-cli.exe` 
 `incr-signed.pdf`, and with the bundled engine removed it exited 3. **Not run:** the PowerPoint
 paste check of step 8, `mutate_viewer.py`, the Explorer preview pane by hand (the steps are in
 `running.md`), and the two update-check scripts' changed lines, which need an install.
+CI passed all three jobs on `06e8770d` (run 44641983349) and `Audit` passed (run 44641983515). No
+rehearsal: `release.yml` changed only in its notes. Release run 44646777664 skipped its gates for
+the CI-passed commit and completed the draft at 8 files. On the draft's files: the installer read
+as `Valid`, timestamped by Certum, and passed `installed_check.py` 26/26 on the Windows build
+machine; the `.dmg` was stapled, its app accepted as Notarized Developer ID, and its `tpdf-cli`
+(Developer ID, `runtime`) answered 26.11.10 and verified the signed fixture. The body needed no
+correction. `SECURITY.md` gained the notice for 26.11.9 and earlier and no scope line: no new
+parser, format or destination. `publish_release.py v26.11.10 --publish` published it; without
+authentication `releases/latest` is v26.11.10 with 8 assets, all 8 answer 200, and `latest.json`
+offers 26.11.10. Step 12 from the published 26.11.9: the Mac passed 12/12 and Windows 18/18, each
+at the first run and each offered the update only on the second start, the first launch's check
+having read `current` minutes after publishing; the Windows run is also the first of
+`update_check.py` since its session file is set aside as a copy and put back first. The cask went
+to 26.11.10 with the published `.dmg`'s SHA-256; `brew audit --cask --online` exited 0 and `brew
+livecheck` reads 26.11.10. The winget pull request (445804) moved from 26.11.9 to 26.11.10 through
+the REST API on manifest version 1.28.0, still the newest, after `winget validate` passed.
 
 **26.11.9 verification and publication, 2026-11-15:** prepared on the Windows development machine.
 The release is a command palette a screen reader hears: the question a command asks, the preview
