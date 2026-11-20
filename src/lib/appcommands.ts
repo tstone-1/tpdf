@@ -1261,8 +1261,8 @@ export function registerAppCommands(
    * A refusal of page numbers, or what to type instead where the refused
    * value is this document's printed numbers (`pagelabels.ts`, `positionsFor`).
    */
-  const orPositions = (raw: string, problem: string | null): string | null =>
-    problem === null ? null : positionsFor(raw, actions.pageCount(), (slot) => actions.printedOf(slot)) ?? problem;
+  const orPositions = (raw: string, problem: string | null, accepts: (positions: string) => boolean): string | null =>
+    problem === null ? null : positionsFor(raw, actions.pageCount(), (slot) => actions.printedOf(slot), accepts) ?? problem;
   /** Offered while `kind` is not the layout already shown; changes to it. */
   const layoutCommand = (kind: SpreadKind) => ({
     enabled: () => {
@@ -3073,7 +3073,7 @@ export function registerAppCommands(
       argument: {
         placeholder: TEXT(locale).extractPlaceholder,
         problem: (raw: string) =>
-          orPositions(raw, parsePageRange(raw, actions.pageCount()).problem ?? null),
+          orPositions(raw, parsePageRange(raw, actions.pageCount()).problem ?? null, (p) => !parsePageRange(p, actions.pageCount()).problem),
         preview: (raw: string) => {
           const range = parsePageRange(raw, actions.pageCount());
           return range.slots
@@ -3113,7 +3113,7 @@ export function registerAppCommands(
       argument: {
         placeholder: TEXT(locale).splitPlaceholder,
         problem: (raw: string) =>
-          orPositions(raw, parseSplitPoints(raw, actions.pageCount()).problem ?? null),
+          orPositions(raw, parseSplitPoints(raw, actions.pageCount()).problem ?? null, (p) => !parseSplitPoints(p, actions.pageCount()).problem),
         preview: (raw: string) => {
           const split = parseSplitPoints(raw, actions.pageCount());
           return split.groups
@@ -3294,7 +3294,7 @@ export function registerAppCommands(
           const trimmed = raw.trim();
           if (trimmed === "") return TEXT(locale).pageNumberRange(pages);
           if (!/^[0-9]+$/.test(trimmed))
-            return orPositions(trimmed, TEXT(locale).notAPageNumber(trimmed));
+            return orPositions(trimmed, TEXT(locale).notAPageNumber(trimmed), (p) => /^[0-9]+$/.test(p) && Number(p) >= 1 && Number(p) <= pages);
           const page = Number(trimmed);
           if (page < 1 || page > pages) {
             return TEXT(locale).documentPages(pages);

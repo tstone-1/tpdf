@@ -205,7 +205,8 @@ writes a tab stop that way. They
 remain subject to normal font, coordinate and clipping validation; their shows
 are excluded from editable runs. Nested sequences, state changes, visible text,
 extra semantic properties and more than 32 separators are refused. The byte
-patcher preserves the entire sequence, and preceding edits retain its origin.
+patcher preserves the entire sequence, and preceding edits retain its origin. An
+undecodable spacer glyph can paint visible ink, so its bounds remain a fixed obstacle.
 `textedit/spacers.rs` owns these checks; generate independent fixtures with
 `scripts/text_continuation_check.py --generate <path> --inline tab|bell|tabs`.
 Use `text-edit-probe --continued` and `text_edit_pdfkit.swift --inline` for readback.
@@ -680,7 +681,7 @@ the built-in StandardEncoding, measured by Adobe's metrics from
 from ReportLab's and pdfminer.six's transcriptions, which must agree on all
 12 x 191 widths; its Helvetica row is also checked against `textbox.rs`, which
 `annot-probe` checks against PDFium. Every arXiv paper's side stamp is set in
-unembedded Times-Roman. Symbol and ZapfDingbats stay refused. The same table
+unembedded Times-Roman. Symbol and ZapfDingbats can be measured, but their original text cannot be edited. The same table
 holds each font's FontBBox, the union of pdfminer.six's and the AFM files
 matplotlib ships (they differ for oblique Helvetica and every Courier). It is used
 only for read-only text, which reserves the box, widened by its larger side at
@@ -1148,8 +1149,9 @@ them on one original page.
   `R` the run's text, strip leading and trailing U+0020 (and nothing else) from both; the
   two cores must be equal. Both empty is a match: that is what a deletion leaves. For a
   replacement `R'`, the new ActualText is `R'` with each end's run of spaces changed by the
-  difference the source had at that end (`A`'s count minus `R`'s), floored at zero; an
-  `R'` of nothing but spaces is one end. It is written in the same save, UTF-16BE with a
+  difference the source had at that end (`A`'s count minus `R`'s), floored at zero. Text consisting
+  entirely of spaces has one trailing separator run. Retyping a deleted word preserves that
+  separator once. The updated text is written in the same save, UTF-16BE with a
   BOM, into the Span's own dictionary (`commit_batch`, beside moved link rectangles), so
   undo, redo and reopening need nothing of their own: the journal holds replacements and
   the save rebuilds from the source. A replacement that wraps is refused, as for an inline

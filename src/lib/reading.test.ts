@@ -946,6 +946,14 @@ describe("a line in two halves", () => {
       const edge = right - at * 10;
       return [char, [edge - 10, y, edge, y + 12]] as [string, [number, number, number, number]];
     });
+  it("reads untagged Hebrew columns from right to left", () => {
+    const text = page([
+      ...leftwards("אב", 300, 100), ...leftwards("הו", 100, 100),
+      ...leftwards("גד", 300, 130), ...leftwards("זח", 100, 130),
+    ]);
+    expect(linesAs(text)).toEqual(["אב", "גד", "הו", "זח"]);
+  });
+
   /** One tagged paragraph over the whole page, so a wide gap is not a column cut. */
   const tagged = (chars: [string, [number, number, number, number]][]): PageText => ({
     ...page(chars),

@@ -469,15 +469,7 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
             walk.unfollowed_in(&resources);
             continue;
         };
-        let unit = doc
-            .get_dictionary(page)
-            .ok()
-            .and_then(|dict| match dict.get(b"UserUnit") {
-                Ok(value) => {
-                    number(resolved(doc, value)?).filter(|unit| unit.is_finite() && *unit > 0.0)
-                }
-                Err(_) => Some(1.0),
-            });
+        let unit = crate::pagetree::user_unit(doc, page);
         walk.content(
             &data,
             &resources,

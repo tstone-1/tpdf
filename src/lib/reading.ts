@@ -648,6 +648,7 @@ export function blocksOf(
   axes: Axes,
   gap: number,
   depth = 0,
+  text?: PageText,
 ): Fragment[][] {
   if (fragments.length < 2 || depth >= MAX_DEPTH) return [fragments];
 
@@ -658,12 +659,14 @@ export function blocksOf(
 
   const columns = split(spans, (s) => [s.extents.alongStart, s.extents.alongEnd], gap);
   if (columns.length > 1) {
+    if (text && writtenBackwards(text, fragments, axes)) columns.reverse();
     return columns.flatMap((group) =>
       blocksOf(
         group.map((s) => s.fragment),
         axes,
         gap,
         depth + 1,
+        text,
       ),
     );
   }
@@ -676,6 +679,7 @@ export function blocksOf(
         axes,
         gap,
         depth + 1,
+        text,
       ),
     );
   }
@@ -766,12 +770,12 @@ export function readingBlocks(text: PageText): ReadingBlock[] {
     return directionGroups(fragments, axes).flatMap(({ turns, fragments }) => {
       if (turns === OBLIQUE) return [{ tag: null, lines: obliqueLines(fragments) }];
       const ownAxes = axesFor(turns);
-      return blocksOf(fragments, ownAxes, gap).map((block) => ({
+      return blocksOf(fragments, ownAxes, gap, 0, text).map((block) => ({
         tag: null, lines: linesOf(text, block, ownAxes),
       }));
     });
   }
-  return blocksOf(fragments, axes, gap).map((block) => ({
+  return blocksOf(fragments, axes, gap, 0, text).map((block) => ({
     tag: null,
     lines: linesOf(text, block, axes),
   }));

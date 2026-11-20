@@ -16,7 +16,7 @@ def good_report():
     stamp = {'attested': True, 'integrity': {'verdict': 'intact'},
              'trust': {'standing': 'trusted'}, 'revocation': {'standing': 'good'},
              'revocation_chain': chain}
-    signature = {'field': 'Signature1', 'document_timestamp': False,
+    signature = {'field': 'Signature1', 'pades_level': 'B-LTA', 'document_timestamp': False,
                  'covers_whole_file': False, 'appended_bytes': 123,
                  'integrity': {'verdict': 'intact'}, 'trust': {'standing': 'trusted'},
                  'timestamp': stamp, 'revocation': {'standing': 'good'},
@@ -35,6 +35,7 @@ class SigningCheckTests(unittest.TestCase):
     def test_incomplete_or_untrusted_evidence_is_refused_even_when_strict_passed(self):
         # Each control breaks one property while strict_passed remains true.
         cases = [
+            (['pades_level'], 'B-LT'),
             (['document_timestamp'], True),
             (['integrity', 'verdict'], 'altered'),
             (['trust', 'standing'], 'untrusted'),

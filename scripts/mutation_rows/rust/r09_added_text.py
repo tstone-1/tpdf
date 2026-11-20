@@ -85,7 +85,7 @@ ROWS = [
     Mutation(
         "added text: the total not moved by the first number",
         "src/addedtext.rs",
-        "        let total = line.first_number.saturating_sub(1) + u32::try_from(chosen.len()).unwrap_or(0);",
+        "        let total = line.last_number(chosen.len());",
         "        let total = u32::try_from(chosen.len()).unwrap_or(0);",
         "a_page_left_out_is_not_counted_and_the_first_number_is_taken",
     ),
@@ -106,8 +106,8 @@ ROWS = [
     Mutation(
         "added text: one page object listed twice written twice",
         "src/addedtext.rs",
-        "            if let Some(first) = seen.insert(pages[*page as usize], *page) {",
-        "            if let Some(first) = seen.insert(pages[*page as usize], *page).filter(|_| false) {",
+        "            if let Some(&(first, second)) = shared.get(&pages[*page as usize]) {",
+        "            if let Some(&(first, second)) = shared.get(&pages[*page as usize]).filter(|_| false) {",
         "a_page_listed_twice_is_refused_rather_than_numbered_twice",
     ),
     # --- How a line is drawn --------------------------------------------------------

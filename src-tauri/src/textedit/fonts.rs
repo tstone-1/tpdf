@@ -481,12 +481,17 @@ impl Metrics {
         Ok((cursor, bounds))
     }
 
-    pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
+    pub(super) fn check_editable_use(&self, text: &str) -> Result<(), String> {
         // An empty show paints no glyph, so it is no use of the font: a
         // deletion, or a writer restoring the cursor after a replacement.
         if self.restricted && !text.is_empty() {
             return Err(forbidden());
         }
+        Ok(())
+    }
+
+    pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
+        self.check_editable_use(text)?;
         self.codes_for(text)
     }
 

@@ -56,9 +56,9 @@ beforeEach(() => {
   dom = installFakeDom();
   cropped = [];
   redacted = [];
-  core.invoke.mockImplementation((command: string) =>
+  core.invoke.mockImplementation((command: string, args?: { crop?: readonly number[] }) =>
     command === "page_geometry"
-      ? Promise.resolve(GEOMETRY)
+      ? Promise.resolve(args?.crop ? GEOMETRY : { ...PAGE, left: 0, top: 0 })
       : Promise.resolve(null),
   );
   tiles.fetchTile.mockRejectedValue(new Error("no tile"));
@@ -71,8 +71,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function build(): Viewer {
+function build(onPageGeometryChanged: (slot: number) => void = () => {}): Viewer {
   return new Viewer(dom.root as unknown as HTMLElement, {
+    onPageGeometryChanged,
     doc: 1,
     pageCount: 2,
     pages: [PAGE],
@@ -239,6 +240,25 @@ describe("a cropped page", () => {
     expect(inner.cropAt(1).left).toBe(0);
     expect(inner.cropAt(1).top).toBe(0);
     expect(inner.cropAt(0).left).toBe(GEOMETRY.left);
+    viewer.destroy();
+  });
+
+  it("updates only the edited thumbnail for a crop, a half turn and an undo", async () => {
+    const changed = vi.fn();
+    const viewer = build(changed);
+    await settle();
+    viewer.setPages(pages(true));
+    await settle();
+    expect(viewer.thumbnailGeometry(0)).toMatchObject({ turns: 0, crop: CROP, size: { width_pt: 400, height_pt: 500 } });
+    const turned = pages(true);
+    turned[0]!.turns = 2;
+    viewer.setPages(turned);
+    expect(viewer.thumbnailGeometry(0)?.turns).toBe(2);
+    expect(viewer.thumbnailGeometry(1)?.turns).toBe(0);
+    viewer.setPages(pages(false));
+    await settle();
+    expect(viewer.thumbnailGeometry(0)).toEqual({ turns: 0, crop: undefined, size: PAGE });
+    expect(changed.mock.calls.map(([slot]) => slot)).toEqual([0, 0, 0, 0]);
     viewer.destroy();
   });
 

@@ -112,6 +112,7 @@ export function positionsFor(
   raw: string,
   pageCount: number,
   labelOf: (slot: number) => string | null,
+  accepts: (positions: string) => boolean = () => true,
 ): string | null {
   const slotsOf = new Map<string, number[]>();
   for (let slot = 0; slot < pageCount; slot++) {
@@ -149,5 +150,6 @@ export function positionsFor(
     if (joined === null) return null;
     typed.push(joined);
   }
-  return usedLabel ? TEXT().typePositions(parts.join(", "), typed.join(",")) : null;
+  const positions = typed.join(",");
+  return usedLabel && accepts(positions) ? TEXT().typePositions(parts.join(", "), positions) : null;
 }

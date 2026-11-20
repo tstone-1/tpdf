@@ -1262,6 +1262,7 @@ fn own_items(
     (size, spacing, word_spacing): (f64, f64, f64),
     fits: impl Fn(f64, [f64; 2]) -> bool,
 ) -> Result<(Vec<Object>, f64, [f64; 2]), String> {
+    metrics.check_editable_use(replacement)?;
     let kept = if source.operator == "TJ" && !grouped {
         let values = source.operands[0].as_array().map_err(|e| e.to_string())?;
         kerning::kept(

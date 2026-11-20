@@ -20,12 +20,14 @@ rollback and must never be interpreted as proof that nothing was written.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import signal
 import subprocess
+import tempfile
 from typing import Any, Mapping, Sequence
 
 from . import reports
@@ -454,7 +456,7 @@ class Tpdf:
         """Write a copy with a page number on every page, `Page 1 of 3` at the bottom center.
 
         `text` may hold {page} and {pages}; `pages="2-10"` numbers those pages
-        alone, and {page} and {pages} then count only them.
+        alone. {page} is the current number and {pages} the final printed number.
         """
         args = ['-o', os.fspath(output)]
         for flag, value in [('--text', text), ('--position', position), ('--size', size),
@@ -572,9 +574,9 @@ class Tpdf:
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],
         operations: Sequence[Mapping[str, Any]], *, dry_run: bool = False,
         force: bool = False, invalidate_signatures: bool = False,
-        password: str | None = None,
+        password: str | None = None, source_sha256: str | None = None,
     ) -> reports.EditReport:
-        """Apply ordered schema-1 edits. A rejected plan publishes no output."""
+        """Apply ordered schema-1 edits, optionally requiring a specific source SHA-256."""
         args = ['--plan', '-', '-o', os.fspath(output)]
         if dry_run:
             args.append('--dry-run')
@@ -583,8 +585,11 @@ class Tpdf:
         if invalidate_signatures:
             args.append('--invalidate-signatures')
         args += ['--', os.fspath(source)]
+        plan: dict[str, Any] = {'schema': 1, 'operations': list(operations)}
+        if source_sha256 is not None:
+            plan['source_sha256'] = source_sha256
         return self.run(
-            'edit', *args, input_json={'schema': 1, 'operations': list(operations)},
+            'edit', *args, input_json=plan,
             password=password,
         ).typed
 
@@ -612,9 +617,19 @@ class Tpdf:
             color = [float(channel) for channel in color]
             if len(color) != 3 or not all(0 <= channel <= 1 for channel in color):
                 raise ValueError('color must be red, green and blue from 0 to 1')
-        found = self.search(source, texts=texts, patterns=patterns, pages=pages,
-                            case_sensitive=case_sensitive, whole_word=whole_word,
-                            password=password)['files'][0]
+        # Search a stable revision. The edit validates its digest against the handle
+        # opened by the CLI, retaining the ordinary source/output alias guards.
+        digest = hashlib.sha256()
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / 'source.pdf'
+            source_path = Path(self.cwd or '.') / source
+            with source_path.open('rb') as original, snapshot.open('wb') as copy:
+                while chunk := original.read(1024 * 1024):
+                    digest.update(chunk)
+                    copy.write(chunk)
+            found = self.search(snapshot, texts=texts, patterns=patterns, pages=pages,
+                                case_sensitive=case_sensitive, whole_word=whole_word,
+                                password=password)['files'][0]
         operations = []
         for match in found['matches']:
             if not match['rects']:
@@ -629,7 +644,7 @@ class Tpdf:
                 operations.append(operation)
         if not operations:
             return None
-        return self.edit(source, output, operations, force=force,
+        return self.edit(source, output, operations, force=force, source_sha256=digest.hexdigest(),
                          invalidate_signatures=invalidate_signatures, password=password)
 
     def verify(

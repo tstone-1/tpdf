@@ -201,7 +201,12 @@ impl Compress {
         self.pictures.map_or(Way::Lossless, Way::Pictures)
     }
 
-    fn run_compress(&self, env: &Env<'_>, out: &mut dyn Write) -> Result<Exit, Failure> {
+    fn run_compress(
+        &self,
+        env: &Env<'_>,
+        out: &mut dyn Write,
+        err: &mut dyn Write,
+    ) -> Result<Exit, Failure> {
         let inputs = std::slice::from_ref(&self.input);
         if let Some(output) = &self.output {
             check_target(inputs, output, self.force)?;
@@ -338,17 +343,45 @@ impl Compress {
 
         let mut preview = None;
         if let Some((_staging, staged, path)) = &staged_preview {
-            if self
+            let published = if self
                 .output
                 .as_ref()
                 .is_some_and(|pdf| save::same_file(pdf, path))
             {
-                return Err(Failure::new(
+                Err(Failure::new(
                     Exit::Refused,
                     "the preview now names the published PDF",
-                ));
+                ))
+            } else {
+                Temporary::publish(staged, path, self.force)
+            };
+            if let Err(failure) = published {
+                let Some(pdf) = &self.output else {
+                    return Err(failure);
+                };
+                let failure = Failure::new(
+                    failure.exit,
+                    format!(
+                        "{} was written. Preview {} was not written: {}",
+                        pdf.display(),
+                        path.display(),
+                        failure.message
+                    ),
+                );
+                say(err, &failure.message);
+                if self.json {
+                    json(
+                        out,
+                        &serde_json::json!({
+                            "schema": SCHEMA, "command": "compress",
+                            "output": pdf.display().to_string(), "written": true,
+                            "preview_requested": path.display().to_string(), "preview_written": false,
+                            "error": report::CommandError::from_failure(&failure),
+                        }),
+                    );
+                }
+                return Ok(failure.exit);
             }
-            Temporary::publish(staged, path, self.force)?;
             preview = Some(path.display().to_string());
         }
 
@@ -442,9 +475,9 @@ impl Subcommand for Compress {
         &self,
         env: &Env<'_>,
         out: &mut dyn Write,
-        _err: &mut dyn Write,
+        err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
-        self.run_compress(env, out)
+        self.run_compress(env, out, err)
     }
 }
 

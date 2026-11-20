@@ -856,7 +856,7 @@ impl Found {
             shown_matrix,
             page_matrix,
             read_only,
-            carried: !fixed,
+            carried: !fixed && marked.spacer.is_none(),
             stroke,
         };
         let bounds = self.bounds(&shown, state, checked)?;
@@ -1051,7 +1051,10 @@ impl Found {
         }
         if let Some(spacer) = &marked.spacer {
             spacer.text(&text)?;
-            return Ok(());
+            if !text.contains(fonts::OPAQUE) {
+                return Ok(());
+            }
+            // An undecodable glyph can paint ink. Keep its measured bounds fixed.
         }
         if let Some(span) = &mut marked.actual {
             span.show(index as u32, &text, metrics.vertical_bounds.is_some())?;

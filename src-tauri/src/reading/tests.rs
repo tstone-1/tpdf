@@ -441,6 +441,26 @@ fn interleaved_columns_read_one_column_after_the_other() {
 }
 
 #[test]
+fn untagged_rtl_columns_start_on_the_right() {
+    let rtl = |label: &str, x: f32, y: f32| {
+        let mut glyphs = word(label, x, y);
+        let mut boxes: Vec<_> = glyphs.iter().map(|g| g.1).collect();
+        boxes.reverse();
+        for (glyph, bounds) in glyphs.iter_mut().zip(boxes) {
+            glyph.1 = bounds;
+        }
+        glyphs
+    };
+    let text = page(vec![
+        rtl("אב", 300., 100.),
+        rtl("הו", 100., 100.),
+        rtl("גד", 300., 130.),
+        rtl("זח", 100., 130.),
+    ]);
+    assert_eq!(text_of(&text, &read(&text).lines), ["אב", "גד", "הו", "זח"]);
+}
+
+#[test]
 fn a_spanning_heading_is_read_before_both_columns() {
     let text = case("heading");
     let lines = text_of(&text, &read(&text).lines);

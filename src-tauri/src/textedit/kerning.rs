@@ -166,11 +166,9 @@ pub(super) fn kept(
     if !matches!(items.first(), Some(Object::String(..))) {
         return None;
     }
-    // A candidate cannot backtrack: it keeps only kerns inside kept runs of a
-    // source that did not (a source that backtracks is read-only).
-    let (text, advance, bounds, lead, _, _) =
+    let (text, advance, bounds, lead, _, backtracks) =
         array_text(&items, metrics, size, spacing, word_spacing).ok()?;
-    (lead.is_none() && text == replacement).then_some((items, advance, bounds))
+    (!backtracks && lead.is_none() && text == replacement).then_some((items, advance, bounds))
 }
 
 /// One word of a show, as the show's own items, and where it starts and ends

@@ -158,6 +158,34 @@ pub struct DisplayedPage {
     pub origin: (f32, f32),
 }
 
+/// First pair of slots sharing each repeated page object.
+pub(crate) fn shared_pages(pages: &[ObjectId]) -> HashMap<ObjectId, (usize, usize)> {
+    let mut first = HashMap::new();
+    let mut shared = HashMap::new();
+    for (slot, &id) in pages.iter().enumerate() {
+        let original = *first.entry(id).or_insert(slot);
+        if original != slot {
+            shared.entry(id).or_insert((original, slot));
+        }
+    }
+    shared
+}
+
+/// Physical points per default user-space unit. UserUnit is a page entry.
+pub(crate) fn user_unit(doc: &Document, page: ObjectId) -> Option<f64> {
+    let dict = doc.get_dictionary(page).ok()?;
+    let Ok(value) = dict.get(b"UserUnit") else {
+        return Some(1.0);
+    };
+    let (_, value) = doc.dereference(value).ok()?;
+    let unit = match value {
+        Object::Integer(n) => *n as f64,
+        Object::Real(n) => f64::from(*n),
+        _ => return None,
+    };
+    (unit.is_finite() && unit > 0.0).then_some(unit)
+}
+
 impl DisplayedPage {
     /// The same rectangle in the page's **own** space, before `/Rotate`.
     ///

@@ -57,7 +57,7 @@ import { catalog } from "./i18n";
 import { Lifetime } from "./lifetime";
 import { filePage, quarterTurns, type PageAddress } from "./pages";
 import { displayedSize, TIER1_WIDTH, type PageSize } from "./scroller";
-import { cancelTile, fetchTile, nextRequestId } from "./tiles";
+import { cancelTile, fetchTile, nextRequestId, type TileSource } from "./tiles";
 
 const TEXT = catalog({
   "en-US": {
@@ -154,6 +154,7 @@ export interface ThumbnailOptions {
    * the page, while `undefined` means there is nothing to ask a worker for.
    */
   addressOf?: (slot: number) => PageAddress | undefined;
+  geometryOf?: (slot: number) => (Pick<TileSource, "turns" | "crop"> & { size: PageSize }) | undefined;
   /** Geometry of page 1, taken as representative --- as `scroller.ts` does. */
   page: PageSize;
   tier1: Tier1Access;
@@ -353,7 +354,7 @@ export class Thumbnails {
    * not in `bitmaps` yet and no request is outstanding. It showed up as twelve
    * borrows on a twelve-page document that had only a handful of rows on screen.
    */
-  private readonly borrowing = new Set<number>();
+  private readonly borrowing = new Map<number, symbol>();
   /**
    * Pages whose render came back an error.
    *
@@ -756,6 +757,22 @@ export class Thumbnails {
     return Math.round((shown.height_pt * TIER1_WIDTH) / shown.width_pt);
   }
 
+  /** A single page was cropped or turned. Its row and the other pages stay put. */
+  invalidatePage(page: number): void {
+    if (this.request?.page === page) {
+      this.generation++;
+      this.withdraw("discard");
+    }
+    this.borrowing.delete(page);
+    this.bitmaps.get(page)?.close();
+    this.bitmaps.delete(page);
+    this.failed.delete(page);
+    this.blank.delete(page);
+    const canvas = this.rows.get(page)?.querySelector("canvas");
+    canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    this.pump();
+  }
+
   /** Tells the strip which page the reader is on. */
   setCurrentPage(page: number): void {
     if (page === this.current) return;
@@ -845,18 +862,17 @@ export class Thumbnails {
     const borrowed = this.opts.tier1.placeholderFor(page);
     if (borrowed) {
       this.borrowed++;
-      this.borrowing.add(page);
+      const borrow = Symbol();
+      this.borrowing.set(page, borrow);
       void createImageBitmap(borrowed)
         .then(
           this.life.claim(
             (copy: ImageBitmap) => {
-              // Not `delete` then `keep`: a rotation during the copy clears the
-              // set, and that is exactly the signal that this bitmap is the
-              // wrong way up.
-              if (!this.borrowing.delete(page)) {
+              if (this.borrowing.get(page) !== borrow) {
                 copy.close();
                 return;
               }
+              this.borrowing.delete(page);
               this.keep(page, copy);
               this.pump();
             },
@@ -866,7 +882,7 @@ export class Thumbnails {
           ),
         )
         .catch(() => {
-          this.borrowing.delete(page);
+          if (this.borrowing.get(page) === borrow) this.borrowing.delete(page);
         });
       return;
     }
@@ -880,17 +896,21 @@ export class Thumbnails {
     // wants.
     const generation = this.generation;
 
+    const geometry = this.opts.geometryOf?.(page);
+    const size = geometry?.size ?? this.displayed();
+    const scale = Math.min(TIER1_WIDTH / size.width_pt, this.thumbPixels() / size.height_pt);
     void fetchTile({
       rid,
       doc: source.doc,
       page: source.page,
-      scale: TIER1_WIDTH / this.displayed().width_pt,
-      turns: this.turns,
+      scale,
+      turns: geometry?.turns ?? this.turns,
+      crop: geometry?.crop,
       invert: this.invert,
       x: 0,
       y: 0,
-      width: TIER1_WIDTH,
-      height: this.thumbPixels(),
+      width: Math.max(1, Math.round(size.width_pt * scale)),
+      height: Math.max(1, Math.round(size.height_pt * scale)),
       format: "raw",
     })
       .then(
@@ -998,6 +1018,9 @@ export class Thumbnails {
         this.rows.delete(page);
       }
     }
+    if (last >= first && (this.focused < first || this.focused > last)) {
+      this.focus(Math.max(first, Math.min(last, this.current)));
+    }
     for (let page = first; page <= last; page++) {
       if (!this.rows.has(page)) this.mount(page);
     }
@@ -1029,7 +1052,7 @@ export class Thumbnails {
     // produces, and re-rendering it at the panel's width would be a second
     // render call of exactly the kind this class exists to ration.
     canvas.style.cssText =
-      `width:${THUMB_WIDTH}px;height:${this.thumbHeight}px;` +
+      `width:${THUMB_WIDTH}px;height:${this.thumbHeight}px;object-fit:contain;` +
       "background:color-mix(in srgb, currentColor 8%, Canvas);" +
       "box-shadow:0 0 0 1px color-mix(in srgb, currentColor 20%, transparent);";
 
@@ -1055,6 +1078,7 @@ export class Thumbnails {
       // live. Set afterwards, the scroll happens first and the content the
       // reader is about to aim at has already slid under the pointer.
       if (this.opts.onReorder) {
+        window.addEventListener("keydown", this.onDragKey, true);
         this.host.setPointerCapture(event.pointerId);
         this.press = {
           from: page,
@@ -1095,6 +1119,8 @@ export class Thumbnails {
     const bitmap = this.bitmaps.get(page);
     const canvas = this.rows.get(page)?.querySelector("canvas");
     if (!bitmap || !canvas) return;
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
     canvas.getContext("2d", { alpha: false })?.drawImage(bitmap, 0, 0);
     // Re-inserting moves it last, which is what makes the map an LRU rather
     // than a queue in arrival order.
@@ -1131,6 +1157,14 @@ export class Thumbnails {
     this.indicator.style.top = `${Math.max(0, gap * this.rowHeight - 1)}px`;
   }
 
+  private readonly onDragKey = (event: KeyboardEvent): void => {
+    if (event.key === "Escape" && this.press) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.endDrag(false);
+    }
+  };
+
   /**
    * Ends the drag, whether it dropped or was abandoned.
    *
@@ -1140,6 +1174,7 @@ export class Thumbnails {
    * that no longer exist.
    */
   private endDrag(drop: boolean): void {
+    window.removeEventListener("keydown", this.onDragKey, true);
     const press = this.press;
     this.press = null;
     if (this.edgeFrame) {
@@ -1285,15 +1320,6 @@ export class Thumbnails {
       case "ArrowUp":
       case "ArrowLeft":
         this.move(-1);
-        break;
-      case "Escape":
-        // Abandons a drag rather than dropping it. There is no other way out
-        // once the pointer has been captured: releasing it *is* the drop, so
-        // without this a reader who started a drag by accident has to complete
-        // one. Falls through to the default when nothing is being dragged, so
-        // Escape keeps whatever meaning the surrounding UI gives it.
-        if (!this.press) return;
-        this.endDrag(false);
         break;
       case "Home":
         this.move(-this.opts.pageCount);

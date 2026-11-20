@@ -279,6 +279,25 @@ class ClientTests(unittest.TestCase):
                 self.pdf.mark_matches(self.source, nothing, texts=['synthetic'], **bad)
         self.assertFalse(nothing.exists())
 
+    def test_mark_matches_refuses_a_different_revision_at_the_same_path(self):
+        client = Tpdf(BINARY, cwd=self.root, timeout=30)
+        search = client.search
+        output = self.root / 'marked.pdf'
+        output.write_bytes(b'prior output')
+
+        def replace_after_search(*args, **kwargs):
+            result = search(*args, **kwargs)
+            before = self.source.stat()
+            fixture(self.source, content=b'BT /F1 12 Tf 90 260 Td (SYNTHETIC ORIGINAL) Tj ET')
+            os.utime(self.source, ns=(before.st_atime_ns, before.st_mtime_ns))
+            self.assertEqual(self.source.stat().st_size, before.st_size)
+            return result
+
+        with patch.object(client, 'search', side_effect=replace_after_search):
+            with self.assertRaisesRegex(CommandError, 'searched revision'):
+                client.mark_matches(self.source.name, output.name, texts=['ORIGINAL'], force=True)
+        self.assertEqual(output.read_bytes(), b'prior output')
+
     def test_page_helpers_merge_extract_and_split_read_back(self):
         second = self.root / 'second.pdf'
         self.pdf.edit(self.source, second, [

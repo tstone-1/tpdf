@@ -63,7 +63,7 @@ impl Spacer {
     // space for a run of tabs and places it with the matrix. Either way the
     // show is spacing only, which is what keeps it out of the editable text.
     // In a font the editor keeps read-only (`fonts::read_only`) the glyph
-    // cannot be read, and needs not be: nothing in that font is editable.
+    // cannot be decoded. The inspector keeps its bounds as a fixed obstacle.
     pub(super) fn text(&self, text: &str) -> Result<(), String> {
         if !(1..=self.count).contains(&text.chars().count())
             || !text

@@ -501,6 +501,33 @@ fn textedit_a_spans_actual_text_is_rewritten_with_its_words() {
 }
 
 #[test]
+fn retyping_a_deleted_tagged_word_keeps_one_trailing_separator() {
+    let (mut doc, ids) = spoken("FIRST", "SECOND ", None);
+    replace(&mut doc, "SECOND", "", None).unwrap();
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    let mut reopened = Document::load_mem(&bytes).unwrap();
+    assert_eq!(spoken_text(&reopened, ids[7]), " ");
+    // An empty run has zero natural advance. Give it the box used for retyping in the editor.
+    replace(
+        &mut reopened,
+        "",
+        "IN",
+        Some(textedit::Layout {
+            width: 60.,
+            height: 16.,
+            size: 12.,
+            wrap: false,
+            grow: false,
+            font: textedit::EditFont::Original,
+            installed: None,
+        }),
+    )
+    .unwrap();
+    assert_eq!(spoken_text(&reopened, ids[7]), "IN ");
+}
+
+#[test]
 fn textedit_a_span_whose_actual_text_is_not_its_words_stays_read_only() {
     for (first, why) in [
         ("FIRST!", "different text"),

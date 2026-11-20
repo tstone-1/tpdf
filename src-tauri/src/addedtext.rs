@@ -137,12 +137,18 @@ pub struct AddedText {
     /// What `{page}` is on the first page written to.
     pub first_number: u32,
     /// The pages to write on, zero-based in the written file's order, or
-    /// `None` for every page. `{page}` counts these, and `{pages}` is how
-    /// many there are, so a cover left out is not counted.
+    /// `None` for every page. Only selected pages advance the number.
+    /// `{pages}` is the last printed number.
     pub pages: Option<Vec<u32>>,
 }
 
 impl AddedText {
+    /// Last printed number for this selection, including when numbering starts at zero.
+    pub(crate) fn last_number(&self, selected: usize) -> u32 {
+        self.first_number
+            .saturating_add(u32::try_from(selected.saturating_sub(1)).unwrap_or(u32::MAX))
+    }
+
     /// A page number at the bottom centre: `Page 1 of 3`, black, 10 pt.
     #[must_use]
     pub fn page_numbers() -> Self {
@@ -300,6 +306,7 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
         ));
     }
     let pages = pagetree::ordered_pages(doc);
+    let shared = pagetree::shared_pages(&pages);
     let count = u32::try_from(pages.len()).unwrap_or(u32::MAX);
     // Checked, and every page resolved, before anything is added.
     let mut planned: Vec<(ObjectId, usize, String)> = Vec::new();
@@ -320,18 +327,17 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
                 sorted
             }
         };
-        let total = line.first_number.saturating_sub(1) + u32::try_from(chosen.len()).unwrap_or(0);
+        let total = line.last_number(chosen.len());
         // **Two page numbers can be one page object**, which a page tree may
         // list twice. Each would then carry both lines, drawn over each other,
         // so that is refused rather than written. `docs/TRAPS.md` has the shape.
-        let mut seen: std::collections::HashMap<ObjectId, u32> = std::collections::HashMap::new();
         for page in &chosen {
-            if let Some(first) = seen.insert(pages[*page as usize], *page) {
+            if let Some(&(first, second)) = shared.get(&pages[*page as usize]) {
                 return Err(said!(
                     "pages {first} and {second} are one page in this file, listed twice, so a \
                      line cannot be written on each",
                     first = first + 1,
-                    second = page + 1
+                    second = second + 1
                 ));
             }
         }
@@ -393,6 +399,8 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
     }
     for (page, list) in by_page {
         let shown = pagetree::displayed_page(doc, page);
+        let unit = pagetree::user_unit(doc, page)
+            .ok_or_else(|| said!("the page has an invalid user unit"))?;
         let open = unclosed(doc, page);
         let (font_names, state_names) = names(doc, page, states.len());
         let mut used = [false; 3];
@@ -404,6 +412,7 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
             };
             let (drawn, slots) = show(
                 shown,
+                unit,
                 &lines[*index],
                 text,
                 &face,
@@ -544,6 +553,7 @@ fn names(doc: &Document, page: ObjectId, states: usize) -> (Vec<String>, Vec<Str
 /// font slots they use.
 fn show(
     shown: DisplayedPage,
+    unit: f64,
     line: &AddedText,
     text: &str,
     face: &Face<'_>,
@@ -551,8 +561,8 @@ fn show(
     state: &str,
 ) -> Result<(String, Vec<usize>), String> {
     let (width, height) = (f64::from(shown.width), f64::from(shown.height));
-    let size = f64::from(line.size);
-    let margin = f64::from(line.margin);
+    let size = f64::from(line.size) / unit;
+    let margin = f64::from(line.margin) / unit;
     let advance = face.advance(text, size)?;
     let (cap_height, descent) = (face.cap_height(), face.descent());
 
@@ -609,7 +619,11 @@ fn show(
     );
     let number = |v: f64| {
         let v = if v.abs() < 1e-9 { 0.0 } else { v };
-        format!("{v:.4}")
+        if unit > 1.0 {
+            format!("{v:.12}")
+        } else {
+            format!("{v:.4}")
+        }
     };
     let [r, g, b] = line.color;
     // Marked as pagination, not content (ISO 32000-1 §14.8.2.2), so a screen
@@ -807,6 +821,16 @@ mod tests {
     }
 
     #[test]
+    fn numbering_from_zero_uses_the_final_printed_number() {
+        let mut doc = document(2, 0, b"");
+        let mut line = AddedText::page_numbers();
+        line.first_number = 0;
+        write(&mut doc, &[line]).unwrap();
+        assert_eq!(shown(&doc, 0), ["Page 0 of 1"]);
+        assert_eq!(shown(&doc, 1), ["Page 1 of 1"]);
+    }
+
+    #[test]
     fn the_bottom_centre_is_centred_and_above_the_margin() {
         let mut doc = document(1, 0, b"");
         write(&mut doc, &[AddedText::page_numbers()]).expect("writes");
@@ -845,6 +869,38 @@ mod tests {
             (m[5] - (421.0 - 10.0 * CAP_HEIGHT / 2.0)).abs() < 1e-3,
             "{m:?}"
         );
+    }
+
+    #[test]
+    fn user_units_preserve_physical_font_size_and_inset() {
+        for line in [AddedText::page_numbers(), AddedText::watermark("DRAFT")] {
+            let mut doc = document(2, 0, b"");
+            let scaled = pagetree::ordered_pages(&doc)[1];
+            let dict = doc.get_dictionary_mut(scaled).unwrap();
+            dict.set("UserUnit", 2);
+            dict.set(
+                "MediaBox",
+                vec![0.0.into(), 0.0.into(), 297.5.into(), 421.0.into()],
+            );
+            let mut line = line;
+            line.text = "LABEL".into();
+            write(&mut doc, &[line]).unwrap();
+            let font_size = |slot| {
+                operations(&doc, slot)
+                    .into_iter()
+                    .find(|op| op.operator == "Tf")
+                    .unwrap()
+                    .operands[1]
+                    .as_float()
+                    .unwrap()
+            };
+            assert_eq!(font_size(0), 2.0 * font_size(1));
+            let plain = matrix(&doc, 0);
+            let scaled = matrix(&doc, 1);
+            for i in [4, 5] {
+                assert!((plain[i] - 2.0 * scaled[i]).abs() < 0.001);
+            }
+        }
     }
 
     #[test]
@@ -1200,6 +1256,11 @@ mod tests {
         // The control: the tree really lists the one page twice.
         assert_eq!(pagetree::ordered_pages(&doc), vec![kid, kid]);
         let objects = doc.objects.len();
+        let mut selected = AddedText::page_numbers();
+        selected.pages = Some(vec![1]);
+        assert!(write(&mut doc, &[selected])
+            .unwrap_err()
+            .contains("pages 1 and 2"));
         let why = write(&mut doc, &[AddedText::page_numbers()]).expect_err("refused");
         assert!(why.contains("pages 1 and 2 are one page"), "{why}");
         assert_eq!(doc.objects.len(), objects);

@@ -18,7 +18,7 @@ export const DIALOG_CLASS = "tpdf-add-text";
 const TEXT = catalog({
   "en-US": {
     numbersTitle: "Save a copy with page numbers",
-    numbersIntro: "{page} is each page's number and {pages} how many pages are numbered. Add words around them for a header or a footer.",
+    numbersIntro: "{page} is the current number and {pages} the final printed number. Add words around them for a header or a footer.",
     firstNumber: "First number",
     watermarkTitle: "Save a copy with a watermark",
     watermarkIntro: "The text is written across each page, turned and see-through, over what is on it.",
@@ -35,7 +35,7 @@ const TEXT = catalog({
   },
   "de-DE": {
     numbersTitle: "Kopie mit Seitenzahlen speichern",
-    numbersIntro: "{page} ist die Nummer jeder Seite und {pages} die Anzahl der nummerierten Seiten. Ergänze Wörter darum herum für eine Kopf- oder Fußzeile.",
+    numbersIntro: "{page} ist die aktuelle Seitenzahl und {pages} die letzte gedruckte Seitenzahl. Ergänze Wörter darum herum für eine Kopf- oder Fußzeile.",
     firstNumber: "Erste Zahl",
     watermarkTitle: "Kopie mit Wasserzeichen speichern",
     watermarkIntro: "Der Text wird quer über jede Seite geschrieben, gedreht und durchscheinend, über ihren Inhalt.",
@@ -51,7 +51,7 @@ const TEXT = catalog({
     cancel: "Abbrechen",
   },
   "de-DE-formal": {
-    numbersIntro: "{page} ist die Nummer jeder Seite und {pages} die Anzahl der nummerierten Seiten. Ergänzen Sie Wörter darum herum für eine Kopf- oder Fußzeile.",
+    numbersIntro: "{page} ist die aktuelle Seitenzahl und {pages} die letzte gedruckte Seitenzahl. Ergänzen Sie Wörter darum herum für eine Kopf- oder Fußzeile.",
   },
 });
 

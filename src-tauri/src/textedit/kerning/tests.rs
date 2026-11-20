@@ -29,6 +29,16 @@ fn write(content: &str, original: &str, replacement: &str) -> Result<Object, Str
         .clone())
 }
 
+#[test]
+fn shortening_a_kerned_run_keeps_the_page_editable() {
+    write(
+        "BT /F1 12 Tf 40 180 Td [(A) 300 (iiWW)] TJ ET",
+        "AiiWW",
+        "Ai",
+    )
+    .unwrap();
+}
+
 fn array(items: Vec<Object>) -> Object {
     Object::Array(items)
 }

@@ -583,7 +583,13 @@ fn ranges_of(mut indices: Vec<usize>) -> Vec<Range> {
 type Span = (Fragment, Extents);
 
 /// `blocksOf`.
-fn blocks_of(fragments: Vec<Fragment>, axes: Axes, gap: f64, depth: usize) -> Vec<Vec<Fragment>> {
+fn blocks_of(
+    view: &View,
+    fragments: Vec<Fragment>,
+    axes: Axes,
+    gap: f64,
+    depth: usize,
+) -> Vec<Vec<Fragment>> {
     if fragments.len() < 2 || depth >= MAX_DEPTH {
         return vec![fragments];
     }
@@ -592,12 +598,16 @@ fn blocks_of(fragments: Vec<Fragment>, axes: Axes, gap: f64, depth: usize) -> Ve
         .map(|f| (f.clone(), extents_of(f.bounds, axes)))
         .collect();
 
-    let columns = split(&spans, |e| (e.along_start, e.along_end), gap);
+    let mut columns = split(&spans, |e| (e.along_start, e.along_end), gap);
     if columns.len() > 1 {
+        if written_backwards(view, &fragments, axes) {
+            columns.reverse();
+        }
         return columns
             .into_iter()
             .flat_map(|group| {
                 blocks_of(
+                    view,
                     group.into_iter().map(|s| s.0).collect(),
                     axes,
                     gap,
@@ -612,6 +622,7 @@ fn blocks_of(fragments: Vec<Fragment>, axes: Axes, gap: f64, depth: usize) -> Ve
             .into_iter()
             .flat_map(|group| {
                 blocks_of(
+                    view,
                     group.into_iter().map(|s| s.0).collect(),
                     axes,
                     gap,
@@ -690,7 +701,7 @@ pub fn read(text: &PageText) -> Reading {
         };
     }
     let lines = if view.char_turns.is_empty() {
-        blocks_of(fragments, axes, gap, 0)
+        blocks_of(&view, fragments, axes, gap, 0)
             .into_iter()
             .flat_map(|block| lines_of(&view, block, axes))
             .collect()
@@ -702,7 +713,7 @@ pub fn read(text: &PageText) -> Reading {
                     return oblique_lines(group);
                 }
                 let own = axes_for(turns);
-                blocks_of(group, own, gap, 0)
+                blocks_of(&view, group, own, gap, 0)
                     .into_iter()
                     .flat_map(|block| lines_of(&view, block, own))
                     .collect()

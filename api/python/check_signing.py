@@ -51,6 +51,8 @@ def long_term_checks(report: dict, field: str) -> list[str]:
     require(signature['covers_whole_file'] is False and signature['appended_bytes'] > 0
             and archive['covers_whole_file'] is True and archive['appended_bytes'] == 0,
             'the archive timestamp covers the final revision')
+    require(signature.get('pades_level') == 'B-LTA',
+            'the signer is classified B-LTA')
     for name, item in [('signer', signature), ('archive authority', archive)]:
         require((item.get('trust') or {}).get('standing') in ('trusted', 'trusted_at_timestamp'),
                 name + ' is trusted')

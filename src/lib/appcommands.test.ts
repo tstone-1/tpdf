@@ -1394,6 +1394,11 @@ describe("the page operations", () => {
       expect(problem("file.extractPages", "i-ii")).toBe("Printed as i-ii: type 1-2");
       expect(problem("file.splitDocument", "ii")).toBe("Printed as ii: type 2");
       expect(problem("nav.goToPage", "ii")).toBe("Printed as ii: type 2");
+      for (const id of ["nav.goToPage", "file.splitDocument"]) {
+        expect(problem(id, "i-ii")).toBeTruthy();
+        expect(problem(id, "i-ii")).not.toContain("type 1-2");
+      }
+      expect(problem("file.extractPages", "1-2")).toBeNull();
     });
 
     it("and leaves a value that is not a label to the parser's own refusal", () => {

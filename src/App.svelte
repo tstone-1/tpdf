@@ -6488,6 +6488,7 @@
         // A row is a slot and a tile request names a page of a document --- this
         // one's, or another file's for a page inserted from it; see `pages.ts`.
         addressOf: (slot) => edits?.map.addressOf(slot, doc.id),
+        geometryOf: (slot) => viewer?.thumbnailGeometry(slot),
         onNavigate: (at) => {
           viewer?.goToPage(at);
           viewer?.focus();
@@ -6736,6 +6737,7 @@
       // also move the page, and this covers the ones that do not, including a
       // link to somewhere on the page the reader is already looking at.
       onNavigate: () => refreshMenu(),
+      onPageGeometryChanged: (slot) => sidebar?.thumbnails?.invalidatePage(slot),
       onStatus: (next) => {
         status = next;
         formLayer?.layout();

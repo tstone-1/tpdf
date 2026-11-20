@@ -93,6 +93,7 @@ export default {
     "Der Text soll auf Seite {page}, das Dokument hat aber {count}",
   "pages {first} and {second} are one page in this file, listed twice, so a line cannot be written on each":
     "Die Seiten {first} und {second} sind in dieser Datei eine Seite, die zweimal aufgeführt ist, daher kann nicht auf jede eine Zeile geschrieben werden",
+  "the page has an invalid user unit": "Die Seite hat eine ungültige Maßeinheit",
   "no font was made for a line of text": "Für eine Textzeile wurde keine Schrift angelegt",
 
   // textlayer.rs

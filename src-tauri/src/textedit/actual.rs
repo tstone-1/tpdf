@@ -134,7 +134,12 @@ pub(super) struct Edges {
 
 fn edges(text: &str) -> (&str, [usize; 2]) {
     let core = text.trim_matches(' ');
-    let lead = text.len() - text.trim_start_matches(' ').len();
+    // Once the word is empty, its spaces form one trailing separator.
+    let lead = if core.is_empty() {
+        0
+    } else {
+        text.len() - text.trim_start_matches(' ').len()
+    };
     let trail = text.len() - text.trim_end_matches(' ').len();
     (core, [lead, trail])
 }

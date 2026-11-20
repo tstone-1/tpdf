@@ -320,6 +320,40 @@ fn table_offset(tag: &[u8; 4]) -> usize {
 }
 
 #[test]
+fn restricted_font_kerning_cannot_keep_a_partial_replacement() {
+    let (mut doc, _, _, program) = fixture();
+    let offset = table_offset(b"OS/2") + 8;
+    doc.get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content[offset..offset + 2]
+        .copy_from_slice(&4u16.to_be_bytes());
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let stream = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 12 Tf 40 180 Td [(SYNTHETIC) 10 ( FIRST)] TJ ET".to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    let scan = textedit::scan(&doc, 0).unwrap();
+    let mut change = Change {
+        page: 0,
+        layout: None,
+        revision: scan.revision,
+        operator: scan.runs[0].operator,
+        original: scan.runs[0].text.clone(),
+        replacement: "SYNTHETIC".into(),
+    };
+    assert!(textedit::write(&mut doc, &[change.clone()])
+        .unwrap_err()
+        .contains("editable use"));
+    change.replacement.clear();
+    textedit::write(&mut doc, &[change]).unwrap();
+}
+
+#[test]
 fn textedit_embedded_refuses_restricted_missing_or_corrupt_programs() {
     for rights in [1_u16, 2, 4, 12, 0x200, 0x8000] {
         let (mut doc, _, _, program) = fixture();
@@ -1418,6 +1452,37 @@ fn textedit_symbolic_codes_keep_a_character_they_cannot_write_read_only() {
                 .collect::<Vec<_>>()
         })
     };
+    // An ActualText tab may paint this same bullet. It remains a fixed obstacle.
+    {
+        let (mut doc, _, _) = bulleted("2022");
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let mut data = lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+        let index = data
+            .operations
+            .iter()
+            .rposition(|op| op.operator == "Tj")
+            .unwrap();
+        data.operations[index].operands[0] = Object::string_literal(vec![15]);
+        let props = dictionary! { "ActualText" => Object::string_literal(vec![9]) };
+        data.operations.insert(
+            index,
+            lopdf::content::Operation::new("BDC", vec!["Span".into(), props.into()]),
+        );
+        data.operations
+            .insert(index + 2, lopdf::content::Operation::new("EMC", vec![]));
+        let stream = doc.add_object(Stream::new(Dictionary::new(), data.encode().unwrap()));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", stream);
+        let inspected = textedit::inspect(&doc, 0).unwrap();
+        let obstacle = inspected
+            .preserved
+            .iter()
+            .find(|run| run.text.contains(super::OPAQUE))
+            .unwrap();
+        assert!(obstacle.display_rect[2] > obstacle.display_rect[0]);
+        assert!(!inspected.held.contains_key(&obstacle.operator));
+    }
     // The control: named as the letter it is, the glyph is text like any other.
     assert_eq!(
         offered(&bulleted("0042").0).unwrap(),

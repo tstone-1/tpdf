@@ -476,6 +476,7 @@ export interface ViewerOptions {
   /** Tile edge in device pixels. Section 4 measured 1024--2048 as the range. */
   tilePx?: number;
   onStatus?: (status: ViewerStatus) => void;
+  onPageGeometryChanged?: (slot: number) => void;
   /**
    * Called every frame with the top of the viewport.
    *
@@ -2768,6 +2769,11 @@ export class Viewer {
     );
   }
 
+  thumbnailGeometry(slot: number) {
+    const source = this.scroller.tileSource(slot);
+    return source && { size: this.displayedPage(slot), turns: source.turns ?? 0, crop: source.crop };
+  }
+
   /**
    * The page in view as the renderer addresses it: its document, its page
    * there, the turn it is shown at and the reader's crop. What *Copy page for
@@ -3472,6 +3478,7 @@ export class Viewer {
     const at = this.textAt(page);
     if (at) at.cache.setPageTurns(at.page, turns);
     this.scroller.setPageTurns(page, turns);
+    this.opts.onPageGeometryChanged?.(page);
     // Earlier sheets can have changed height underneath the old scroll offset.
     this.applyFit(false, anchor);
 
@@ -3535,16 +3542,11 @@ export class Viewer {
     // index is by slot, and a deletion renumbers every slot after the gap.
     this.markIndex = null;
 
-    // Before either branch below, because a crop can change without the order
-    // changing --- which is the common case, since cropping one page moves no
-    // page --- and the early return would then leave the text cache holding an
-    // extraction measured under the box the reader just replaced.
-    void this.adoptCrops(after);
-
     if (before.sameOrder(after)) {
       // The crops, which a crop changes without moving a page; the scroller
       // renders under them.
       this.scroller.adoptViews(views);
+      void this.adoptCrops(after);
       // Every slot, not the ones that differ: `setPageTurns` returns early for a
       // page whose turn has not moved, so the comparison it would take to avoid
       // the call is the comparison it already does.
@@ -3563,6 +3565,7 @@ export class Viewer {
 
     this.opts.pageCount = after.length;
     this.scroller.setPages([...views]);
+    void this.adoptCrops(after);
     this.a11y.setPages(after.length);
     this.searcher.setPages(after.length);
 
@@ -7451,26 +7454,16 @@ export class Viewer {
       const source = this.textAt(slot, pages);
       const want = view.crop;
       const held = this.crops.get(view.id);
-      if (want === undefined) {
-        // Nothing to ask: the file's own page is what `cropAt` falls back to,
-        // so a cleared crop needs the entry gone rather than a round trip.
-        if (held) {
-          this.crops.delete(view.id);
-          this.cropBoxes.delete(view.id);
-          source?.cache.setPageCrop(source.page, undefined);
-          this.scroller.invalidatePage(slot);
-        }
-        continue;
-      }
       if (source === undefined) continue;
       source.cache.setPageCrop(source.page, want);
+      if (want === undefined && !held) continue;
       // The box this page's geometry was measured under, and if it is the box
       // the model holds now, nothing about the page changed: no question, no
       // dropped tiles. The size the scroller learned is carried by identity
       // across a reorder (`Scroller.setPages`), so it needs no re-noting either.
       const asked = this.cropBoxes.get(view.id);
-      if (held && asked && asked.every((value, index) => value === want[index])) continue;
-      const at = await pageGeometry(source.doc, source.page, want).catch(
+      if (want && held && asked && asked.every((value, index) => value === want[index])) continue;
+      const at = await pageGeometry(source.doc, source.page, want ?? null).catch(
         () => null,
       );
       // The reply is for the document as it was when the question went out, and
@@ -7483,8 +7476,13 @@ export class Viewer {
       // another page's size and looks like a rendering fault.
       if (this.pages !== pages || this.life.ended) return;
       if (!at) continue;
-      this.crops.set(view.id, at);
-      this.cropBoxes.set(view.id, [want[0], want[1], want[2], want[3]]);
+      if (want) {
+        this.crops.set(view.id, at);
+        this.cropBoxes.set(view.id, [...want]);
+      } else {
+        this.crops.delete(view.id);
+        this.cropBoxes.delete(view.id);
+      }
       // Re-anchored and refitted as `learnGeometry` and `setPageTurns` are. On a
       // lazily opened document the pages not yet read are laid out at the mean
       // of the known sizes, so this one size moves all of them: cropping the
@@ -7506,6 +7504,7 @@ export class Viewer {
         );
       }
       this.scroller.invalidatePage(slot);
+      this.opts.onPageGeometryChanged?.(slot);
     }
     // A page that has gone takes its geometry with it, or the map grows for the
     // life of the document and a reused id would find a stale answer.

@@ -154,8 +154,8 @@ ROWS += [
     Mutation(
         "viewer: measure an imported page's crop against the opened document",
         "src/lib/viewer.ts",
-        "      const at = await pageGeometry(source.doc, source.page, want).catch(",
-        "      const at = await pageGeometry(this.opts.doc, source.page, want).catch(",
+        "      const at = await pageGeometry(source.doc, source.page, want ?? null).catch(",
+        "      const at = await pageGeometry(this.opts.doc, source.page, want ?? null).catch(",
         "measures a cropped page inserted from another file against that file",
     ),
     Mutation(

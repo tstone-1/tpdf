@@ -754,8 +754,8 @@ ROWS += [
         # boundary is not a stated one.
         "a11y: treat an inferred block as a stated paragraph",
         "src/lib/reading.ts",
-        "  return blocksOf(fragments, axes, gap).map((block) => ({\n    tag: null,",
-        '  return blocksOf(fragments, axes, gap).map((block) => ({\n    tag: "P",',
+        "  return blocksOf(fragments, axes, gap, 0, text).map((block) => ({\n    tag: null,",
+        '  return blocksOf(fragments, axes, gap, 0, text).map((block) => ({\n    tag: "P",',
         "reports an inferred block as having no type",
     ),
     Mutation(
@@ -2157,8 +2157,8 @@ ROWS += [
         # that looks least like the thing that caused it.
         "viewer: keep a page's crop geometry after the crop is cleared",
         "src/lib/viewer.ts",
-        "        if (held) {\n          this.crops.delete(view.id);",
-        "        if (held) {\n          void held;",
+        "      } else {\n        this.crops.delete(view.id);",
+        "      } else {\n        void held;",
         "takes the geometry back off when the crop is cleared",
     ),
     Mutation(

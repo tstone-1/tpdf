@@ -259,6 +259,8 @@ fn a_spans_actual_text_differs_from_its_words_only_at_the_ends() {
         ("word", "word ", "text", "text"),
         (" word", "word", "text", " text"),
         ("word ", "word", "", " "),
+        (" ", "", "IN", "IN "),
+        ("  ", " ", "word", "word "),
         ("word", "word ", " ", ""),
         ("word ", "word", " ", "  "),
     ] {

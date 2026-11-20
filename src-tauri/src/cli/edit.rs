@@ -139,6 +139,7 @@ fn parse(args: &[String], mode: Mode) -> Result<Edit, String> {
 #[serde(deny_unknown_fields)]
 struct EditRequest {
     schema: u32,
+    source_sha256: Option<String>,
     operations: Vec<Operation>,
 }
 
@@ -729,6 +730,16 @@ impl Subcommand for Edit {
             return Err(Failure::new(Exit::Refused, "the document is signed or its signatures could not be fully read; edit requires --invalidate-signatures"));
         }
         let request = request.expect("edit has a request");
+        if let Some(expected) = &request.source_sha256 {
+            if !expected
+                .eq_ignore_ascii_case(&crate::encoding::hex_lower(&before.opened_as().digest))
+            {
+                return Err(Failure::new(
+                    Exit::Refused,
+                    "the source differs from the searched revision; no output was published",
+                ));
+            }
+        }
         let (plan, fonts) = apply(&request, &before, env.now, |request| session.ask(request))?;
         drop(session);
         let sizes = dimensions(&plan, &before.sizes);

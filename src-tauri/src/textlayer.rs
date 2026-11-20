@@ -116,12 +116,7 @@ pub fn write(doc: &mut Document, layers: &[Layer]) -> Result<(), String> {
         return Ok(());
     }
     let pages = pagetree::ordered_pages(doc);
-    let mut page_ids = BTreeSet::new();
-    let shared: BTreeSet<_> = pages
-        .iter()
-        .copied()
-        .filter(|id| !page_ids.insert(*id))
-        .collect();
+    let shared = pagetree::shared_pages(&pages);
     let mut seen = BTreeSet::new();
     let mut codes = BTreeMap::new();
     let mut planned = Vec::new();
@@ -148,7 +143,7 @@ pub fn write(doc: &mut Document, layers: &[Layer]) -> Result<(), String> {
         }
         let shown = pagetree::displayed_page(doc, id);
         if let Some(lines) = content(shown, &layer.words, &mut codes)? {
-            if shared.contains(&id) {
+            if shared.contains_key(&id) {
                 return Err(said!(
                     "the OCR page shares its page object with another page"
                 ));

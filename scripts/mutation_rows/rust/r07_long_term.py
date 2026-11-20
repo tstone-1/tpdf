@@ -1825,7 +1825,7 @@ ROWS += [
         # though only its position were its own.
         "carried: read-only text moves whatever keeps it where it is",
         "src/textedit/inspect.rs",
-        "            carried: !fixed,\n",
+        "            carried: !fixed && marked.spacer.is_none(),\n",
         "            carried: true,\n",
         "a_block_below_that_cannot_be_moved_refuses_the_wrap",
     ),

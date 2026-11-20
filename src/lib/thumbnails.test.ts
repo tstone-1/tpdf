@@ -270,6 +270,31 @@ describe("Thumbnails lifetime", () => {
     return makeStrip(dom);
   }
 
+  it("refreshes a single page using its edited turn and crop", async () => {
+    const crop = [10, 20, 110, 220] as const;
+    let turns = 0;
+    const pages = makeStrip(dom, {
+      pageCount: 1,
+      geometryOf: () => ({ size: { width_pt: 100, height_pt: 200 }, turns, crop }),
+    });
+    pages.setActive(true);
+    expect(tiles.fetchTile.mock.calls[0]?.[0]).toMatchObject({ turns: 0, crop });
+    deliver(render(() => {}));
+    await settle();
+    turns = 2;
+    pages.invalidatePage(0);
+    expect(tiles.fetchTile.mock.calls[1]?.[0]).toMatchObject({ turns: 2, crop });
+    pages.destroy();
+  });
+
+  it("keeps a tab stop when a jump replaces all visible rows", () => {
+    const pages = makeStrip(dom);
+    pages.setActive(true);
+    pages.setCurrentPage(20);
+    expect(pages.elementFor(20)?.tabIndex).toBe(0);
+    pages.destroy();
+  });
+
   it("asks for no tile for a page tpdf made, and carries on past it", async () => {
     // **The made page is in the middle, and that is the whole fixture.** With it
     // at slot 0 this test passes whether the walk-on exists or not, because
@@ -362,6 +387,30 @@ describe("Thumbnails lifetime", () => {
     pages.setPages(40);
     await settle();
     expect(closed).toEqual([1]);
+  });
+
+  it.each([true, false])("keeps the current bitmap across a slot reset (old completes first: %s)", async (oldFirst) => {
+    const pending: ((bitmap: ImageBitmap) => void)[] = [];
+    const original = globalThis.createImageBitmap;
+    globalThis.createImageBitmap = (() => new Promise<ImageBitmap>((done) => pending.push(done))) as typeof createImageBitmap;
+    const old = { close: vi.fn() } as unknown as ImageBitmap;
+    const fresh = { close: vi.fn() } as unknown as ImageBitmap;
+    const pages = makeStrip(dom, { pageCount: 1, tier1: { placeholderFor: () => fresh } });
+    try {
+      pages.setActive(true);
+      pages.setPages(1);
+      expect(pending).toHaveLength(2);
+      for (const index of oldFirst ? [0, 1] : [1, 0]) {
+        pending[index]!(index === 0 ? old : fresh);
+        await settle();
+      }
+      expect(old.close).toHaveBeenCalledOnce();
+      expect(fresh.close).not.toHaveBeenCalled();
+    } finally {
+      pages.destroy();
+      globalThis.createImageBitmap = original;
+    }
+    expect(fresh.close).toHaveBeenCalledOnce();
   });
 
   it("releases a borrowed copy that lands after it was destroyed", async () => {
@@ -880,12 +929,15 @@ describe("Thumbnails dragging", () => {
   it("abandons the drag on Escape rather than dropping it", () => {
     const moves: [number, number][] = [];
     const { pages, panel, rowHeight } = stripForDrag(moves);
+    const events = new EventTarget();
+    vi.spyOn(globalThis.window, "addEventListener").mockImplementation(events.addEventListener.bind(events));
+    vi.spyOn(globalThis.window, "removeEventListener").mockImplementation(events.removeEventListener.bind(events));
     press(pages, 3, 3 * rowHeight);
     panel.dispatch("pointermove", { pointerId: 1, clientY: 0 });
     expect(pages.dragging).toBe(true);
 
-    const list = (pages.elementFor(0) as unknown as FakeDom["root"]).parent!.parent!;
-    list.dispatch("keydown", { key: "Escape", preventDefault: () => {} });
+    // Navigation focuses the viewer. Escape reaches window, outside the thumbnail list.
+    events.dispatchEvent(Object.assign(new Event("keydown"), { key: "Escape" }));
     expect(pages.dragging).toBe(false);
     // The release still arrives -- the pointer is a real pointer and the reader
     // still lets go of it -- and it must not become the drop Escape refused.

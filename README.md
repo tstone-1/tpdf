@@ -1003,7 +1003,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   <!-- built: file.compress -->
 - **Save a copy with page numbers** writes a copy with a number on every page, *Page 1 of
   3* at the bottom center unless you change it. The dialog takes the text, with `{page}`
-  for each page's number and `{pages}` for how many are numbered, so words around them
+  for each page's number and `{pages}` for the final number printed, so words around them
   make a header or a footer; one of nine positions; the size; the first number; and which
   pages, so a cover can be left out and is then not counted. **Save a copy with a
   watermark** writes a line of text across every page, grey, turned 45 degrees and a third
@@ -1272,7 +1272,8 @@ option changes either. `--text` takes `{page}` and `{pages}`, so `--text "Confid
 `bottom-right`; `--size` is in points, `--margin` the distance from the edges in points,
 `--color` red, green and blue from 0 to 1; `page-numbers` takes `--start`, the first
 number, and `watermark` takes `--angle` in degrees and `--opacity` from 0 to 1. `--pages`
-chooses the pages, and `{page}` and `{pages}` count only those. Latin-1 text is set in
+chooses the pages, and numbering advances only on those pages. With two selected pages and
+`--start 7`, `{page} of {pages}` prints "7 of 8" and "8 of 8". Latin-1 text is set in
 Helvetica; Greek, Cyrillic, Chinese, Japanese and Korean in subsets of the bundled Noto Sans
 fonts. Arabic, Hebrew, the Indic scripts, Thai and the like are refused with nothing written.
 Each page written to is
@@ -1743,7 +1744,8 @@ for change in pdf.compare("contract-v1.pdf", "contract-v2.pdf")["changes"]:
     print(change["old_page"], change["kind"], change["removed"], "->", change["added"])
 ```
 
-`mark_matches()` takes the same terms and writes a copy in which every match is marked.
+`mark_matches()` searches a snapshot and writes a copy in which every match is marked.
+If the source changes before the edit, the command refuses to publish the copy.
 `kind=` is `"highlight"` (the default), `"underline"`, `"strikeout"` or `"squiggly"`, and
 `color=` is red, green and blue from 0 to 1. It returns the edit report, or `None` when
 nothing matched; no file is written then. A match that has no position on the page raises
@@ -1998,7 +2000,10 @@ drawings are not pictures and stay sharp at any zoom.
 Before you write anything, `--dry-run` reports the size the copy would have, and
 `--preview preview.png` writes a picture of what changes: the part of a page that differs
 most, as it is now on the left and as the copy would draw it on the right, at 200%.
-Together they answer how much space is saved and how soft the pictures get.
+Together they show how much space is saved and how soft the pictures get.
+When writing both files, the PDF is published first. If replacing the preview fails afterward,
+the command returns an error. Its JSON identifies the published `output` with `written: true`
+and the requested preview with `preview_requested` and `preview_written: false`.
 
 Left exactly as they are: a picture no page draws directly, a black-and-white scan (JBIG2,
 CCITT) or a JPEG 2000 picture, one in an indexed, CMYK or other special colour space, one

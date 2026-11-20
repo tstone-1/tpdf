@@ -27,7 +27,7 @@ use crate::worker_proto::{Reply, Request};
 pub const PAGE_NUMBERS: Registered = Registered {
     name: "page-numbers",
     usage: "page-numbers <in.pdf> -o <out.pdf> [--text TEXT] [--position POS] [--size PT]\n        [--start N] [--pages 1-3,7] [--margin PT] [--color r,g,b] [--password-env VAR]\n        [--invalidate-signatures] [--force] [--json]",
-    summary: "Writes a copy with a page number on every page, `Page 1 of 3` at\n            the bottom centre unless --text and --position say otherwise.\n            {page} and {pages} in --text are the number and the count.",
+    summary: "Writes a copy with a page number on every page, `Page 1 of 3` at\n            the bottom centre unless --text and --position say otherwise.\n            {page} and {pages} in --text are the current and final printed numbers.",
     parse: |args| parse(args, false).map(|c| Box::new(c) as Box<dyn Subcommand>),
 };
 
@@ -227,8 +227,7 @@ impl AddText {
             }
             None => (0..count).collect(),
         };
-        let total =
-            self.added.first_number.saturating_sub(1) + u32::try_from(chosen.len()).unwrap_or(0);
+        let total = self.added.last_number(chosen.len());
         let expected: Vec<(u32, String)> = chosen
             .iter()
             .zip(self.added.first_number..)

@@ -107,6 +107,47 @@ pub(super) fn writes_a_smaller_copy(report: &mut Report) {
     let at = |name: &str| dir.join(name).display().to_string();
     let source = at("photo.pdf");
     std::fs::write(&source, photo_pdf()).expect("the input");
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let output = at("replacement.pdf");
+        let preview = at("locked.png");
+        std::fs::write(&output, b"old PDF").unwrap();
+        std::fs::write(&preview, b"old preview").unwrap();
+        let _lock = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&preview)
+            .unwrap();
+        let (code, json, stderr) = tool(
+            &[
+                "compress",
+                &source,
+                "-o",
+                &output,
+                "--pictures",
+                "screen",
+                "--preview",
+                &preview,
+                "--force",
+                "--json",
+            ],
+            &[],
+        );
+        let result = parsed(&json);
+        report.check(
+            "a failed preview reports the PDF already published",
+            code == 3
+                && result["written"] == true
+                && result["output"] == output.as_str()
+                && result["preview_written"] == false
+                && result["preview_requested"] == preview.as_str()
+                && result["error"].is_object()
+                && std::fs::read(&output).unwrap().starts_with(b"%PDF")
+                && std::fs::read(&preview).unwrap() == b"old preview",
+            &format!("{json} {stderr}"),
+        );
+    }
     let before = size(&source);
     let original = drawn(&source, &at("source.png"));
     let (_, words, _) = tool(&["text", &source], &[]);

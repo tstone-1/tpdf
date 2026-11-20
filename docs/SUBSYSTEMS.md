@@ -806,6 +806,11 @@ sweep, because a redaction addresses content streams by position and a stream ad
 would move them. It is `Plan::added_text`, empty out of the model like `text_layers`, and
 `Plan::is_identity` and `is_appendable` both treat a plan carrying it as a change.
 
+Numbering advances only on selected slots. `{pages}` is the last printed number, including
+when numbering starts at zero. A selected page object must occur only once in the entire
+page tree, since writing through it would change every slot that references it. Font size
+and margins are specified in physical points and converted using the page's `/UserUnit`.
+
 The text is drawn over the content. A stream holding `q` goes in front of the page's own
 streams, and the new stream after them begins with one `Q` for it and one for each `q` the
 content left open, counted by decoding it within `MAX_CONTENT_BYTES`; an undecodable content
