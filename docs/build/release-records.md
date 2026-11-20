@@ -2,6 +2,46 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.11 verification and publication, 2026-11-20:** prepared on the Windows development machine.
+The release answers the first priority of an external audit of 26.11.10, the paths by which a
+redaction still read *verified*. The check reads a composite font's text through its `/ToUnicode`
+map (`fontread.rs`), and withholds the verdict where the map is missing, incomplete or sends a
+glyph to a private-use or control character, or where a string's font is unknown; over 82 local
+documents, 14 had been withheld for a composite font and 1 still is, 7 more are verified, and
+none went the other way. A removed word is found in hex, escaped, kerned, split across shows and
+in WinAnsi or MacRoman bytes; LZW and ASCII85 streams cut short and `/Differences` encodings that
+move a searched letter withhold the verdict; the image-only copy searches unmarked pages. Each
+reason carries a kind from the reader that produced it, and the window groups them under three
+headings. `SECURITY.md` has a third notice, for 26.11.10 and earlier. Step 1 took `svelte` 5.58.1
+and `uuid` 1.29.3; `rsa` 0.10.0 is released but `cms` 0.3 is still a release candidate, so the
+`der` set stays held; the engine pin is the head of the branch Chrome stable ships. All 38 gates
+passed on the release tree; `check_linux.py` passed (after a first attempt of all three remote
+runs refused a file added with `git add -N`, which `git stash create` cannot carry).
+`window_checks.py` 18 of 18 on the second Mac and on the Windows build machine. Step 7 in the
+mutation worktree at `815cf87e`, a commit object of the release tree: `mutate_python.py` 40/40,
+`mutate_frontend.py --near v26.11.10` 16/16, `mutate_rust.py --near v26.11.10` 31/31; before
+that, every `verify:` row (60) and every `redaction:` row (9) was run whole, eight and one of them
+new, and five new frontend rows. `print-probe` passed 15 of 15, 13 of 13 and 12 of 12.
+`redact-reach-probe` with the gate on, the same 3 local documents as 26.11.10: 203 regions, 193
+taken whole, none still reading as text. The local installer carried `tpdf_shell.dll`,
+`tpdf-cli.exe` and `pdfium\pdfium.dll`; unpacked outside the tree its `tpdf-cli` answered 26.11.11
+and verified `incr-signed.pdf`, and with the bundled engine removed it exited 3. **Not run:** the
+PowerPoint paste check of step 8, `mutate_viewer.py`, NVDA, and the Explorer preview pane by hand.
+CI passed all three jobs on `05cd11fe` (run 44735596697) and `Audit` passed (run 44735596630). No
+rehearsal: `release.yml` changed only in its notes. Release run 44742910963 skipped its gates for
+the CI-passed commit and completed the draft at 8 files. On the draft's files: the installer read
+as `Valid`, timestamped by Certum, and passed `installed_check.py` 26/26 on the Windows build
+machine; the `.dmg` was stapled, its app accepted as Notarized Developer ID, and its `tpdf-cli`
+(Developer ID, `runtime`) answered 26.11.11 and verified the signed fixture. The body needed no
+correction, and `SECURITY.md` no scope line: the font maps are read inside the existing scan.
+`publish_release.py v26.11.11 --publish` published it; without authentication `releases/latest`
+is v26.11.11 with 8 assets, all 8 answer 200, and `latest.json` offers 26.11.11. Step 12 from the
+published 26.11.10: the Mac passed 12/12 and Windows 18/18, each offered the update only on the
+second start, the first launch's check having read `current` a minute after publishing. The cask
+went to 26.11.11 with the published `.dmg`'s SHA-256; `brew audit --cask --online` exited 0 and
+`brew livecheck` reads 26.11.11. The winget pull request (445804) moved from 26.11.10 to 26.11.11
+through the REST API on manifest version 1.28.0, still the newest, after `winget validate` passed.
+
 **26.11.10 verification and publication, 2026-11-20:** prepared on the Windows development machine. The release
 is the fixes from a read-through of the whole tree on 2026-11-19: a redaction's verdict is
 withheld for a picture however it is stored, for a stream the check could not decode as a viewer
