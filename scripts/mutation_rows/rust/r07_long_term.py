@@ -1209,8 +1209,8 @@ ROWS += [
         # control vouches for Telugu.
         "scripts: read every unnamed script as one",
         "src/ocr.rs",
-        "        other => Script::Other(other >> 7),",
-        "        _ => Script::Other(0),",
+        "        script => Script::Other(script),",
+        "        _ => Script::Other(U::Tamil),",
         "a_character_is_of_one_script_or_of_none",
     ),
     Mutation(
@@ -1218,8 +1218,8 @@ ROWS += [
         # Latin control then vouches for a number set in Arabic-Indic digits.
         "scripts: read a digit of another script as of none",
         "src/ocr.rs",
-        "    if !ch.is_alphanumeric() {",
-        "    if !ch.is_alphabetic() {",
+        "!ch.is_alphanumeric() || ch.is_ascii_digit()",
+        "!ch.is_alphabetic() || ch.is_ascii_digit()",
         "a_character_is_of_one_script_or_of_none",
     ),
     Mutation(

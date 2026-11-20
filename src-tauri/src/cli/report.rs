@@ -1274,6 +1274,9 @@ pub struct Hit {
     /// Empty when its characters have no position, which a script must not
     /// take for "nowhere": the match is real and cannot be marked.
     pub rects: Vec<HitRect>,
+    /// Some visible characters have no corresponding rectangle.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub partial_geometry: bool,
 }
 
 /// One rectangle of a [`Hit`], in the form `edit`'s `annotate` and `redact

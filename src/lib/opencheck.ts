@@ -436,7 +436,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const stillHeld = await call("page_import_cancel", { doc: model.doc, pending: asked.pending });
       report.check("and the backend is no longer holding it", !stillHeld, String(stillHeld));
 
-      await host.importPages(other);
+      await Promise.all([host.importPages(other), host.importPages(other)]);
       const count = host.pendingImport()?.pages ?? 0;
       answer(`2-${count}`); await host.idle(); await quiet();
       const ranged = host.edits()!.state;
@@ -1248,6 +1248,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "closing": await closingCheck(host, expected, report); break;
     case "fit": await fitCheck(host, expected, report); break;
     case "disk-change": await diskChangeCheck(host, expected, report); break;
+    case "forms-mixed":
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");
       const [first, second] = expected.split("|");
@@ -1282,9 +1283,12 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const radios = () => [...document.querySelectorAll<HTMLInputElement>('.form-fields input[type="radio"]')];
       const single = () => document.querySelector<HTMLSelectElement>('.form-fields select[size]:not([multiple])');
       const custom = () => document.querySelector<HTMLInputElement>('.form-fields input[list]');
-      const mixed = !!combo();
+      const sourceForm = await call("document_form", { doc: a.id });
+      const mixed = phase === "forms-mixed" || sourceForm.widgets.some((widget) => widget.control.kind === "choice");
       if (mixed) {
-        check("mixed controls were discovered", radios().length === 2 && !!list());
+        const hasControls = radios().length === 2 && !!combo() && !!list() && !!single() && !!custom();
+        check("mixed controls were discovered", hasControls);
+        if (!hasControls) break;
         radios()[1]!.click(); await host.idle();
         check("choosing a radio clears its sibling", radios()[1]!.checked && !radios()[0]!.checked);
         host.run("edit.undo"); await host.idle();
@@ -1346,8 +1350,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "tabs": {
       const check = (name: string, ok: boolean) => report.check(name, ok,
         `${host.tabs().length} tabs, active ${basename(host.path())}`);
-      const [first, second] = expected.split("|");
-      if (!first || !second || first === second) throw new Error("two distinct fixture paths required");
+      const [first, second, alias] = expected.split("|");
+      if (!first || !second || !alias || first === second) throw new Error("two distinct fixtures and an alias required");
       report.emit("[tabs] opening the first fixture");
       await host.open(first);
       const a = host.tabs()[0];
@@ -1418,6 +1422,9 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("switching restores fixed zoom", Math.abs((host.viewer()?.currentZoom ?? 0) - 1.25) < 0.001 && host.viewer()?.fitMode === "none");
       await host.open(first);
       check("opening an existing path reuses its tab", host.tabs().length === 2 && host.edits()?.doc === a.id);
+      await host.open(alias);
+      check("opening a filesystem alias keeps the edited tab and its handle",
+        host.tabs().length === 2 && host.edits()?.doc === a.id && host.edits()?.state.pages[0]?.turns === 1);
       await host.open(`${first}.missing`);
       check("a failed open leaves both tabs and the active document intact", host.tabs().length === 2 && host.edits()?.doc === a.id && host.hasViewer());
       host.run("file.save");
@@ -1475,8 +1482,12 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         left.side === "removed" && right.side === "added");
       check("both sides have words painted", left.spans.length > 0 && right.spans.length > 0);
       check("both sides are on the first change", left.current === 0 && right.current === 0);
+      const panels = Array.from(document.querySelectorAll('[id="tpdf-panel-changes"]'));
+      const identities = panels.map((panel) => Array.from(panel.querySelectorAll<HTMLElement>("button[data-index]"),
+        (row) => [row.dataset.index, row.textContent]));
       const rows = rowsIn().length;
-      check("both sidebars list the changes, the same rows on each", rows > 0 && rows % 2 === 0);
+      check("both sidebars list the changes, the same rows on each", identities.length === 2 &&
+        (identities[0]?.length ?? 0) > 0 && JSON.stringify(identities[0]) === JSON.stringify(identities[1]));
       report.check("the list says only the words were compared",
         said().includes("Only the words were compared."), said().slice(0, 300));
 
@@ -1486,6 +1497,27 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("next change moves both sides", host.beside()?.differenceMarks?.current === 1);
       host.run("nav.previousChange");
       await settled("the step back", () => host.viewer()?.differenceMarks?.current === 0);
+
+      // Exercise native page recognition on the macOS fixture. The comparison
+      // reads temporary words from this viewer and loses them when it unmounts.
+      if (isMac()) {
+        const compareAgain = async () => {
+          host.run("file.compareWith", name(newer).replace(/\.pdf$/, ""));
+          await settled("the refreshed comparison", () => host.viewer()?.differenceMarks != null &&
+            host.beside()?.differenceMarks != null);
+        };
+        host.run("file.recognisePage");
+        await settled("page recognition", () => host.viewer()?.hasRecognisedText === true);
+        check("recognising a page invalidates both sides", host.viewer()?.differenceMarks === null &&
+          host.beside()?.differenceMarks === null && said().includes("has changed since it was compared"));
+        document.querySelector<HTMLButtonElement>('[data-testid="problem-dismiss"]')?.click();
+        await compareAgain();
+        await host.open(scan); await host.open(older); await host.idle();
+        check("losing the recognised text invalidates the refreshed comparison",
+          host.viewer()?.hasRecognisedText === false && host.viewer()?.differenceMarks === null &&
+          host.beside()?.differenceMarks === null && said().includes("has changed since it was compared"));
+        await compareAgain();
+      }
 
       report.emit("[compare] editing the older document");
       host.run("edit.rotatePageClockwise");

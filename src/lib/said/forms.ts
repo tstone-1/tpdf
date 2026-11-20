@@ -135,6 +135,8 @@ export default {
   "This list uses characters that cannot be saved visibly":
     "Diese Liste enthält Zeichen, die sich nicht sichtbar speichern lassen",
   "The answer does not fit visibly in this field": "Die Antwort passt nicht sichtbar in dieses Feld",
+  "An empty option prevents clearing this inherited choice":
+    "Diese geerbte Auswahl kann wegen einer leeren Option nicht gelöscht werden",
   "Duplicate form answer": "Doppelte Formularantwort",
   "The form field is no longer in this document": "Das Formularfeld ist nicht mehr in diesem Dokument",
   "Shared checkboxes have incompatible on states": "Verbundene Kontrollkästchen haben unvereinbare Ein-Zustände",

@@ -64,6 +64,15 @@ beforeEach(() => {
 });
 
 describe("TextCache eviction", () => {
+  it("keeps the visible crop cached while reading stored marks against file-space boxes", async () => {
+    const original = page(2), cropped = page(1);
+    const cache = new TextCache(1, async ({ crop }) => crop ? cropped : original);
+    cache.setPageCrop(fp(0), [10, 0, 590, 800]);
+    await cache.load(fp(0));
+    expect(await cache.loadFileText(fp(0))).toBe(original);
+    expect(cache.peekUnturned(fp(0))).toBe(cropped);
+  });
+
   it("holds everything that fits under the bound", async () => {
     const cache = new TextCache(1);
     const pages = Math.floor(TEXT_CACHE_CHARS / SMALL) - 1;

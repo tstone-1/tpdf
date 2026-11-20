@@ -2139,8 +2139,8 @@ ROWS += [
         # A value outside the table would fall through to the matrix of 1 with the sides of 5 to 8.
         'images: take any number as an orientation',
         'src/imagepages.rs',
-        '            return u8::try_from(value).ok().filter(|v| (1..=8).contains(v));',
-        '            return u8::try_from(value).ok();',
+        '                    .filter(|v| (1..=8).contains(v))',
+        '',
         'a_jpegs_orientation_is_read_in_either_byte_order',
     ),
     Mutation(

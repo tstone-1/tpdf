@@ -1160,13 +1160,8 @@ fn normalise(s: &str) -> String {
 
 /// A writing system, as far as the gate has to tell them apart.
 ///
-/// Not the Unicode `Script` property, which needs a table this crate does not
-/// carry. The scripts named are the ones a redaction is likely to meet and the
-/// ones measured against Vision; every other letter is told apart by the block
-/// it sits in, which is coarser than a script in one direction only --- two
-/// blocks of one script read as two, so a control in one does not vouch for
-/// text in the other, and the answer is *not verified* where a finer table
-/// would have certified.
+/// Common letters and numbers without a unique script require the same
+/// character in the control. ASCII and fullwidth decimal digits are neutral.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Script {
     /// Latin, with its accented and extended letters.
@@ -1191,9 +1186,10 @@ pub enum Script {
     Katakana,
     /// Chinese characters, wherever they are used.
     Han,
-    /// A letter or digit of no script named above, by its block of 128 code
-    /// points.
-    Other(u32),
+    /// Another Unicode writing system.
+    Other(icu_properties::props::Script),
+    /// An alphanumeric character whose writing system is ambiguous.
+    Ambiguous(char),
 }
 
 impl fmt::Display for Script {
@@ -1210,7 +1206,10 @@ impl fmt::Display for Script {
             Self::Hiragana => "hiragana",
             Self::Katakana => "katakana",
             Self::Han => "Chinese characters",
-            Self::Other(block) => return write!(f, "the script at U+{:04X}", block << 7),
+            Self::Other(script) => icu_properties::PropertyNamesLong::new()
+                .get(*script)
+                .unwrap_or("unknown script"),
+            Self::Ambiguous(ch) => return write!(f, "U+{:04X}", u32::from(*ch)),
         };
         f.write_str(name)
     }
@@ -1228,38 +1227,24 @@ impl fmt::Display for Script {
 /// as those.
 #[must_use]
 pub fn script_of(ch: char) -> Option<Script> {
-    if !ch.is_alphanumeric() {
+    use icu_properties::{props::Script as U, CodePointMapData};
+    if !ch.is_alphanumeric() || ch.is_ascii_digit() || ('０'..='９').contains(&ch) {
         return None;
     }
-    let code = match u32::from(ch) {
-        wide @ 0xFF01..=0xFF5E => wide - 0xFEE0,
-        code => code,
-    };
-    Some(match code {
-        0x30..=0x39 => return None,
-        0x0000..=0x02AF | 0x1E00..=0x1EFF | 0x2C60..=0x2C7F | 0xA720..=0xA7FF | 0xFB00..=0xFB06 => {
-            Script::Latin
-        }
-        0x0370..=0x03FF | 0x1F00..=0x1FFF => Script::Greek,
-        0x0400..=0x052F | 0x1C80..=0x1C8F | 0x2DE0..=0x2DFF | 0xA640..=0xA69F => Script::Cyrillic,
-        0x0590..=0x05FF | 0xFB1D..=0xFB4F => Script::Hebrew,
-        0x0600..=0x06FF | 0x0750..=0x077F | 0x0870..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF => {
-            Script::Arabic
-        }
-        0x0900..=0x097F | 0xA8E0..=0xA8FF => Script::Devanagari,
-        0x0E00..=0x0E7F => Script::Thai,
-        0x1100..=0x11FF | 0x3130..=0x318F | 0xA960..=0xA97F | 0xAC00..=0xD7FF | 0xFFA0..=0xFFDC => {
-            Script::Hangul
-        }
-        0x3040..=0x309F => Script::Hiragana,
-        0x30A0..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9F => Script::Katakana,
-        0x2E80..=0x2FDF
-        | 0x3005..=0x3007
-        | 0x3400..=0x4DBF
-        | 0x4E00..=0x9FFF
-        | 0xF900..=0xFAFF
-        | 0x2_0000..=0x3_23AF => Script::Han,
-        other => Script::Other(other >> 7),
+    Some(match CodePointMapData::<U>::new().get(ch) {
+        U::Latin => Script::Latin,
+        U::Greek => Script::Greek,
+        U::Cyrillic => Script::Cyrillic,
+        U::Hebrew => Script::Hebrew,
+        U::Arabic => Script::Arabic,
+        U::Devanagari => Script::Devanagari,
+        U::Thai => Script::Thai,
+        U::Hangul => Script::Hangul,
+        U::Hiragana => Script::Hiragana,
+        U::Katakana => Script::Katakana,
+        U::Han => Script::Han,
+        U::Common | U::Inherited | U::Unknown => Script::Ambiguous(ch),
+        script => Script::Other(script),
     })
 }
 
@@ -1338,19 +1323,8 @@ fn listed(scripts: &std::collections::BTreeSet<Script>) -> String {
 
 // ------------------------------------------------------- the type-level rule
 
-/// Pixels that have been through redaction and passed the gate.
-///
-/// `docs/PLAN.md` §6 requires that when OCR is applied to a flattened page it is
-/// run "only on already-redacted pixels with the redacted regions masked out",
-/// because OCR over a *pre-redaction* image reinstates the secret as an invisible
-/// text layer --- a shadow-text carrier, which §6's own table lists as a thing
-/// redaction must defeat.
-///
-/// A comment saying so is a comment somebody edits around. This is the same move
-/// `worker.rs` makes with `PreWorker`/`WarmWorker`: the shadow-text builder will
-/// accept only this type, and the only way to obtain one is to present an
-/// [`Legibility::Illegible`] verdict. "OCR the pre-redaction image" then does not
-/// compile rather than being forbidden in prose.
+/// A consistent pixel buffer paired with an illegible verdict. Its caller owns
+/// the association between the buffer, the verdict and the document rendered.
 #[derive(Debug)]
 pub struct RedactedPixels<'a> {
     pixels: Pixels<'a>,
@@ -1511,12 +1485,23 @@ mod tests {
         // A digit of another script is that script's, or a Latin control would
         // vouch for it.
         assert_eq!(script_of('\u{663}'), Some(Script::Arabic));
-        // Scripts with no name here are told apart by block: Tamil is not
+        // Scripts without a dedicated variant retain their Unicode identity: Tamil is not
         // Telugu, and Tamil is Tamil.
         let (tamil, telugu) = (script_of('\u{ba4}'), script_of('\u{c24}'));
         assert!(matches!(tamil, Some(Script::Other(_))), "{tamil:?}");
         assert_ne!(tamil, telugu);
         assert_eq!(tamil, script_of('\u{bae}'));
+    }
+
+    #[test]
+    fn different_scripts_in_one_unicode_block_require_separate_controls() {
+        for (token, other) in [("Ω", "Ϣ"), ("ހ", "ߊ")] {
+            let mut control = control();
+            token.clone_into(&mut control.token);
+            let clean = || Legibility::Illegible { engine: engine() };
+            assert!(hold_to_scripts(clean(), &control, &[token]).certifies());
+            assert!(!hold_to_scripts(clean(), &control, &[other]).certifies());
+        }
     }
 
     #[test]

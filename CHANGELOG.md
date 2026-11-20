@@ -21,6 +21,27 @@ have the binary.)
 
 ### Fixed
 
+- Merging a filled appendix preserves its saved appearance behind either a plain cover
+  or an editable form. A missing appearance stops the merge before it writes.
+- Page numbering and watermarking refuse a placement entirely outside a selected page.
+- Repeated text edits can reopen at the decoded byte limit. Layout edits count the
+  operators actually written.
+- CLI search and redaction stop collecting at their match limits. Annotation plans
+  require complete placement. Blank-page messages identify the selected pages, and
+  document information qualifies incomplete signature counts.
+- Compression estimates use the opened source revision and report the target image
+  resolution. The preview receives the same final destination check as the PDF.
+- Automatic JPEG page sizing uses EXIF resolution when JFIF supplies no physical units.
+- Opening a file through another path returns to its existing edits. Favourites and
+  external page requests use the same tab lookup.
+- Text comparisons go stale when recognised text changes and close when a partner is
+  lost during reopen. Overlapping page insertions keep the newer range question usable.
+- Windows PATH changes recognise expandable entries. Python accepts read-only edit
+  mappings, single OCR language tags and command help, and bounds timeout cleanup.
+
+- Redaction review shows the marked words under a crop and keeps keyboard focus on the selected region. OCR verification follows the crop and rotation of the saved page and checks the writing system of its control word.
+- Clipped comment previews can still receive replies and can no longer overwrite the original body. Cleared form choices stay cleared on reopen. Long text answers and indirectly stored widget rectangles remain readable.
+- Windows printing honors Stop during the final render. Page-range hints accept printed labels beginning with a hyphen.
 - Extracting and moving pages handle indirect and positional bookmarks. Blank and imported pages retain their intended crop and rotation, and imported links to missing pages stay unresolved.
 - CLI search highlight plans verify the source revision. Crop and render honor the physical page scale, and fitting a narrow page to one pixel produces a usable image.
 - Text reflow checks underline clips, stroke widths and individual painted subpaths before moving text. Tabs restore the page being read after a reorder and discard measurements when the document is replaced.
@@ -9340,9 +9361,8 @@ entry, so the two largest changes of the day were absent from the release histor
   from the same probe image, in a band appended to it, matched by position rather than by
   string, and **sized from the smallest box the redaction covered**. A control drawn at 48 pt
   proves an engine reads 48 pt and says nothing about the 6 pt footnote that was redacted.
-- **`RedactedPixels` can only be constructed from an `Illegible` verdict**, so §6's rule that
-  OCR runs only on already-redacted pixels is carried by the type rather than by a comment —
-  the same move `worker.rs` makes with `PreWorker`/`WarmWorker`.
+- **`RedactedPixels` requires an `Illegible` verdict** and checks the dimensions of the supplied
+  buffer. The caller is responsible for supplying pixels from the document it checked.
 - **OCR does not run in the parser worker, measured rather than argued.** Vision under
   `SANDBOX_PROFILE` is killed by SIGTRAP; with all of `/System/Library` readable it fails with
   `nilError`; it needs general `file-read`, which is what the profile most needs to withhold

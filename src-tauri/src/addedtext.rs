@@ -309,7 +309,7 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
     let shared = pagetree::shared_pages(&pages);
     let count = u32::try_from(pages.len()).unwrap_or(u32::MAX);
     // Checked, and every page resolved, before anything is added.
-    let mut planned: Vec<(ObjectId, usize, String)> = Vec::new();
+    let mut planned: Vec<(u32, usize, String)> = Vec::new();
     for (index, line) in lines.iter().enumerate() {
         check(line)?;
         let chosen: Vec<u32> = match &line.pages {
@@ -343,11 +343,7 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
         }
         for (nth, page) in chosen.iter().enumerate() {
             let number = line.first_number + u32::try_from(nth).unwrap_or(0);
-            planned.push((
-                pages[*page as usize],
-                index,
-                filled(&line.text, number, total),
-            ));
+            planned.push((*page, index, filled(&line.text, number, total)));
         }
     }
     if planned.is_empty() {
@@ -392,12 +388,13 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
         .collect();
 
     // One page at a time, every line for it in one stream.
-    let mut by_page: std::collections::BTreeMap<ObjectId, Vec<(usize, String)>> =
+    let mut by_page: std::collections::BTreeMap<u32, Vec<(usize, String)>> =
         std::collections::BTreeMap::new();
     for (page, index, text) in planned {
         by_page.entry(page).or_default().push((index, text));
     }
-    for (page, list) in by_page {
+    for (slot, list) in by_page {
+        let page = pages[slot as usize];
         let shown = pagetree::displayed_page(doc, page);
         let unit = pagetree::user_unit(doc, page)
             .ok_or_else(|| said!("the page has an invalid user unit"))?;
@@ -418,7 +415,8 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
                 &face,
                 &font_names,
                 &state_names[*index],
-            )?;
+            )
+            .map_err(|why| said!("added text on page {page}: {why}", page = slot + 1))?;
             for slot in slots {
                 used[slot] = true;
             }
@@ -610,6 +608,23 @@ fn show(
 
     // The text's direction and its up, turned by the angle the reader sees.
     let (sin, cos) = f64::from(line.angle).to_radians().sin_cos();
+    // Intersect the rotated line box with the visible page in display space.
+    // Their own four axes suffice to separate any two disjoint rectangles.
+    let half_line = advance / 2.0;
+    let half_height = size * (cap_height + descent) / 2.0;
+    let u = along + half_line;
+    let v = below - size * cap_height + half_height;
+    let dx = x + u * cos + v * sin - width / 2.0;
+    let dy = y - u * sin + v * cos - height / 2.0;
+    let c = cos.abs();
+    let s = sin.abs();
+    if dx.abs() >= width / 2.0 + half_line * c + half_height * s
+        || dy.abs() >= height / 2.0 + half_line * s + half_height * c
+        || (dx * cos - dy * sin).abs() >= half_line + width / 2.0 * c + height / 2.0 * s
+        || (dx * sin + dy * cos).abs() >= half_height + width / 2.0 * s + height / 2.0 * c
+    {
+        return Err(said!("the line lies entirely outside the visible page"));
+    }
     let along_dir = (cos * right.0 - sin * down.0, cos * right.1 - sin * down.1);
     let up_dir = (-sin * right.0 - cos * down.0, -sin * right.1 - cos * down.1);
     let anchor = upright.at(x, y);

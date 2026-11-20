@@ -96,8 +96,14 @@ struct Quad {
 }
 
 /// `charQuad`.
-fn char_quad(boxes: &[f64], index: usize) -> Quad {
-    let at = |k: usize| boxes.get(index * 4 + k).copied().unwrap_or(0.0);
+fn char_quad(boxes: &[f32], index: usize) -> Quad {
+    let at = |k: usize| {
+        boxes
+            .get(index * 4 + k)
+            .copied()
+            .map(webview_number)
+            .unwrap_or(0.0)
+    };
     Quad {
         left: at(0),
         top: at(1),
@@ -152,12 +158,11 @@ fn on_same_line(a: Quad, b: Quad, sideways: bool) -> bool {
 /// `runsFor`: one rectangle per run of text on a line, flat, four numbers each.
 #[must_use]
 pub fn runs_for(text: &PageText, from: u32, to: Option<u32>) -> Vec<f64> {
-    let boxes: Vec<f64> = text.boxes.iter().copied().map(webview_number).collect();
     let end = to.map_or(text.codes.len(), |to| (to as usize).min(text.codes.len()));
     let mut runs: Vec<Quad> = Vec::new();
     let mut current_turns: Option<u32> = None;
     for index in (from as usize)..end {
-        let quad = char_quad(&boxes, index);
+        let quad = char_quad(&text.boxes, index);
         if !is_placed(quad) {
             continue;
         }
@@ -234,7 +239,6 @@ pub fn regions_on(text: &PageText, page: u32, halves: &[Half]) -> Vec<[f32; 4]> 
 /// box: either way it stays on the page.
 #[must_use]
 pub fn uncovered(text: &PageText, half: Half, areas: &[[f32; 4]]) -> usize {
-    let boxes: Vec<f64> = text.boxes.iter().copied().map(webview_number).collect();
     let end = half
         .to
         .map_or(text.codes.len(), |to| (to as usize).min(text.codes.len()));
@@ -250,7 +254,7 @@ pub fn uncovered(text: &PageText, half: Half, areas: &[[f32; 4]]) -> usize {
             })
         })
         .filter(|&index| {
-            let quad = char_quad(&boxes, index);
+            let quad = char_quad(&text.boxes, index);
             if !is_placed(quad) {
                 return true;
             }

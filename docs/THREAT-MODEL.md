@@ -4624,8 +4624,11 @@ than the redacted text proves only that the engine reads larger text. Every engi
 a missing control, produce `NotVerified`, never `Illegible`.
 
 **The control is held to script as well as size**, since 2026-10-05. A clean verdict stands only
-when every script in the words the region covered is one the control word is written in;
-otherwise the result is `NotVerified` with the cause `ScriptUnproven`. The gate also asks Vision
+when every script in the words the region covered is one the control word is written in.
+The classifier uses the Unicode Script property. A crop or rotation moves both the marked
+regions and the control words into the saved page's coordinates before OCR. A marked area
+outside its crop cannot be certified. For an unproven script,
+the result is `NotVerified` with the cause `ScriptUnproven`. The gate also asks Vision
 with `automaticallyDetectsLanguage` on, where the request has the selector (macOS 13 and later).
 Measured 2026-10-05 on build 26A434 in the sandboxed worker, 12 pt at 2x: asked plainly, Vision
 returns the control and nothing else for Chinese, Japanese and Thai, which is what the script

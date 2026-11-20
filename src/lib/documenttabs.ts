@@ -240,6 +240,15 @@ export class DocumentTabs<T extends { view: number; path: string }> {
     return showing.find((tab) => tab.view === prefer) ?? showing[0];
   }
 
+  async matchingPath(
+    path: string, resolve: (path: string, candidates: string[]) => Promise<string | null>, prefer?: T["view"],
+  ): Promise<T | undefined> {
+    const exact = this.forPath(path, prefer);
+    if (exact || !this.entries.length) return exact;
+    const matched = await resolve(path, [...new Set(this.entries.map((tab) => tab.path))]);
+    return matched === null ? undefined : this.forPath(matched, prefer);
+  }
+
   keep(tab: T, replacing: T["view"] = tab.view): void {
     const index = this.entries.findIndex((entry) => entry.view === replacing);
     if (index < 0) this.entries.push(tab);

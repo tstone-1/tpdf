@@ -772,6 +772,23 @@ describe("RedactList", () => {
     expect(picked).toEqual([3]);
   });
 
+  it("focuses the picked row and restores it when words arrive", () => {
+    const list = panel();
+    show(list, [region({ id: 1 }), region({ id: 2 })]);
+    const first = list.elementFor(1)!;
+    first.focus();
+    const second = list.elementFor(2) as unknown as import("./testdom").FakeElement;
+    second.dispatch("pointerdown", {});
+    expect(second.focused).toBe(true);
+    Object.defineProperty(document, "activeElement", { configurable: true, value: second });
+    list.setWords();
+    const replacement = list.elementFor(2) as unknown as import("./testdom").FakeElement;
+    expect(replacement).not.toBe(second);
+    expect(replacement.focused).toBe(true);
+    dom.root.children[1]?.dispatch("keydown", { key: "Delete", target: replacement });
+    expect(removed).toEqual([2]);
+  });
+
   /** A row's remove control, found by its part rather than by position. */
   function removeControl(
     list: RedactList,

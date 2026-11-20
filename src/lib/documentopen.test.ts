@@ -70,7 +70,7 @@ it("reads the settled session before opening the last closed document", () => {
 });
 
 it("applies an external location to the view found by the shared path lookup", () => {
-  expect(functionIn(app, "function placeOpened(")).toContain("tabs.forPath(given.path, openView)?.view !== openView");
+  expect(functionIn(app, "function placeOpened(")).toContain("(await matchingTab(given.path, view))?.view !== view");
 });
 
 describe("the other views of a document that was saved", () => {
@@ -267,7 +267,9 @@ describe("the views a failed open leaves without a document", () => {
     tabs.keep({ view: 9, path: "/twice.pdf" }, 3);
     panes.replaced(3, 9);
     const row = rowOf(tabs);
-    dropAbandoned(panes, tabs, { own: 9, replaced: true, twins: [twin] }, row.refresh);
+    const dropped: number[] = [];
+    dropAbandoned(panes, tabs, { own: 9, replaced: true, twins: [twin] }, row.refresh, (id) => dropped.push(id));
+    expect(dropped).toEqual([9, twin.view]);
     expect(row.drawn).toEqual([[1]]);
     expect(panes.split).toBe(false);
     expect(panes.front("left")).toBe(1);
@@ -528,11 +530,19 @@ describe("the open's wiring in App.svelte", () => {
   // Read as text with the comments taken out, because `App.svelte` is the join
   // and nothing imports it. That sees that a line is there and not whether it
   // runs (`sourcetext.ts`), so these hold the hand-over and no decision.
+  it("invalidates a comparison when temporary recognised text changes or leaves its viewer", () => {
+    expect(functionIn(app, "async function recogniseCurrentPage(")).toMatch(
+      /await shown\.recognisePage\([\s\S]*?comparisons\.invalidate\(view\)\) refreshComparison\(\)/);
+    expect(functionIn(app, "function unmountDocument(")).toMatch(
+      /viewer\?\.hasRecognisedText && comparisons\.invalidate\(openView\)\) refreshComparison\(\);[\s\S]*?viewer\?\.destroy\(\)/);
+  });
+
   it("asks this module for each decision, in the function that needs it", () => {
     expect(missingFrom(functionIn(app, "async function openDocument("), [
       "const pages = pageTable(doc);",
       "const resume = placeToResume(retainedPlace(retained), override, session.places, path, retained?.edits.state.pages.length ?? doc.page_count);",
       "const written = afterWrite ? tabs.forPath(path, tabs.active) : undefined;",
+      "if (written) endComparison(written.view);",
       "const left = abandonedBy(tabs.all, written, replaced, twins);",
       "abandonOpen(acquired, left.replaced, left.twins);",
       "const said = openFailure(e, resuming);",
@@ -546,7 +556,7 @@ describe("the open's wiring in App.svelte", () => {
       "placeOnSide(panes, view, replacing?.view, retained !== undefined);",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "function abandonOpen("), [
-      "dropAbandoned(panes, tabs, { own: acquired >= 0 ? viewOf(acquired) : undefined, replaced, twins }, refreshTabs);",
+      "dropAbandoned(panes, tabs, { own: acquired >= 0 ? viewOf(acquired) : undefined, replaced, twins }, refreshTabs, endComparison);",
     ])).toEqual([]);
   });
 

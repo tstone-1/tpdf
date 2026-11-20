@@ -744,6 +744,13 @@ export class RedactList {
   }
 
   private paint(): void {
+    const active = document.activeElement as HTMLElement | null;
+    const hadFocus = active != null && this.list.contains(active);
+    const onRemove = active?.dataset?.part === "remove";
+    if (hadFocus) {
+      const activeId = idOf(onRemove ? active.parentElement : active);
+      if (activeId !== null) this.focused = activeId;
+    }
     this.list.replaceChildren();
     this.elements.clear();
 
@@ -770,6 +777,11 @@ export class RedactList {
       const element = this.build(row);
       this.elements.set(row.redaction.id, element);
       this.list.appendChild(element);
+    }
+    if (hadFocus && this.focused !== null) {
+      const row = this.elements.get(this.focused);
+      const target = onRemove ? row?.querySelector<HTMLElement>('[data-part="remove"]') : row;
+      target?.focus({ preventScroll: true });
     }
   }
 
@@ -900,6 +912,7 @@ export class RedactList {
     element.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       this.focus(redaction.id);
+      element.focus({ preventScroll: true });
       this.opts.onPick(redaction.id);
     });
 

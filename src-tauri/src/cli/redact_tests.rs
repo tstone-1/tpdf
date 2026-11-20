@@ -4,8 +4,8 @@
 
 use super::fill::SignedState;
 use super::redact::{
-    match_regions, outcome, parse, plain, region_list, search_pages, signed_refusal, still_found,
-    unmarked, Found, Redact,
+    limited_search, match_regions, outcome, parse, plain, region_list, search_pages,
+    signed_refusal, still_found, unmarked, Found, Redact, WalkError,
 };
 use super::report::{self, RedactedPage, SearchKind};
 use super::Exit;
@@ -395,6 +395,11 @@ fn a_match_with_only_some_characters_placed_is_a_reason() {
                 .to_string()
         ]
     );
+    let annotation = |found: &Found| {
+        let file = super::search::searched("source.pdf", 1, Vec::new(), found);
+        super::search::plan(&file, &[0; 32], super::search::Markup::Highlight, None)
+    };
+    assert!(annotation(&found).unwrap_err().contains("only in part"));
     // The control: the same page with every box in place is marked whole.
     let whole = walk(
         &[query(SearchKind::Text, "Secret")],
@@ -402,6 +407,7 @@ fn a_match_with_only_some_characters_placed_is_a_reason() {
         &[page(&["Secret here"])],
     );
     assert!(unmarked(&whole).is_empty(), "{:?}", unmarked(&whole));
+    assert!(annotation(&whole).is_ok());
 }
 
 #[test]
@@ -583,4 +589,20 @@ fn regions_stdin_is_single_use_and_the_separator_keeps_option_like_paths_literal
     // A literal file named '-' is spelled './-'; stdin cannot alias an output.
     assert!(parse(&argv("a.pdf --regions - -o -")).is_ok());
     assert!(refused("a.pdf --regions ./- -o -").contains("regions file"));
+}
+
+#[test]
+fn match_budget_stops_before_reading_later_pages() {
+    for kind in [SearchKind::Text, SearchKind::Pattern] {
+        let qs = [query(kind, "hit")];
+        let mut read = Vec::new();
+        let found = limited_search(&qs, &[1, 2, 3], 2, |at| {
+            read.push(at);
+            Ok(page(&["hit hit"]))
+        });
+        assert!(matches!(found, Err(WalkError::Limit)));
+        assert_eq!(read, [0, 1]);
+        let exact = limited_search(&qs, &[1], 2, |_| Ok(page(&["hit hit"])));
+        assert!(matches!(exact, Ok(found) if found.matches.len() == 2));
+    }
 }

@@ -58,6 +58,7 @@ const TEXT = catalog({
     comment: "Comment",
     commentText: "Comment text",
     yourReply: "Your reply",
+    previewOnly: "Only a preview of this comment is available.",
     edit: "Edit",
     reply: "Reply",
     closeComment: "Close comment",
@@ -67,6 +68,7 @@ const TEXT = catalog({
     comment: "Kommentar",
     commentText: "Kommentartext",
     yourReply: "Deine Antwort",
+    previewOnly: "Für diesen Kommentar ist nur eine Vorschau verfügbar.",
     edit: "Bearbeiten",
     reply: "Antworten",
     closeComment: "Kommentar schließen",
@@ -221,11 +223,10 @@ export class CommentPopup {
    * Whether the comment on show can be rewritten.
    *
    * What the `Edit this comment` command asks before offering itself. Two
-   * conditions and not one: a popup has to be open, and its comment has to have
-   * an object of its own.
+   * data requirements apply: an addressable annotation and a complete body.
    */
   get editable(): boolean {
-    return this.shown !== null && this.subject?.object != null;
+    return this.shown !== null && this.subject?.object != null && !this.subject.body_clipped;
   }
 
   /** Whether the editor is open, so a second arming is not a reset. */
@@ -247,11 +248,8 @@ export class CommentPopup {
   /**
    * Whether the comment on show can be answered.
    *
-   * The same two conditions {@link CommentPopup.editable} states, and for the
-   * same reason in the second one: `/IRT` names an object, so a comment the file
-   * wrote as a direct dictionary has nothing for a reply to point at. That they
-   * agree today is not a reason to share a getter --- the two answer different
-   * questions and the next condition either grows will not be shared.
+   * A reply references its parent's object through `/IRT`. A clipped comment
+   * still has that identity when the file stored it as an indirect object.
    */
   get replyable(): boolean {
     return this.shown !== null && this.subject?.object != null;
@@ -260,9 +258,7 @@ export class CommentPopup {
   /**
    * Whether the comment on show can be deleted.
    *
-   * {@link CommentPopup.editable}'s two conditions once more, and a getter of
-   * its own for that entry's reason --- the three commands ask three questions
-   * and only happen to agree today.
+   * Deletion requires the object identity, including for a clipped body.
    *
    * **It does not ask whether a reply answers the comment**, which is the one
    * refusal deleting has that the other two do not. That is the model's
@@ -409,7 +405,8 @@ export class CommentPopup {
       // Absent rather than disabled for a comment the file wrote as a direct
       // dictionary --- see the module note. Gone while the editor is open,
       // because arming what is already armed is not an action.
-      ...(comment.object && !box ? [this.editButton(), this.replyButton()] : []),
+      ...(this.editable && !box ? [this.editButton()] : []),
+      ...(this.replyable && !box ? [this.replyButton()] : []),
       ...this.replies.map((reply) => replyBlock(reply)),
     );
   }
@@ -540,7 +537,9 @@ function subject(comment: Comment): HTMLElement {
 function body(comment: Comment): HTMLElement {
   const element = document.createElement("div");
   const text = comment.body.trim();
-  element.textContent = text || noCommentLabel(comment.kind);
+  element.textContent = comment.body_clipped
+    ? [text, TEXT().previewOnly].filter(Boolean).join("\n\n")
+    : text || noCommentLabel(comment.kind);
   element.style.cssText =
     "white-space:pre-wrap;overflow-wrap:anywhere;" +
     (text ? "" : "opacity:0.6;font-style:italic;");

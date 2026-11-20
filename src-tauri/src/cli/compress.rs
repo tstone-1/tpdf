@@ -21,11 +21,14 @@ use std::path::{Path, PathBuf};
 
 use super::args::{lexically_same, unknown, value};
 use super::fill::SignedState;
-use super::pages::{check_target, copy_of, publish_copy, read_input, same_sizes, Temporary};
+use super::pages::{
+    check_target, copy_of, publish_copy, read_input, same_sizes, unchanged, Temporary,
+};
 use super::report::{self, SCHEMA};
 use super::text::{declined, password, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::compress::{Compress as Way, Estimate, Pictures, Preset};
+use crate::fingerprint::Fingerprint;
 use crate::save;
 use crate::worker_proto::{Reply, Request};
 
@@ -201,6 +204,15 @@ impl Compress {
         self.pictures.map_or(Way::Lossless, Way::Pictures)
     }
 
+    fn source_size(&self, opened_as: &Fingerprint) -> Result<u64, Failure> {
+        if self.dry_run {
+            // Publishing a PDF checks the revision in publish_copy. An
+            // estimate must also describe the revision still at this path.
+            unchanged(&[(self.input.as_path(), opened_as)])?;
+        }
+        Ok(opened_as.len)
+    }
+
     fn run_compress(
         &self,
         env: &Env<'_>,
@@ -240,9 +252,6 @@ impl Compress {
             ));
         }
         let shown = self.input.display().to_string();
-        let before = std::fs::metadata(&self.input)
-            .map(|data| data.len())
-            .map_err(|why| Failure::new(Exit::Internal, format!("{shown}: {why}")))?;
 
         // The estimate, when it is the answer or the preview needs it.
         let estimate: Option<Estimate> = if self.dry_run || self.preview.is_some() {
@@ -284,6 +293,7 @@ impl Compress {
             }
         }
 
+        let before = self.source_size(input.opened_as())?;
         let mut after = estimate.as_ref().map_or(0, |estimate| estimate.bytes_after);
         if let Some(output) = &self.output {
             input.plan.compress = self.way();
@@ -353,7 +363,7 @@ impl Compress {
                     "the preview now names the published PDF",
                 ))
             } else {
-                Temporary::publish(staged, path, self.force)
+                Temporary::publish(inputs, staged, path, self.force)
             };
             if let Err(failure) = published {
                 let Some(pdf) = &self.output else {
@@ -425,7 +435,7 @@ impl Compress {
 fn plain(report: &report::Compressed) -> String {
     let how = match (&report.preset, report.dpi, report.quality, report.jpeg) {
         (Some(preset), Some(dpi), Some(quality), Some(jpeg)) => format!(
-            "pictures at most {dpi} pixels an inch, JPEG quality {quality}{}{}",
+            "target picture resolution {dpi} pixels an inch, JPEG quality {quality}{}{}",
             if jpeg {
                 ""
             } else {
@@ -534,6 +544,18 @@ mod tests {
     }
 
     #[test]
+    fn a_dry_run_reports_the_revision_used_for_its_estimate() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = parse(&args("a.pdf --dry-run")).unwrap();
+        command.input = dir.path().join("source.pdf");
+        std::fs::write(&command.input, b"first").unwrap();
+        let opened = Fingerprint::of(&command.input).unwrap();
+        assert_eq!(command.source_size(&opened).unwrap(), 5);
+        std::fs::write(&command.input, b"a different revision").unwrap();
+        assert!(command.source_size(&opened).is_err());
+    }
+
+    #[test]
     fn a_preset_names_three_numbers_and_each_can_be_given_alone() {
         for (name, preset) in [
             ("screen", Preset::Screen),
@@ -631,14 +653,14 @@ mod tests {
         said.signatures_invalidated = 1;
         assert_eq!(
             plain(&said),
-            "b.pdf: 400 bytes, 60% smaller than the 1000 it was; pictures at most 110 pixels \
+            "b.pdf: 400 bytes, 60% smaller than the 1000 it was; target picture resolution 110 pixels \
              an inch, JPEG quality 60 (screen)\nThe rewrite invalidates existing signatures."
         );
         said.preset = Some("custom".into());
         said.jpeg = Some(false);
         said.signatures_invalidated = 0;
         assert!(plain(&said).ends_with(
-            "pictures at most 110 pixels an inch, JPEG quality 60, lossless pictures kept lossless"
+            "target picture resolution 110 pixels an inch, JPEG quality 60, lossless pictures kept lossless"
         ));
     }
 
@@ -658,8 +680,8 @@ mod tests {
         said.signatures_unknown = true;
         assert_eq!(
             plain(&said),
-            "a.pdf: a copy would be 400 bytes, 60% smaller than the 1000 it is; pictures at \
-             most 150 pixels an inch, JPEG quality 75 (balanced)\n\
+            "a.pdf: a copy would be 400 bytes, 60% smaller than the 1000 it is; target picture \
+             resolution 150 pixels an inch, JPEG quality 75 (balanced)\n\
              3 of 7 pictures stored smaller.\n\
              p.png: the picture that loses the most, before on the left and after on the right."
         );

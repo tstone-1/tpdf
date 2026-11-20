@@ -988,7 +988,7 @@ pub(super) fn publish_signed(
     let temporary = Temporary::beside(output).map_err(|e| e.message)?;
     let staged = temporary.0.join("signed.pdf");
     save::write_signed(input, &staged, bytes).map_err(|e| e.message)?;
-    Temporary::publish(&staged, output, force).map_err(|e| e.message)
+    Temporary::publish(&[input.to_owned()], &staged, output, force).map_err(|e| e.message)
 }
 
 fn run_sign(

@@ -265,6 +265,10 @@ export default {
   "page {page}: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing {size:.1} pt or larger is readable there":
     "Seite {page}: die markierten Bereiche enthielten keinen Text, daher richtet sich die Prüfung nach der kleinsten Schrift, die auf der Seite übrig ist: dort ist nichts in {size} pt oder größer lesbar",
   "the removed areas could not be read back. {why}": "die entfernten Bereiche konnten nicht zurückgelesen werden. {why}",
+  "A marked area extends beyond the saved page": "Ein markierter Bereich ragt über die gespeicherte Seite hinaus",
+  "The cropped page has no measurable area": "Die zugeschnittene Seite hat keine messbare Fläche",
+  "The written page dimensions differ from the geometry of its marked areas":
+    "Die Maße der gespeicherten Seite weichen von den Seitenmaßen ab, auf die sich die Markierungen beziehen",
   "the written file could not be reopened to read the removed areas back, so they could not be shown unreadable: {reason}":
     "die geschriebene Datei konnte nicht erneut geöffnet werden, um die entfernten Bereiche zurückzulesen, daher ließ sich nicht zeigen, dass sie unlesbar sind: {reason}",
   "the area at {rect:?} pt is not on a page of {height_px} px, so there was nothing to render for the check":

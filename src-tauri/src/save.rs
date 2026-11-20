@@ -5513,7 +5513,7 @@ const COMMIT_RETRIES: u32 = 5;
 /// check failed that way once in a full run and passed six times alone
 /// (2026-10-18); a reader saving over a file the scanner was reading would get
 /// the same refusal. Any other error, and the last refusal, is reported at once.
-fn commit(staged: &Path, out: &Path) -> Result<(), String> {
+pub(crate) fn commit(staged: &Path, out: &Path) -> Result<(), String> {
     let mut attempt = 0;
     loop {
         match std::fs::rename(staged, out) {

@@ -281,8 +281,7 @@ impl Subcommand for Render {
         let staging = Temporary::beside(&self.output)?;
         let staged = staging.0.join("page.png");
         std::fs::write(&staged, &png).map_err(|e| Failure::new(Exit::Refused, e.to_string()))?;
-        check_target(inputs, &self.output, self.force)?;
-        Temporary::publish(&staged, &self.output, self.force)?;
+        Temporary::publish(inputs, &staged, &self.output, self.force)?;
         let report = report::Rendered {
             schema: SCHEMA,
             command: "render".into(),

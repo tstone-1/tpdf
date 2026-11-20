@@ -243,7 +243,6 @@ fn textedit_rendering_intents_preserve_operators_resources_and_geometry() {
         let before = textedit::scan(&doc, 0).unwrap();
         assert_eq!(before.runs.len(), 2);
         assert_eq!(before.runs[0].matrix, [1., 0., 0., 1., 40., 180.]);
-        let bytes = doc.get_page_content(page);
         let objects = doc.objects.clone();
         let change = Change {
             layout: None,
@@ -265,10 +264,7 @@ fn textedit_rendering_intents_preserve_operators_resources_and_geometry() {
             .as_stream()
             .unwrap()
             .content,
-            String::from_utf8(bytes)
-                .unwrap()
-                .replace("(FIRST)", "(IN)")
-                .into_bytes()
+            body.replace("(FIRST)", "(IN)").into_bytes()
         );
         for (id, object) in objects {
             if id != page {

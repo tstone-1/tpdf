@@ -285,6 +285,18 @@ fn acroform(doc: &Document) -> Option<&Dictionary> {
     doc.dereference(o).ok()?.1.as_dict().ok()
 }
 
+const MAX_ANSWER_BYTES: usize = 16 * 1024;
+
+// UTF-16 can take two bytes per UTF-8 byte, plus its byte-order mark.
+fn oversized_string(raw: &[u8]) -> bool {
+    let limit = if raw.starts_with(&[0xfe, 0xff]) || raw.starts_with(&[0xff, 0xfe]) {
+        2 * MAX_ANSWER_BYTES + 2
+    } else {
+        MAX_ANSWER_BYTES
+    };
+    raw.len() > limit
+}
+
 fn option_text(doc: &Document, value: &Object) -> Result<String, String> {
     let raw = doc
         .dereference(value)
@@ -292,7 +304,7 @@ fn option_text(doc: &Document, value: &Object) -> Result<String, String> {
         .1
         .as_str()
         .map_err(|_| said!("A choice option is not a text string"))?;
-    if raw.len() > 16384 {
+    if oversized_string(raw) {
         return Err(said!("This form contains an oversized option"));
     }
     Ok(crate::annots::decode_text_string(raw))
@@ -561,7 +573,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             };
             if inherited(doc, object, b"V")
                 .and_then(|v| v.as_str().ok())
-                .is_some_and(|raw| raw.len() > 16384)
+                .is_some_and(oversized_string)
             {
                 return Err(said!("This form contains an oversized answer"));
             }
@@ -587,6 +599,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             };
             let numbers = w
                 .get(b"Rect")
+                .and_then(|object| doc.dereference(object).map(|(_, rect)| rect))
                 .and_then(Object::as_array)
                 .map_err(|_| said!("A form widget has no rectangle"))?;
             if numbers.len() != 4 {
@@ -957,7 +970,7 @@ pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
     }
     match (&widget.control, value) {
         (_, Value::Text(text)) => {
-            if text.len() > 16384 {
+            if text.len() > MAX_ANSWER_BYTES {
                 return Err(rejected(
                     Invalid::Length,
                     said!("A form answer is limited to 16 KB"),
@@ -1358,6 +1371,13 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                 }
             }
         }
+        let inherited_answer = doc
+            .get_dictionary(change.object)
+            .and_then(|field| field.get(b"Parent"))
+            .and_then(Object::as_reference)
+            .ok()
+            .and_then(|parent| inherited(doc, parent, b"V"))
+            .is_some();
         let flags = integer(doc, change.object, b"Ff");
         let field = doc
             .get_dictionary_mut(change.object)
@@ -1404,7 +1424,13 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                 }),
             },
         );
-        if let Control::Choice { combo, .. } = control {
+        if let Control::Choice {
+            combo,
+            multiple,
+            ref options,
+            ..
+        } = control
+        {
             if let Value::Selection(indices) = &change.value {
                 field.set(
                     "I",
@@ -1417,8 +1443,17 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                     field.set("TI", indices.first().copied().unwrap_or(0) as i64);
                 }
                 if indices.is_empty() {
-                    field.remove(b"V");
-                    field.remove(b"I");
+                    if !inherited_answer {
+                        field.remove(b"V");
+                        field.remove(b"I");
+                    } else if !multiple {
+                        if options.iter().any(|option| option.export.is_empty()) {
+                            return Err(said!(
+                                "An empty option prevents clearing this inherited choice"
+                            ));
+                        }
+                        field.set("V", pdf_string(""));
+                    }
                 }
             } else {
                 field.remove(b"I");
@@ -2017,6 +2052,91 @@ pub(crate) mod tests {
             std::fs::write(path, &bytes).unwrap();
         }
         (Document::load_mem(&bytes).unwrap(), field, check)
+    }
+
+    #[test]
+    fn large_text_and_an_indirect_widget_rectangle_survive_save_and_reopen() {
+        let (mut doc, field, check) = fixture();
+        let rect = doc.add_object(Object::Array(vec![
+            0.into(),
+            0.into(),
+            900.into(),
+            900.into(),
+        ]));
+        for w in scan(&doc)
+            .unwrap()
+            .widgets
+            .iter()
+            .filter(|w| w.object == field)
+        {
+            doc.get_dictionary_mut(w.widget).unwrap().set("Rect", rect);
+        }
+        let dict = doc.get_dictionary_mut(field).unwrap();
+        dict.remove(b"MaxLen");
+        dict.set("Ff", 1 << 12);
+        dict.set("DA", Object::string_literal("/Helv 4 Tf"));
+        let answer = Value::Text("x ".repeat(MAX_ANSWER_BYTES / 2));
+        write(
+            &mut doc,
+            &[Change {
+                object: field,
+                value: answer.clone(),
+            }],
+        )
+        .unwrap();
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let form = scan(&Document::load_mem(&bytes).unwrap()).unwrap();
+        assert_eq!(form.widgets.len(), 3);
+        assert!(form.widgets.iter().any(|w| w.object == check));
+        assert!(form
+            .widgets
+            .iter()
+            .filter(|w| w.object == field)
+            .all(|w| w.value == answer));
+    }
+
+    #[test]
+    fn a_cleared_choice_overrides_its_parent_without_changing_its_sibling() {
+        let (mut doc, _, combo, list) = mixed_fixture();
+        let parent = doc.add_object(dictionary! {"V" => pdf_string("OTHER"), "Kids" => vec![Object::Reference(combo), list.into()]});
+        for child in [combo, list] {
+            let field = doc.get_dictionary_mut(child).unwrap();
+            field.set("Parent", parent);
+            field.remove(b"V");
+            field.remove(b"I");
+        }
+        let value = |form: &Form, id| {
+            form.widgets
+                .iter()
+                .find(|w| w.object == id)
+                .unwrap()
+                .value
+                .clone()
+        };
+        for child in [combo, list] {
+            assert_eq!(
+                value(&scan(&doc).unwrap(), child),
+                Value::Selection(vec![2])
+            );
+        }
+        for child in [combo, list] {
+            write(
+                &mut doc,
+                &[Change {
+                    object: child,
+                    value: Value::Selection(vec![]),
+                }],
+            )
+            .unwrap();
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).unwrap();
+            let form = scan(&Document::load_mem(&bytes).unwrap()).unwrap();
+            assert_eq!(value(&form, child), Value::Selection(vec![]));
+            if child == combo {
+                assert_eq!(value(&form, list), Value::Selection(vec![2]));
+            }
+        }
     }
 
     #[test]

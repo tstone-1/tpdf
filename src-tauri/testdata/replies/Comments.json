@@ -6,6 +6,7 @@
       "kind": "text",
       "author": "A. Reader",
       "body": "the first note",
+      "body_clipped": true,
       "subject": "a subject",
       "date": "2026-01-02T03:04:05Z",
       "rect": [

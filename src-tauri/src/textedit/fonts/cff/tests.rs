@@ -1140,7 +1140,7 @@ fn textedit_cff_letter_outside_latin_keeps_its_text_read_only_and_the_page_edita
     assert_eq!(after.runs[0].text, "EDITED FIRST");
     let content = doc.get_page_content(page);
     // The Cyrillic run is kept byte for byte, hex string and all.
-    assert!(content.ends_with(b"BT /F1 12 Tf 40 140 Td <418042> Tj ET\n\n"));
+    assert!(content.ends_with(b"BT /F1 12 Tf 40 140 Td <418042> Tj ET\n"));
     // Only that refusal changes route. The glyph-name path would keep a glyph
     // whose widths disagree read-only; the WinAnsi path refuses the font.
     let (mut doc, font, _, _) = fixture(NORMAL);

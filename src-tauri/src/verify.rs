@@ -38,15 +38,9 @@
 //! deferred image sitting anywhere else in the file is still exactly what this
 //! bullet says it is: bytes nobody read, reported rather than waved through.
 //!
-//! **The byte scan reads characters, and a composite font does not store
-//! them.** Under a `/Type0` font a content stream carries glyph numbers, so a
-//! word drawn through one is never in the file as its own bytes and the scan
-//! finds nothing whether the word is there or not. A file holding such a font is
-//! therefore blind, once, for the file: the scan cannot account for a copy of
-//! the words anywhere it draws. The command-line tool adds a text-extraction
-//! search of the pages it was asked about, which reads them in their own
-//! encoding; it does not reach an appearance stream or a form no page draws,
-//! so it narrows this reason and does not withdraw it.
+//! Composite (Type0) fonts store glyph numbers. The scan decodes the text
+//! using its font mappings. An incomplete mapping or text whose font cannot
+//! be identified leaves a file-wide reason to withhold verification.
 //!
 //! A caller that wants a single word gets [`Verdict`], which says *not verified*
 //! for either list. What the split buys is that the reason names the next step

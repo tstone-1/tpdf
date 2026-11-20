@@ -119,8 +119,8 @@ ROWS += [
         # whole field tree, and with it every other page's answers.
         "merge: an imported widget keeps its parent field",
         "src/merge.rs",
-        '    out.remove(b"Parent");\n',
-        "",
+        '    let mut stamp = Dictionary::new();',
+        '    let mut stamp = widget.clone();',
         "importing_one_page_of_a_form_does_not_bring_the_other_pages_answers",
     ),
     Mutation(

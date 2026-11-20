@@ -8,6 +8,33 @@ The unedited TPDF_CHOICE_FIXTURE is the negative control: this check must reject
 import sys
 
 from pypdf import PdfReader
+from pypdf.generic import ContentStream
+
+
+def verify_list_rows(appearance, reader):
+    rectangles = []
+    labels = {}
+    blue = False
+    rect = position = None
+    for args, operator in ContentStream(appearance, reader).operations:
+        if operator == b"rg":
+            blue = tuple(map(float, args)) == (0.8, 0.87, 1)
+        elif operator == b"re":
+            rect = tuple(map(float, args))
+        elif operator == b"f":
+            if blue and rect is not None:
+                rectangles.append(rect)
+            rect = None
+        elif operator == b"Tm":
+            position = tuple(map(float, args[-2:]))
+        elif operator == b"Tj":
+            labels[str(args[0])] = position
+    assert len(rectangles) == 2, "two row backgrounds required"
+    for label, shaded in [("First label", 1), ("Second label", 0), ("Third label", 1)]:
+        x, y = labels[label]
+        count = sum(left <= x <= left + width and bottom <= y <= bottom + height
+                    for left, bottom, width, height in rectangles)
+        assert count == shaded, f"{label} has {count} backgrounds"
 
 
 def verify(path: str) -> None:
@@ -44,9 +71,7 @@ def verify(path: str) -> None:
                 if name == "delivery_choice":
                     assert b"5365636f6e64206c6162656c" in content, "dropdown appearance must draw Second label"
                 else:
-                    assert b"4669727374206c6162656c" in content, "first list label missing"
-                    assert b"5468697264206c6162656c" in content, "third list label missing"
-                    assert content.count(b"0.8 0.87 1 rg") == 2, "both selected list rows must be shaded"
+                    verify_list_rows(widget["/AP"]["/N"], reader)
     assert buttons == 2 and choices == 2, "widget coverage"
 
 

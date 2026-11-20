@@ -215,7 +215,7 @@ together; editable custom text removes stale `/I`. Radio indices use widget
 object order, so page moves cannot retarget a pending answer, and `/AS` is updated
 on every sibling while preserving its authored artwork. `TPDF_CHOICE_FIXTURE`
 and `TPDF_CHOICE_PROBE` on the mixed-form Rust test generate synthetic inputs
-and saved output for `tabs_check.py --phase forms` and `choice_pdf_check.py`.
+and saved output for `tabs_check.py --phase forms-mixed` and `choice_pdf_check.py`.
 The latter uses the independent `pypdf` parser and must reject the unedited input.
 PDFKit displays the first label for duplicate dropdown exports despite a saved
 `/I` selecting the second. `TPDF_CHOICE_UNIQUE_PROBE` generates the distinct-export
@@ -388,6 +388,11 @@ it. `worker-probe` writes one document both ways and compares byte for byte.
 
 **The copy paths, the split and the print job followed on 2026-09-01**, on the same seam —
 `Job` carries what a print does not share with a save, so `staged_rewrite` is one function.
+For every base document, incoming widgets keep their normal appearance
+as static stamp annotations. A stateful widget uses its selected appearance.
+An incoming widget without a usable appearance stops the operation before publication.
+The original fields remain in the base field tree and can still be filled.
+
 **The page-range print and the merge followed on 2026-09-01**, through
 `Request::PrintRange` and `Request::Merge`. The merge is the widest of them — it parses files
 the reader picked in a dialog that tpdf never opened — and the obstacle recorded for it was
@@ -520,7 +525,8 @@ runs out is refused; the decoder forgives a missing end marker and about twenty 
 EXIF orientation becomes the content matrix, all eight values, and a page takes the shown
 shape. The matrices were checked against Quick Look for 5 and 6, and the unit test holds all
 eight against the EXIF table. A PNG is expanded to eight-bit gray or RGB and deflated, with an
-`/SMask` when any pixel is not opaque. A page is the picture at its stated resolution, 72 DPI
+`/SMask` when any pixel is not opaque. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
+A page is the picture at its stated resolution, 72 DPI
 when it states none, held between 3 and 14,400 points a side.
 
 Not done: CMYK JPEG, which needs `/Decode [1 0 ...]` for Adobe's inverted samples; TIFF, HEIC

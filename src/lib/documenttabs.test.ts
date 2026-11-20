@@ -38,6 +38,23 @@ describe("document tabs", () => {
     expect(tabs.find(2)).toMatchObject({ page: 2, edits: [2] });
   });
 
+  it("keeps the same edit model when the filesystem recognises an alias", async () => {
+    const tabs = new DocumentTabs<ReturnType<typeof tab>>();
+    const original = tab(1);
+    tabs.keep(original);
+    original.edits.push(42);
+    const alias = "/fixture/sub/../1.pdf";
+    const resolved = await tabs.matchingPath(alias, async (asked, candidates) => {
+      expect(asked).toBe(alias);
+      expect(candidates).toEqual([original.path]);
+      return original.path;
+    });
+    expect(resolved).toBe(original);
+    expect(resolved?.edits).toEqual([1, 42]);
+    expect(tabs.all).toHaveLength(1);
+    expect(await tabs.matchingPath("/fixture/2.pdf", async () => null)).toBeUndefined();
+  });
+
   it("reuses Windows path spellings but distinguishes POSIX case", () => {
     const tabs = new DocumentTabs<ReturnType<typeof tab>>();
     tabs.keep(tab(1, "C:\\fixture\\Example.pdf"));

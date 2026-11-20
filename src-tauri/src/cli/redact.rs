@@ -412,8 +412,25 @@ pub struct Found {
 pub fn search_pages(
     queries: &[(SearchKind, String, Prepared)],
     pages: &[u32],
-    mut text_of: impl FnMut(u32) -> Result<PageText, String>,
+    text_of: impl FnMut(u32) -> Result<PageText, String>,
 ) -> Result<Found, String> {
+    limited_search(queries, pages, usize::MAX, text_of).map_err(|why| match why {
+        WalkError::Page(why) => why,
+        WalkError::Limit => "too many search matches".into(),
+    })
+}
+
+pub(super) enum WalkError {
+    Page(String),
+    Limit,
+}
+
+pub(super) fn limited_search(
+    queries: &[(SearchKind, String, Prepared)],
+    pages: &[u32],
+    limit: usize,
+    mut text_of: impl FnMut(u32) -> Result<PageText, String>,
+) -> Result<Found, WalkError> {
     let mut found = Found {
         counts: vec![0; queries.len()],
         ..Found::default()
@@ -422,7 +439,8 @@ pub fn search_pages(
     let mut previous: Option<(u32, PageText)> = None;
     for &page in pages {
         let at = page - 1;
-        let text = text_of(at).map_err(|why| format!("page {page} could not be read: {why}"))?;
+        let text = text_of(at)
+            .map_err(|why| WalkError::Page(format!("page {page} could not be read: {why}")))?;
         let adjacent = previous.as_ref().is_some_and(|(was, _)| *was + 1 == at);
         let mut touched = false;
         let mut across = false;
@@ -432,7 +450,12 @@ pub fn search_pages(
             } else {
                 None
             };
-            let answer = compiled.search_page(&text.codes, at, carry);
+            let remaining = limit - found.matches.len();
+            let answer =
+                compiled.search_page_up_to(&text.codes, at, carry, remaining.saturating_add(1));
+            if answer.matches.len() > remaining {
+                return Err(WalkError::Limit);
+            }
             for hit in &answer.matches {
                 across |= hit.end_page.is_some();
             }
@@ -612,10 +635,13 @@ fn search_back(
             )]
         }
     };
-    let reasons = match search_pages(queries, pages, |at| {
+    let reasons = match limited_search(queries, pages, MAX_MATCHES_TO_MARK, |at| {
         wait(|reply| service.text(info.id, at, None, reply))
     }) {
-        Err(why) => vec![format!(
+        Err(WalkError::Limit) => vec![format!(
+            "the written file still has more than {MAX_MATCHES_TO_MARK} matches"
+        )],
+        Err(WalkError::Page(why)) => vec![format!(
             "the written file could not be searched again, so the matches could not be shown \
              gone: {why}"
         )],
@@ -939,26 +965,12 @@ fn run_redact(
         ));
     }
 
-    let found = search_pages(&queries, &pages, |at| {
+    let found = limited_search(&queries, &pages, MAX_MATCHES_TO_MARK, |at| {
         wait(|reply| service.text(doc, at, None, reply))
-    })
-    .map_err(|why| {
-        Failure::new(
-            Exit::Refused,
-            format!("{shown}: {why}, so nothing was marked and nothing was written"),
-        )
+    }).map_err(|why| match why {
+        WalkError::Page(why) => Failure::new(Exit::Refused, format!("{shown}: {why}, so nothing was marked and nothing was written")),
+        WalkError::Limit => Failure::new(Exit::Refused, format!("more than {MAX_MATCHES_TO_MARK} matches; nothing was written --- narrow the search, or redact fewer pages at a time with --pages")),
     })?;
-    if found.matches.len() > MAX_MATCHES_TO_MARK {
-        return Err(Failure::new(
-            Exit::Refused,
-            format!(
-                "{} matches is more than the {MAX_MATCHES_TO_MARK} that can be marked at once, \
-                 and nothing was written --- narrow the search, or redact fewer pages at a time \
-                 with --pages",
-                found.matches.len()
-            ),
-        ));
-    }
 
     // The window's model, marked the way the window marks it.
     let mut marked: std::collections::BTreeMap<u32, Vec<[f32; 4]>> = match_regions(&found);

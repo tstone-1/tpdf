@@ -5768,6 +5768,7 @@ dependencies = [
  "getrandom 0.4.3",
  "gtk",
  "hmac 0.12.1",
+ "icu_properties",
  "image",
  "landlock",
  "libc",

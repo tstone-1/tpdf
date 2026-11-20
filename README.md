@@ -1291,8 +1291,7 @@ tpdf search report.pdf --text "North Pier" --annotate highlight --color 1,0.9,0.
 `--color` is red, green and blue from 0 to 1; without it the marks take `edit`'s default.
 The plan holds at most 1,000 marks and includes the SHA-256 of the searched document.
 If the input bytes change before `edit`, it refuses the plan and leaves the output untouched. Nothing is printed when
-nothing matched, and a match whose characters have no position on the page stops the plan
-with a refusal, since it would otherwise be left unmarked with nothing said.
+nothing matched. If any matched characters lack a usable position on the page, the command refuses the plan.
 
 **Reading from a pipe.** `info`, `verify`, `text`, `search`, `compare` and `fields` take `-` for the
 document and read it from standard input: `curl -s https://example.org/a.pdf | tpdf text -`.
@@ -1577,6 +1576,9 @@ the page as it is displayed:
   given.
 
 **Page operations.** `merge` takes two or more inputs and preserves argument order.
+When the first PDF has a form, its fields stay editable. Fields on appended pages
+keep their saved appearance as static annotations. If an incoming widget lacks a
+usable appearance, the merge stops and preserves any existing output.
 `extract --pages` selects pages in document order, each once: `3,1,1` means pages 1
 and 3. `split --every N` writes groups of N consecutive pages (default 1); the last
 may be shorter. `-o part.pdf` produces `part-1.pdf`, `part-2.pdf`, and so on, never
@@ -1738,10 +1740,15 @@ for file in pdf.search("a.pdf", "b.pdf", texts=["PRIVATE-731"])["files"]:
 ```
 
 `compare()` takes two documents, the older first, and returns what changed in their words.
-Differing is not an error: an empty `changes` means the words are the same.
+The words are equal when there are zero changes and both sides report zero uncompared words.
 
 ```python
-for change in pdf.compare("contract-v1.pdf", "contract-v2.pdf")["changes"]:
+report = pdf.compare("contract-v1.pdf", "contract-v2.pdf")
+if report["old"]["words_not_compared"] or report["new"]["words_not_compared"]:
+    print("Comparison incomplete")
+elif not report["changes"]:
+    print("The words are equal")
+for change in report["changes"]:
     print(change["old_page"], change["kind"], change["removed"], "->", change["added"])
 ```
 
@@ -1749,7 +1756,7 @@ for change in pdf.compare("contract-v1.pdf", "contract-v2.pdf")["changes"]:
 If the source changes before the edit, the command refuses to publish the copy.
 `kind=` is `"highlight"` (the default), `"underline"`, `"strikeout"` or `"squiggly"`, and
 `color=` is red, green and blue from 0 to 1. It returns the edit report, or `None` when
-nothing matched; no file is written then. A match that has no position on the page raises
+nothing matched; no file is written then. A match with wholly or partly missing character positions raises
 `ValueError` before anything is written.
 
 ```python
@@ -1803,7 +1810,7 @@ Signing keeps the key in the OS, which may request key-access approval; allow an
 client timeout. Encrypted inputs are refused. An intact signature is not necessarily trusted;
 `verify(..., strict=True)` checks both and raises on a negative verdict.
 
-`run(command, *arguments)` reaches every CLI command.
+`run(command, *arguments)` runs CLI commands that produce JSON. Shell completions produce plain text and are available directly from the CLI.
 It returns a `Result` carrying
 `report`, `exit_code` and `stderr`. `Result.typed` is the same report; the client's methods
 return it under the shape `tpdf_client.reports` names, and nothing checks that shape at run time. Nonzero exits raise `CommandError`, which retains
@@ -1949,7 +1956,7 @@ enlarged.
 A JPEG goes into the document as the bytes it is, so it is not compressed a second time
 and loses nothing; that also means whatever its file carries goes with it, a camera's
 position included. A photograph is turned the way its EXIF orientation says. A PNG is
-decoded and compressed again without loss, and its transparency is kept. A picture may
+decoded and stored with lossless compression and transparency. Sixteen-bit PNG samples, including alpha, are reduced to eight bits per channel. A picture may
 have up to 40 megapixels and 30,000 pixels a side, and a document up to 500 pictures. A
 CMYK JPEG is refused; save it as RGB first. Any other file is refused by name and nothing
 is written.
@@ -1991,9 +1998,9 @@ smaller and looks exactly the same: streams stored loosely are compressed and th
 written with object streams. On ordinary documents that saves a few percent, because
 pictures are most of a PDF's size and this does not touch them.
 
-`--pictures screen`, `balanced` or `print` also shrinks pictures. A picture drawn at more
-than 110, 150 or 300 pixels an inch is scaled down to that, and a photograph or a scan is
-stored as JPEG at quality 60, 75 or 85. `--dpi N` (20 to 1200) and `--quality N` (1 to 100)
+`--pictures screen`, `balanced` or `print` targets 110, 150 or 300 pixels an inch.
+An image dimension keeps its original pixels up to 20 percent above the target. Finer
+dimensions scale down to the target. Photographs and scans use JPEG quality 60, 75 or 85. `--dpi N` (20 to 1200) and `--quality N` (1 to 100)
 set those two numbers yourself, starting from `balanced` when no preset is named, and
 `--no-jpeg` keeps a picture that is stored without loss stored without loss. Text and line
 drawings are not pictures and stay sharp at any zoom.
@@ -2189,7 +2196,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   side, whitespace collapsed; and `rects`, where it is: one `{page, rect}` per run of text
   on a line, `rect` being `[x, y, width, height]` in points from the page's top-left corner,
   the form `edit`'s `annotate` and `redact --regions` take. `rects` is empty for a match
-  whose characters have no position. Matches are in page order, then in the order they
+  whose characters have no position. A match with some usable rectangles and incomplete
+  character coverage carries `partial_geometry: true`. Matches are in page order, then in the order they
   start.
 - `page-numbers` and `watermark`: `input`, `output`, `pages` (how many the copy has),
   `written` (the pages the text went on, counted from 1, each read back holding its line),

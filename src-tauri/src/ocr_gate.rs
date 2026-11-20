@@ -182,14 +182,59 @@ pub struct GatePage {
     pub taking: String,
     /// The page's displayed width in points.
     ///
-    /// Taken from the source's [`crate::text::PageText`] rather than from the
-    /// written file's geometry, so it is guaranteed to be the same measurement
-    /// the word boxes were made under. If the written page turns out to differ,
-    /// the control fails to read back and the gate says *not verified* --- which
-    /// is the right answer for a page that moved under the removal.
+    /// Starts in source coordinates. A pending crop or turn changes the
+    /// regions, control words and dimensions together before read-back.
     pub width_pt: f32,
     /// The page's displayed height in points.
     pub height_pt: f32,
+}
+
+impl GatePage {
+    /// Places source display rectangles in the saved page after its crop and turn.
+    pub(crate) fn place_on_output(
+        &mut self,
+        crop: crate::render::CropGeometry,
+        turns: u8,
+    ) -> Result<(), String> {
+        let (w, h) = (crop.width_pt, crop.height_pt);
+        if ![w, h, crop.left, crop.top].iter().all(|v| v.is_finite()) || w <= 0.0 || h <= 0.0 {
+            return Err(said!("The cropped page has no measurable area"));
+        }
+        let (width, height) = if turns % 2 == 0 { (w, h) } else { (h, w) };
+        let place = |[l, t, r, b]: [f32; 4]| {
+            let local = [l - crop.left, t - crop.top, r - crop.left, b - crop.top];
+            crate::text::turn_device(turns, w, h, local)
+        };
+        let inside = |r: &[f32; 4]| {
+            r[0] >= 0.
+                && r[1] >= 0.
+                && r[2] <= width
+                && r[3] <= height
+                && r[0] < r[2]
+                && r[1] < r[3]
+        };
+        for region in &mut self.regions {
+            *region = place(*region);
+            if !inside(region) {
+                return Err(said!("A marked area extends beyond the saved page"));
+            }
+        }
+        for word in &mut self.words {
+            word.rect = place(word.rect);
+        }
+        // Keep the script and size evidence of every covered word, including
+        // one clipped by the crop. Only fully visible survivors may be controls.
+        self.words.retain(|word| {
+            inside(&word.rect)
+                || self
+                    .regions
+                    .iter()
+                    .any(|r| crate::objects::overlaps(*r, word.rect))
+        });
+        self.width_pt = width;
+        self.height_pt = height;
+        Ok(())
+    }
 }
 
 /// Drops words the removal will take with an operation but no region covers.
@@ -840,7 +885,20 @@ pub fn judge_all(
         .iter()
         .map(|page| PageVerdicts {
             page: page.page,
-            outcome: gate_one_page(service, &mut engine, opened.id, page),
+            outcome: if opened.pages.get(page.page as usize).is_some_and(|size| {
+                (size.width_pt - page.width_pt).abs() < 0.001
+                    && (size.height_pt - page.height_pt).abs() < 0.001
+            }) {
+                gate_one_page(service, &mut engine, opened.id, page)
+            } else {
+                PageOutcome::Whole(Legibility::NotVerified {
+                    cause: NotVerifiedCause::RegionStrip,
+                    why: said!(
+                        "The written page dimensions differ from the geometry of its marked areas"
+                    ),
+                    evidence: None,
+                })
+            },
         })
         .collect();
 
@@ -1175,6 +1233,36 @@ mod tests {
         assert!(!reaches_floor(MIN_CONTROL_PX * 0.99));
         assert!(!reaches_floor(MIN_CONTROL_PX - 0.01));
         assert!(reaches_floor(MIN_CONTROL_PX));
+    }
+
+    #[test]
+    fn a_crop_and_turn_place_the_control_and_the_region_on_the_output_page() {
+        let original = GatePage {
+            page: 0,
+            regions: vec![[55., 38., 75., 48.]],
+            words: vec![ControlWord {
+                rect: [80., 55., 92., 62.],
+                text: "control".into(),
+            }],
+            taking: String::new(),
+            width_pt: 140.,
+            height_pt: 100.,
+        };
+        let crop = crate::render::CropGeometry {
+            left: 30.,
+            top: 20.,
+            width_pt: 90.,
+            height_pt: 60.,
+        };
+        let mut page = original.clone();
+        page.place_on_output(crop, 1).unwrap();
+        assert_eq!(page.regions, [[32., 25., 42., 45.]]);
+        assert_eq!(page.words[0].rect, [18., 50., 25., 62.]);
+        assert_eq!((page.width_pt, page.height_pt), (60., 90.));
+        let mut cut = original;
+        assert!(cut
+            .place_on_output(crate::render::CropGeometry { left: 60., ..crop }, 0)
+            .is_err());
     }
 
     #[test]

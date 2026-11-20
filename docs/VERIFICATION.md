@@ -7111,3 +7111,51 @@ named the page with no text, and gave the same 113 words. The two digital pairs 
 listed the same changes as before. Eight hand mutations of the rule each failed the unit tests:
 either side's test removed, either bound of the page range, either default at the ends of a
 side, the pages counted as read, and the count of words not compared.
+
+### Form merging, file identity and comparison reports (2026-11-20)
+
+The Python API test merges two independently fillable PDFs, changes the base
+field, reopens it and renders page two. Its PNG matches the filled appendix
+before the merge. An appendix without a normal widget appearance leaves the
+existing output intact. The independent list-box checker rejects both a
+missing highlight and two highlights painted on the same row.
+
+A 600 by 900 pixel JPEG with 300 DPI in EXIF and unitless JFIF produced a
+144 by 216 point page with automatic sizing and with an explicit 300 DPI.
+The comparison quickstart reported equality, differences and an incomplete
+comparison for three corresponding pairs. Plain output and JSON, including
+the rectangles, matched the preceding CLI for one and forty disjoint changes.
+
+The macOS tabs window check reopened an edited PDF through an existing
+subdirectory and `..`. The tab count, document handle and rotation stayed
+the same. The import window check submitted two preparations and committed
+the newer page range. Native page recognition marked both sides of a comparison
+out of date. Repeating the comparison and then remounting the recognised viewer
+cleared its temporary text and marked the comparison out of date again.
+On Windows, both Python timeout tests completed in
+6.2 seconds in total, including the case where a descendant held the output
+pipe for 15 seconds after the parent exited.
+
+
+### Filled appendices, off-page headers and repeat text edits (2026-11-20)
+
+The CLI regression merges the same filled appendix behind a plain cover, adds
+and fills a new field on that cover, and compares the rendered appendix with
+its original PNG after both writes. A widget without an appearance preserves
+the existing destination. On a mixed-size document, a 200-point header margin
+is accepted on the large page and refused on the 100-point page. The existing
+destination survives the refusal. A five-point margin writes to both pages.
+
+Two same-length text replacements save and reopen at the 1 MiB decoded limit.
+The original revision digest still works, including its terminating newline.
+A separate byte comparison checks that the writer preserves a trailing PDF
+comment. The operator-budget test compares an expansion at 16,384 emitted
+operators with one requiring a further operator.
+
+A shallow unsigned form reports zero signatures. A twelve-level form reports
+an incomplete scan. The search tests distinguish complete, partially placed
+and unplaced matches, and check the last page requested when the match budget
+is exceeded. The compression tests change a source after opening it and check
+that the estimate is refused. A staged preview preserves an input named as
+its destination. The text parser, page-read failure and imported-widget
+mutation checks each failed their designated test when the guard was removed.

@@ -1250,6 +1250,7 @@ fn spool_planned(
         }
     }
 
+    stopped()?;
     open.end()?;
     // What was spooled, not what the job holds: a reader who asked for two sheets
     // of forty should see two here, and the caller compares this against the
@@ -1259,11 +1260,17 @@ fn spool_planned(
 
 /// Runs tpdf's own part of a spool with the watchdog's clock stopped, when
 /// there is one (`print::Beat::ours`).
-fn ours<R>(beat: Option<&crate::print::Beat<'_>>, work: impl FnOnce() -> R) -> R {
-    match beat {
+fn ours<R>(
+    beat: Option<&crate::print::Beat<'_>>,
+    work: impl FnOnce() -> Result<R, String>,
+) -> Result<R, String> {
+    let value = match beat {
         Some(beat) => beat.ours(work),
         None => work(),
-    }
+    }?;
+    // Stop can arrive inside the final band, after the last between-band check.
+    stopped()?;
+    Ok(value)
 }
 
 /// A print document between `StartDocW` and whichever call closes it.
@@ -1873,7 +1880,11 @@ mod tests {
     #[test]
     fn stop_remains_with_its_job_until_the_final_event() {
         let first = super::PrintJob::begin().unwrap();
-        super::stop();
+        let final_band = super::ours(None, || {
+            super::stop();
+            Ok(vec![0; 4])
+        });
+        assert_eq!(final_band.unwrap_err(), super::STOPPED);
         assert!(super::PrintJob::begin().is_err());
         assert_eq!(super::stopped().unwrap_err(), super::STOPPED);
         drop(first);

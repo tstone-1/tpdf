@@ -2271,6 +2271,62 @@ pub(super) fn removes_what_it_finds(report: &mut Report) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Compare the application's region and control against independently extracted
+/// glyphs on a copy with the same page edits and the original words still present.
+fn transformed_gate_matches_rendered_words(input: &Path, dir: &Path) {
+    let crop = [-24., 45., 490., 740.];
+    let reference = dir.join("turned-and-cropped.pdf");
+    let mut doc = Document::load(input).unwrap();
+    let page_id = doc.get_pages()[&2];
+    let dict = doc.get_dictionary_mut(page_id).unwrap();
+    dict.set("CropBox", crop.map(Object::Real).to_vec());
+    dict.set("Rotate", 90);
+    doc.save(&reference).unwrap();
+
+    let service = RenderService::start_with(library_dir(), Backend::Worker);
+    let info = wait(|r| service.open(input.into(), false, None, r)).unwrap();
+    let edits = tpdf_lib::edits::Edits::default();
+    edits.open(info.id, 2, None);
+    let words = |path: &Path| {
+        let opened = wait(|r| service.open(path.into(), false, None, r)).unwrap();
+        let text = wait(|r| service.text(opened.id, 1, None, r)).unwrap();
+        let words = tpdf_lib::ocr_gate::words_from(&text);
+        wait(|r| service.close(opened.id, r)).unwrap();
+        words
+    };
+    let word_box = |words: &[tpdf_lib::ocr::ControlWord], text: &str| {
+        words.iter().find(|word| word.text == text).unwrap().rect
+    };
+    let source = words(input);
+    edits
+        .redact(info.id, 2, word_box(&source, "Rumpelstilzchen"))
+        .unwrap();
+    edits.crop(info.id, 2, Some(crop.map(f64::from))).unwrap();
+    edits.rotate(info.id, 2, 1).unwrap();
+    let asked = tauri::async_runtime::block_on(tpdf_lib::redaction::ask_redactions(
+        &edits, &service, info.id,
+    ))
+    .unwrap();
+    assert_eq!(asked.gate.len(), 1, "{:?}", asked.concerns);
+    let gate = &asked.gate[0];
+    let rendered = words(&reference);
+    for (actual, expected) in [
+        (gate.regions[0], word_box(&rendered, "Rumpelstilzchen")),
+        (
+            word_box(&gate.words, "CONTROL-KEEP"),
+            word_box(&rendered, "CONTROL-KEEP"),
+        ),
+    ] {
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(a, b)| (a - b).abs() < 0.01),
+            "{actual:?} vs {expected:?}"
+        );
+    }
+}
+
 /// A document, where it is, and what to search it for.
 type Parity<'a> = (String, PathBuf, Vec<(SearchKind, &'a str)>);
 
@@ -2279,6 +2335,7 @@ pub(super) fn verdict_is_the_applications(report: &mut Report) {
     let dir = scratch("redact-parity");
     let contacts = dir.join("contacts.pdf");
     std::fs::write(&contacts, contacts_pdf()).expect("contacts");
+    transformed_gate_matches_rendered_words(&contacts, &dir);
     let shared = dir.join("shared-form.pdf");
     std::fs::write(&shared, shared_form_pdf()).expect("shared form");
     let mut cases: Vec<Parity<'_>> = vec![

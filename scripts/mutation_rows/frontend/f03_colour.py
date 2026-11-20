@@ -2300,7 +2300,7 @@ ROWS += [
         # `return` line matched twice. The gate caught it; a narrower anchor
         # would have mutated whichever came first.
         "  get editable(): boolean {\n"
-        "    return this.shown !== null && this.subject?.object != null;",
+        "    return this.shown !== null && this.subject?.object != null && !this.subject.body_clipped;",
         "  get editable(): boolean {\n    return this.shown !== null;",
         "offers no editor for a comment the file wrote without an object",
     ),
@@ -2476,15 +2476,13 @@ ROWS += [
         # visited -- the comment-words loop in `App.svelte` is the live one.
         "viewer: ask for the unturned text of the slot's number",
         "src/lib/viewer.ts",
-        "    await at.cache.load(at.page);\n"
-        "    return at.cache.peekUnturned(at.page);",
+        "    return at.cache.loadFileText(at.page);",
         # The slot number raw, as every neighbouring page-addressing mutation
         # here passes it. It was `filePage(slot)`, which `viewer.ts` does not
         # import, so the mutation threw `ReferenceError: filePage is not
         # defined` and the red test said nothing about which page was read.
         # `check_mutation_types.py` found it.
-        "    await at.cache.load(slot);\n"
-        "    return at.cache.peekUnturned(slot);",
+        "    return at.cache.loadFileText(slot);",
         "answers a page's unturned text, after the page above went",
     ),
     Mutation(

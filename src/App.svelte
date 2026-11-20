@@ -1300,7 +1300,7 @@
     await openPath(favourite.path);
     // Only in the favourite's document: when it would not open, the one in
     // front is still another, and its page is not the one marked.
-    if (openPathName === favourite.path) viewer?.goToPage(favourite.page);
+    if ((await matchingTab(favourite.path, openView))?.view === openView) viewer?.goToPage(favourite.page);
   }
 
   /**
@@ -1326,7 +1326,7 @@
     }
     const keep = tab.edits.state.dirty || twinsOf(tabs.all, tab).length > 0;
     await openPath(next);
-    if (!keep && tabs.find(from) === tab && tabs.forPath(next) !== undefined) await closeTab(from);
+    if (!keep && tabs.find(from) === tab && (await matchingTab(next)) !== undefined) await closeTab(from);
   }
 
   /** Opens again the document closed most recently, where it was left. */
@@ -1837,6 +1837,7 @@
     // fires a scan at the next document for a query the field no longer shows.
     clearTimeout(findTimer);
     findTimer = 0;
+    if (viewer?.hasRecognisedText && comparisons.invalidate(openView)) refreshComparison();
     textEditorGeneration++;
     textEditor?.destroy();
     formLayer?.destroy();
@@ -2972,20 +2973,13 @@
   async function importPagesFrom(path: string): Promise<void> {
     const model = edits, view = openView;
     if (!model) return;
-    let prepared;
     try {
-      prepared = await model.prepareImport(path);
+      await pendingImports.prepare(model.doc, () => model.prepareImport(path),
+        () => !!palette && stillIn(view, model), () => palette?.close(),
+        () => palette?.askFor("edit.insertPages.range"));
     } catch (error) {
       asDocument(view, () => { if (edits === model) say(String(error)); });
-      return;
     }
-    // The document went away while the file opened: its close released the
-    // file already, and there is nothing to ask about. A reader who has gone
-    // to the other side is not asked either: the question is put to the
-    // document they are in, and the file is released when this one closes.
-    if (!stillIn(view, model)) return;
-    pendingImports.hold(model.doc, prepared);
-    palette?.askFor("edit.insertPages.range");
   }
 
   /**
@@ -3460,11 +3454,8 @@
    * and makes a second call during the first a no-op rather than a second
    * interleaved walk.
    *
-   * The words are read against the page **as it is now** while the comments were
-   * scanned when the document opened. That is the same footing the rectangles
-   * are already on --- `applyPageOrder` re-slots a comment's page and leaves its
-   * geometry alone --- so a page an edit has rotated moves its highlight and its
-   * words together, or neither.
+   * Page order selects the current slot. Word boxes and comment rectangles both
+   * use the original file coordinates, including after a crop or rotation.
    */
   async function fillCommentWords(): Promise<void> {
     const source = rawComments;
@@ -3945,6 +3936,7 @@
       refreshMenu();
       try {
         await shown.recognisePage(slot, recognitionLanguage.language);
+        if (comparisons.invalidate(view)) refreshComparison();
         asDocument(view, () => say(message("recognisedPage"), [], "success"));
       } catch (e) {
         asDocument(view, () => say(String(e)));
@@ -4036,7 +4028,7 @@
     if (!path || !said) return;
     say(said);
     await openPath(path);
-    const opened = tabs.forPath(path, tabs.active);
+    const opened = await matchingTab(path, tabs.active);
     if (opened) asDocument(opened.view, () => say(said));
   }
 
@@ -5367,7 +5359,7 @@
     if (!region || !edits) return;
     const slot = edits.map.slotOfId(region.page);
     if (slot === undefined) return;
-    viewer?.goToDestination(slot, region.area[1]);
+    viewer?.scrollToFileRect(slot, region.area);
   }
 
   /**
@@ -5954,7 +5946,7 @@
       for (const path of plan.show) {
         await openPath(path, plan.resuming);
         const given = handed.find((each) => each.path === path);
-        if (given) placeOpened(given);
+        if (given) await placeOpened(given);
       }
       // After the document the reader is waiting for has been asked for, and
       // not awaited: until it answers, both of the tool's commands are offered.
@@ -6182,6 +6174,10 @@
     refreshMenu();
   }
 
+  function matchingTab(path: string, prefer?: ViewId) {
+    return tabs.matchingPath(path, (name, candidates) => call("matching_open_path", { path: name, candidates }), prefer);
+  }
+
   /**
    * Opens a document, one at a time.
    *
@@ -6215,7 +6211,7 @@
     // place it tore the document down under a task still running on it.
     const ready = afterWrite ? Promise.resolve() : documentTasks.idle();
     return ready.then(() => opens.run(async () => {
-      const existing = resume ? undefined : tabs.forPath(path);
+      const existing = resume ? undefined : await matchingTab(path, tabs.active);
       // A document already open is shown where it is, on its own side.
       if (existing) { await showTabNow(existing.view); viewer?.focus(); return; }
       const failed = await openDocument(path, resuming, resume, undefined, afterWrite);
@@ -6237,7 +6233,7 @@
    */
   async function openFromOutside(given: Opening): Promise<void> {
     await openPath(given.path);
-    placeOpened(given);
+    await placeOpened(given);
   }
 
   /**
@@ -6245,11 +6241,16 @@
    * the document is the one in front. Nothing when it asked for none, or when
    * the open failed and something else is in front.
    */
-  function placeOpened(given: Opening): void {
-    if (!hasPlace(given) || !viewer || tabs.forPath(given.path, openView)?.view !== openView) return;
-    const problem = applyPlace(viewer, given, edits?.state.pages.length ?? openPageCount);
-    if (problem !== null) say(problem);
-    if (given.forward !== null) void searchForward(viewer, given.path, given.forward);
+  async function placeOpened(given: Opening): Promise<void> {
+    if (!hasPlace(given)) return;
+    const view = openView;
+    if ((await matchingTab(given.path, view))?.view !== view || tabs.active !== view) return;
+    asDocument(view, () => {
+      if (!viewer) return;
+      const problem = applyPlace(viewer, given, edits?.state.pages.length ?? openPageCount);
+      if (problem !== null) say(problem);
+      if (given.forward !== null) void searchForward(viewer, given.path, given.forward);
+    });
   }
 
   /**
@@ -7059,7 +7060,7 @@
     // gone, is `dropAbandoned`'s. On every path, the ones that drop nothing
     // included: a row drawn once too often is the same row.
     dropAbandoned(panes, tabs,
-      { own: acquired >= 0 ? viewOf(acquired) : undefined, replaced, twins }, refreshTabs);
+      { own: acquired >= 0 ? viewOf(acquired) : undefined, replaced, twins }, refreshTabs, endComparison);
     if (acquired >= 0) void call("close_document", { doc: acquired }).catch(console.warn);
     if (replaced) {
       // Whatever half-built state got as far as existing. A viewer left alive
@@ -7185,6 +7186,7 @@
       // A document compared before it was last unmounted shows it again.
       showComparisonHere();
     } catch (e) {
+      if (written) endComparison(written.view);
       const left = abandonedBy(tabs.all, written, replaced, twins);
       abandonOpen(acquired, left.replaced, left.twins);
       const said = openFailure(e, resuming);

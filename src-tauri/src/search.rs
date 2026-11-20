@@ -620,21 +620,30 @@ impl Prepared {
     /// Every non-overlapping occurrence in one page's characters.
     #[must_use]
     pub fn find_in(&self, codes: &[u32], page: u32) -> Vec<Match> {
-        find_prepared(self, codes, page)
+        find_prepared(self, codes, page, usize::MAX)
     }
 
     /// One page's answer, and the break before it when there is a carry.
     #[must_use]
     pub fn search_page(&self, codes: &[u32], page: u32, carry: Option<&Carry>) -> PageMatches {
+        self.search_page_up_to(codes, page, carry, usize::MAX)
+    }
+
+    /// Collect at most `limit` hits in reading order, including a hit across the break.
+    pub(crate) fn search_page_up_to(
+        &self,
+        codes: &[u32],
+        page: u32,
+        carry: Option<&Carry>,
+        limit: usize,
+    ) -> PageMatches {
         let tail = self.tail_of(codes, page);
-        let mut matches = self.find_in(codes, page);
-        if let Some(carry) = carry {
-            // Ahead of this page's own hits, because the walk keeps matches in
-            // the order they are found and a hit that begins on the previous
-            // page comes first in reading order.
-            let mut across = find_across(self, codes, page, carry);
-            across.append(&mut matches);
-            matches = across;
+        // Non-overlapping matches can cross a single break at most once.
+        let mut matches =
+            carry.map_or_else(Vec::new, |carry| find_across(self, codes, page, carry));
+        matches.truncate(limit);
+        if matches.len() < limit {
+            matches.extend(find_prepared(self, codes, page, limit - matches.len()));
         }
         PageMatches {
             page,
@@ -661,7 +670,7 @@ impl Prepared {
 
 /// [`Prepared::find_in`]'s body, a free function so the walk below reads as it
 /// did when the query was rebuilt here.
-fn find_prepared(prepared: &Prepared, codes: &[u32], page: u32) -> Vec<Match> {
+fn find_prepared(prepared: &Prepared, codes: &[u32], page: u32, limit: usize) -> Vec<Match> {
     let needle = &prepared.needle;
     let options = prepared.options;
     // Nothing this page can say makes a barren query match --- see
@@ -700,6 +709,9 @@ fn find_prepared(prepared: &Prepared, codes: &[u32], page: u32) -> Vec<Match> {
             // who wants a boundary inside a pattern can write `\b`.
             if whole(at, end) {
                 spans.push((at, end));
+                if spans.len() == limit {
+                    break;
+                }
             }
         }
     } else {
@@ -723,6 +735,9 @@ fn find_prepared(prepared: &Prepared, codes: &[u32], page: u32) -> Vec<Match> {
                 continue;
             }
             spans.push((at, end));
+            if spans.len() == limit {
+                break;
+            }
             // Non-overlapping, which is what a reader counting hits expects:
             // `aa` occurs once in `aaa`, not twice.
             at += needle.chars.len();

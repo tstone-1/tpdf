@@ -301,6 +301,30 @@ pub async fn ask_redactions(
     // dangerous direction, and the remap cannot do that: it takes the slot from
     // the plan or drops the entry.
     let marked: Vec<u32> = gate.iter().map(|page| page.page).collect();
+    let mut output_gate = Vec::with_capacity(gate.len());
+    for mut page in gate {
+        let view = &plan.pages[page.page as usize];
+        let PageSource::Baseline(source) = view.source else {
+            unreachable!("gate slots came from baseline pages")
+        };
+        if view.crop.is_some() || view.turns % 4 != 0 {
+            let (reply, rx) = reply_channel();
+            service.geometry(
+                doc,
+                source,
+                view.crop.map(|rect| rect.map(|v| v as f32)),
+                reply,
+            );
+            let mapped = await_reply("redaction geometry", rx)
+                .await
+                .and_then(|crop| page.place_on_output(crop, view.turns));
+            if let Err(why) = mapped {
+                concerns.push(said!("Page {number}: the removed area could not be checked on the written page: {why}", number = page.page + 1));
+                continue;
+            }
+        }
+        output_gate.push(page);
+    }
     // How many of the written pages came from another file, counted off the
     // plan the write uses rather than off the model --- one list, one reader.
     let inserted = plan
@@ -318,7 +342,7 @@ pub async fn ask_redactions(
         regions,
         shows: shows_total,
         pages,
-        gate,
+        gate: output_gate,
         inserted,
         marked,
     })
@@ -682,8 +706,7 @@ pub(crate) async fn read_back(
     written: Written,
 ) -> Judged {
     // §6 step 4, which is the only reader that can see a picture of the words.
-    // It runs on the file that was just written, never on the source --- see
-    // `ocr::RedactedPixels`, where that is a type-level rule.
+    // The gate reopens this output and renders the marked areas from it.
     let gate = match written {
         Written::Rewritten { .. } => {
             gate_written_file(

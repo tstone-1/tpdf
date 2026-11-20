@@ -1106,6 +1106,7 @@ pub fn run() {
             set_menu_enabled,
             close_document,
             reveal_file,
+            matching_open_path,
             folder_pdfs,
             release_documents,
             page_text,

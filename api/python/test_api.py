@@ -279,6 +279,16 @@ class ClientTests(unittest.TestCase):
                 self.pdf.mark_matches(self.source, nothing, texts=['synthetic'], **bad)
         self.assertFalse(nothing.exists())
 
+    def test_mark_matches_refuses_partial_geometry(self):
+        output = self.root / 'marked.pdf'
+        output.write_bytes(b'previous output')
+        report = self.pdf.search(self.source, texts=['ORIGINAL'])
+        report['files'][0]['matches'][0]['partial_geometry'] = True
+        with patch.object(self.pdf, 'search', return_value=report):
+            with self.assertRaisesRegex(ValueError, 'only in part'):
+                self.pdf.mark_matches(self.source, output, texts=['ORIGINAL'], force=True)
+        self.assertEqual(output.read_bytes(), b'previous output')
+
     def test_cli_highlight_plan_binds_the_bytes_searched(self):
         import hashlib
         data = self.source.read_bytes()
@@ -410,7 +420,7 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(client.comments('--json')['comments'], [])
         self.assertEqual(client.text_runs('--json')['runs'][0]['text'], 'SYNTHETIC ORIGINAL')
         client.render('--json', '-page.png', dpi=72)
-        client.edit('--json', '-edited.pdf', [{'op': 'rotate', 'page': 1, 'degrees': 90}])
+        client.edit('-filled.pdf', '-edited.pdf', [{'op': 'rotate', 'page': 1, 'degrees': 90}])
         client.merge(['--json', '-edited.pdf'], '-merged.pdf')
         client.extract('-merged.pdf', '-extracted.pdf', pages='2')
         client.rotate('-extracted.pdf', '-rotated.pdf', degrees=180)
@@ -722,6 +732,120 @@ class ClientTests(unittest.TestCase):
         after = self.pdf.fields(output)['fields']
         self.assertEqual(next(f for f in after if f['name'] == field['name'])['value'], 'API')
 
+    def test_merging_forms_preserves_base_fields_and_the_appendix_appearance(self):
+        base, appendix, filled, merged, saved = [
+            self.root / name for name in ('base.pdf', 'appendix.pdf', 'filled.pdf', 'merged.pdf', 'saved.pdf')]
+        fixture(base, form=True)
+        fixture(appendix, form=True)
+        merged.write_bytes(b'previous output')
+        with self.assertRaisesRegex(CommandError, 'appearance'):
+            self.pdf.merge([base, appendix], merged, force=True)
+        self.assertEqual(merged.read_bytes(), b'previous output')
+        name = 'Synthetic.answer'
+        self.pdf.fill(appendix, filled, {name: 'APPENDIX'})
+        self.pdf.merge([base, filled], merged, force=True)
+        self.assertEqual([(f['name'], f['value']) for f in self.pdf.fields(merged)['fields']], [(name, 'OLD')])
+        self.pdf.fill(merged, saved, {name: 'BASE'})
+        self.assertEqual(self.pdf.fields(saved)['fields'][0]['value'], 'BASE')
+        source_png, merged_png = self.root / 'original.png', self.root / 'merged.png'
+        self.pdf.render(filled, source_png)
+        self.pdf.render(saved, merged_png, page=2)
+        self.assertEqual(merged_png.read_bytes(), source_png.read_bytes())
+        self.pdf.render(self.source, merged_png, force=True)
+        self.assertNotEqual(merged_png.read_bytes(), source_png.read_bytes())
+
+    def test_plain_cover_preserves_rendered_appendix_and_remains_form_editable(self):
+        form, filled, merged, made, saved = [self.root / f'{name}.pdf'
+                                            for name in ('form', 'filled', 'merged', 'made', 'saved')]
+        fixture(form, form=True)
+        merged.write_bytes(b'previous output')
+        with self.assertRaisesRegex(CommandError, 'appearance'):
+            self.pdf.merge([self.source, form], merged, force=True)
+        self.assertEqual(merged.read_bytes(), b'previous output')
+        self.pdf.fill(form, filled, {'Synthetic.answer': 'VISIBLE'})
+        self.pdf.merge([self.source, filled], merged, force=True)
+        self.pdf.add_fields(merged, made, [{'name': 'New', 'kind': 'text', 'page': 1,
+                                            'rect': [20, 20, 100, 20]}])
+        self.pdf.fill(made, saved, {'New': 'COVER'})
+        self.assertEqual(self.pdf.fields(saved)['fields'][0]['value'], 'COVER')
+        reference = self.root / 'filled.png'
+        actual = self.root / 'appendix.png'
+        self.pdf.render(filled, reference)
+        for doc in (merged, saved):
+            self.pdf.render(doc, actual, page=2, force=True)
+            self.assertEqual(actual.read_bytes(), reference.read_bytes())
+
+    def test_text_edit_output_stays_editable_at_the_decoded_byte_limit(self):
+        content = b'BT /F1 12 Tf 30 100 Td (Ten) Tj ET'
+        import hashlib
+        content = content.ljust(1024 * 1024, b' ')
+        fixture(self.source, content=content)
+        self.assertEqual(self.pdf.text_runs(self.source)['revision'],
+                         list(hashlib.sha256(content + b'\n').digest()))
+        doc = self.source
+        for original, replacement in [('Ten', 'Tan'), ('Tan', 'Ton')]:
+            scan = self.pdf.text_runs(doc)
+            self.assertEqual(scan['runs'][0]['text'], original)
+            saved = self.root / f'{replacement}.pdf'
+            self.pdf.edit(doc, saved, [{'op': 'replace_text', 'page': 1, 'operator': scan['runs'][0]['operator'],
+                                        'revision': scan['revision'], 'original': original, 'replacement': replacement}])
+            doc = saved
+        self.assertEqual(self.pdf.text_runs(doc)['runs'][0]['text'], 'Ton')
+
+    def test_off_page_header_refuses_the_entire_mixed_size_copy(self):
+        small, mixed, out = [self.root / f'{name}.pdf' for name in ('small', 'mixed', 'out')]
+        self.pdf.crop(self.source, small, rect=[0, 0, 100, 100])
+        self.pdf.merge([self.source, small], mixed)
+        out.write_bytes(b'previous output')
+        args = [mixed, '-o', out, '--force', '--text', 'ORIGINAL', '--position', 'top-left']
+        with self.assertRaisesRegex(CommandError, 'page 2'):
+            self.pdf.run('page-numbers', *args, '--margin', '200')
+        self.assertEqual(out.read_bytes(), b'previous output')
+        self.assertEqual(self.pdf.run('page-numbers', *args, '--margin', '5').report['written'], [1, 2])
+        for page in (1, 2):
+            before, after = self.root / 'before.png', self.root / 'after.png'
+            self.pdf.render(mixed, before, page=page, dpi=72, force=True)
+            self.pdf.render(out, after, page=page, dpi=72, force=True)
+            self.assertNotEqual(before.read_bytes(), after.read_bytes(), f'header on page {page}')
+
+    def test_info_distinguishes_an_incomplete_signature_scan(self):
+        for depth, expected in [(1, 'Signatures: none'), (12, 'Signatures: unknown (incomplete scan)')]:
+            objects = [b'<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>',
+                       b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+                       b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>']
+            for index in range(depth):
+                objects.append(f'<< /T (group{index}) /Kids [{index + 5} 0 R] >>'.encode())
+            objects.append(b'<< /FT /Tx /T (Notes) >>')
+            write_pdf(self.source, objects)
+            result = subprocess.check_output([BINARY, 'info', self.source], text=True)
+            self.assertIn(expected, result)
+
+    def test_search_reports_only_the_selected_blank_page(self):
+        blank, mixed = self.root / 'blank.pdf', self.root / 'mixed.pdf'
+        fixture(blank, content=b'')
+        self.pdf.merge([self.source, blank], mixed)
+        result = self.pdf.run('search', '--text', 'SYNTHETIC', '--pages', '2', mixed, check=False)
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn('page 2 has no text to search', result.stderr)
+        self.assertEqual(len(self.pdf.search(mixed, texts=['SYNTHETIC'])['files'][0]['matches']), 1)
+
+    def test_mapping_edit_and_command_help(self):
+        from types import MappingProxyType
+        operation = {'op': 'rotate', 'page': 1, 'degrees': 90}
+        for op in (operation, MappingProxyType(operation)):
+            self.assertFalse(self.pdf.edit(self.source, self.root / 'rotated.pdf', [op], dry_run=True)['written'])
+        self.assertEqual(self.pdf.run('info', '--help').report['command'], 'help')
+        fixture(self.root / '--help')
+        local = Tpdf(BINARY, cwd=self.root)
+        self.assertEqual(local.run('info', '--', '--help').report['command'], 'info')
+
+    def test_ocr_passes_complete_language_tags_in_preference_order(self):
+        with patch.object(self.pdf, 'run') as run:
+            for tags, expected in [('de-DE', ['de-DE']), (['de-DE', 'en-US'], ['de-DE', 'en-US'])]:
+                self.pdf.ocr(self.source, 'out.pdf', languages=tags)
+                args = run.call_args.args
+                self.assertEqual([args[i+1] for i, arg in enumerate(args) if arg == '--language'], expected)
+
     def test_edit_text_without_a_request_file(self):
         scanned = self.pdf.text_runs(self.source)
         run = scanned['runs'][0]
@@ -1015,6 +1139,20 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(Path(cleanup[0]), Path(os.environ['SystemRoot']) / 'System32' / 'taskkill.exe')
         self.assertLess(time.monotonic() - start, 10)
         self.assertIsNotNone(processes[0].poll())
+
+
+    def test_timeout_after_parent_exits_with_its_output_still_open(self):
+        original = subprocess.Popen
+        def launch(argv, **kwargs):
+            if argv[0] == str(BINARY.resolve()):
+                child = 'import time; time.sleep(15)'
+                parent = f'import subprocess,sys; subprocess.Popen([sys.executable,"-c",{child!r}])'
+                return original([sys.executable, '-c', parent], **kwargs)
+            return original(argv, **kwargs)
+        start = time.monotonic()
+        with patch('tpdf_client.subprocess.Popen', side_effect=launch), self.assertRaises(CommandTimeout):
+            Tpdf(BINARY, timeout=0.5).help()
+        self.assertLess(time.monotonic() - start, 12)
 
 
 class ExecutableLookupTests(unittest.TestCase):

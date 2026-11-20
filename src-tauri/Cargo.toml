@@ -35,6 +35,8 @@ members = ["shellext"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# The OCR control uses Unicode Script data already shipped through ICU4X.
+icu_properties = "2.4"
 unicode-bidi = "0.3"
 tempfile = "3"
 tauri = { version = "2", features = [] }
@@ -381,6 +383,7 @@ windows-sys = { version = "0.61", features = [
     # instead of the `NaN` that stands in for "not measurable here".
     "Win32_System_ProcessStatus",
     # `userpath.rs`: the user's own PATH, read and written at any length.
+    "Win32_System_Environment",
     "Win32_System_Registry",
     "Win32_System_SystemServices",
     "Win32_System_Threading",

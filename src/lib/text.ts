@@ -631,6 +631,15 @@ export class TextCache {
     return request;
   }
 
+  /** Original file-space boxes for stored annotations and redactions. */
+  async loadFileText(page: FilePage): Promise<PageText | null> {
+    if (!this.crops.has(page)) {
+      const text = await this.loadUnturned(page);
+      if (!this.crops.has(page)) return text;
+    }
+    return this.ask({ doc: this.doc, page, crop: null }).catch(() => null);
+  }
+
   /**
    * Fetches a page's text and answers in the *document's* space.
    *

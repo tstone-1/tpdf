@@ -149,7 +149,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "compare", "add-text", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen", "closing", "fit", "disk-change"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "forms-mixed", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "compare", "add-text", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen", "closing", "fit", "disk-change"), default="tabs")
     parser.add_argument("--other", type=Path, help="The second file --phase import and --phase answers read")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -181,6 +181,10 @@ def main() -> int:
             shutil.copyfile(args.other, second)
         else:
             shutil.copyfile(args.pdf, second)
+        if args.phase == "tabs":
+            subdir = room / "sub"
+            subdir.mkdir()
+            copies.append(subdir / ".." / first.name)
         if args.phase in ("sides", "closing"):
             # A third tab, so that a side still has one when its front tab
             # moves, and so that a middle tab has one on each side.

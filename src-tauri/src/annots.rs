@@ -222,6 +222,9 @@ pub struct Comment {
     /// somebody made without typing anything, which is reported rather than
     /// dropped --- the mark is on the page either way.
     pub body: String,
+    /// The displayed body is incomplete and cannot safely seed a replacement.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub body_clipped: bool,
     /// `/Subj`, which Acrobat shows as a title above the body.
     pub subject: String,
     /// `/M`, parsed and re-emitted as `YYYY-MM-DD HH:MM`. `None` when the
@@ -547,6 +550,7 @@ fn comment(
         kind,
         author,
         body,
+        body_clipped: clipped,
         subject,
         date: annot
             .get(b"M")
@@ -1795,6 +1799,19 @@ mod tests {
     }
 
     #[test]
+    fn only_the_shortened_comment_is_flagged_as_a_preview() {
+        let note =
+            |body| dictionary! {"Subtype" => "Text", "Contents" => Object::string_literal(body)};
+        let comments = scan_annots(vec![
+            note("a".repeat(MAX_BODY_CHARS + 1)),
+            note("short".into()),
+        ]);
+        assert_eq!(comments.limits.bodies_clipped, 1);
+        assert!(comments.items[0].body_clipped);
+        assert!(!comments.items[1].body_clipped);
+    }
+
+    #[test]
     fn a_documents_body_keeps_its_paragraphs() {
         // Through the scan rather than through `sanitize_body` directly, which
         // is the difference between testing the rule and testing that the rule
@@ -2385,6 +2402,7 @@ mod tests {
             kind: Kind::Text,
             author: "Jane Example".into(),
             body: "Have a look at https://example.invalid/ when you can.".into(),
+            body_clipped: false,
             subject: "Figure 3".into(),
             date: Some("2026-08-12 10:15".into()),
             rect: [1.0, 2.0, 3.0, 4.0],
@@ -2401,6 +2419,7 @@ mod tests {
             kind,
             author,
             body,
+            body_clipped,
             subject,
             date,
             rect,
@@ -2441,6 +2460,7 @@ mod tests {
             format!("{quads:?}"),
             reply_to.map(|id| id.to_string()).unwrap_or_default(),
             hidden.to_string(),
+            body_clipped.to_string(),
             // Three more numbers the document chose, and the same argument as
             // `quads` above: an `f32` that failed to parse never reaches here.
             format!("{color:?}"),

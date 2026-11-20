@@ -206,9 +206,14 @@ export function dropAbandoned<Id>(
   tabs: { readonly all: readonly { view: Id }[]; remove(id: Id): unknown },
   left: { own: Id | undefined; replaced: boolean; twins: readonly { view: Id }[] },
   refresh: () => void,
+  onDrop?: (id: Id) => void,
 ): void {
-  if (left.own !== undefined) dropView(panes, tabs, left.own);
-  if (left.replaced) for (const twin of left.twins) dropView(panes, tabs, twin.view);
+  function drop(id: Id): void {
+    onDrop?.(id);
+    dropView(panes, tabs, id);
+  }
+  if (left.own !== undefined) drop(left.own);
+  if (left.replaced) for (const twin of left.twins) drop(twin.view);
   refresh();
 }
 

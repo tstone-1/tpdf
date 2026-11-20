@@ -11,6 +11,10 @@ const n = (count: string | undefined, one: string, many: string): string =>
   count === "1" ? one : many;
 
 export default {
+  "An imported form field has no usable appearance to preserve":
+    "Für ein importiertes Formularfeld ist keine verwendbare Darstellung vorhanden.",
+  "Page {number}: the removed area could not be checked on the written page: {why}":
+    "Seite {number}: Der entfernte Bereich konnte auf der gespeicherten Seite nicht geprüft werden: {why}",
   "the copy would not be smaller than the source": "Die Kopie wäre nicht kleiner als die Quelldatei",
   "the staged file was not measured": "Die Größe der vorbereiteten Datei wurde nicht ermittelt",
   "the document's page labels could not be remapped":

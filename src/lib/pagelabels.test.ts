@@ -71,6 +71,7 @@ describe("positionsFor", () => {
     positionsFor(raw, labels.length, (slot) => labels[slot] ?? null);
 
   it("names the positions of printed numbers, singly, in ranges and with a hyphen in a label", () => {
+    expect(of("-A--B", ["-A", "-B"])).toBe("Printed as -A--B: type 1-2");
     expect(of("ii")).toBe("Printed as ii: type 2");
     expect(of("i-ii, App-A")).toBe("Printed as i-ii, App-A: type 1-2,7");
     const labels = ["A", "A-B", "B-C", "C"];

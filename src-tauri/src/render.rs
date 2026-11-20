@@ -2269,20 +2269,22 @@ pub fn geometry_of(
             page.quarter_turns(),
         )
     };
-    let Some(want) = crop else {
+    if crop.is_none() {
         return Ok(CropGeometry {
             width_pt: file_width,
             height_pt: file_height,
             left: 0.0,
             top: 0.0,
         });
-    };
+    }
 
-    let placed = place_crop(turns, file_width, file_height, file_box, want);
     // The cropped page's *own* report of its size rather than the rectangle's
     // width and height, so that a disagreement between the two is something a
     // check can see instead of something this function defines away.
     let cropped = document.page_cropped(page, crop)?;
+    // The media box clips the requested crop. Its effective corner is the
+    // origin both the saved page and its glyph boxes will use.
+    let placed = place_crop(turns, file_width, file_height, file_box, cropped.crop_pt());
     Ok(CropGeometry {
         width_pt: cropped.width_pt(),
         height_pt: cropped.height_pt(),

@@ -36,7 +36,7 @@ for file in pdf.search("a.pdf", "b.pdf", texts=["North Pier"])["files"]:
         print(file["path"], match["page"], match["hit"])
 ```
 
-`pdf.run(command, *arguments)` reaches every command and returns a `Result`; its `typed`
+`pdf.run(command, *arguments)` runs commands that produce JSON and returns a `Result`; its `typed`
 property is the report, which the methods above return under the shape `tpdf_client.reports` names.
 
 Every method is described in the

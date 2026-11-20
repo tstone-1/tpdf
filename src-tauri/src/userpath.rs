@@ -31,31 +31,37 @@ fn key(entry: &str) -> String {
 /// `value` with `dir` as its last entry, or `None` when it is already one.
 #[must_use]
 pub fn with(value: &str, dir: &str) -> Option<String> {
-    if value.split(';').any(|entry| key(entry) == key(dir)) {
-        return None;
-    }
-    let kept = value.trim_end_matches(';');
-    Some(if kept.is_empty() {
-        dir.to_string()
-    } else {
-        format!("{kept};{dir}")
-    })
+    change(value, dir, true, key)
 }
 
-/// `value` without any entry that is `dir`, or `None` when it has none. The
-/// other entries are kept as they were written.
+/// Removes literal entries for this directory.
 #[must_use]
 pub fn without(value: &str, dir: &str) -> Option<String> {
-    if !value.split(';').any(|entry| key(entry) == key(dir)) {
+    change(value, dir, false, key)
+}
+
+fn change(value: &str, dir: &str, add: bool, entry_key: impl Fn(&str) -> String) -> Option<String> {
+    let target = key(dir);
+    let matches = |entry: &str| entry_key(entry) == target;
+    if add == value.split(';').any(matches) {
         return None;
     }
-    Some(
-        value
-            .split(';')
-            .filter(|entry| key(entry) != key(dir))
-            .collect::<Vec<_>>()
-            .join(";"),
-    )
+    if add {
+        let kept = value.trim_end_matches(';');
+        Some(if kept.is_empty() {
+            dir.to_owned()
+        } else {
+            format!("{kept};{dir}")
+        })
+    } else {
+        Some(
+            value
+                .split(';')
+                .filter(|entry| !matches(entry))
+                .collect::<Vec<_>>()
+                .join(";"),
+        )
+    }
 }
 
 /// What a change did.
@@ -75,11 +81,7 @@ pub enum Outcome {
 #[cfg(windows)]
 pub fn apply(dir: &str, add: bool) -> Result<Outcome, String> {
     let (value, kind) = windows::read()?;
-    let changed = if add {
-        with(&value, dir)
-    } else {
-        without(&value, dir)
-    };
+    let changed = windows::change_entry(&value, kind, dir, add);
     let Some(changed) = changed else {
         return Ok(Outcome::Unchanged);
     };
@@ -96,7 +98,8 @@ pub fn apply(dir: &str, add: bool) -> Result<Outcome, String> {
 /// The value could not be read, or is not text.
 #[cfg(windows)]
 pub fn stored(dir: &str) -> Result<bool, String> {
-    Ok(with(&windows::read()?.0, dir).is_none())
+    let (value, kind) = windows::read()?;
+    Ok(windows::change_entry(&value, kind, dir, true).is_none())
 }
 
 #[cfg(windows)]
@@ -113,6 +116,31 @@ mod windows {
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    pub(super) fn change_entry(value: &str, kind: u32, dir: &str, add: bool) -> Option<String> {
+        use windows_sys::Win32::System::Environment::ExpandEnvironmentStringsW;
+
+        super::change(value, dir, add, |entry| {
+            if kind == REG_EXPAND_SZ && entry.contains('%') {
+                let input = wide(entry);
+                // Windows reports the required capacity including the terminator.
+                let size =
+                    unsafe { ExpandEnvironmentStringsW(input.as_ptr(), std::ptr::null_mut(), 0) };
+                if (1..=32768).contains(&size) {
+                    let mut out = vec![0; size as usize];
+                    let written = unsafe {
+                        ExpandEnvironmentStringsW(input.as_ptr(), out.as_mut_ptr(), size)
+                    };
+                    if (1..=size).contains(&written) {
+                        if let Ok(expanded) = String::from_utf16(&out[..(written - 1) as usize]) {
+                            return super::key(&expanded);
+                        }
+                    }
+                }
+            }
+            super::key(entry)
+        })
     }
 
     struct Key(HKEY);
@@ -395,6 +423,26 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn expandable_registry_entries_match_the_installed_path() {
+        use super::windows::change_entry;
+        use windows_sys::Win32::System::Registry::{REG_EXPAND_SZ, REG_SZ};
+        let root = std::env::var("SystemRoot").unwrap();
+        let dir = format!(r"{root}\tpdf");
+        let raw = r"%SystemRoot%\tpdf;%SystemRoot%\other";
+        assert_eq!(change_entry(raw, REG_EXPAND_SZ, &dir, true), None);
+        assert_eq!(
+            change_entry(raw, REG_EXPAND_SZ, &dir, false).as_deref(),
+            Some(r"%SystemRoot%\other")
+        );
+        assert_eq!(
+            change_entry(raw, REG_SZ, &dir, true),
+            Some(format!("{raw};{dir}"))
+        );
+        assert_eq!(change_entry(raw, REG_SZ, &dir, false), None);
+    }
+
     /// A scratch key of this test's own, away from the user's environment.
     #[cfg(windows)]
     fn scratch(name: &str) -> String {
@@ -428,7 +476,7 @@ mod tests {
         for dir in [DIR, r"C:\Windows", ""] {
             assert_eq!(
                 stored(dir).expect("asked"),
-                with(&value, dir).is_none(),
+                super::windows::change_entry(&value, kind, dir, true).is_none(),
                 "{dir}"
             );
         }

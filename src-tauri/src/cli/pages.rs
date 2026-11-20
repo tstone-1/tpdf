@@ -316,10 +316,7 @@ pub(super) fn check_target(inputs: &[PathBuf], target: &Path, force: bool) -> Re
             "an output names an input under another name",
         ));
     }
-    // symlink_metadata also sees dangling links; --force does not follow
-    // them to an unrelated file when the save helper resolves its target.
-    // It describes the link and not what the link names, so `is_file` is
-    // false for a link as it is for a directory.
+    // Inspect the directory entry itself, including a dangling link.
     if let Ok(metadata) = target.symlink_metadata() {
         if !metadata.is_file() || !force {
             return Err(Failure::new(
@@ -505,8 +502,7 @@ impl Pages {
         report: &mut report::Pages,
     ) -> Result<(), Failure> {
         for ((temp, sizes), target) in staged.iter().zip(sizes).zip(targets) {
-            self.check_target(target)?;
-            Temporary::publish(temp, target, self.force)?;
+            Temporary::publish(&self.inputs, temp, target, self.force)?;
             report.outputs.push(report::PageOutput {
                 path: target.display().to_string(),
                 pages: sizes.len(),
@@ -702,8 +698,7 @@ pub(super) fn publish_copy<W, T>(
     let read = checked_copy(sources, &staged, write, |written| {
         read_back(&staged, written)
     })?;
-    check_target(inputs, output, force)?;
-    Temporary::publish(&staged, output, force)?;
+    Temporary::publish(inputs, &staged, output, force)?;
     Ok(read)
 }
 
@@ -774,10 +769,18 @@ impl Temporary {
             "could not allocate a staging file",
         ))
     }
-    pub(super) fn publish(staged: &Path, target: &Path, force: bool) -> Result<(), Failure> {
+    pub(super) fn publish(
+        inputs: &[PathBuf],
+        staged: &Path,
+        target: &Path,
+        force: bool,
+    ) -> Result<(), Failure> {
+        check_target(inputs, target, force)?;
         let result = if force {
             keep_mode(staged, target);
-            save::commit_in_place(staged, target)
+            // CLI outputs replace the named directory entry, even if its identity
+            // changes after validation. Only document saves follow the final link.
+            save::commit(staged, target)
         } else {
             std::fs::hard_link(staged, target).map_err(|e| e.to_string())
         };
@@ -843,7 +846,7 @@ mod tests {
         let staged = staging.0.join("out");
         std::fs::write(&staged, b"new").unwrap();
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o644)).unwrap();
-        Temporary::publish(&staged, &target, true).unwrap();
+        Temporary::publish(&[], &staged, &target, true).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert_eq!(mode(&target), 0o600);
         drop(staging);
@@ -890,7 +893,7 @@ mod tests {
         let staged = temp.0.join("checked.pdf");
         std::fs::write(&staged, b"new").unwrap();
         std::fs::write(&target, b"late arrival").unwrap();
-        assert!(Temporary::publish(&staged, &target, false).is_err());
+        assert!(Temporary::publish(&[], &staged, &target, false).is_err());
         assert_eq!(std::fs::read(&target).unwrap(), b"late arrival");
         let scratch = temp.0.clone();
         drop(temp);
@@ -941,8 +944,7 @@ mod tests {
         refused(&directory, false);
         refused(&directory, true);
 
-        // Nor is a link: publishing with --force resolves its target, and
-        // would replace a file the command line never named.
+        // A link is outside the CLI contract even when replacement is forced.
         #[cfg(unix)]
         {
             let victim = root.join("victim.txt");
@@ -980,6 +982,21 @@ mod tests {
         }
         assert!(!staging_left(&root));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_staged_preview_cannot_replace_its_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.pdf");
+        let staged = dir.path().join("staged.png");
+        std::fs::write(&input, b"source").unwrap();
+        std::fs::write(&staged, b"preview").unwrap();
+        let inputs = [input.clone()];
+        assert!(Temporary::publish(&inputs, &staged, &input, true).is_err());
+        assert_eq!(std::fs::read(&input).unwrap(), b"source");
+        let preview = dir.path().join("preview.png");
+        Temporary::publish(&inputs, &staged, &preview, true).unwrap();
+        assert_eq!(std::fs::read(preview).unwrap(), b"preview");
     }
 
     #[test]

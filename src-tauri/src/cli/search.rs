@@ -33,7 +33,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::args::{unknown, value};
-use super::redact::{search_pages, Found};
+use super::redact::{limited_search, Found, WalkError};
 use super::report::{self, ErrorKind, FileError, SearchKind, SCHEMA};
 use super::text::{page_list, password, selected, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
@@ -259,6 +259,12 @@ pub fn plan(
             file.path, hit.page, hit.hit
         ));
     }
+    if let Some(hit) = file.matches.iter().find(|hit| hit.partial_geometry) {
+        return Err(format!(
+            "{}: page {}: {:?} could be marked only in part, so no plan is printed",
+            file.path, hit.page, hit.hit
+        ));
+    }
     let operations: Vec<PlanOperation> = file
         .matches
         .iter()
@@ -431,11 +437,11 @@ pub fn textless(file: &report::SearchedFile) -> Option<String> {
     let empty = &file.pages_without_text;
     Some(match empty.as_slice() {
         [] => return None,
+        [one] => format!("{}: page {one} has no text to search", file.path),
         all if all.len() == file.pages_searched as usize => format!(
-            "{}: none of its pages has text to search --- a scan has to be read by OCR first",
+            "{}: none of the selected pages has text to search --- a scan has to be read by OCR first",
             file.path
         ),
-        [one] => format!("{}: page {one} has no text to search", file.path),
         many => {
             let shown: Vec<String> = many.iter().take(10).map(u32::to_string).collect();
             let more = if many.len() > 10 { ", ..." } else { "" };
@@ -482,6 +488,7 @@ pub fn searched(path: &str, pages: usize, empty: Vec<u32>, found: &Found) -> rep
         .iter()
         .zip(&found.by)
         .map(|(hit, query)| {
+            let (rects, partial_geometry) = rects_of(hit, found);
             (
                 hit.page,
                 hit.start,
@@ -492,7 +499,8 @@ pub fn searched(path: &str, pages: usize, empty: Vec<u32>, found: &Found) -> rep
                     before: hit.before.clone(),
                     hit: hit.hit.clone(),
                     after: hit.after.clone(),
-                    rects: rects_of(hit, found),
+                    rects,
+                    partial_geometry,
                 },
             )
         })
@@ -509,23 +517,27 @@ pub fn searched(path: &str, pages: usize, empty: Vec<u32>, found: &Found) -> rep
 
 /// Where one match is: `regions.rs`'s rectangles for each page it touches, as
 /// `[x, y, width, height]`.
-fn rects_of(hit: &crate::search::Match, found: &Found) -> Vec<report::HitRect> {
-    super::regions::halves(std::slice::from_ref(hit))
-        .iter()
-        .flat_map(|half| {
-            let areas = found
-                .texts
-                .get(&half.page)
-                .map(|text| super::regions::regions_on(text, half.page, &[*half]))
-                .unwrap_or_default();
+fn rects_of(hit: &crate::search::Match, found: &Found) -> (Vec<report::HitRect>, bool) {
+    let mut rects = Vec::new();
+    let mut incomplete = false;
+    for half in super::regions::halves(std::slice::from_ref(hit)) {
+        let Some(text) = found.texts.get(&half.page) else {
+            incomplete = true;
+            continue;
+        };
+        let areas = super::regions::regions_on(text, half.page, &[half]);
+        incomplete |= super::regions::uncovered(text, half, &areas) > 0;
+        rects.extend(
             areas
                 .into_iter()
                 .map(|[left, top, right, bottom]| report::HitRect {
                     page: half.page + 1,
                     rect: [left, top, right - left, bottom - top],
-                })
-        })
-        .collect()
+                }),
+        );
+    }
+    let partial = incomplete && !rects.is_empty();
+    (rects, partial)
 }
 
 /// One document, searched, or the reason it was not.
@@ -582,21 +594,28 @@ fn search_one(
         Err(why) => return failed(ErrorKind::Refused, format!("{shown}: {why}")),
     };
     let mut empty = Vec::new();
-    let found = search_pages(queries, &pages, |page| -> Result<PageText, String> {
-        match session.ask(Request::Text { page, crop: None }) {
-            Ok(Reply::Text(text)) => {
-                if text.codes.is_empty() {
-                    empty.push(page + 1);
+    let found = limited_search(
+        queries,
+        &pages,
+        MAX_MATCHES,
+        |page| -> Result<PageText, String> {
+            match session.ask(Request::Text { page, crop: None }) {
+                Ok(Reply::Text(text)) => {
+                    if text.codes.is_empty() {
+                        empty.push(page + 1);
+                    }
+                    Ok(text)
                 }
-                Ok(text)
+                Ok(other) => Err(format!("the worker answered a text request with {other:?}")),
+                Err(Declined::Locked(why) | Declined::Refused(why) | Declined::Failed(why)) => {
+                    Err(why)
+                }
             }
-            Ok(other) => Err(format!("the worker answered a text request with {other:?}")),
-            Err(Declined::Locked(why) | Declined::Refused(why) | Declined::Failed(why)) => Err(why),
-        }
-    });
+        },
+    );
     match found {
-        Err(why) => failed(ErrorKind::Failed, format!("{shown}: {why}")),
-        Ok(found) if found.matches.len() > MAX_MATCHES => failed(
+        Err(WalkError::Page(why)) => failed(ErrorKind::Failed, format!("{shown}: {why}")),
+        Err(WalkError::Limit) => failed(
             ErrorKind::Refused,
             format!(
                 "{shown}: more than {MAX_MATCHES} matches --- narrow the search, or ask for \

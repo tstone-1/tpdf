@@ -139,7 +139,7 @@ export function positionsFor(
     const choices = new Set<string>();
     const whole = one(part);
     if (whole !== null) choices.add(whole);
-    for (let at = part.indexOf("-"); at > 0; at = part.indexOf("-", at + 1)) {
+    for (let at = part.indexOf("-", 1); at > 0; at = part.indexOf("-", at + 1)) {
       const from = one(part.slice(0, at).trim());
       const to = from === null ? null : one(part.slice(at + 1).trim());
       if (from !== null && to !== null) choices.add(`${from}-${to}`);

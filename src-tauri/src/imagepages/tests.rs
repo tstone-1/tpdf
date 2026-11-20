@@ -45,6 +45,32 @@ fn exif(orientation: u16, little: bool) -> Vec<u8> {
     out
 }
 
+#[test]
+fn exif_resolution_uses_physical_units_and_both_axes() {
+    for (unit, expected) in [
+        (1u16, None),
+        (2, Some((100.0, 200.0))),
+        (3, Some((254.0, 508.0))),
+    ] {
+        let mut data = b"Exif\0\0II\x2a\0\x08\0\0\0\x03\0".to_vec();
+        for (tag, offset) in [(0x011au16, 50u32), (0x011b, 58)] {
+            data.extend(tag.to_le_bytes());
+            data.extend([5, 0, 1, 0, 0, 0]);
+            data.extend(offset.to_le_bytes());
+        }
+        data.extend([0x28, 1, 3, 0, 1, 0, 0, 0]);
+        data.extend(unit.to_le_bytes());
+        data.extend([0; 6]);
+        for n in [200u32, 2, 400, 2] {
+            data.extend(n.to_le_bytes());
+        }
+        assert_eq!(
+            jpeg_facts(&with_segment(RGB, 0xe1, &data)).unwrap().dpi,
+            expected
+        );
+    }
+}
+
 /// A PNG of `width` by `height` whose samples are `pixels`.
 fn png_of(
     width: u32,
@@ -253,6 +279,10 @@ fn a_jpegs_orientation_is_read_in_either_byte_order() {
         let odd = with_segment(RGB, 0xe1, &exif(9, little));
         assert_eq!(picture(&odd).expect("a JPEG").orientation, 1);
     }
+    // The first complete entry still applies when the IFD claims a second.
+    let mut truncated = exif(6, true);
+    truncated[14..16].copy_from_slice(&2u16.to_le_bytes());
+    assert_eq!(jpeg_orientation(&with_segment(RGB, 0xe1, &truncated)), 6);
     // A segment that only starts like EXIF is passed over, not read past.
     let cut = with_segment(RGB, 0xe1, b"Exif\0\0II*\0\xff\xff\xff\xff");
     assert_eq!(picture(&cut).expect("a JPEG").orientation, 1);

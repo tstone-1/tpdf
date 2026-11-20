@@ -33,8 +33,8 @@ fn textedit_stream_patch_preserves_coordinates_comments_and_untouched_text_bytes
     let expected = String::from_utf8(source.to_vec())
         .unwrap()
         .replace("(SYNTHETIC FIRST) Tj", "(EDITED FIRST) Tj");
-    // The source merger contributes one newline on each read.
-    assert_eq!(after, format!("{expected}\n\n").as_bytes());
+    // Reading the single saved stream adds no separator.
+    assert_eq!(after, expected.as_bytes());
 }
 
 #[test]
@@ -212,4 +212,30 @@ fn a_moved_path_is_accepted_only_as_a_paired_pure_translation() {
     assert!(apply(vec![open(1, down.clone())]).is_err());
     assert!(apply(vec![close(2)]).is_err());
     assert!(apply(vec![open(1, down.clone()), open(3, down.clone()), close(4)]).is_err());
+}
+
+#[test]
+fn layout_replacements_are_charged_for_the_emitted_operators() {
+    for total in [textedit::MAX_OPERATIONS, textedit::MAX_OPERATIONS + 1] {
+        let source = format!("(X) Tj {}", "0 g ".repeat(total - 4));
+        let content = Content::decode_strict(source.as_bytes()).unwrap();
+        let expansion = vec![content.operations[0].clone(); 4];
+        let result = rewrite_expanded(
+            source.as_bytes(),
+            &content,
+            &BTreeSet::from([0]),
+            &std::collections::BTreeMap::from([(0, expansion)]),
+        );
+        if total == textedit::MAX_OPERATIONS {
+            assert_eq!(
+                Content::decode_strict(&result.unwrap())
+                    .unwrap()
+                    .operations
+                    .len(),
+                total
+            );
+        } else {
+            assert!(result.unwrap_err().contains("operator limit"));
+        }
+    }
 }

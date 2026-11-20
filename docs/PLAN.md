@@ -3352,10 +3352,9 @@ no conversion anywhere.
 taken from the other's moment.** The control has to be no larger than the smallest box the
 regions covered, and after the write those boxes are gone by construction — for
 `redact_document` the file is gone too — so the word list is captured while the reader's
-document is still open, one text extraction per page. The pixels are the opposite:
-`ocr::RedactedPixels` already makes it a type-level rule that only already-redacted pixels may
-be judged, because OCR over the pre-redaction image reinstates the secret as a text layer,
-which is one of the carriers §6 exists to defeat.
+document is still open, one text extraction per page. For the pixels, the gate reopens the written file and renders its regions there.
+This binds the sample to the output. A pixel buffer and a separately supplied OCR verdict
+alone cannot establish which document supplied the image.
 
 **It renders strips, not pages, and that is what makes the scale worth choosing.** Both
 mappings the pixels cross are 16 MB, and a whole A4 sheet at 4x is 32 MB — so a gate that
@@ -18892,9 +18891,9 @@ that it presented several genuinely unresolved questions as settled architecture
      apply — no network, no writes — and it stays a separate process because the first rung
      showed the engine can abort its host. Reproduce with `scripts/vision_sandbox_probe.swift`.
 
-   §6's first dependency is enforced by a type: `RedactedPixels` can only be constructed from
-   an `Illegible` verdict, so "OCR the pre-redaction image and reinstate the secret as an
-   invisible text layer" does not compile rather than being forbidden in a comment.
+   The production gate reopens the written output and renders the marked regions from it.
+   The `RedactedPixels` constructor checks buffer dimensions and requires an `Illegible`
+   verdict. It takes the buffer and verdict separately, so the caller establishes their provenance.
 
    ~~What is **not** answered, and is the next decision: which engines.~~ **Half answered,
    and this paragraph stated the other half as open for longer than it was.** macOS is done:

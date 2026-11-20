@@ -73,6 +73,7 @@ export interface Comment {
   kind: CommentKind;
   author: string;
   body: string;
+  body_clipped?: boolean;
   subject: string;
   date: string | null;
   /** `[left, top, right, bottom]`, points from the displayed page's top-left. */

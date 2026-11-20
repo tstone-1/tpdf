@@ -381,15 +381,22 @@ fn document_text(d: &report::Document) -> Vec<String> {
             plural(d.form.widgets, "widget", "widgets")
         ),
     });
+    let complete = super::verify::signatures_complete(&d.limits);
     match d.signatures.len() {
+        0 if !complete => lines.push("  Signatures: unknown (incomplete scan)".into()),
         0 => lines.push("  Signatures: none".into()),
         n => {
             // Counted apart, as `verify` does: a document timestamp is a
             // signature field and nobody's signature.
-            lines.push(if d.signatures.iter().any(|s| s.document_timestamp) {
-                format!("  Signatures: {}", counted(&d.signatures))
+            let count = if d.signatures.iter().any(|s| s.document_timestamp) {
+                counted(&d.signatures)
             } else {
-                format!("  Signatures: {n}")
+                n.to_string()
+            };
+            lines.push(if complete {
+                format!("  Signatures: {count}")
+            } else {
+                format!("  Signatures found: {count} (incomplete scan)")
             });
             for signature in &d.signatures {
                 lines.extend(signature_text(signature).lines().map(|l| format!("  {l}")));

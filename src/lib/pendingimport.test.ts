@@ -17,6 +17,31 @@ function slot() {
 }
 
 describe("the import waiting for its pages", () => {
+  it("keeps a replacement committable and releases a reply after a tab switch", async () => {
+    const { pending, released } = slot();
+    let current = true;
+    const questions: number[] = [];
+    const prepare = (reply: Promise<PreparedImport>) => pending.prepare(9, () => reply, () => current,
+      () => pending.drop(), () => questions.push(pending.current(9)!.pending));
+    let finish!: (prepared: PreparedImport) => void;
+    const first = prepare(new Promise((resolve) => { finish = resolve; }));
+    const second = prepare(Promise.resolve({ ...report, pending: 5 }));
+    await Promise.resolve();
+    expect(questions).toEqual([]);
+    finish(report);
+    await Promise.all([first, second]);
+    expect(questions).toEqual([4, 5]);
+    expect(released).toEqual(["9:4"]);
+    expect(pending.take(9)?.pending).toBe(5);
+    const left = prepare(new Promise((resolve) => { finish = resolve; }));
+    await Promise.resolve();
+    current = false;
+    finish({ ...report, pending: 6 });
+    await left;
+    expect(questions).toEqual([4, 5]);
+    expect(released).toEqual(["9:4", "9:6"]);
+  });
+
   it("is offered only for the document it was prepared for", () => {
     const { pending, released } = slot();
     expect(pending.current(9)).toBeNull();

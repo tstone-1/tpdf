@@ -120,9 +120,15 @@ pub(super) fn rewrite_expanded(
     edits: &BTreeSet<usize>,
     expansions: &std::collections::BTreeMap<usize, Vec<lopdf::content::Operation>>,
 ) -> Result<Vec<u8>, String> {
-    if changed.operations.len() + expansions.values().map(Vec::len).sum::<usize>()
-        > super::MAX_OPERATIONS
+    if expansions
+        .keys()
+        .any(|index| *index >= changed.operations.len() || !edits.contains(index))
     {
+        return Err(said!("invalid text patch"));
+    }
+    let emitted = changed.operations.len() - expansions.len()
+        + expansions.values().map(Vec::len).sum::<usize>();
+    if emitted > super::MAX_OPERATIONS {
         return Err(said!("edited page exceeds the text operator limit"));
     }
     let mut spans: Vec<Range<usize>> = Vec::new();

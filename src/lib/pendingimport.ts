@@ -23,6 +23,7 @@
  * version that looks right.
  */
 
+import { Serial } from "./serial";
 import { catalog } from "./i18n";
 import { namePages, parsePageRange, type PageRange } from "./pageranges";
 
@@ -71,6 +72,7 @@ export interface PendingImport extends PreparedImport {
  * (`current(doc)`) and is released rather than answered (`take`).
  */
 export class PendingImports {
+  readonly #prepares = new Serial();
   #held: PendingImport | null = null;
   readonly #release: (doc: number, pending: number) => void;
 
@@ -81,6 +83,22 @@ export class PendingImports {
    */
   constructor(release: (doc: number, pending: number) => void) {
     this.#release = release;
+  }
+
+  /** The backend has one prepared file per document. Keep prepares in request order. */
+  prepare(doc: number, open: () => Promise<PreparedImport>, current: () => boolean,
+    dismiss: () => void, ask: () => void): Promise<void> {
+    return this.#prepares.run(async () => {
+      if (!current()) return;
+      const prepared = await open();
+      if (!current()) {
+        this.#release(doc, prepared.pending);
+        return;
+      }
+      dismiss();
+      this.hold(doc, prepared);
+      ask();
+    });
   }
 
   /**

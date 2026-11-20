@@ -9,6 +9,8 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { dropAbandoned } from "./documentopen";
+import { DocumentTabs } from "./documenttabs";
 
 import backend from "../../src-tauri/src/compare.rs?raw";
 import {
@@ -269,6 +271,21 @@ describe("ComparisonState", () => {
     expect(state.count).toBe(MAX_ROWS);
     expect(state.pick(MAX_ROWS)).toBe(false);
     expect(state.step(-1)).toBe(MAX_ROWS - 1);
+  });
+
+  it("clears the surviving view when its partner is abandoned during reopen", () => {
+    const state = two();
+    const tabs = new DocumentTabs();
+    tabs.keep({ view: 7, path: "old.pdf" });
+    tabs.keep({ view: 9, path: "new.pdf" });
+    state.step(1);
+    expect(state.paintFor(7)?.current).toBe(0);
+    dropAbandoned({ closed() {} }, tabs, { own: undefined, replaced: true, twins: [{ view: 9 }] },
+      () => {}, (id) => state.end(id));
+    expect(tabs.all.map((tab) => tab.view)).toEqual([7]);
+    expect(state.compared).toBeNull();
+    expect(state.paintFor(7)).toBeNull();
+    expect(state.step(1)).toBe(-1);
   });
 
   it("ends when either view is closed, and not for another", () => {

@@ -26,6 +26,43 @@ pub async fn reveal_file(path: String) -> Result<(), String> {
     reveal_local_file(&path)
 }
 
+/// Returns the existing tab path that names this file, including filesystem aliases.
+#[tauri::command]
+pub async fn matching_open_path(path: String, candidates: Vec<String>) -> Option<String> {
+    matching_file(Path::new(&path), candidates)
+}
+
+fn matching_file(path: &Path, candidates: Vec<String>) -> Option<String> {
+    let identity = |path: &Path| {
+        path.is_file()
+            .then(|| crate::fingerprint::FileId::at(path))
+            .flatten()
+    };
+    let requested = identity(path)?;
+    candidates
+        .into_iter()
+        .find(|candidate| identity(Path::new(candidate)) == Some(requested))
+}
+
+#[cfg(test)]
+mod file_match_tests {
+    use super::matching_file;
+
+    #[test]
+    fn a_path_through_dot_dot_identifies_the_open_file() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let file = root.join("Cargo.toml");
+        let candidates = vec![
+            root.join("Cargo.lock").display().to_string(),
+            file.display().to_string(),
+        ];
+        assert_eq!(
+            matching_file(&root.join("src/../Cargo.toml"), candidates),
+            Some(file.display().to_string())
+        );
+    }
+}
+
 /// How many entries of a folder [`folder_pdfs`] reads before it stops.
 const FOLDER_ENTRIES: usize = 10_000;
 

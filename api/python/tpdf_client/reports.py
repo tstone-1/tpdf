@@ -589,7 +589,7 @@ class EditReport(TypedDict):
 # --- comments --------------------------------------------------------------
 
 
-class Comment(TypedDict):
+class _CommentRequired(TypedDict):
     """One original annotation."""
 
     # Assigned in document order; stable for one scan.
@@ -618,6 +618,12 @@ class Comment(TypedDict):
     # [number, generation] of the annotation's object; None for a direct
     # dictionary, which cannot be edited in place.
     object: list[int] | None
+
+
+class Comment(_CommentRequired, total=False):
+    """One original annotation."""
+
+    body_clipped: bool
 
 
 class CommentLimits(TypedDict):
@@ -1392,7 +1398,12 @@ class HitRect(TypedDict):
     rect: list[float]
 
 
-class SearchHit(TypedDict):
+class _SearchGeometry(TypedDict, total=False):
+    # Listed rectangles cover only part of the hit.
+    partial_geometry: bool
+
+
+class SearchHit(_SearchGeometry):
     """One match."""
 
     # The page it starts on, counted from 1.

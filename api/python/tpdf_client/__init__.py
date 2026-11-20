@@ -222,11 +222,13 @@ class Tpdf:
                 try:
                     process.communicate(timeout=5)
                 except subprocess.TimeoutExpired:
-                    # A descendant may have retained a pipe after the parent died.
-                    # Closing our copies keeps the caller's deadline bounded.
-                    for stream in (process.stdin, process.stdout, process.stderr):
-                        if stream is not None:
-                            stream.close()
+                    # Windows communicate() owns the pipe readers. Closing a
+                    # buffered stream here waits on its thread's read lock
+                    # until the last descendant releases its inherited handle.
+                    if os.name != 'nt':
+                        for stream in (process.stdin, process.stdout, process.stderr):
+                            if stream is not None:
+                                stream.close()
                     process.wait(timeout=5)
             if isinstance(error, KeyboardInterrupt):
                 raise
@@ -244,7 +246,9 @@ class Tpdf:
         if not isinstance(report, dict) or type(report.get('schema')) is not int or report['schema'] != 1:
             raise ProtocolError('unsupported or missing tpdf report schema; expected 1',
                                 stderr=said, exit_code=process.returncode)
-        if report.get('command') != command:
+        help_only = (process.returncode == 0 and any(arg in ('--help', '-h') for arg in args)
+                     and all(arg in ('--help', '-h', '--json') for arg in options + args))
+        if report.get('command') != ('help' if help_only else command):
             raise ProtocolError(f'tpdf report command does not match {command}',
                                 stderr=said, exit_code=process.returncode)
         result = Result(report, process.returncode, said)
@@ -325,19 +329,12 @@ class Tpdf:
         self, old: str | os.PathLike[str], new: str | os.PathLike[str], *,
         password: str | None = None,
     ) -> reports.CompareReport:
-        """List what changed in the words from `old` to `new`.
+        """Words are equal when changes and uncompared words on both sides are zero.
 
         Each entry of report['changes'] has its kind (removed, added or
         replaced), the words on each side, the page each is on and where.
-        Only the words are compared: an empty list means the two documents have
-        the same words, not that they are the same document.
-
-        Differing is an answer, not an error: the CLI's exit 1 is returned as a
-        report whose changes are not empty. A document with no text on any page,
-        such as a scan, has no words to compare and raises CommandError (exit 3).
-        Words beside a page with no text on the other side are not compared;
-        each document's 'words_not_compared' says how many, and an empty list
-        with either above zero does not mean the words are the same.
+        Each side reports its count in words_not_compared. Exit 1 returns a
+        report for either differences or a partial comparison. A document with no selectable words raises CommandError.
         """
         result = self.run('compare', '--', old, new, password=password, check=False)
         if result.exit_code not in (0, 1):
@@ -394,13 +391,14 @@ class Tpdf:
 
         The operating system's text recogniser reads pages without text and
         scanned pages with some typed text. It adds the words those pages
-        lack and leaves other pages alone. `languages` are
-        BCP-47 tags such as "de-DE", most preferred first.
+        lack and leaves other pages alone. Pass a single BCP-47 tag such as
+        "de-DE" or a sequence of tags in order of preference.
         """
         args = ['-o', os.fspath(output)]
         if pages is not None:
             args += ['--pages', pages]
-        for language in languages:
+        tags = (languages,) if isinstance(languages, str) else languages
+        for language in tags:
             args += ['--language', language]
         if force:
             args.append('--force')
@@ -585,7 +583,7 @@ class Tpdf:
         if invalidate_signatures:
             args.append('--invalidate-signatures')
         args += ['--', os.fspath(source)]
-        plan: dict[str, Any] = {'schema': 1, 'operations': list(operations)}
+        plan: dict[str, Any] = {'schema': 1, 'operations': [dict(operation) for operation in operations]}
         if source_sha256 is not None:
             plan['source_sha256'] = source_sha256
         return self.run(
@@ -608,8 +606,8 @@ class Tpdf:
         search leaves an existing output untouched.
         color is red, green and blue from 0 to 1; without it edit's default applies.
 
-        A match whose characters have no position on the page raises ValueError
-        before anything is written, rather than being left unmarked in silence.
+        A match with wholly or partly missing character positions raises ValueError
+        before anything is written.
         """
         if kind not in ('highlight', 'underline', 'strikeout', 'squiggly'):
             raise ValueError('kind must be highlight, underline, strikeout or squiggly')
@@ -637,6 +635,8 @@ class Tpdf:
                     f"page {match['page']}: {match['hit']!r} matched and has no position, "
                     'so it cannot be marked'
                 )
+            if match.get('partial_geometry'):
+                raise ValueError(f"page {match['page']}: {match['hit']!r} could be marked only in part")
             for area in match['rects']:
                 operation = {'op': 'annotate', 'page': area['page'], 'kind': kind, 'rect': area['rect']}
                 if color is not None:

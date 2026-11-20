@@ -1071,9 +1071,13 @@ fn strict_fails_a_document_whose_list_of_signatures_was_cut() {
         said[0].starts_with("tpdf: ") && said[0].contains("may not be"),
         "{said:?}"
     );
-    // The two counts the scan keeps are what decides it, each on its own.
+    // Each reason for an incomplete enumeration is sufficient on its own.
     use super::verify::signatures_complete;
     assert!(signatures_complete(&Limits::default()));
+    assert!(!signatures_complete(&Limits {
+        locked: true,
+        ..Limits::default()
+    }));
     assert!(!signatures_complete(&Limits {
         signatures_dropped: 1,
         ..Limits::default()
@@ -2878,6 +2882,7 @@ fn samples() -> Vec<(&'static str, String)> {
                     kind: crate::annots::Kind::Text,
                     author: "Synthetic author".into(),
                     body: "Synthetic note".into(),
+                    body_clipped: false,
                     subject: String::new(),
                     date: Some("2026-09-29 12:00".into()),
                     rect: [10., 20., 30., 40.],
@@ -4223,6 +4228,7 @@ fn search_sample() -> report::Searched {
             before: before.into(),
             hit: hit.into(),
             after: after.into(),
+            partial_geometry: false,
             // One rectangle on the page it starts on, and one more on the page it
             // ends on when it runs over a break.
             rects: std::iter::once(page)
@@ -4580,7 +4586,7 @@ fn search_prints_one_line_per_match_and_names_the_document_only_among_several() 
     one.files[0].pages_without_text = vec![1, 2, 3];
     assert!(textless(&one.files[0])
         .expect("all")
-        .contains("none of its pages has text"));
+        .contains("none of the selected pages has text"));
     one.files[0].pages_without_text.clear();
     assert_eq!(textless(&one.files[0]), None);
 

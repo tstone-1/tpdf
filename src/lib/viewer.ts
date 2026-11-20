@@ -4356,7 +4356,7 @@ export class Viewer {
     const page = this.pages.idOf(slot);
     if (page === undefined) return false;
     this.shownRegion = { page, rect: [rect[0], rect[1], rect[2], rect[3]] };
-    this.goToDestination(slot, Math.max(0, this.viewRectOn(slot, rect).top));
+    this.scrollToFileRect(slot, rect);
     this.placeRegion();
     this.wake();
     return true;
@@ -6237,16 +6237,15 @@ export class Viewer {
     return true;
   }
 
-  /**
-   * A file widget placed through the same mapping as comments and links. The
-   * rectangle is the file's displayed one, so it is placed under the crop and
-   * every turn, as {@link showRegion}'s is: its raw top is off by the crop's
-   * own top on a cropped page.
-   */
+  /** Scroll to a rectangle from the opened file after applying the current crop and rotation. */
+  scrollToFileRect(slot: number, rect: readonly [number, number, number, number]): void {
+    this.goToDestination(slot, Math.max(0, this.viewRectOn(slot, rect).top));
+  }
+
   showForm(widget: import("./forms").FormWidget): void {
     const slot = this.pages.slotOf(widget.page);
     if (slot !== undefined) {
-      this.goToDestination(slot, Math.max(0, this.viewRectOn(slot, widget.display_rect).top));
+      this.scrollToFileRect(slot, widget.display_rect);
     }
   }
 
@@ -6581,6 +6580,10 @@ export class Viewer {
   }
 
   private readonly recovery = new SearchRecovery();
+
+  get hasRecognisedText(): boolean {
+    return this.recovery.size > 0;
+  }
 
   /** Recognise the file page currently shown. The caller holds document edits
    * while this runs; OCR boxes describe whole words, including partial hits. */
@@ -7625,29 +7628,11 @@ export class Viewer {
     return out;
   }
 
-  /**
-   * A page's text as the document displays it, fetching it if it is not here.
-   *
-   * The asking counterpart of {@link TextCache.peekUnturned}, which answers only
-   * from the cache. Unturned for the same reason as there: a caller reading a
-   * comment's `/QuadPoints` has rectangles in the page's own space, and matching
-   * them against boxes in the reader's rotation would find the words of a
-   * different part of the page every time the window was turned.
-   *
-   * Waits on `load` and then reads the cache rather than using `load`'s own
-   * answer, because that one is turned into the view. Reading it back is safe
-   * against nothing: the page could be evicted between the two, which is why
-   * `null` is a real outcome here rather than a formality.
-   *
-   * Deliberately **not** used by anything on the paint path. It queues an
-   * extraction behind the tiles, so a caller wanting many pages should ask for
-   * one at a time --- `App.svelte`'s comment-words loop is the worked example.
-   */
+  /** Original file-space word boxes for a stored comment or redaction in this slot. */
   async unturnedText(slot: number): Promise<PageText | null> {
     const at = this.textAt(slot);
     if (!at) return null;
-    await at.cache.load(at.page);
-    return at.cache.peekUnturned(at.page);
+    return at.cache.loadFileText(at.page);
   }
 
   /** Draws the marks, the search highlights and the selection. */

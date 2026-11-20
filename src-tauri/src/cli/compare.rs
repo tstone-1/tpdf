@@ -203,7 +203,7 @@ impl Subcommand for Compare {
                 ));
             }
         }
-        let report = compared(&old, &new, &comparison);
+        let report = compared(&old, &new, &comparison, self.json);
 
         say(
             err,
@@ -290,7 +290,12 @@ fn textless(side: &report::ComparedFile) -> Option<String> {
 }
 
 /// The report for `comparison` of `old` against `new`.
-fn compared(old: &Read, new: &Read, comparison: &Comparison) -> report::Compared {
+fn compared(
+    old: &Read,
+    new: &Read,
+    comparison: &Comparison,
+    include_rects: bool,
+) -> report::Compared {
     let file = |side: &Read, words: u32, unread: u32, empty: &[u32]| report::ComparedFile {
         path: side.shown.clone(),
         pages: u32::try_from(side.texts.len()).unwrap_or(u32::MAX),
@@ -320,12 +325,12 @@ fn compared(old: &Read, new: &Read, comparison: &Comparison) -> report::Compared
         changes: comparison
             .changes
             .iter()
-            .map(|change| changed(old, new, change))
+            .map(|change| changed(old, new, change, include_rects))
             .collect(),
     }
 }
 
-fn changed(old: &Read, new: &Read, change: &Change) -> report::ComparedChange {
+fn changed(old: &Read, new: &Read, change: &Change, include_rects: bool) -> report::ComparedChange {
     report::ComparedChange {
         kind: change.kind,
         old_page: change.left_at.page + 1,
@@ -334,8 +339,16 @@ fn changed(old: &Read, new: &Read, change: &Change) -> report::ComparedChange {
         added: change.added.clone(),
         before: change.before.clone(),
         after: change.after.clone(),
-        old_rects: rects(&old.texts, &change.left),
-        new_rects: rects(&new.texts, &change.right),
+        old_rects: if include_rects {
+            rects(&old.texts, &change.left)
+        } else {
+            Vec::new()
+        },
+        new_rects: if include_rects {
+            rects(&new.texts, &change.right)
+        } else {
+            Vec::new()
+        },
     }
 }
 

@@ -243,6 +243,16 @@ describe("CommentPopup", () => {
     expect(editorOf(note)).toBeNull();
   });
 
+  it("keeps replies available without offering to overwrite a clipped body", () => {
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0], body_clipped: true }), [], anchor(), false);
+    expect(note.replyable).toBe(true);
+    expect(words(note)).not.toContain("Edit");
+    note.edit();
+    expect(editorOf(note)).toBeNull();
+    expect(rewrites).toEqual([]);
+  });
+
   it("arms an editor over the body and sends the new text when it closes", () => {
     const note = popup();
     note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);

@@ -6,8 +6,10 @@ documents that say "`AGENTS.md` records ..." about text editing mean this file.
 
 Existing-text editing admits exact 90/180/270-degree text matrices with positive
 orientation after composition; editable runs require diagonal page CTMs. Decoded page content
-is bounded to 1 MiB and 16,384 operators, allowing character-positioned exports
-past the former 4,096-operator limit. Adjacent positioned text fragments are grouped
+is bounded to 1 MiB and 16,384 operators. These budgets apply to the saved
+stream and its emitted operators. A newline separates adjacent streams. The final
+newline used for parsing trailing comments and computing the edit revision stays
+out of the saved bytes. Adjacent positioned text fragments are grouped
 within a line, without crossing graphics/text state changes. Saving a group
 replaces its first show and empties its other shows, preserving every authored
 positioning operation. Rectangular clips remain active during preview and saving;

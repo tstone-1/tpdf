@@ -598,17 +598,17 @@ pub(crate) fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, Stri
         return Err(said!("too many page content streams"));
     }
     let mut bytes = Vec::new();
-    for value in streams {
+    for (index, value) in streams.iter().enumerate() {
         let stream = crate::encoding::resolve(doc, value)
             .as_stream()
             .map_err(|e| e.to_string())?;
-        let remaining = MAX_CONTENT.saturating_sub(bytes.len() + 1);
-        let decoded = filters::decode(stream, remaining)?;
-        bytes.extend(decoded);
-        bytes.push(b'\n');
-        if bytes.len() > MAX_CONTENT {
-            return Err(said!("page content exceeds its limit"));
+        if index > 0 {
+            if bytes.len() == MAX_CONTENT {
+                return Err(said!("page content exceeds its limit"));
+            }
+            bytes.push(b'\n');
         }
+        bytes.extend(filters::decode(stream, MAX_CONTENT - bytes.len())?);
     }
     Ok(bytes)
 }
@@ -926,8 +926,13 @@ fn inspect_pinning(
     }
     let mut tags = tagging::Tags::read(doc, id, &pages)?;
     tags.pin(pinned);
-    let bytes = page_content(doc, id)?;
+    let mut bytes = page_content(doc, id)?;
+    // The strict parser requires a line ending after a trailing comment.
+    // Older edit plans also include this delimiter in the revision digest.
+    bytes.push(b'\n');
     let content = Content::decode_strict(&bytes).map_err(|e| e.to_string())?;
+    let revision = Sha256::digest(&bytes).to_vec();
+    bytes.pop();
     if content.operations.len() > MAX_OPERATIONS {
         return Err(said!("text operator count exceeds its limit"));
     }
@@ -942,7 +947,7 @@ fn inspect_pinning(
     let mut saved = Vec::new();
     let mut checked = inspect::Checked::new(doc, resources);
     let sheet = crate::pagetree::displayed_page(doc, id);
-    let mut found = inspect::Found::new(page, Sha256::digest(&bytes).to_vec(), sheet);
+    let mut found = inspect::Found::new(page, revision, sheet);
     let mut object = inspect::TextObject::new();
     let mut marked = inspect::Marked::new(tags);
     let mut path_until = 0;

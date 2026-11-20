@@ -591,13 +591,10 @@ pub fn file_report(shown: String, properties: &docinfo::Properties) -> report::F
     }
 }
 
-/// Whether the scan listed every signature the document has: it stopped at
-/// no bound on signature fields, and read every form field. `fill` and the
-/// page commands read the same two counts as "whether it is signed is not
-/// known" (`fill::signed_state`).
+/// The object graph was readable and the scan reached every signature field.
 #[must_use]
 pub fn signatures_complete(limits: &docinfo::Limits) -> bool {
-    limits.signatures_dropped == 0 && limits.unreadable == 0
+    !limits.locked && limits.signatures_dropped == 0 && limits.unreadable == 0
 }
 
 /// What `verify` says of a document whose list of signatures was cut.

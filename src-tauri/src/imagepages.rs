@@ -123,15 +123,21 @@ fn plausible(x: f64, y: f64) -> Option<(f64, f64)> {
     (PLAUSIBLE_DPI.contains(&x) && PLAUSIBLE_DPI.contains(&y)).then_some((x, y))
 }
 
-/// The orientation in an EXIF segment's payload, after `Exif\0\0`.
-fn exif_orientation(tiff: &[u8]) -> Option<u8> {
+#[derive(Default)]
+struct Exif {
+    orientation: Option<u8>,
+    dpi: Option<(f64, f64)>,
+}
+
+/// The orientation and physical resolution in an EXIF segment's payload, after `Exif\0\0`.
+fn exif_properties(tiff: &[u8]) -> Option<Exif> {
     let little = match tiff.get(..4)? {
         [b'I', b'I', 42, 0] => true,
         [b'M', b'M', 0, 42] => false,
         _ => return None,
     };
     let u16_at = |at: usize| {
-        let pair: [u8; 2] = tiff.get(at..at + 2)?.try_into().ok()?;
+        let pair: [u8; 2] = tiff.get(at..)?.get(..2)?.try_into().ok()?;
         Some(if little {
             u16::from_le_bytes(pair)
         } else {
@@ -139,7 +145,7 @@ fn exif_orientation(tiff: &[u8]) -> Option<u8> {
         })
     };
     let u32_at = |at: usize| {
-        let four: [u8; 4] = tiff.get(at..at + 4)?.try_into().ok()?;
+        let four: [u8; 4] = tiff.get(at..)?.get(..4)?.try_into().ok()?;
         Some(if little {
             u32::from_le_bytes(four)
         } else {
@@ -148,15 +154,43 @@ fn exif_orientation(tiff: &[u8]) -> Option<u8> {
     };
     let directory = u32_at(4)? as usize;
     let entries = usize::from(u16_at(directory)?);
-    // A directory of a few hundred entries is already not a camera's.
-    for entry in 0..entries.min(512) {
+    let rational = |offset: u32| {
+        let pos = usize::try_from(offset).ok()?;
+        let numerator = u32_at(pos)?;
+        let denominator = u32_at(pos.checked_add(4)?)?;
+        (denominator != 0).then(|| f64::from(numerator) / f64::from(denominator))
+    };
+    let mut facts = Exif::default();
+    let (mut x, mut y) = (None, None);
+    // TIFF's default ResolutionUnit is inches.
+    let mut unit = 2;
+    // A truncated final entry must not discard facts from the complete ones.
+    let available = (tiff.len() - directory - 2) / 12;
+    for entry in 0..entries.min(512).min(available) {
         let at = directory + 2 + entry * 12;
-        if u16_at(at)? == 0x0112 {
-            let value = u16_at(at + 8)?;
-            return u8::try_from(value).ok().filter(|v| (1..=8).contains(v));
+        if u32_at(at + 4)? != 1 {
+            continue;
+        }
+        match (u16_at(at)?, u16_at(at + 2)?) {
+            (0x0112, 3) => {
+                facts.orientation = u8::try_from(u16_at(at + 8)?)
+                    .ok()
+                    .filter(|v| (1..=8).contains(v))
+            }
+            (0x011a, 5) => x = rational(u32_at(at + 8)?),
+            (0x011b, 5) => y = rational(u32_at(at + 8)?),
+            (0x0128, 3) => unit = u16_at(at + 8)?,
+            _ => {}
         }
     }
-    None
+    if let (Some(x), Some(y)) = (x, y) {
+        facts.dpi = match unit {
+            2 => plausible(x, y),
+            3 => plausible(x * 2.54, y * 2.54),
+            _ => None,
+        };
+    }
+    Some(facts)
 }
 
 /// What a JPEG's header says, read without decoding anything.
@@ -177,6 +211,7 @@ fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
         orientation: 1,
         dpi: None,
     };
+    let mut exif_dpi = None;
     let mut offset = 2;
     loop {
         if bytes.get(offset) != Some(&0xff) {
@@ -205,8 +240,11 @@ fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
                 };
             }
             0xe1 if payload.starts_with(b"Exif\0\0") => {
-                if let Some(found) = exif_orientation(&payload[6..]) {
-                    facts.orientation = found;
+                if let Some(found) = exif_properties(&payload[6..]) {
+                    if let Some(orientation) = found.orientation {
+                        facts.orientation = orientation;
+                    }
+                    exif_dpi = found.dpi.or(exif_dpi);
                 }
             }
             // The frame: baseline, extended or progressive, eight bits a sample.
@@ -217,6 +255,7 @@ fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
                 facts.height = u32::from(u16::from_be_bytes([payload[1], payload[2]]));
                 facts.width = u32::from(u16::from_be_bytes([payload[3], payload[4]]));
                 facts.components = payload[5];
+                facts.dpi = facts.dpi.or(exif_dpi);
                 return Ok(facts);
             }
             0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf => {
