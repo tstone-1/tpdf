@@ -377,6 +377,52 @@ fn what_could_change_by_more_than_resolution_is_left_as_it_is() {
 }
 
 #[test]
+fn a_page_unit_scales_all_uses_including_a_soft_mask_also_drawn_directly() {
+    let mut doc = Document::with_version("1.7");
+    let mask = doc.add_object(Stream::new(
+        image(400, 400, "DeviceGray".into()),
+        noise(400 * 400),
+    ));
+    let mut img = image(400, 400, "DeviceRGB".into());
+    img.set("SMask", mask);
+    let parent = doc.add_object(Stream::new(img, noise(400 * 400 * 3)));
+    let page = page_with(
+        &mut doc,
+        "q 72 0 0 72 0 0 cm /Im Do Q q 18 0 0 18 0 0 cm /G Do Q",
+        &[("Im", parent), ("G", mask)],
+    );
+    doc.get_dictionary_mut(page).unwrap().set("UserUnit", 4);
+    let _ = apply(&mut doc, SCREEN);
+    assert_eq!(whole(&doc, parent, b"Width"), 400);
+    assert_eq!(whole(&doc, mask, b"Width"), 400);
+    assert_ne!(filter(&doc, mask), "DCTDecode");
+}
+
+#[test]
+fn the_preview_ignores_a_larger_losslessly_reencoded_image() {
+    let mut doc = Document::with_version("1.7");
+    let flat = doc.add_object(Stream::new(
+        image(500, 500, "DeviceGray".into()),
+        vec![80; 500 * 500],
+    ));
+    let photo = doc.add_object(Stream::new(
+        image(400, 400, "DeviceRGB".into()),
+        noise(400 * 400 * 3),
+    ));
+    pages_with(
+        &mut doc,
+        &[
+            ("q 475 0 0 475 0 0 cm /Flat Do Q", &[("Flat", flat)]),
+            ("q 400 0 0 400 0 0 cm /Photo Do Q", &[("Photo", photo)]),
+        ],
+    );
+    assert_eq!(
+        super::estimate(&doc, SCREEN).unwrap().focus.unwrap().page,
+        1
+    );
+}
+
+#[test]
 fn a_soft_mask_is_scaled_with_its_picture_and_never_stored_as_jpeg() {
     let mut doc = Document::with_version("1.7");
     let mask = doc.add_object(

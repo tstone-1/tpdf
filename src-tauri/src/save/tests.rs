@@ -6522,6 +6522,34 @@ fn a_checked_copy_is_shown_the_staged_file_before_it_has_its_name() {
 }
 
 #[test]
+fn a_smaller_copy_checks_the_finished_edit_before_replacing_the_destination() {
+    use crate::commands::compress::CompressionSize;
+    let scratch = Scratch::new("smaller-copy-size");
+    let (source, plan) = staging_subject(&scratch, "source.pdf").unwrap();
+    let out = scratch.join("copy.pdf");
+    let original = std::fs::read(&source).unwrap();
+    for length in [original.len() + 1, original.len(), original.len() - 1] {
+        std::fs::write(&out, b"existing copy").unwrap();
+        let writer = FakeWriter::writing(Ok(vec![42; length]));
+        let measured = std::cell::Cell::new(None);
+        let result = write_checked_copy(&source, &plan, &out, None, &writer, &|staged| {
+            measured.set(Some(CompressionSize::smaller(&source, staged)?));
+            Ok(())
+        });
+        if length < original.len() {
+            result.unwrap();
+            let sizes = measured.get().unwrap();
+            assert_eq!(sizes.bytes_before, original.len() as u64);
+            assert_eq!(sizes.bytes_after, length as u64);
+            assert_eq!(std::fs::read(&out).unwrap(), vec![42; length]);
+        } else {
+            assert!(result.unwrap_err().message.contains("not be smaller"));
+            assert_eq!(std::fs::read(&out).unwrap(), b"existing copy");
+        }
+    }
+}
+
+#[test]
 fn a_checked_copy_that_fails_its_check_leaves_nothing_and_replaces_nothing() {
     let scratch = Scratch::new("checked-copy-refused");
     let (source, plan) = staging_subject(&scratch, "source.pdf").expect("subject");

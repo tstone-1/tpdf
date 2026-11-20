@@ -942,7 +942,7 @@ ROWS += [
 # --- copying, cutting and pasting marks, 2026-10-15 --------------------------------
 ROWS += [
     Mutation("mark clipboard: copy a highlight", "src/lib/markclipboard.ts",
-        '      return "A mark made over words is not copied: on another page it would mark nothing";',
+        "      return TEXT().words;",
         "      return null;",
         "copies the marks a reader places, and not those made of words or fields"),
     Mutation("mark clipboard: share the mark's arrays", "src/lib/markclipboard.ts",
@@ -1014,7 +1014,7 @@ ROWS += [
         "",
         "drops what is not kept, and a fetch that lands after its mark was dropped"),
     Mutation("mark clipboard: a picture without its pixels", "src/lib/markclipboard.ts",
-        '  if (mark.kind === "picture" && !pixels) return "A picture whose pixels could not be read is not copied";\n',
+        "  if (mark.kind === \"picture\" && !pixels) return TEXT().pixels;\n",
         "",
         "carries its pixels, and is not copied without them"),
     Mutation("mark clipboard: a signature's pixels left behind", "src/lib/markclipboard.ts",

@@ -37,6 +37,24 @@ function open(): {
 }
 
 describe("PasswordDialog", () => {
+  it("keeps Find inside the modal and lets Cancel handle Enter", async () => {
+    const { dialog, backdrop, cancel } = open();
+    const answer = dialog.ask("locked.pdf", "locked");
+    expect(backdrop.open).toBe(true);
+    let stopped = false;
+    let prevented = false;
+    backdrop.dispatch("keydown", { key: "f", ctrlKey: true,
+      stopPropagation: () => { stopped = true; }, preventDefault: () => { prevented = true; } });
+    expect([stopped, prevented]).toEqual([true, true]);
+    prevented = false;
+    backdrop.dispatch("keydown", { key: "Enter", target: cancel, preventDefault: () => { prevented = true; } });
+    expect(prevented).toBe(false);
+    expect(dialog.isOpen).toBe(true);
+    cancel.dispatch("click", {});
+    await expect(answer).resolves.toBeNull();
+    expect(backdrop.open).toBe(false);
+  });
+
   it("resolves with what was typed", async () => {
     const { dialog, field, unlock } = open();
     const answer = dialog.ask("locked.pdf", "This document is locked, and needs a password.");
@@ -87,7 +105,7 @@ describe("PasswordDialog", () => {
     const { dialog, backdrop, field } = open();
     const answer = dialog.ask("locked.pdf", "locked");
     field.value = "swordfish";
-    backdrop.dispatch("keydown", { key: "Enter" });
+    backdrop.dispatch("keydown", { key: "Enter", target: field });
     await expect(answer).resolves.toBe("swordfish");
   });
 

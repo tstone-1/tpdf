@@ -192,6 +192,19 @@ describe("RecognitionLanguage", () => {
     expect(state.question()).toBeNull();
   });
 
+  it("keeps the current question when the menu is invoked twice", async () => {
+    const state = new RecognitionLanguage();
+    let asks = 0;
+    const open = () => state.choose(async () => windows, () => { asks++; }, () => {});
+    await Promise.all([open(), open()]);
+    await open();
+    expect(asks).toBe(1);
+    expect(state.answer("en-US")).toBe(chosen("en-US"));
+    expect(placeholder(null, windows.languages)).toContain("en-US");
+    expect(placeholder(null, ["de"])).toContain("de /");
+    expect(placeholder(null, [])).not.toContain("de-DE");
+  });
+
   it("takes an answer once, says it, and stops asking", () => {
     const state = new RecognitionLanguage();
     state.hold(mac);

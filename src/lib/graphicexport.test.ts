@@ -124,7 +124,8 @@ describe("graphicName and graphicSaid", () => {
 
   it("says what was made, by what was made", () => {
     expect(graphicSaid(DRAWING)).toBe("Copied the graphic, 2015 by 363 pixels on a transparent background.");
-    expect(graphicSaid({ ...DRAWING, extension: "svg" }, "logo.svg")).toMatch(/logo\.svg, a drawing that stays sharp/);
+    expect(graphicSaid({ ...DRAWING, extension: "svg" }, "logo.svg")).toBe("Saved the graphic as logo.svg.");
+    expect(graphicSaid({ ...JPEG, extension: "svg" }, "photo.svg")).toBe("Saved the graphic as photo.svg.");
     expect(graphicSaid({ ...JPEG, extension: "jpg" }, "logo.jpg")).toMatch(/picture as logo\.jpg, as the document stores it/);
     expect(graphicSaid({ ...DRAWING, extension: "png" }, "logo.png")).toMatch(/logo\.png, 2015 by 363 pixels/);
   });

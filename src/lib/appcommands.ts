@@ -2899,7 +2899,8 @@ export function registerAppCommands(
       enabled: () => actions.recognitionLanguages() !== null,
       argument: {
         get placeholder() {
-          return languagePlaceholder(actions.recognitionLanguages()?.current ?? null);
+          const list = actions.recognitionLanguages();
+          return languagePlaceholder(list?.current ?? null, list?.offered.languages);
         },
         problem: (raw: string) => {
           const asked = actions.recognitionLanguages();

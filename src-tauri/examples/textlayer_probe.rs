@@ -298,6 +298,47 @@ fn touching(bindings: progressive::Bindings, scratch: &Path) -> bool {
             word("right", 198.0, 250.0),
         ],
     };
+    let unicode = Layer {
+        page: 0,
+        words: vec![
+            word("\u{5d0}\u{5d1}\u{5d2}\u{5d3}", 20.0, 68.0),
+            Word {
+                text: "A\u{1d49c}B".into(),
+                rect: [140.0, 54.0, 176.0, 66.0],
+            },
+            word("\u{5d0}12\u{5d1}", 232.0, 280.0),
+        ],
+    };
+    let mut unicode_doc = doc.clone();
+    textlayer::write(&mut unicode_doc, std::slice::from_ref(&unicode)).expect("Unicode layer");
+    let file = tempfile::tempdir().expect("private probe directory");
+    let at = file.path().join("unicode.pdf");
+    unicode_doc.save(&at).expect("write Unicode layer");
+    let unicode_read = open(bindings, &at)
+        .and_then(|document| text::extract(&document.page(0).ok()?).ok())
+        .expect("read Unicode layer");
+    let unicode_ok = check(
+        "right-to-left OCR reads in order, at its place, alongside a supplementary character",
+        tpdf_lib::ocr_layer::reads_back(&unicode, &text::PageText::default(), &unicode_read),
+        &format!("{:x?}", unicode_read.codes),
+    );
+    let mut reversed = unicode_read.clone();
+    let a = reversed
+        .codes
+        .iter()
+        .position(|&c| c == 'A' as u32)
+        .unwrap();
+    let b = reversed
+        .codes
+        .iter()
+        .position(|&c| c == 'B' as u32)
+        .unwrap();
+    reversed.codes.swap(a, b);
+    let reversed_refused = check(
+        "reversing the Latin word on a bidirectional page invalidates the layer",
+        !tpdf_lib::ocr_layer::reads_back(&unicode, &text::PageText::default(), &reversed),
+        "",
+    );
     let name = "three words whose boxes touch read back as three words";
     if let Err(why) = textlayer::write(&mut doc, &[layer]) {
         return check(name, false, &why);
@@ -318,7 +359,8 @@ fn touching(bindings: progressive::Bindings, scratch: &Path) -> bool {
         name,
         read == ["left", "middle", "right"],
         &format!("{read:?}"),
-    )
+    ) && unicode_ok
+        && reversed_refused
 }
 
 /// The largest difference between two boxes' matching edges.

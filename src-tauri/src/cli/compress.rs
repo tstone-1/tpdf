@@ -17,7 +17,7 @@
 //! not smaller is not written.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::args::{lexically_same, unknown, value};
 use super::fill::SignedState;
@@ -167,6 +167,35 @@ pub fn saved_percent(before: u64, after: u64) -> u64 {
     (before - after) * 100 / before
 }
 
+/// Compare new names using the destination filesystem's case and normalization rules.
+fn same_destination(output: &Path, preview: &Path) -> Result<bool, Failure> {
+    if save::same_file(output, preview) {
+        return Ok(true);
+    }
+    let parent = |path: &Path| {
+        path.parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .to_path_buf()
+    };
+    if output.exists() || preview.exists() || !save::same_file(&parent(output), &parent(preview)) {
+        return Ok(false);
+    }
+    let (Some(left), Some(right)) = (output.file_name(), preview.file_name()) else {
+        return Err(Failure::new(
+            Exit::Usage,
+            "choose filenames for the PDF and preview",
+        ));
+    };
+    let temp = Temporary::beside(output)?;
+    std::fs::File::create_new(temp.0.join(left))
+        .map_err(|e| Failure::new(Exit::Refused, e.to_string()))?;
+    temp.0
+        .join(right)
+        .try_exists()
+        .map_err(|e| Failure::new(Exit::Refused, e.to_string()))
+}
+
 impl Compress {
     fn way(&self) -> Way {
         self.pictures.map_or(Way::Lossless, Way::Pictures)
@@ -183,7 +212,9 @@ impl Compress {
             if self
                 .output
                 .as_ref()
-                .is_some_and(|output| save::same_file(output, preview))
+                .map(|output| same_destination(output, preview))
+                .transpose()?
+                .unwrap_or(false)
             {
                 return Err(Failure::new(
                     Exit::Usage,
@@ -307,6 +338,16 @@ impl Compress {
 
         let mut preview = None;
         if let Some((_staging, staged, path)) = &staged_preview {
+            if self
+                .output
+                .as_ref()
+                .is_some_and(|pdf| save::same_file(pdf, path))
+            {
+                return Err(Failure::new(
+                    Exit::Refused,
+                    "the preview now names the published PDF",
+                ));
+            }
             Temporary::publish(staged, path, self.force)?;
             preview = Some(path.display().to_string());
         }
@@ -413,6 +454,21 @@ mod tests {
 
     fn args(line: &str) -> Vec<String> {
         line.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn absent_output_names_follow_the_volume_case_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let control = dir.path().join("Case");
+        std::fs::write(&control, []).unwrap();
+        let insensitive = dir.path().join("CASE").exists();
+        let pdf = dir.path().join("Report.pdf");
+        assert_eq!(
+            same_destination(&pdf, &dir.path().join("REPORT.pdf")).unwrap(),
+            insensitive
+        );
+        assert!(!same_destination(&pdf, &dir.path().join("preview.png")).unwrap());
+        assert!(!pdf.exists());
     }
 
     #[test]

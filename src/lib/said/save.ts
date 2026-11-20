@@ -11,6 +11,8 @@ const n = (count: string | undefined, one: string, many: string): string =>
   count === "1" ? one : many;
 
 export default {
+  "the copy would not be smaller than the source": "Die Kopie wäre nicht kleiner als die Quelldatei",
+  "the staged file was not measured": "Die Größe der vorbereiteten Datei wurde nicht ermittelt",
   "the document's page labels could not be remapped":
     "Die Seitenbezeichnungen des Dokuments konnten nicht neu zugeordnet werden",
   // redact.rs: what stays, and why.

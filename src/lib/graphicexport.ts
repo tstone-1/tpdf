@@ -28,7 +28,7 @@ const TEXT = catalog({
     storedJpeg: "JPEG picture, as stored",
     copied: (width: number, height: number) =>
       `Copied the graphic, ${width} by ${height} pixels on a transparent background.`,
-    savedSvg: (name: string) => `Saved the graphic as ${name}, a drawing that stays sharp at any size.`,
+    savedSvg: (name: string) => `Saved the graphic as ${name}.`,
     savedPng: (name: string, width: number, height: number) =>
       `Saved the graphic as ${name}, ${width} by ${height} pixels on a transparent background.`,
     savedJpeg: (name: string) => `Saved the picture as ${name}, as the document stores it.`,
@@ -44,7 +44,7 @@ const TEXT = catalog({
     storedJpeg: "JPEG-Bild, wie gespeichert",
     copied: (width: number, height: number) =>
       `Grafik kopiert, ${width} × ${height} Pixel auf transparentem Hintergrund.`,
-    savedSvg: (name: string) => `Grafik als ${name} gespeichert, eine Zeichnung, die in jeder Größe scharf bleibt.`,
+    savedSvg: (name: string) => `Grafik als ${name} gespeichert.`,
     savedPng: (name: string, width: number, height: number) =>
       `Grafik als ${name} gespeichert, ${width} × ${height} Pixel auf transparentem Hintergrund.`,
     savedJpeg: (name: string) => `Bild als ${name} gespeichert, so wie das Dokument es enthält.`,
@@ -153,10 +153,8 @@ export interface GraphicChoice {
 /**
  * The formats a region can be saved as, the one to suggest first.
  *
- * SVG first when the drawing can be one, because it stays sharp at any size;
- * then PNG, which every graphic can be; and the stored JPEG when the region
- * is one. A picture stored any other way is already given as it is by the
- * PNG, so it has no third choice.
+ * Offer SVG for supported graphics, then the original JPEG when available.
+ * PNG is available for every graphic.
  */
 export function graphicChoices(found: GraphicFound): GraphicChoice[] {
   const choices: GraphicChoice[] = [];

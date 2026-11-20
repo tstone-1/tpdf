@@ -492,7 +492,7 @@ export interface Commands {
       path: string;
       pictures: import("./compress").Pictures | null;
     };
-    reply: Copied;
+    reply: import("./compress").CompressionSize;
   };
   extract_pages: {
     args: { doc: DocHandle; source: string; path: string; slots: number[] };

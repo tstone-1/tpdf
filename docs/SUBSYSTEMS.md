@@ -546,7 +546,8 @@ instead of only with `qpdf`. A new password also gets `/Length 256`, a file iden
 the source had none, and a header of at least 1.7.
 
 A new password is one string used as both the user and the owner password, with every
-permission granted, under `V 5`/`R 6`. `cli/protect.rs` is the tool's two commands, which
+permission granted, under `V 5`/`R 6`. Setting one is refused if the source opens without
+a password and restricts permissions. `cli/protect.rs` is the tool's two commands, which
 open the staged copy in fresh PDFium workers before publishing it; `commands/protect.rs` is
 the window's one command, `protect_copy`, where a password sets and its absence removes. On
 the frontend the rules and sentences are `src/lib/protect.ts` and the dialog is
@@ -569,12 +570,13 @@ file nor an append.
 
 Lossless deflates plain streams and deflates deflated ones again, keeping what is smaller.
 Pictures are found by `drawn`, which walks page content and the blocks it draws for the
-matrix at each `Do`; `shrink` scales and re-encodes one picture and leaves it when the new
+matrix at each `Do`, including the page’s `UserUnit`; `shrink` scales and re-encodes one picture and leaves it when the new
 form is not a tenth smaller. The JPEG encoder is the `image` crate's, already in the tree
 through `pdfium-render`; the decoder is `zune-jpeg`, as for `tpdf images`.
 
-The estimate is a worker request, `Request::Shrink`, answered from the graph's one
-`lopdf` parse (`DocumentGraph::shrink`), so it is of the file as opened. `render::run_shrink`
+The window measures a temporary copy made from the current edit plan. For a picture preview, it
+asks the worker for `Request::Shrink` on the working document, including unsaved changes. On save
+it checks the staged file is smaller before replacing the destination and reports the measured sizes. `render::run_shrink`
 adds the sample: it opens the estimate's bytes as a second document in the same worker and
 draws one page from each. `commands/compress.rs` turns the sample into two PNG `data:` URLs
 for `compressdialog.ts`. `docs/PLAN.md` *A smaller copy* has the measurements and
@@ -600,7 +602,12 @@ which pages get a layer and what the engine is asked; `cli/ocr.rs` is the tool's
 session and asks for 1024 px tiles, the window asks the render service for the page as one
 tile. The window's copy goes through `save::write_checked_copy`, which shows the staged file
 to a check before the rename and refuses a source that changed; the check opens the staged
-file in the render service and compares each layer with `ocr_layer::reads_back`. Progress is
+file in the render service and compares each layer with `ocr_layer::reads_back`. Both OCR render paths exclude
+annotations and editable widgets. The CLI hidden-text check shares the tile renderer and explicitly
+includes overlays to detect text covered by a comment. Each OCR layer maps only the Unicode scalars
+it writes. Right-to-left words are laid out in visual order. On a page with such a word the check
+verifies extracted text and character positions for every written word, since the reader may reverse
+a neighbouring Latin word too. The writer refuses a layer on a page object shared by multiple slots. Progress is
 the event `tpdf://ocr-progress`, and `ocr_cancel` sets a flag read between pages. On the
 frontend the sentences are `src/lib/recognise.ts`; `App.svelte` keeps the save panel, the
 Stop button and the open of the copy. The plan

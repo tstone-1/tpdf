@@ -130,7 +130,7 @@ fn every_other_malformed_redaction_line_is_refused_with_its_reason() {
         ("in.pdf -o out.pdf --text", "needs a value"),
         (
             "in.pdf -o out.pdf --text a --password-env A=B",
-            "cannot be one",
+            "environment variable name",
         ),
     ] {
         let why = refused(line);

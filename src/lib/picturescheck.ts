@@ -45,6 +45,22 @@ export async function picturesCheck(host: OpenCheckHost, expected: string, repor
   const pages = host.edits()?.state.pages.length ?? 0;
   report.check("and it has a page for each picture", pages === 2, String(pages));
 
+  // Try to replace this two-page album with a one-page file. The disk check
+  // below the window also reads the original two pages back after both attempts.
+  for (const dirty of [false, true]) {
+    if (dirty) {
+      host.run("edit.rotatePageClockwise");
+      if (!await settle(() => host.edits()?.state.dirty === true, SETTLE_MS)) throw new Error("rotation failed");
+    }
+    host.answerPictures([first]);
+    host.answerSave(at("album.pdf"));
+    host.run("file.fromPictures");
+    await host.idle();
+    const refused = await settle(() => shown().includes("Close the open destination"), WRITE_MS);
+    report.check(`an open album is preserved (dirty=${dirty})`, refused && host.edits()?.state.dirty === dirty
+      && host.path() === at("album.pdf") && host.edits()?.state.pages.length === 2, shown());
+  }
+
   // ---- 2. A file that is not a picture: refused by name, and nothing changes.
   host.answerPictures([first, at("album.pdf")]);
   host.answerSave(at("refused.pdf"));

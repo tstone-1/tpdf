@@ -13,9 +13,25 @@
  * `App.svelte` makes the marks; this decides what can be copied and holds it.
  */
 
+import { catalog } from "./i18n";
 import type { MarkKind, MarkView, PageId, StampName } from "./pages";
 import { hasStrokes } from "./markband";
 import type { PicturePixels } from "./picture";
+
+const TEXT = catalog({
+  "en-US": {
+    words: "A mark made over words is not copied: on another page it would mark nothing",
+    field: "A form field is not copied; use Arrange: duplicate",
+    pixels: "A picture whose pixels could not be read is not copied",
+    signature: "A signature picture without its pixels is not copied",
+  },
+  "de-DE": {
+    words: "Eine Textmarkierung lässt sich nicht kopieren, weil ihr auf einer anderen Seite der zugehörige Text fehlt.",
+    field: "Ein Formularfeld lässt sich mit dem Befehl zum Duplizieren vervielfältigen.",
+    pixels: "Das Bild konnte nicht kopiert werden, weil seine Bilddaten nicht lesbar waren.",
+    signature: "Das Unterschriftsbild konnte ohne seine Bilddaten nicht kopiert werden.",
+  },
+});
 
 /** One copied mark. Geometry in the model's space for its page, as `MarkView` holds it. */
 export interface CopiedMark {
@@ -55,9 +71,9 @@ export function notCopied(kind: MarkKind): string | null {
     case "underline":
     case "strikeout":
     case "squiggly":
-      return "A mark made over words is not copied: on another page it would mark nothing";
+      return TEXT().words;
     case "field":
-      return "A form field is not copied; use Arrange: duplicate";
+      return TEXT().field;
     case "note":
     case "square":
     case "ellipse":
@@ -82,8 +98,8 @@ export function notCopied(kind: MarkKind): string | null {
 export function describe(mark: MarkView, pixels?: PicturePixels): CopiedMark | string {
   const why = notCopied(mark.kind);
   if (why) return why;
-  if (mark.kind === "picture" && !pixels) return "A picture whose pixels could not be read is not copied";
-  if (mark.kind === "signature" && !mark.image) return "A signature picture without its pixels is not copied";
+  if (mark.kind === "picture" && !pixels) return TEXT().pixels;
+  if (mark.kind === "signature" && !mark.image) return TEXT().signature;
   return {
     kind: mark.kind,
     quads: [...mark.quads],
@@ -119,6 +135,7 @@ export class MarkClipboard {
     marks: readonly MarkView[],
     from: CopiedFrom,
     pixels: ReadonlyMap<number, PicturePixels> = new Map(),
+    requireAll = false,
   ): { copied: number; refused: string[] } {
     const copied: CopiedMark[] = [];
     const refused: string[] = [];
@@ -127,11 +144,18 @@ export class MarkClipboard {
       if (typeof one === "string") refused.push(one);
       else copied.push(one);
     }
+    if (requireAll && refused.length > 0) return { copied: 0, refused };
     if (copied.length > 0) {
       this.held = copied;
       this.source = from;
     }
     return { copied: copied.length, refused };
+  }
+
+  /** A cut waiting for pixels is cancelled when the selection changes. */
+  sameSelection(captured: readonly number[], current: readonly number[]): boolean {
+    const ids = new Set(current);
+    return captured.length === current.length && captured.every((id) => ids.has(id));
   }
 
   /** The marks held, for a paste. */

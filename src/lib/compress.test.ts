@@ -130,12 +130,8 @@ describe("what a smaller copy comes to, in words", () => {
   it("suggests a name and says the size once the copy is written", () => {
     expect(suggestedName("/home/me/Report.PDF")).toBe("Report smaller.pdf");
     expect(suggestedName("notes")).toBe("notes smaller.pdf");
-    expect(afterCompress({}, "/out/Report smaller.pdf", shrinkage(95_103_456, 4_094_847))).toBe(
+    expect(afterCompress(shrinkage(95_103_456, 4_094_847), "/out/Report smaller.pdf")).toBe(
       "Saved Report smaller.pdf, about 3.9 MB where the document is 91 MB.",
-    );
-    expect(afterCompress({}, "/out/a.pdf", null)).toBe("Saved a.pdf.");
-    expect(afterCompress({ changed: true }, "/out/a.pdf", null)).toMatch(
-      /^Saved a\.pdf\. The file was written, but the original changed on disk/,
     );
   });
 });

@@ -73,17 +73,176 @@ pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
         .and_then(|ef| ef.get(b"UF").or_else(|_| ef.get(b"F")).ok())
         .and_then(|file| resolve(document, file).as_stream().ok())
         .ok_or_else(|| said!("{name} holds no file to save."))?;
-    if stream.dict.has(b"Filter") {
-        stream
-            .decompressed_content_with_limit(MAX_DECODE)
-            .map_err(|why| {
-                said!(
-                    "{name} could not be decoded within {mib} MiB: {why}",
-                    mib = MAX_DECODE >> 20
-                )
-            })
+    decode(document, stream, MAX_DECODE).map_err(|why| {
+        said!(
+            "{name} could not be decoded within {mib} MiB: {why}",
+            mib = MAX_DECODE >> 20
+        )
+    })
+}
+
+fn decode(document: &Document, stream: &lopdf::Stream, limit: usize) -> Result<Vec<u8>, String> {
+    use std::borrow::Cow;
+
+    let direct = |value| {
+        document
+            .dereference(value)
+            .map(|(_, obj)| obj)
+            .map_err(|e| e.to_string())
+    };
+    if stream.dict.has(b"F") {
+        return Err(said!("external attachment streams are unsupported"));
+    }
+    let filters = match stream.dict.get(b"Filter").ok().map(direct).transpose()? {
+        None | Some(Object::Null) => &[][..],
+        Some(name @ Object::Name(_)) => std::slice::from_ref(name),
+        Some(Object::Array(filters)) if !filters.is_empty() => filters,
+        _ => return Err(said!("invalid attachment filters")),
+    };
+    let params = match stream
+        .dict
+        .get(b"DecodeParms")
+        .ok()
+        .map(direct)
+        .transpose()?
+    {
+        None | Some(Object::Null) => &[][..],
+        Some(Object::Array(values)) if values.len() == filters.len() => values,
+        Some(value @ Object::Dictionary(_)) if filters.len() == 1 => std::slice::from_ref(value),
+        _ => return Err(said!("invalid attachment filter parameters")),
+    };
+    let mut bytes = Cow::Borrowed(stream.content.as_slice());
+    for (index, filter) in filters.iter().enumerate() {
+        let name = direct(filter)?.as_name().map_err(|e| e.to_string())?;
+        let mut parameters = lopdf::Dictionary::new();
+        match params.get(index).map(direct).transpose()? {
+            Some(Object::Dictionary(dict)) => {
+                for key in [
+                    b"Predictor".as_slice(),
+                    b"Columns",
+                    b"Colors",
+                    b"BitsPerComponent",
+                    b"EarlyChange",
+                ] {
+                    if let Ok(value) = dict.get(key) {
+                        parameters.set(key, direct(value)?.as_i64().map_err(|e| e.to_string())?);
+                    }
+                }
+            }
+            None | Some(Object::Null) => {}
+            _ => return Err(said!("invalid attachment filter parameters")),
+        }
+        bytes = Cow::Owned(decode_stage(name, bytes, parameters, limit)?);
+    }
+    if bytes.len() > limit {
+        return Err(said!("attachment exceeds its size limit"));
+    }
+    Ok(bytes.into_owned())
+}
+
+fn decode_stage(
+    name: &[u8],
+    input: std::borrow::Cow<'_, [u8]>,
+    params: lopdf::Dictionary,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    use crate::encoding::complete::{ascii85, flate};
+    let number = |key: &[u8], default| params.get(key).and_then(Object::as_i64).unwrap_or(default);
+    let predictor = number(b"Predictor", 1);
+    let plain = match name {
+        b"ASCII85Decode" => return ascii85(&input, limit),
+        b"FlateDecode" => Some(flate(&input, limit)?),
+        b"LZWDecode" => {
+            let early = number(b"EarlyChange", 1);
+            if !matches!(early, 0 | 1) {
+                return Err(said!("invalid LZW EarlyChange"));
+            }
+            Some(lzw(&input, early == 1, limit)?)
+        }
+        b"ASCIIHexDecode" => {
+            if !input
+                .iter()
+                .position(|&b| b == b'>')
+                .is_some_and(|end| input[end + 1..].iter().all(u8::is_ascii_whitespace))
+            {
+                return Err(said!("incomplete ASCIIHex attachment"));
+            }
+            None
+        }
+        b"RunLengthDecode" => {
+            let mut rest = input.as_ref();
+            loop {
+                match rest.split_first() {
+                    Some((&128, [])) => break,
+                    Some((&length, tail)) if length != 128 => {
+                        let count = if length < 128 {
+                            usize::from(length) + 1
+                        } else {
+                            1
+                        };
+                        rest = tail
+                            .get(count..)
+                            .ok_or_else(|| said!("incomplete RunLength attachment"))?;
+                    }
+                    _ => return Err(said!("incomplete RunLength attachment")),
+                }
+            }
+            None
+        }
+        b"BrotliDecode" => None,
+        _ => return Err(said!("unsupported attachment filter")),
+    };
+    if let Some(plain) = plain {
+        if predictor == 1 {
+            return Ok(plain);
+        }
+        let columns = usize::try_from(number(b"Columns", 1)).unwrap_or(0);
+        let colors = usize::try_from(number(b"Colors", 1)).unwrap_or(0);
+        let bits = usize::try_from(number(b"BitsPerComponent", 8)).unwrap_or(0);
+        let stride = columns
+            .checked_mul(colors)
+            .and_then(|n| n.checked_mul(bits))
+            .map(|n| n.div_ceil(8));
+        let Some(stride) = stride.filter(|&n| n > 0 && n <= limit && n <= plain.len()) else {
+            return Err(said!("invalid attachment predictor dimensions"));
+        };
+        if !matches!(bits, 1 | 2 | 4 | 8 | 16)
+            || !matches!(predictor, 2 | 10..=15)
+            || plain.len() % (stride + usize::from(predictor >= 10)) != 0
+        {
+            return Err(said!("invalid attachment predictor rows"));
+        }
+    }
+    let mut dict = lopdf::Dictionary::new();
+    dict.set("Filter", Object::Name(name.to_vec()));
+    dict.set("DecodeParms", params);
+    lopdf::Stream::new(dict, input.into_owned())
+        .decompressed_content_with_limit(limit)
+        .map_err(|e| e.to_string())
+}
+
+fn lzw(input: &[u8], early: bool, limit: usize) -> Result<Vec<u8>, String> {
+    use weezl::{decode::Decoder, BitOrder, LzwStatus};
+    let mut decoder = if early {
+        Decoder::with_tiff_size_switch(BitOrder::Msb, 8)
     } else {
-        Ok(stream.content.clone())
+        Decoder::new(BitOrder::Msb, 8)
+    };
+    let mut rest = input;
+    let mut bytes = Vec::new();
+    let mut buffer = [0; 8192];
+    loop {
+        let step = decoder.decode_bytes(rest, &mut buffer);
+        if step.consumed_out > limit - bytes.len() {
+            return Err(said!("attachment exceeds its size limit"));
+        }
+        bytes.extend_from_slice(&buffer[..step.consumed_out]);
+        rest = &rest[step.consumed_in..];
+        match step.status {
+            Ok(LzwStatus::Done) if rest.is_empty() => return Ok(bytes),
+            Ok(LzwStatus::Ok) if step.consumed_in != 0 || step.consumed_out != 0 => {}
+            _ => return Err(said!("incomplete or invalid LZW attachment")),
+        }
     }
 }
 
@@ -384,6 +543,63 @@ mod tests {
         assert_eq!(content(&doc, 1).expect("packed"), packed);
         let missing = content(&doc, 2).expect_err("no third");
         assert!(missing.contains("no attachment 3 (it has 2)"), "{missing}");
+    }
+
+    #[test]
+    fn attachment_filter_references_and_size_limits() {
+        let packed = b"packed ".repeat(50);
+        let mut doc = carrying(&[("a", "packed.txt", &packed, true)], false);
+        let filter = doc.add_object(Object::Name(b"FlateDecode".to_vec()));
+        let filters = doc.add_object(Object::Array(vec![Object::Reference(filter)]));
+        let one = doc.add_object(Object::Integer(1));
+        let params = doc.add_object(dictionary! { "Predictor" => one });
+        let stream = doc
+            .objects
+            .values_mut()
+            .find_map(|o| o.as_stream_mut().ok())
+            .unwrap();
+        stream.dict.set("Filter", filters);
+        stream
+            .dict
+            .set("DecodeParms", vec![Object::Reference(params)]);
+        assert_eq!(content(&doc, 0).unwrap(), packed);
+        let stream = doc
+            .objects
+            .values_mut()
+            .find_map(|o| o.as_stream_mut().ok())
+            .unwrap();
+        stream.content.pop();
+        assert!(content(&doc, 0).is_err());
+
+        let dir = crate::testutil::TempDir::new("incomplete-attachment");
+        let source = written(&dir, &mut doc);
+        let expected = crate::fingerprint::Fingerprint::of(&source).unwrap();
+        let dest = dir.join("kept.txt");
+        std::fs::write(&dest, b"previous file").unwrap();
+        assert!(save(&source, &expected, 0, &dest, None, &crate::save::Here).is_err());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"previous file");
+        assert_eq!(dir.names(), ["carrier.pdf", "kept.txt"]);
+
+        let columns = doc.add_object(Object::Integer(2));
+        let predicted = Stream::new(
+            dictionary! {
+                "Filter" => filter,
+                "DecodeParms" => dictionary! {"Predictor" => 12, "Columns" => columns}
+            },
+            vec![120, 156, 99, 112, 116, 98, 98, 98, 2, 0, 2, 95, 0, 138],
+        );
+        assert_eq!(decode(&doc, &predicted, 6).unwrap(), b"ABCD");
+        let raw = Stream::new(dictionary! {}, b"1234".to_vec());
+        assert_eq!(decode(&doc, &raw, 4).unwrap(), b"1234");
+        assert!(decode(&doc, &raw, 3).is_err());
+
+        let lzw = Stream::new(
+            dictionary! {"Filter" => "LZWDecode"},
+            vec![0x80, 0x10, 0x60, 0x20],
+        );
+        assert_eq!(decode(&doc, &lzw, 1).unwrap(), b"A");
+        let incomplete = Stream::new(lzw.dict, lzw.content[..2].to_vec());
+        assert!(decode(&doc, &incomplete, 1).is_err());
     }
 
     #[test]

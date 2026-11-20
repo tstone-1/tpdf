@@ -301,7 +301,7 @@ project conventions.
   the pictures and drawings lying wholly inside the drag come out on their own, without the
   page behind them. The copy is a PNG on a transparent background, for pasting into a picture
   editor, at 600 dpi up to about 63 cm² (9.7 square inches); a larger graphic is held to
-  3.5 million pixels, so a figure the size of half an A4 page comes out at about 270 dpi. The saved file is an SVG that stays sharp at any size, a PNG, or,
+  3.5 million pixels, so a figure the size of half an A4 page comes out at about 270 dpi. The saved file is an SVG (vectors scale and embedded pictures keep their resolution), a PNG, or,
   for a JPEG photo, the JPEG the document stores. A drawing with text or a gradient in it is
   saved as PNG only. A click on a picture or drawing selects it, and Ctrl+C or either command
   then takes that one without a drag.
@@ -999,8 +999,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   numbers* sets the resolution and the JPEG quality directly, and whether photographs may
   be stored as JPEG at all. A choice that would not make the file smaller cannot be saved.
   The open document and the file it came from keep every pixel; the copy includes changes
-  you have not saved yet, and the sizes shown are worked out from the file as it is on
-  disk. Text and line drawings are never made coarser: only pictures are.
+  you have not saved yet, and the dialog compares the file size on disk with a copy that includes those edits. Text and line drawings are never made coarser: only pictures are.
   <!-- built: file.compress -->
 - **Save a copy with page numbers** writes a copy with a number on every page, *Page 1 of
   3* at the bottom center unless you change it. The dialog takes the text, with `{page}`

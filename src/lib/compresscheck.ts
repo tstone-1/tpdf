@@ -154,4 +154,22 @@ export async function compressCheck(host: OpenCheckHost, expected: string, repor
   // ---- 5. The smaller copy opens.
   await host.open(at("small.pdf")); await host.idle(); await quiet();
   report.check("the smaller copy opens", host.path() === at("small.pdf"), host.path());
+
+  // A new page exists only in the working document. Its full-resolution picture
+  // makes the lossless plan larger than the compressed source on disk.
+  const working = host.edits();
+  if (!working) throw new Error("the smaller copy has no edit model");
+  const pending = await working.prepareImport(source);
+  await host.apply((edits) => edits.importPages(0, pending.pending, [0]));
+  const estimate = await working.compressEstimate(host.path(), null);
+  report.check("the estimate includes the unsaved imported page",
+    estimate.bytesAfter > estimate.bytesBefore, `${estimate.bytesBefore} to ${estimate.bytesAfter}`);
+  let refusal = "";
+  try {
+    await working.compressCopy(host.path(), at("tiny.pdf"), null);
+  } catch (error) {
+    refusal = String(error);
+  }
+  report.check("a larger working copy is refused before replacing tiny.pdf",
+    refusal.includes("not be smaller"), refusal);
 }

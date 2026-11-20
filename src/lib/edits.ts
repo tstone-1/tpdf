@@ -34,7 +34,7 @@ import { INK_WIDTH } from "./markband";
 import { pictureBody } from "./picture";
 import type { Fill } from "./redactfill";
 import type { PreparedImport } from "./pendingimport";
-import type { Pictures, Shrinkage } from "./compress";
+import type { CompressionSize, Pictures, Shrinkage } from "./compress";
 import type { Recognised } from "./recognise";
 
 // Re-exported because this is the module a reader of the edit state comes to
@@ -897,8 +897,7 @@ export class Edits {
   }
 
   /**
-   * What a smaller copy of the file this document was opened from would come
-   * to. Nothing is written, so no consent is asked for.
+   * Measures a smaller copy including the current edits, in private temporary files.
    */
   async compressEstimate(source: string, pictures: Pictures | null): Promise<Shrinkage> {
     return await call("compress_estimate", { doc: this.doc, source, pictures });
@@ -911,7 +910,7 @@ export class Edits {
    * {@link saveCopy} with the copy made smaller, so the open document and
    * {@link dirty} are untouched and a signed document is asked about first.
    */
-  async compressCopy(source: string, path: string, pictures: Pictures | null): Promise<Copied> {
+  async compressCopy(source: string, path: string, pictures: Pictures | null): Promise<CompressionSize> {
     await this.beforeWrite();
     return await call("compress_copy", { doc: this.doc, source, path, pictures });
   }

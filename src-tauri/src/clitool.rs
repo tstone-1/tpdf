@@ -157,16 +157,17 @@ pub fn tool() -> Result<PathBuf, String> {
 
 /// The sentence for the reader after asking `plan` again, following a change.
 #[must_use]
-pub fn outcome(install: bool, after: &Step, tool: &Path) -> String {
+pub fn outcome(install: bool, after: &Step, alias: &Step, tool: &Path) -> String {
     match (install, after) {
         (true, Step::Present) => said!(
             "Installed. `tpdf` in a terminal now runs the command-line tool ({LINK} links to \
              {path}). Try `tpdf help`.",
             path = tool.display()
         ),
-        (false, Step::Absent) => {
+        (false, Step::Absent) if matches!(alias, Step::Absent) => {
             said!("Removed {LINK} and {ALIAS}. The application is unchanged.")
         }
+        (false, Step::Absent) => said!("Removed {LINK}."),
         (_, Step::Foreign(why)) => said!("{why}, so it was left alone."),
         (true, _) => said!("{path} was not installed.", path = LINK),
         (false, _) => said!("{path} is still there.", path = LINK),
@@ -184,17 +185,18 @@ pub fn outcome(install: bool, after: &Step, tool: &Path) -> String {
 pub fn apply(install: bool) -> Result<String, String> {
     let tool = tool()?;
     let link = Path::new(LINK);
+    let alias = Path::new(ALIAS);
     match plan(install, link, &tool) {
         // Settled only when the second name is too: an installation from
         // before 2026-10-02 has the link and not the alias, and installing
         // again is how it gains it.
-        Step::Present if changes(install, link, Path::new(ALIAS), &tool).is_empty() => {
+        Step::Present if matches!(plan(install, alias, &tool), Step::Present) => {
             return Ok(said!(
                 "Already installed: {LINK} links to {path}.",
                 path = tool.display()
             ))
         }
-        Step::Absent if changes(install, link, Path::new(ALIAS), &tool).is_empty() => {
+        Step::Absent if matches!(plan(install, alias, &tool), Step::Absent) => {
             return Ok(said!(
                 "The command-line tool is not installed ({LINK} does not exist)."
             ))
@@ -206,7 +208,6 @@ pub fn apply(install: bool) -> Result<String, String> {
         }
         Step::Create | Step::Repoint(_) | Step::Remove | Step::Present | Step::Absent => {}
     }
-    let alias = Path::new(ALIAS);
     let both = changes(install, link, alias, &tool);
     if both
         .iter()
@@ -216,8 +217,9 @@ pub fn apply(install: bool) -> Result<String, String> {
         privileged(install, &tool, &changes(install, link, alias, &tool))?;
     }
     let after = plan(install, link, &tool);
-    let mut text = outcome(install, &after, &tool);
-    if let Some(also) = alias_outcome(install, &plan(install, alias, &tool)) {
+    let alias_after = plan(install, alias, &tool);
+    let mut text = outcome(install, &after, &alias_after, &tool);
+    if let Some(also) = alias_outcome(install, &alias_after) {
         text.push(' ');
         text.push_str(&also);
     }
@@ -782,13 +784,26 @@ mod tests {
     #[test]
     fn the_reader_is_told_what_is_there_afterwards_not_what_was_attempted() {
         let tool = Path::new("/Applications/tpdf.app/Contents/MacOS/tpdf-cli");
-        assert!(outcome(true, &Step::Present, tool).starts_with("Installed."));
-        assert!(outcome(false, &Step::Absent, tool).starts_with("Removed"));
+        assert!(outcome(true, &Step::Present, &Step::Absent, tool).starts_with("Installed."));
+        assert!(outcome(false, &Step::Absent, &Step::Absent, tool).starts_with("Removed"));
         // Both names are removed, so both are said.
-        assert!(outcome(false, &Step::Absent, tool).contains(ALIAS));
+        assert!(outcome(false, &Step::Absent, &Step::Absent, tool).contains(ALIAS));
+        let foreign = Step::Foreign("alias is a regular file".into());
+        let mixed = format!(
+            "{} {}",
+            outcome(false, &Step::Absent, &foreign, tool),
+            alias_outcome(false, &foreign).unwrap()
+        );
+        assert_eq!(
+            mixed,
+            format!("Removed {LINK}. alias is a regular file, so it was left alone.")
+        );
         // A change that did not take is not reported as one.
-        assert!(outcome(true, &Step::Create, tool).contains("was not installed"));
-        assert!(outcome(false, &Step::Remove, tool).contains("still there"));
-        assert!(outcome(true, &Step::Foreign("x is odd".into()), tool).contains("left alone"));
+        assert!(outcome(true, &Step::Create, &Step::Absent, tool).contains("was not installed"));
+        assert!(outcome(false, &Step::Remove, &Step::Absent, tool).contains("still there"));
+        assert!(
+            outcome(true, &Step::Foreign("x is odd".into()), &Step::Absent, tool)
+                .contains("left alone")
+        );
     }
 }

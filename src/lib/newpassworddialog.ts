@@ -13,6 +13,7 @@
  */
 
 import { catalog } from "./i18n";
+import { passwordKeys } from "./passwordkeys";
 import { ADVICE, NOT_ASCII, beyondAscii, judge } from "./protect";
 
 const TEXT = catalog({
@@ -37,7 +38,7 @@ export const DIALOG_CLASS = "tpdf-new-password";
 
 /** A modal asking for a new password. Built once and reused. */
 export class NewPasswordDialog {
-  private readonly backdrop: HTMLElement;
+  private readonly backdrop: HTMLDialogElement;
   private readonly heading: HTMLElement;
   private readonly note: HTMLElement;
   private readonly problem: HTMLElement;
@@ -49,16 +50,15 @@ export class NewPasswordDialog {
   private shown = false;
 
   constructor(host: HTMLElement) {
-    this.backdrop = document.createElement("div");
+    this.backdrop = document.createElement("dialog");
     this.backdrop.className = DIALOG_CLASS;
     this.backdrop.style.cssText =
-      "position:fixed;inset:0;display:none;z-index:70;" +
+      "position:fixed;inset:0;display:none;max-width:none;max-height:none;width:100%;height:100%;margin:0;padding:0;border:0;" +
       "background:rgba(0,0,0,0.28);align-items:flex-start;justify-content:center;";
 
     const panel = document.createElement("div");
-    panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", TEXT().newPassword);
+    this.backdrop.setAttribute("aria-modal", "true");
+    this.backdrop.setAttribute("aria-label", TEXT().newPassword);
     panel.style.cssText =
       "margin-top:14vh;width:min(420px,92vw);" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
@@ -95,20 +95,7 @@ export class NewPasswordDialog {
     this.backdrop.addEventListener("click", (event) => {
       if (event.target === this.backdrop) this.settle(null);
     });
-    this.backdrop.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        this.settle(null);
-        return;
-      }
-      // Stopped as well as defaulted away: the window's key handler binds Enter.
-      if (event.key === "Enter") {
-        event.preventDefault();
-        event.stopPropagation();
-        this.submit();
-      }
-    });
+    passwordKeys(this.backdrop, [this.first, this.second], save, () => this.settle(null), () => this.submit());
   }
 
   /** Whether it is on screen. */
@@ -129,6 +116,7 @@ export class NewPasswordDialog {
     }
     this.shown = true;
     this.backdrop.style.display = "flex";
+    this.backdrop.showModal();
     this.first.focus();
     return new Promise((resolve) => {
       this.pending = resolve;
@@ -162,6 +150,7 @@ export class NewPasswordDialog {
     this.second.value = "";
     if (this.shown) {
       this.shown = false;
+      this.backdrop.close();
       this.backdrop.style.display = "none";
       this.returnFocus?.focus();
       this.returnFocus = null;

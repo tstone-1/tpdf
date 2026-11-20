@@ -37,6 +37,7 @@
  */
 
 import { catalog } from "./i18n";
+import { passwordKeys } from "./passwordkeys";
 
 const TEXT = catalog({
   "en-US": { dialog: "Password required", password: "Password", cancel: "Cancel", unlock: "Unlock" },
@@ -55,7 +56,7 @@ export const DIALOG_CLASS = "tpdf-password";
  * promise nobody resolves.
  */
 export class PasswordDialog {
-  private readonly backdrop: HTMLElement;
+  private readonly backdrop: HTMLDialogElement;
   private readonly panel: HTMLElement;
   private readonly heading: HTMLElement;
   private readonly note: HTMLElement;
@@ -79,16 +80,15 @@ export class PasswordDialog {
   private shown = false;
 
   constructor(host: HTMLElement) {
-    this.backdrop = document.createElement("div");
+    this.backdrop = document.createElement("dialog");
     this.backdrop.className = DIALOG_CLASS;
     this.backdrop.style.cssText =
-      "position:fixed;inset:0;display:none;z-index:70;" +
+      "position:fixed;inset:0;display:none;max-width:none;max-height:none;width:100%;height:100%;margin:0;padding:0;border:0;" +
       "background:rgba(0,0,0,0.28);align-items:flex-start;justify-content:center;";
 
     this.panel = document.createElement("div");
-    this.panel.setAttribute("role", "dialog");
-    this.panel.setAttribute("aria-modal", "true");
-    this.panel.setAttribute("aria-label", TEXT().dialog);
+    this.backdrop.setAttribute("aria-modal", "true");
+    this.backdrop.setAttribute("aria-label", TEXT().dialog);
     this.panel.style.cssText =
       "margin-top:14vh;width:min(420px,92vw);" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
@@ -127,23 +127,7 @@ export class PasswordDialog {
     this.backdrop.addEventListener("click", (event) => {
       if (event.target === this.backdrop) this.settle(null);
     });
-    this.backdrop.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        this.settle(null);
-        return;
-      }
-      // Enter submits from the field, which is where the reader's hands are.
-      // Stopped rather than merely defaulted-away: the window key handler binds
-      // Enter, and a submit that also drove a command would be a second action
-      // the reader did not ask for.
-      if (event.key === "Enter") {
-        event.preventDefault();
-        event.stopPropagation();
-        this.submit();
-      }
-    });
+    passwordKeys(this.backdrop, [this.field], unlock, () => this.settle(null), () => this.submit());
   }
 
   /** Whether it is on screen. */
@@ -187,6 +171,7 @@ export class PasswordDialog {
     }
     this.shown = true;
     this.backdrop.style.display = "flex";
+    this.backdrop.showModal();
     this.field.focus();
 
     return new Promise((resolve) => {
@@ -218,6 +203,7 @@ export class PasswordDialog {
     this.field.value = "";
     if (this.shown) {
       this.shown = false;
+      this.backdrop.close();
       this.backdrop.style.display = "none";
       this.returnFocus?.focus();
       this.returnFocus = null;

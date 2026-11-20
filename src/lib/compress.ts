@@ -11,7 +11,6 @@
 
 import { catalog } from "./i18n";
 import { basename } from "./paths";
-import { afterCopy } from "./recovery";
 
 const TEXT = catalog({
   "en-US": {
@@ -96,6 +95,8 @@ export interface SampleView {
 }
 
 /** What a smaller copy would come to. `Shrinkage` in `commands/compress.rs`. */
+export type CompressionSize = Pick<Shrinkage, "bytesBefore" | "bytesAfter">;
+
 export interface Shrinkage {
   bytesBefore: number;
   bytesAfter: number;
@@ -243,15 +244,6 @@ export function suggestedName(path: string): string {
  * Never silent, where an ordinary copy is: the window still shows the
  * document it had, and the size of the file on disk is the point.
  */
-export function afterCompress(
-  copied: { changed?: boolean },
-  path: string,
-  shrinkage: Shrinkage | null,
-): string {
-  const said =
-    shrinkage && isSmaller(shrinkage)
-      ? TEXT().savedSmaller(basename(path), size(shrinkage.bytesAfter), size(shrinkage.bytesBefore))
-      : TEXT().saved(basename(path));
-  const changed = afterCopy(copied);
-  return changed ? `${said} ${changed}` : said;
+export function afterCompress(measured: CompressionSize, path: string): string {
+  return TEXT().savedSmaller(basename(path), size(measured.bytesAfter), size(measured.bytesBefore));
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { AUTHORITY_KEY } from "./validationdata";
 import wording from "../../src-tauri/testdata/cli/wording.json";
 import {
   CHOICE_KEY,
@@ -66,8 +67,23 @@ describe("the remembered choice", () => {
         kept = value;
       },
     });
-    expect(writeStampChoice({ server: "other", url: "https://tsa.example/" }, storage)).toBe(true);
+    expect(writeStampChoice({ server: "other", url: "  https://tsa.example/  " }, storage)).toBe(true);
     expect(readStampChoice(storage)).toEqual({ server: "other", url: "https://tsa.example/" });
+  });
+
+  it("clears rejected custom addresses for both preference keys, including legacy entries", () => {
+    for (const key of [CHOICE_KEY, AUTHORITY_KEY]) {
+      const secret = { server: SERVERS[0]!.name, url: "https://demo:example@tsa.example/" };
+      const values = new Map([[key, JSON.stringify(secret)]]);
+      const storage = () => ({
+        getItem: (name: string) => values.get(name) ?? null,
+        setItem: (name: string, value: string) => { values.set(name, value); },
+      });
+      expect(readStampChoice(storage, key)).toEqual({ ...secret, url: "" });
+      expect(values.get(key)).not.toContain("demo:");
+      writeStampChoice(secret, storage, key);
+      expect(values.get(key)).toBe(JSON.stringify({ ...secret, url: "" }));
+    }
   });
 
   it("falls back to none, whole, for anything tpdf did not write", () => {

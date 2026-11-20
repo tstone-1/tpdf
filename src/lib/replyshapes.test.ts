@@ -75,7 +75,8 @@ import type { Made } from "./pictures";
 import Made_ from "../../src-tauri/testdata/replies/Made.json";
 import type { Comparison } from "./comparison";
 import Comparison_ from "../../src-tauri/testdata/replies/Comparison.json";
-import type { Shrinkage } from "./compress";
+import type { CompressionSize, Shrinkage } from "./compress";
+import CompressionSize_ from "../../src-tauri/testdata/replies/CompressionSize.json";
 import Shrinkage_ from "../../src-tauri/testdata/replies/Shrinkage.json";
 import type { Recognised } from "./recognise";
 import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
@@ -291,6 +292,10 @@ const SCHEMA = {
     left_without_words: ["array"],
     right_without_words: ["array"],
   } satisfies Shape<Comparison>,
+  CompressionSize: {
+    bytesBefore: ["number"],
+    bytesAfter: ["number"],
+  } satisfies Shape<CompressionSize>,
   Shrinkage: {
     bytesBefore: ["number"],
     bytesAfter: ["number"],
@@ -436,6 +441,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Forward: Forward_ satisfies Widen<Forward>,
   Made: Made_ satisfies Widen<Made>,
   Comparison: Comparison_ satisfies Widen<Comparison>,
+  CompressionSize: CompressionSize_ satisfies Widen<CompressionSize>,
   Shrinkage: Shrinkage_ satisfies Widen<Shrinkage>,
   Recognised: Recognised_ satisfies Widen<Recognised>,
   Setup: Setup_ satisfies Widen<PrintSetup>,

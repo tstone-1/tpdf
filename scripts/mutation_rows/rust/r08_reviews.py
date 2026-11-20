@@ -2372,8 +2372,8 @@ ROWS += [
     Mutation(
         "attachments: a compressed file saved compressed",
         "src/attachments.rs",
-        "    if stream.dict.has(b\"Filter\") {",
-        "    if false {",
+        "    for (index, filter) in filters.iter().enumerate() {",
+        "    for (index, filter) in filters.iter().take(0).enumerate() {",
         "takes_out_the_bytes_as_they_were_put_in_compressed_or_not",
     ),
     Mutation(

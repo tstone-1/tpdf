@@ -848,6 +848,13 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put(
+        "CompressionSize",
+        &crate::commands::compress::CompressionSize {
+            bytes_before: 8_412_330,
+            bytes_after: 1_902_118,
+        },
+    );
+    put(
         "Shrinkage",
         &crate::commands::compress::Shrinkage {
             bytes_before: 8_412_330,

@@ -60,7 +60,9 @@ fn fixture(path: &Path) {
 q 1 0 0 1 100 700 cm /Logo Do Q \
 q 80 0 0 40 100 500 cm /Pic Do Q \
 q 64 0 0 64 300 480 cm /Photo Do Q \
-BT /F1 14 Tf 0 0 0 rg 100 300 Td (Words) Tj ET"
+BT /F1 14 Tf 0 0 0 rg 100 300 Td (Words) Tj ET \
+q 30 180 m 70 180 l 30 220 l h W n 0 g 30 180 40 40 re f Q \
+q 0 G 0 w 100 180 m 140 220 l S Q"
         .to_vec();
     let stream = doc.add_object(Stream::new(dictionary! {}, content));
     let page = doc.add_object(dictionary! {
@@ -186,6 +188,8 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
         svg.as_ref()
             .is_ok_and(|(_, found)| found.extension == "svg")
             && text.matches("<path ").count() == 2
+            && text.contains("<clipPath ")
+            && text.contains("clip-path=")
             && text.contains("fill=\"#ff0000\"")
             && text.contains("stroke=\"#0000ff\" stroke-width=\"4\"")
             && text.contains("matrix(2 0 0 1 100 700)"),
@@ -231,6 +235,20 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
         }) && refused.as_ref().is_err_and(|why| why.contains("text")),
         &format!("{described:?} / {refused:?}"),
     );
+
+    for (left, reason) in [(25, "clipping path"), (95, "stroke")] {
+        let area = |format| region(left, 175, left + 50, 225, format);
+        let svg = export(&mut worker, area(GraphicFormat::Svg));
+        let png = export(&mut worker, area(GraphicFormat::Png))
+            .ok()
+            .and_then(|(bytes, _)| decoded(&bytes));
+        report.check(
+            reason,
+            svg.is_err_and(|why| why.contains(reason))
+                && png.is_some_and(|(_, _, pixels)| pixels.chunks_exact(4).any(|rgba| rgba[3] > 0)),
+            "SVG must refuse the operation and PNG must paint it",
+        );
+    }
 
     let empty = export(&mut worker, region(400, 100, 450, 150, GraphicFormat::Png));
     report.check(
@@ -298,9 +316,9 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
 
     let page = export(&mut worker, region(0, 0, 595, 842, GraphicFormat::Describe));
     report.check(
-        "a region around the whole page takes all five objects, the page white included",
+        "a region around the whole page takes all seven objects, the page white included",
         page.as_ref()
-            .is_ok_and(|(_, found)| found.objects == 5 && found.original.is_none()),
+            .is_ok_and(|(_, found)| found.objects == 7 && found.original.is_none()),
         &format!("{page:?}"),
     );
 }

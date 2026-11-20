@@ -84,9 +84,8 @@ mod raw {
 const RENDER_FLAGS: c_int = raw::FPDF_ANNOT | raw::FPDF_REVERSE_BYTE_ORDER;
 
 /// The flags for a render with or without the page's annotations: comments,
-/// highlights, stamps, drawings. Form fields are drawn either way, by
-/// `FPDF_FFLDraw` after the page, which is what a print without the comments
-/// wants (`print_layout::Settings::marks`).
+/// highlights, stamps, drawings. `FPDF_FFLDraw` draws widgets for an annotated
+/// screen render and for printing. OCR requests the underlying page alone.
 #[derive(Clone, Copy)]
 pub struct RenderOptions {
     pub annotations: bool,
@@ -1458,7 +1457,8 @@ pub fn render_with(
         other => Outcome::Failed(other),
     };
 
-    if outcome.is_done() {
+    // OCR reads only base page content. Printing may hide comments but still needs fields.
+    if outcome.is_done() && (options.annotations || options.printing) {
         if let Some(form) = page.form {
             // The form pass is deliberately after a complete base render, as in
             // pdfium-render. A cancelled tile is discarded by every production

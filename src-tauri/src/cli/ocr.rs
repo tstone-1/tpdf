@@ -107,13 +107,14 @@ fn language(raw: &str) -> Result<String, String> {
     }
 }
 
-/// One page as raw RGBA, rendered by the worker in tiles.
+/// One page as raw RGBA. Hidden-text detection includes visible overlays; OCR excludes them.
 pub(super) fn render(
     session: &mut Session,
     page: u32,
     width: u32,
     height: u32,
     scale: f32,
+    annotations: bool,
 ) -> Result<Vec<u8>, Failure> {
     let mut pixels = vec![0; width as usize * height as usize * 4];
     for y in (0..height).step_by(TILE as usize) {
@@ -121,7 +122,7 @@ pub(super) fn render(
             let tw = (width - x).min(TILE) as u16;
             let th = (height - y).min(TILE) as u16;
             let tile = session.tile(TileRequest {
-                annotations: true,
+                annotations,
                 printing: false,
                 rid: 0,
                 doc: 0,
@@ -230,7 +231,7 @@ impl Ocr {
                         )
                     },
                 )?;
-            let rgba = render(session, page, width, height, scale)?;
+            let rgba = render(session, page, width, height, scale, false)?;
             // Spawned at the first page that needs it, so a document whose
             // pages all have text never starts an engine.
             let worker = match &mut engine {

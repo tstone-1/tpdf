@@ -83,6 +83,8 @@
 //! reported as **unknown**, never as clean: this module's whole purpose is to
 //! stop a reassuring answer being given on evidence nobody has.
 
+pub(crate) mod complete;
+
 use std::collections::HashSet;
 
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};

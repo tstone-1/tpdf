@@ -100,6 +100,11 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
 
   // ---- 4. Unsaved changes: told to save, and no panel is asked for.
   await host.open(scan); await host.idle(); await quiet();
+  host.answerSave(copy);
+  await run();
+  const openDestination = await settle(() => shown().includes("Close the open destination"), DIALOG_MS);
+  report.check("OCR refuses an already open output and leaves the scan active",
+    openDestination && host.path() === scan && host.tabs().some((tab) => tab.path === copy), shown());
   const asked = host.saveSuggestions().length;
   await host.apply((edits) => edits.rotate(0, 1));
   // Asserted before the command runs: with no edit in the model the command

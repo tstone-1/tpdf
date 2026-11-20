@@ -87,6 +87,18 @@ describe("MarkClipboard", () => {
     expect(clipboard.marks.map((one) => one.kind)).toEqual(["square"]);
   });
 
+  it("cancels a pending cut after reselection and preserves the clipboard on an unreadable picture", () => {
+    const clipboard = new MarkClipboard();
+    expect(clipboard.sameSelection([7], [8])).toBe(false);
+    expect(clipboard.sameSelection([7], [])).toBe(false);
+    expect(clipboard.sameSelection([7, 8], [8, 7])).toBe(true);
+    const from = { doc: 1, page: pageId(2) };
+    clipboard.copy([mark("ellipse")], from);
+    const result = clipboard.copy([mark("square"), mark("picture")], from, new Map(), true);
+    expect(result.copied).toBe(0);
+    expect(clipboard.marks.map((item) => item.kind)).toEqual(["ellipse"]);
+  });
+
   it("keeps what it held when nothing new can be copied", () => {
     const clipboard = new MarkClipboard();
     clipboard.copy([mark("square")], { doc: 1, page: pageId(3) });

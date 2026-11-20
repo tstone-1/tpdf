@@ -161,21 +161,23 @@ def modules_say(rows: list[list[str]]) -> tuple[bool, bool, bool, set[str]]:
 
 
 def explorer_window(folder: Path, shots: Path | None, checks: Checks) -> None:
-    script = f"""
+    script = """
+$ErrorActionPreference = 'Stop'
 $shell = New-Object -ComObject Shell.Application
-Start-Process explorer.exe -ArgumentList '"{folder}"'
+Start-Process explorer.exe -ArgumentList ('"' + $env:TPDF_EXPLORER_FOLDER + '"')
 $w = $null
-for ($i = 0; $i -lt 60 -and -not $w; $i++) {{
+for ($i = 0; $i -lt 60 -and -not $w; $i++) {
   Start-Sleep -Milliseconds 250
-  $w = $shell.Windows() | Where-Object {{ $_.Document.Folder.Self.Path -eq '{folder}' }} | Select-Object -First 1
-}}
-if (-not $w) {{ exit 3 }}
+  $w = $shell.Windows() | Where-Object { $_.Document.Folder.Self.Path -eq $env:TPDF_EXPLORER_FOLDER } | Select-Object -First 1
+}
+if (-not $w) { exit 3 }
 $w.Document.CurrentViewMode = 1
 $w.Document.IconSize = 256
 Write-Output $w.HWND
 """
     opened = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True,
-                            text=True, timeout=60, check=False)
+                            text=True, timeout=60, check=False,
+                            env={**os.environ, "TPDF_EXPLORER_FOLDER": str(folder.resolve())})
     hwnd = int(opened.stdout.strip().splitlines()[-1]) if opened.returncode == 0 and opened.stdout.strip() else 0
     if not checks.note(hwnd != 0, "an Explorer window opens on the corpus in large icons",
                        opened.stderr.strip()[:200]):
@@ -198,24 +200,41 @@ Write-Output $w.HWND
     checks.note(failed == 0 and slowest < 1.0, "Explorer answers within a second throughout",
                 f"{asked} asked, slowest {slowest * 1000:.0f} ms, {failed} unanswered")
     if shots:
-        shots.mkdir(parents=True, exist_ok=True)
         picture = shots / "explorer-corpus.png"
-        grab = f"""
+        grab = """
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System; using System.Runtime.InteropServices;
-public static class W {{ [StructLayout(LayoutKind.Sequential)] public struct R {{ public int L, T, Ri, B; }}
-[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r); }}
+public static class W { [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Ri, B; }
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r); }
 '@
 $r = New-Object W+R
-[W]::GetWindowRect([IntPtr]{hwnd}, [ref]$r) | Out-Null
+if (-not [W]::GetWindowRect([IntPtr]([long]$env:TPDF_EXPLORER_HWND), [ref]$r)) { throw "GetWindowRect failed" }
 $b = New-Object System.Drawing.Bitmap ($r.Ri - $r.L), ($r.B - $r.T)
 $g = [System.Drawing.Graphics]::FromImage($b)
 $g.CopyFromScreen($r.L, $r.T, 0, 0, $b.Size)
-$b.Save('{picture}')
+$b.Save($env:TPDF_EXPLORER_PICTURE, [System.Drawing.Imaging.ImageFormat]::Png)
+$g.Dispose()
+$b.Dispose()
 """
-        subprocess.run(["powershell", "-NoProfile", "-Command", grab], timeout=60, check=False)
-        print(f"  picture: {picture}")
+        try:
+            shots.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(dir=shots) as staging:
+                fresh = Path(staging).resolve() / picture.name
+                capture = subprocess.run(["powershell", "-NoProfile", "-Command", grab],
+                                         capture_output=True, text=True, timeout=60, check=False,
+                                         env={**os.environ, "TPDF_EXPLORER_HWND": str(hwnd),
+                                              "TPDF_EXPLORER_PICTURE": str(fresh)})
+                if capture.returncode:
+                    raise ValueError(capture.stderr.strip()[:300] or f"capture exited {capture.returncode}")
+                with fresh.open("rb") as image:
+                    if image.read(8) != b"\x89PNG\r\n\x1a\n":
+                        raise ValueError("capture produced no PNG")
+                fresh.replace(picture)
+            checks.note(True, f"Explorer screenshot saved to {picture}")
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            checks.note(False, "Explorer screenshot saved", str(error))
     user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
 
 

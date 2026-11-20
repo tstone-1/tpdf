@@ -1843,8 +1843,8 @@ ROWS += [
         # Somebody else's restrictions, dropped for a reader who was never asked for a password.
         'protect: remove restrictions from a document that opens unasked',
         'src/protect.rs',
-        '            if plain.is_ok_and(|doc| doc.is_encrypted()) {',
-        '            if true {',
+        '            } else if plain.is_ok_and(|doc| doc.is_encrypted()) {',
+        '            } else if true {',
         'a_removal_needs_a_document_that_a_password_opens',
     ),
     Mutation(
@@ -2033,10 +2033,10 @@ ROWS += [
     ),
     Mutation(
         # The sentence a reader acts on when they send the copy to somebody.
-        'cli protect: say the old password still opens it',
+        'cli protect: invert the reported protection state',
         'src/cli/protect.rs',
-        '        (true, false) => format!(',
-        '        (true, _) => format!(',
+        'vec![if report.protected {',
+        'vec![if !report.protected {',
         'the_sentences_say_which_password_opens_the_copy',
     ),
     Mutation(

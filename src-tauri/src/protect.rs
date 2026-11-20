@@ -78,27 +78,40 @@ pub fn acceptable(password: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Refuses a removal the document does not support, before anything is built.
+/// Checks that the requested change preserves restrictions on an unprompted document.
 ///
 /// `had` is whether the source was encrypted and `original` its bytes.
 ///
 /// # Errors
 ///
-/// A removal from a document with no encryption, or from one that opens
-/// without a password.
+/// Invalid new password, removal without an opening password, or a change
+/// that would discard restrictions on a document that opens without one.
 pub fn allowed(protection: &Protection, had: bool, original: &[u8]) -> Result<(), String> {
     match protection {
         Protection::Keep => Ok(()),
-        Protection::Set(password) => acceptable(password),
+        Protection::Set(password) if !had => acceptable(password),
         Protection::Remove if !had => Err(said!(
             "This document has no password, so there is none to remove."
         )),
-        Protection::Remove => {
+        Protection::Set(_) | Protection::Remove => {
             // Asked of the bytes rather than of the password that was given:
             // `lopdf` tries the empty password by itself, so a wrong password
             // on a document that opens without one still arrives decrypted.
             let plain = Document::load_mem_with_options(original, lopdf::LoadOptions::default());
-            if plain.is_ok_and(|doc| doc.is_encrypted()) {
+            if let Protection::Set(password) = protection {
+                let may_change = plain.is_ok_and(|doc| {
+                    doc.is_encrypted()
+                        || doc
+                            .encryption_state
+                            .is_some_and(|s| s.permissions().contains(Permissions::all()))
+                });
+                if !may_change {
+                    return Err(said!(
+                        "Changing the password would discard the document restrictions."
+                    ));
+                }
+                acceptable(password)
+            } else if plain.is_ok_and(|doc| doc.is_encrypted()) {
                 Ok(())
             } else {
                 Err(said!(
@@ -441,7 +454,11 @@ mod tests {
         })
         .unwrap();
         open.encrypt(&restricted).unwrap();
-        let why = allowed(&Protection::Remove, true, &bytes_of(open)).unwrap_err();
+        let bytes = bytes_of(open);
+        assert!(allowed(&Protection::Set("new".into()), true, &bytes)
+            .unwrap_err()
+            .contains("restrictions"));
+        let why = allowed(&Protection::Remove, true, &bytes).unwrap_err();
         assert!(why.contains("opens without a password"), "{why}");
     }
 

@@ -390,7 +390,70 @@ pub fn reads_back(written: &Layer, before: &PageText, read: &PageText) -> bool {
     let mut got: Vec<char> = characters(read).collect();
     wanted.sort_unstable();
     got.sort_unstable();
+    if !rtl_words_read_back(written, read) {
+        return false;
+    }
     wanted == got
+}
+
+/// On a bidirectional page PDFium can reverse even a neighbouring Latin word.
+/// Verify logical order and glyph positions in every written word on such a page.
+fn rtl_words_read_back(layer: &Layer, read: &PageText) -> bool {
+    use unicode_bidi::{bidi_class, BidiClass, ParagraphBidiInfo};
+    if !layer.words.iter().any(|word| {
+        word.text
+            .chars()
+            .any(|c| matches!(bidi_class(c), BidiClass::R | BidiClass::AL))
+    }) {
+        return true;
+    }
+    let mut glyphs: Vec<_> = read
+        .codes
+        .iter()
+        .zip(read.boxes.chunks_exact(4))
+        .enumerate()
+        .filter_map(|(i, (&code, b))| {
+            let ch = char::from_u32(code)?;
+            (!ch.is_control() && !ch.is_whitespace()).then_some((
+                (b[1] + b[3]) * 0.5,
+                (b[0] + b[2]) * 0.5,
+                i,
+                ch,
+            ))
+        })
+        .collect();
+    glyphs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut budget = 8_000_000usize;
+    for word in &layer.words {
+        let [left, top, right, bottom] = word.rect;
+        let start = glyphs.partition_point(|g| g.0 < top);
+        let end = glyphs.partition_point(|g| g.0 <= bottom);
+        let row = &glyphs[start..end.max(start)];
+        let Some(leftover) = budget.checked_sub(row.len()) else {
+            return false;
+        };
+        budget = leftover;
+        let mut inside: Vec<_> = row.iter().filter(|g| g.1 >= left && g.1 <= right).collect();
+        inside.sort_unstable_by_key(|g| g.2);
+        let logical: String = word
+            .text
+            .chars()
+            .filter(|ch| !ch.is_control() && !ch.is_whitespace())
+            .collect();
+        if !inside.iter().map(|g| g.3).eq(logical.chars()) {
+            return false;
+        }
+        inside.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let bidi = ParagraphBidiInfo::new(&logical, None);
+        if !inside
+            .iter()
+            .map(|g| g.3)
+            .eq(bidi.reorder_line(0..logical.len()).chars())
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// A page's characters as [`reads_back`] counts them.
@@ -598,6 +661,30 @@ mod tests {
             pages_named(&eleven),
             "pages 1, 2, 3, 4, 5, 6, 7, 8 and 3 more"
         );
+    }
+
+    #[test]
+    fn rtl_readback_checks_logical_order_and_visual_positions() {
+        let rect = [0., 0., 40., 10.];
+        for (logical, order) in [("אבגד", vec![3, 2, 1, 0]), ("אב12", vec![3, 2, 0, 1])] {
+            let layer = Layer {
+                page: 0,
+                words: vec![Word {
+                    text: logical.into(),
+                    rect,
+                }],
+            };
+            let mut read = typed(logical, rect);
+            assert!(!reads_back(&layer, &none(), &read));
+            let boxes = read.boxes.clone();
+            read.boxes = order
+                .into_iter()
+                .flat_map(|i| boxes[i * 4..i * 4 + 4].iter().copied())
+                .collect();
+            assert!(reads_back(&layer, &none(), &read), "{logical}");
+            read.codes.reverse();
+            assert!(!reads_back(&layer, &none(), &read));
+        }
     }
 
     #[test]

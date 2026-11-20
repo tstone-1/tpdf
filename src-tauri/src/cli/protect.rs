@@ -237,13 +237,10 @@ impl Protect {
 
 /// The report as sentences.
 fn plain(report: &report::Protected) -> String {
-    let mut lines = vec![match (report.protected, report.was_protected) {
-        (true, false) => format!("{}: needs the new password to open, AES-256", report.output),
-        (true, true) => format!(
-            "{}: needs the new password to open, AES-256; the one it had no longer opens it",
-            report.output
-        ),
-        (false, _) => format!("{}: opens without a password", report.output),
+    let mut lines = vec![if report.protected {
+        format!("{}: needs the new password to open, AES-256", report.output)
+    } else {
+        format!("{}: opens without a password", report.output)
     }];
     if report.signatures_invalidated > 0 || report.signatures_unknown {
         lines.push("The rewrite invalidates existing signatures.".into());
@@ -309,6 +306,15 @@ mod tests {
     }
 
     #[test]
+    fn both_password_options_diagnose_invalid_variable_names() {
+        for arg in ["--new-password-env", "--password-env"] {
+            let why = parse(&args(&format!("a.pdf -o b.pdf {arg} A=B")), true).unwrap_err();
+            assert!(why.contains("environment variable name"), "{why}");
+            assert!(!why.contains("--password-env"), "{why}");
+        }
+    }
+
+    #[test]
     fn the_sentences_say_which_password_opens_the_copy() {
         let mut report = report::Protected {
             schema: SCHEMA,
@@ -326,7 +332,10 @@ mod tests {
             "b.pdf: needs the new password to open, AES-256"
         );
         report.was_protected = true;
-        assert!(plain(&report).ends_with("the one it had no longer opens it"));
+        assert_eq!(
+            plain(&report),
+            "b.pdf: needs the new password to open, AES-256"
+        );
         report.protected = false;
         report.signatures_invalidated = 1;
         assert_eq!(

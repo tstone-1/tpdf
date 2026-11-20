@@ -44,6 +44,24 @@ function open(): {
 }
 
 describe("NewPasswordDialog", () => {
+  it("keeps Find inside the modal and lets Cancel handle Enter", async () => {
+    const { dialog, backdrop, cancel } = open();
+    const answer = dialog.ask("report.pdf");
+    expect(backdrop.open).toBe(true);
+    let stopped = false;
+    let prevented = false;
+    backdrop.dispatch("keydown", { key: "f", ctrlKey: true,
+      stopPropagation: () => { stopped = true; }, preventDefault: () => { prevented = true; } });
+    expect([stopped, prevented]).toEqual([true, true]);
+    prevented = false;
+    backdrop.dispatch("keydown", { key: "Enter", target: cancel, preventDefault: () => { prevented = true; } });
+    expect(prevented).toBe(false);
+    expect(dialog.isOpen).toBe(true);
+    cancel.dispatch("click", {});
+    await expect(answer).resolves.toBeNull();
+    expect(backdrop.open).toBe(false);
+  });
+
   it("resolves with a password typed the same way twice", async () => {
     const { dialog, first, second, save } = open();
     const answer = dialog.ask("report.pdf");
@@ -70,7 +88,7 @@ describe("NewPasswordDialog", () => {
     });
     first.value = "tr0ub4dor";
     second.value = "tr0ub4dir";
-    backdrop.dispatch("keydown", { key: "Enter" });
+    backdrop.dispatch("keydown", { key: "Enter", target: first });
     await Promise.resolve();
     expect(settled).toBe(false);
     expect(dialog.isOpen).toBe(true);
@@ -78,7 +96,7 @@ describe("NewPasswordDialog", () => {
     // What was typed is still there to be corrected.
     expect(first.value).toBe("tr0ub4dor");
     second.value = "tr0ub4dor";
-    backdrop.dispatch("keydown", { key: "Enter" });
+    backdrop.dispatch("keydown", { key: "Enter", target: first });
     await expect(answer).resolves.toBe("tr0ub4dor");
   });
 

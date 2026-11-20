@@ -126,10 +126,7 @@ pub fn parse(args: &[String]) -> Result<Text, String> {
 /// A name that is empty or holds `=`, which no variable can have.
 pub(crate) fn variable(name: &str) -> Result<String, String> {
     if name.is_empty() || name.contains('=') || name.contains('\0') {
-        return Err(format!(
-            "`--password-env` takes the name of an environment variable, and `{name}` cannot be \
-             one --- the password itself never goes on the command line"
-        ));
+        return Err("Expected a nonempty environment variable name without '=' or NUL.".into());
     }
     Ok(name.to_string())
 }
@@ -257,7 +254,7 @@ pub(crate) fn password(name: Option<&str>) -> Result<Option<String>, Failure> {
         Ok(value) => Ok(Some(value)),
         Err(std::env::VarError::NotPresent) => Err(Failure::new(
             Exit::Usage,
-            format!("--password-env names {name}, and no such environment variable is set"),
+            format!("no such environment variable is set: {name}"),
         )),
         Err(std::env::VarError::NotUnicode(_)) => Err(Failure::new(
             Exit::Usage,

@@ -469,7 +469,21 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
             walk.unfollowed_in(&resources);
             continue;
         };
-        walk.content(&data, &resources, Some(IDENTITY), 0);
+        let unit = doc
+            .get_dictionary(page)
+            .ok()
+            .and_then(|dict| match dict.get(b"UserUnit") {
+                Ok(value) => {
+                    number(resolved(doc, value)?).filter(|unit| unit.is_finite() && *unit > 0.0)
+                }
+                Err(_) => Some(1.0),
+            });
+        walk.content(
+            &data,
+            &resources,
+            unit.map(|u| [u, 0.0, 0.0, u, 0.0, 0.0]),
+            0,
+        );
     }
     let unknown = |shown: &mut Shown| {
         shown.width = f64::INFINITY;
@@ -502,8 +516,6 @@ struct Picture {
     /// 1 for grey, 3 for RGB.
     channels: usize,
     stored: Stored,
-    /// The id of its soft mask, when it has one this can scale with it.
-    mask: Option<ObjectId>,
 }
 
 /// How many components a colour space has, when it is one this handles.
@@ -623,24 +635,17 @@ fn picture(doc: &Document, id: ObjectId, as_mask: bool) -> Option<Picture> {
     if stored == Stored::Jpeg && dict.has(b"DecodeParms") {
         return None;
     }
-    let mask = match dict.get(b"SMask") {
-        Err(_) => None,
-        Ok(mask) => {
-            // A mask this cannot scale keeps its picture as it is too.
-            let mask = mask.as_reference().ok()?;
-            if as_mask {
-                return None;
-            }
-            picture(doc, mask, true)?;
-            Some(mask)
+    if let Ok(mask) = dict.get(b"SMask") {
+        if as_mask {
+            return None;
         }
-    };
+        picture(doc, mask.as_reference().ok()?, true)?;
+    }
     Some(Picture {
         width,
         height,
         channels,
         stored,
-        mask,
     })
 }
 
@@ -919,28 +924,36 @@ fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize, usize) {
     let mut changed = 0usize;
     // A mask is scaled once, for the largest any of its pictures is shown.
     let mut masks: BTreeMap<ObjectId, Shown> = BTreeMap::new();
-    let mut done: BTreeSet<ObjectId> = BTreeSet::new();
+
     for (id, shown) in &shown {
-        let Some(found) = picture(doc, *id, false) else {
-            continue;
-        };
-        if let Some(mask) = found.mask {
+        // A parent with an unsupported colour space can still depend on a shared mask.
+        if let Some(mask) = doc
+            .get_object(*id)
+            .ok()
+            .and_then(|obj| obj.as_stream().ok())
+            .and_then(|stream| stream.dict.get(b"SMask").ok())
+            .and_then(|obj| obj.as_reference().ok())
+        {
             let entry = masks.entry(mask).or_default();
             entry.width = entry.width.max(shown.width);
             entry.height = entry.height.max(shown.height);
         }
-        if shrink(doc, *id, &found, *shown, how, false) {
+    }
+    for (id, shown) in &shown {
+        if let Some(mask) = masks.get_mut(id) {
+            mask.width = mask.width.max(shown.width);
+            mask.height = mask.height.max(shown.height);
+        } else if picture(doc, *id, false)
+            .is_some_and(|found| shrink(doc, *id, &found, *shown, how, false))
+        {
             changed += 1;
         }
-        done.insert(*id);
     }
-    for (id, shown) in masks {
-        // One a page also draws as a picture was handled above.
-        if done.contains(&id) {
-            continue;
-        }
-        if let Some(found) = picture(doc, id, true) {
-            shrink(doc, id, &found, shown, how, true);
+    for (id, extent) in masks {
+        if picture(doc, id, true).is_some_and(|found| shrink(doc, id, &found, extent, how, true))
+            && shown.contains_key(&id)
+        {
+            changed += 1;
         }
     }
     (shown.len(), changed, unknown)
@@ -1243,18 +1256,23 @@ fn focus(before: &Document, after: &Document, shown: &BTreeMap<ObjectId, Shown>)
             .and_then(|object| object.as_stream().ok())
             .map(|stream| stream.content.as_slice())
     }
-    let (id, shown, old, new) = shown
+    let (shown, old, new) = shown
         .iter()
         .filter(|(id, _)| content(before, **id) != content(after, **id))
-        .filter_map(|(id, shown)| Some((*id, *shown, size(before, *id)?, size(after, *id)?)))
+        .filter_map(|(id, shown)| {
+            let old = size(before, *id)?;
+            let new = size(after, *id)?;
+            let filter = &after.get_object(*id).ok()?.as_stream().ok()?.dict;
+            let jpeg = filter.get(b"Filter").and_then(Object::as_name).ok() == Some(b"DCTDecode");
+            (old != new || jpeg).then_some((*shown, old, new))
+        })
         // The most pixels lost; among pictures only re-encoded, the largest.
         // The sizes are the file's own numbers for any stream that was only
         // deflated, so the arithmetic saturates rather than overflows.
-        .max_by_key(|(_, _, old, new)| {
+        .max_by_key(|(_, old, new)| {
             let (before, after) = (old.0.saturating_mul(old.1), new.0.saturating_mul(new.1));
             (before.saturating_sub(after), before)
         })?;
-    let _ = id;
     let dpi = |pixels: i64| -> u32 {
         if shown.width <= 0.0 || !shown.width.is_finite() {
             return 0;

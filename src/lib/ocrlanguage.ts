@@ -34,8 +34,8 @@ const TEXT = catalog({
     typeLanguage: (automatic: string, offering: string) => `Type a language, or ${automatic}. ${offering}`,
     several: (typed: string, labels: string) => `Several begin with "${typed}": ${labels}`,
     noneBegins: (typed: string, offering: string) => `No language here begins with "${typed}". ${offering}`,
-    placeholder: (automatic: string, current: string) =>
-      `Language, such as de-DE or German, or ${automatic} (now: ${current})`,
+    placeholder: (choices: string, current: string) =>
+      `Language: ${choices} (now: ${current})`,
     letChoose: "Let the recognizer choose the language",
     chosenAutomatic: "Text will be recognized in the language the recognizer chooses.",
     chosen: (language: string) => `Text will be recognized as ${language}.`,
@@ -60,8 +60,8 @@ const TEXT = catalog({
     typeLanguage: (automatic: string, offering: string) => `Gib eine Sprache ein oder ${automatic}. ${offering}`,
     several: (typed: string, labels: string) => `Mehrere beginnen mit „${typed}“: ${labels}`,
     noneBegins: (typed: string, offering: string) => `Keine angebotene Sprache beginnt mit „${typed}“. ${offering}`,
-    placeholder: (automatic: string, current: string) =>
-      `Sprache, etwa de-DE oder Deutsch, oder ${automatic} (jetzt: ${current})`,
+    placeholder: (choices: string, current: string) =>
+      `Sprache: ${choices} (jetzt: ${current})`,
     letChoose: "Die Texterkennung die Sprache wählen lassen",
     chosenAutomatic: "Text wird in der Sprache erkannt, die die Texterkennung wählt.",
     chosen: (language: string) => `Text wird als ${language} erkannt.`,
@@ -170,8 +170,9 @@ export function pick(raw: string, offered: Offered): Picked {
 }
 
 /** What the palette's input shows before anything is typed. */
-export function placeholder(current: string | null): string {
-  return TEXT().placeholder(AUTOMATIC.toLowerCase(), label(current));
+export function placeholder(current: string | null, languages: readonly string[] = []): string {
+  const choices = [...languages.slice(0, 1), TEXT().automatic].join(" / ");
+  return TEXT().placeholder(choices, label(current));
 }
 
 /** What choosing will do, shown while a usable answer is in the input. */
@@ -206,6 +207,7 @@ export class RecognitionLanguage {
   /** The chosen tag, or null for the engine's own choice. */
   language: string | null = null;
   private asking: Offered | null = null;
+  private fetching = false;
 
   /** What the session file remembered. Anything but a string is no choice. */
   restore(stored: unknown): void {
@@ -223,11 +225,15 @@ export class RecognitionLanguage {
    * cannot be fetched is said, and nothing is asked.
    */
   async choose(fetch: () => Promise<Offered>, ask: () => void, say: (problem: string) => void): Promise<void> {
+    if (this.fetching || this.asking) return;
+    this.fetching = true;
     try {
       this.hold(await fetch());
     } catch (error) {
       say(String(error));
       return;
+    } finally {
+      this.fetching = false;
     }
     ask();
   }

@@ -154,12 +154,38 @@ pub(super) fn sets_and_removes_a_password(report: &mut Report) {
     report.check(
         "a document that had a password gets the new one instead",
         code == 0
-            && said.contains("the one it had no longer opens it")
+            && said
+                .trim_end()
+                .ends_with("needs the new password to open, AES-256")
             && old == 3
             && new == 0
             && !was.is_empty()
             && read == was,
         &format!("exit {code}; {stderr}; old {old}; new {new}"),
+    );
+
+    let (code, said, _) = tool(
+        &[
+            "protect",
+            &locked,
+            "-o",
+            &replaced,
+            "--force",
+            "--new-password-env",
+            "KEY",
+            "--password-env",
+            "KEY",
+        ],
+        &[("KEY", OLD)],
+    );
+    report.check(
+        "the same password still opens the copy",
+        code == 0
+            && said
+                .trim_end()
+                .ends_with("needs the new password to open, AES-256")
+            && text(&replaced, Some(OLD)).1 == was,
+        &said,
     );
 
     let long = "x".repeat(128);

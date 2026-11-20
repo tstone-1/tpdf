@@ -321,6 +321,17 @@ export default {
   "the page lists no annotations": "Die Seite führt keine Anmerkungen",
 
   // attachments.rs
+  "external attachment streams are unsupported": "Externe Datenströme für Anhänge werden nicht unterstützt",
+  "invalid attachment filters": "Ungültige Filter für den Anhang",
+  "invalid attachment filter parameters": "Ungültige Filterparameter für den Anhang",
+  "attachment exceeds its size limit": "Der Anhang überschreitet die Größenbegrenzung",
+  "invalid LZW EarlyChange": "Ungültiger Wert für LZW EarlyChange",
+  "incomplete ASCIIHex attachment": "Unvollständige ASCIIHex-Daten im Anhang",
+  "incomplete RunLength attachment": "Unvollständige RunLength-Daten im Anhang",
+  "unsupported attachment filter": "Nicht unterstützter Filter für Anhänge",
+  "invalid attachment predictor dimensions": "Ungültige Abmessungen für den Prädiktor des Anhangs",
+  "invalid attachment predictor rows": "Ungültige Zeilen für den Prädiktor des Anhangs",
+  "incomplete or invalid LZW attachment": "Unvollständige oder ungültige LZW-Daten im Anhang",
   "The document has no attachment {number} (it has {count}).":
     "Das Dokument hat keinen Anhang {number} (es hat {count}).",
   "{name} holds no file to save.": "{name} enthält keine Datei zum Speichern.",
@@ -376,6 +387,10 @@ export default {
     "Sie enthält Text, den das SVG noch nicht zeichnen kann; speichere sie als PNG",
   "it holds a gradient, which the SVG cannot draw yet; save it as PNG":
     "Sie enthält einen Farbverlauf, den das SVG noch nicht zeichnen kann; speichere sie als PNG",
+  "SVG export cannot preserve this clipping path; save as PNG":
+    "Dieser Beschneidungspfad lässt sich als SVG nicht erhalten; speichere sie als PNG.",
+  "SVG export cannot preserve this stroke; save as PNG":
+    "Diese Linie lässt sich als SVG nicht erhalten; speichere sie als PNG.",
   "the region holds more than one picture, or a drawing":
     "Der Bereich enthält mehr als ein Bild oder eine Zeichnung",
   "the picture has no size": "Das Bild hat keine Größe",
@@ -405,6 +420,10 @@ export const sie = {
     "Sie enthält Text, den das SVG noch nicht zeichnen kann; speichern Sie sie als PNG",
   "it holds a gradient, which the SVG cannot draw yet; save it as PNG":
     "Sie enthält einen Farbverlauf, den das SVG noch nicht zeichnen kann; speichern Sie sie als PNG",
+  "SVG export cannot preserve this clipping path; save as PNG":
+    "Dieser Beschneidungspfad lässt sich als SVG nicht erhalten; speichern Sie sie als PNG.",
+  "SVG export cannot preserve this stroke; save as PNG":
+    "Diese Linie lässt sich als SVG nicht erhalten; speichern Sie sie als PNG.",
   "Choose one available radio button":
     "Wählen Sie ein vorhandenes Optionsfeld",
   "Choose available options without duplicates":

@@ -101,6 +101,7 @@
       mergedName: (stem: string) => `${stem} merged.pdf`,
       choosePictures: "Choose pictures, one for each page",
       saveNewDocument: "Save the new document",
+      destinationOpen: "Close the open destination document before saving a copy there.",
       makingDocument: "Making the document...",
       saveSigned: "Save the signed document",
       saveWithValidation: "Save the document with long-term validation data",
@@ -274,6 +275,7 @@
       mergedName: (stem: string) => `${stem} zusammengeführt.pdf`,
       choosePictures: "Bilder auswählen, eines pro Seite",
       saveNewDocument: "Neues Dokument speichern",
+      destinationOpen: "Schließen Sie das geöffnete Zieldokument, bevor Sie dort eine Kopie speichern.",
       makingDocument: "Dokument wird erstellt...",
       saveSigned: "Signiertes Dokument speichern",
       saveWithValidation: "Dokument mit Langzeitvalidierungsdaten speichern",
@@ -2751,7 +2753,7 @@
     const view = openView, model = edits, mounted = viewer;
     const state = model?.state;
     if (!mounted || !model || !state) return;
-    const named = mounted.namedMarks();
+    const named = [...mounted.namedMarks()];
     const marks = state.marks.filter((mark) => named.includes(mark.id));
     const page = marks[0]?.page;
     if (page === undefined) return;
@@ -2772,11 +2774,8 @@
       }
     }
     if (!stillIn(view, model, mounted)) return;
-    const { copied, refused: unread } = markClipboard.copy(marks, { doc: model.doc, page }, pixels);
-    if (cut && unread.length > refused.length) {
-      say(unread.at(-1) ?? null);
-      return;
-    }
+    if (cut && !markClipboard.sameSelection(named, mounted.namedMarks())) return;
+    const { copied, refused: unread } = markClipboard.copy(marks, { doc: model.doc, page }, pixels, cut);
     if (copied === 0) {
       say(unread[0] ?? TEXT().nothingCopied);
       return;
@@ -3821,9 +3820,8 @@
         blockingTask = TEXT().savingSmaller;
         await tick();
         say(afterCompress(
-          await edits.compressCopy(source, path, chosen.pictures),
+          await working.compressCopy(source, path, chosen.pictures),
           path,
-          chosen.shrinkage,
         ));
       } catch (e) {
         if (e instanceof SaveCancelled) return;
@@ -3999,6 +3997,7 @@
           ? await signSaves.ask(suggested, panel)
           : await panel();
         if (!chosen) return;
+        requireClosedDestination(chosen);
         // Numbered before Stop is shown, so a press at any moment names this run.
         recognitionRun += 1;
         blockingTask = STARTING;
@@ -4518,6 +4517,7 @@
           ? await signSaves.ask(suggested, panel)
           : await panel();
         if (!chosen) return;
+        requireClosedDestination(chosen);
         blockingTask = TEXT().makingDocument;
         await tick();
         done.said = afterPictures(await call("images_to_pdf", { images, path: chosen }), chosen);
@@ -6278,6 +6278,10 @@
       await confirmSignatureSave(() => call("document_properties", { doc: doc.id }),
         askSignatureSave, merging);
     });
+  }
+
+  function requireClosedDestination(path: string): void {
+    if (isOpenTab(path)) throw TEXT().destinationOpen;
   }
 
   const isOpenTab = (path: string) => tabs.forPath(path) !== undefined;

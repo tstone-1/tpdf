@@ -221,6 +221,7 @@ pub struct Shape {
 pub struct Svg {
     bounds: Bounds,
     body: String,
+    clips: usize,
 }
 
 impl Svg {
@@ -228,7 +229,18 @@ impl Svg {
         Self {
             bounds,
             body: String::new(),
+            clips: 0,
         }
+    }
+
+    fn begin_clip(&mut self, [l, b, r, t]: Bounds, parent: Matrix) {
+        let id = self.clips;
+        self.clips += 1;
+        let transform = parent.map(num).join(" ");
+        self.body.push_str(&format!(
+            r##"<defs><clipPath id="c{id}"><rect x="{}" y="{}" width="{}" height="{}" transform="matrix({transform})"/></clipPath></defs><g clip-path="url(#c{id})">"##,
+            num(l), num(b), num(r - l), num(t - b)
+        ));
     }
 
     /// Adds one path. A path with neither fill nor stroke draws nothing and
@@ -484,7 +496,13 @@ mod engine {
                     "no picture or drawing lies wholly inside the region; drag around all of it"
                 ));
             };
-            let single = (chosen.len() == 1 && bindings.FPDFPageObj_GetType(chosen[0]) == IMAGE)
+            let mut problems = Vec::new();
+            for &object in &chosen {
+                cannot_draw(bindings, object, &mut problems);
+            }
+            let single = (chosen.len() == 1
+                && matches!(rectangular_clip(bindings, chosen[0]), Ok(None))
+                && bindings.FPDFPageObj_GetType(chosen[0]) == IMAGE)
                 .then_some(chosen[0]);
             let original = match single {
                 Some(image) => Some(if stored_jpeg(bindings, &copy, &page, image) {
@@ -494,13 +512,15 @@ mod engine {
                 }),
                 None => None,
             };
-            let mut problems = Vec::new();
-            for &object in &chosen {
-                cannot_draw(bindings, object, &mut problems);
-            }
             let no_svg = problems.first().map(|problem| match problem {
                 Unsupported::Text => {
                     said!("it holds text, which the SVG cannot draw yet; save it as PNG")
+                }
+                Unsupported::Clip => {
+                    said!("SVG export cannot preserve this clipping path; save as PNG")
+                }
+                Unsupported::Hairline => {
+                    said!("SVG export cannot preserve this stroke; save as PNG")
                 }
                 Unsupported::Gradient => {
                     said!("it holds a gradient, which the SVG cannot draw yet; save it as PNG")
@@ -691,6 +711,58 @@ mod engine {
     enum Unsupported {
         Text,
         Gradient,
+        Clip,
+        Hairline,
+    }
+
+    // PDFium returns clip coordinates in the containing form or page's space.
+    // Retain a single rectangular path, including an implicit Form BBox.
+    unsafe fn rectangular_clip(
+        bindings: Bindings,
+        object: FPDF_PAGEOBJECT,
+    ) -> Result<Option<Bounds>, ()> {
+        let clip = bindings.FPDFPageObj_GetClipPath(object);
+        if clip.is_null() {
+            return Ok(None);
+        }
+        match bindings.FPDFClipPath_CountPaths(clip) {
+            -1 => return Ok(None),
+            1 => {}
+            _ => return Err(()),
+        }
+        let count = bindings.FPDFClipPath_CountPathSegments(clip, 0);
+        if !matches!(count, 4 | 5) {
+            return Err(());
+        }
+        let mut points = [(0.0, 0.0); 5];
+        for i in 0..count {
+            let seg = bindings.FPDFClipPath_GetPathSegment(clip, 0, i);
+            let (mut x, mut y) = (0.0, 0.0);
+            if seg.is_null()
+                || bindings.FPDFPathSegment_GetType(seg)
+                    != if i == 0 { SEGMENT_MOVE } else { SEGMENT_LINE }
+                || (i < count - 1 && bindings.FPDFPathSegment_GetClose(seg) != 0)
+                || bindings.FPDFPathSegment_GetPoint(seg, &mut x, &mut y) == 0
+                || !x.is_finite()
+                || !y.is_finite()
+            {
+                return Err(());
+            }
+            points[i as usize] = (f64::from(x), f64::from(y));
+        }
+        let [a, b, c, d, end] = points;
+        let corners = a.0 != c.0
+            && a.1 != c.1
+            && ((b == (a.0, c.1) && d == (c.0, a.1)) || (b == (c.0, a.1) && d == (a.0, c.1)));
+        if !corners || (count == 5 && end != a) {
+            return Err(());
+        }
+        Ok(Some([
+            a.0.min(c.0),
+            a.1.min(c.1),
+            a.0.max(c.0),
+            a.1.max(c.1),
+        ]))
     }
 
     /// What in `object`, at any depth, the SVG cannot draw.
@@ -699,7 +771,20 @@ mod engine {
         object: FPDF_PAGEOBJECT,
         problems: &mut Vec<Unsupported>,
     ) {
+        if rectangular_clip(bindings, object).is_err() {
+            problems.push(Unsupported::Clip);
+        }
         match bindings.FPDFPageObj_GetType(object) {
+            PATH => {
+                let (mut mode, mut stroked, mut width) = (0, 0, 0.0);
+                if bindings.FPDFPath_GetDrawMode(object, &mut mode, &mut stroked) == 0
+                    || (stroked != 0
+                        && (bindings.FPDFPageObj_GetStrokeWidth(object, &mut width) == 0
+                            || width <= 0.0))
+                {
+                    problems.push(Unsupported::Hairline);
+                }
+            }
             TEXT => problems.push(Unsupported::Text),
             SHADING => problems.push(Unsupported::Gradient),
             FORM => {
@@ -723,6 +808,11 @@ mod engine {
         parent: Matrix,
         svg: &mut Svg,
     ) -> Result<(), String> {
+        let clip = rectangular_clip(bindings, object)
+            .map_err(|()| said!("SVG export cannot preserve this clipping path; save as PNG"))?;
+        if let Some(bounds) = clip {
+            svg.begin_clip(bounds, parent);
+        }
         let own = concat(matrix(bindings, object), parent);
         match bindings.FPDFPageObj_GetType(object) {
             PATH => svg.shape(&shape(bindings, object, own)),
@@ -736,6 +826,9 @@ mod engine {
             }
             IMAGE => svg.picture(&native_png(bindings, document, page, object)?, own),
             _ => {}
+        }
+        if clip.is_some() {
+            svg.body.push_str("</g>");
         }
         Ok(())
     }

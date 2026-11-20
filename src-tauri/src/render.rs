@@ -159,8 +159,8 @@ pub struct TileRequest {
     /// make unreachable.
     pub crop: Option<[f32; 4]>,
     /// Whether to draw the page's annotations: comments, highlights, stamps
-    /// and drawings. Form fields are drawn either way. Always set but for a
-    /// print that leaves the comments out (`print_layout::Settings::marks`).
+    /// and drawings. OCR excludes these and form widgets. Printing keeps
+    /// widgets even when the reader omits comments (`print_layout::Settings::marks`).
     pub annotations: bool,
     /// Apply PDFium print visibility for print preview and spooling.
     pub printing: bool,

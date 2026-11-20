@@ -21,6 +21,15 @@ have the binary.)
 
 ### Fixed
 
+- Saving a smaller copy includes unsaved edits in the estimate and checks the final size before replacing a file. Compression respects physical page scale and shared transparency masks. The preview shows a visibly changed picture, and the CLI rejects a preview path that also names the output PDF.
+- OCR excludes comments and editable fields from permanent page text. Its Unicode map covers the characters actually written. Right-to-left words are checked for reading order and position, and a page-only operation refuses to change another slot that shares the same page object.
+- Cut keeps the original selection and clipboard intact when the selection changes or some of its pictures cannot be read. Clipboard refusal messages follow the interface language.
+- The OCR language prompt handles repeated requests and suggests installed languages. Timestamp presets discard invalid custom addresses before storing a choice.
+
+- Attachment extraction resolves indirect filters and refuses incomplete data or files over the decoded size limit.
+- Changing an opening password preserves permission restrictions on documents that open without prompting. Password prompts keep keyboard focus and respect the focused Cancel button.
+- Creating a document from pictures or adding OCR refuses to overwrite an open destination. SVG export directs clipped graphics and device hairlines to PNG.
+- The CLI reports which password opens the output. On macOS, removing the command-line tool reports a retained alias accurately.
 - Saving an attachment checks that it came from the document open in the viewer.
 - Page labels follow their pages after a save. Deleting pages preserves bookmarks
   to surviving named destinations, and bookmarks on cropped pages land at the correct height.

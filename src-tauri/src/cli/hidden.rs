@@ -109,7 +109,7 @@ impl Pages for Opened<'_> {
         height: u32,
         scale: f32,
     ) -> Result<Vec<u8>, Failure> {
-        render(self.session, page, width, height, scale)
+        render(self.session, page, width, height, scale, true)
     }
 }
 

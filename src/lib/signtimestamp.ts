@@ -125,7 +125,16 @@ export function readStampChoice(
   if (typeof value !== "object" || value === null) return noStamp();
   const { server, url } = value as { server?: unknown; url?: unknown };
   if (typeof server !== "string" || !known(server)) return noStamp();
-  if (typeof url !== "string" || url.length > MAX_URL_CHARS) return noStamp();
+  if (typeof url !== "string") return noStamp();
+  if (url.length > MAX_URL_CHARS) {
+    writeStampChoice(noStamp(), storage, key);
+    return noStamp();
+  }
+  if (url && addressProblem(url)) {
+    const clean = { server, url: "" };
+    writeStampChoice(clean, storage, key);
+    return clean;
+  }
   return { server, url };
 }
 
@@ -136,7 +145,8 @@ export function writeStampChoice(
   key: string = CHOICE_KEY,
 ): boolean {
   try {
-    storage().setItem(key, JSON.stringify(choice));
+    const url = !addressProblem(choice.url) ? choice.url.trim() : "";
+    storage().setItem(key, JSON.stringify({ server: choice.server, url }));
     return true;
   } catch {
     return false;

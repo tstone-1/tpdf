@@ -108,6 +108,7 @@ export default {
     "Das Kommandozeilenwerkzeug liegt nicht neben diesem tpdf ({path}).",
   "Installed. `tpdf` in a terminal now runs the command-line tool ({LINK} links to {path}). Try `tpdf help`.":
     "Installiert. `tpdf` startet im Terminal jetzt das Kommandozeilenwerkzeug ({LINK} verweist auf {path}). Probier `tpdf help`.",
+  "Removed {LINK}.": "{LINK} entfernt.",
   "Removed {LINK} and {ALIAS}. The application is unchanged.":
     "{LINK} und {ALIAS} wurden entfernt. Die App selbst ist unverändert.",
   "{why}, so it was left alone.": "{why}, daher wurde es nicht angerührt.",
@@ -224,6 +225,8 @@ export default {
     "Das Passwort ist zu lang: Ein PDF-Passwort hat höchstens {MAX_BYTES} Bytes, und dieses hat {length}.",
   "The password holds a control character, such as a tab or a line break, which most readers cannot type back.":
     "Das Passwort enthält ein Steuerzeichen, etwa einen Tabulator oder einen Zeilenumbruch, das die meisten Leser nicht wieder eintippen können.",
+  "Changing the password would discard the document restrictions.":
+    "Eine Passwortänderung würde die Dokumentbeschränkungen aufheben.",
   "This document has no password, so there is none to remove.":
     "Dieses Dokument hat kein Passwort, daher gibt es keins zu entfernen.",
   "This document opens without a password. What it restricts was set by whoever made it, and tpdf removes a password only from a document that needs one to open.":

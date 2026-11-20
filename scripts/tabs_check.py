@@ -597,11 +597,11 @@ def picture_files(directory: Path, binary: Path) -> bool:
         except (ValueError, KeyError, IndexError):
             described = {}
         sizes = described.get("page_sizes", [])
-        widths = sorted(size["width_pt"] for size in sizes)
+        widths = [size["width_pt"] for size in sizes]
         checks = [
             ("album.pdf has two pages", described.get("pages") == 2),
-            (f"of two sizes, one half the other: {widths}",
-             len(widths) == 2 and abs(widths[1] - 2 * widths[0]) <= 1),
+            (f"the second page is half as wide as the first: {widths}",
+             len(widths) == 2 and widths[1] > 0 and abs(widths[0] - 2 * widths[1]) <= 1),
         ]
     else:
         checks = [("album.pdf was written", False)]

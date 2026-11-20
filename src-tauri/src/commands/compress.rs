@@ -1,8 +1,7 @@
 //! Save a smaller copy, and say first what one would come to.
 //!
-//! `compress_estimate` asks the worker that holds the document what a smaller
-//! copy would weigh and for one part of one page before and after; nothing is
-//! written. `compress_copy` is `save_copy` with one thing changed: the plan
+//! `compress_estimate` measures a private temporary copy of the working document
+//! and asks the worker for one part of one page before and after. `compress_copy` is `save_copy` with one thing changed: the plan
 //! says how the copy is made smaller (`compress.rs`). The open document is not
 //! touched, and unsaved changes go into the copy as they do for any copy.
 
@@ -10,7 +9,7 @@ use std::path::Path;
 
 use base64::Engine as _;
 
-use super::{await_reply, outside_of, password_for, reply_channel};
+use super::{answered, outside_of, password_for};
 use crate::compress::{Compress, Pictures, Sample};
 use crate::render::RenderService;
 use crate::{edits, save};
@@ -94,30 +93,109 @@ pub(crate) fn view(sample: &Sample) -> Result<SampleView, String> {
     })
 }
 
-/// Says what a smaller copy of the file `doc` was opened from would come to.
-///
-/// Of the file as it is on disk: a change not yet saved is not in the figure.
+/// The measured sizes of the source and the completed staged PDF.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompressionSize {
+    pub bytes_before: u64,
+    pub bytes_after: u64,
+}
+
+impl CompressionSize {
+    pub(crate) fn smaller(source: &Path, staged: &Path) -> Result<Self, String> {
+        let bytes_before = file_size(source)?;
+        let bytes_after = file_size(staged)?;
+        if bytes_after >= bytes_before {
+            return Err(said!("the copy would not be smaller than the source"));
+        }
+        Ok(Self {
+            bytes_before,
+            bytes_after,
+        })
+    }
+}
+
+fn file_size(path: &Path) -> Result<u64, String> {
+    std::fs::metadata(path)
+        .map(|m| m.len())
+        .map_err(|why| format!("{}: {why}", path.display()))
+}
+
+/// Measures the working plan with the same sandboxed writer that publishes the PDF.
 #[tauri::command]
 pub async fn compress_estimate(
+    app: tauri::AppHandle,
+    edits: tauri::State<'_, edits::Edits>,
     service: tauri::State<'_, RenderService>,
     doc: u32,
     source: String,
     pictures: Option<Pictures>,
 ) -> Result<Shrinkage, String> {
+    let mut plan = edits.plan(doc)?;
     let compress = way(pictures)?;
-    let bytes_before = std::fs::metadata(&source)
-        .map(|data| data.len())
-        .map_err(|why| format!("{source}: {why}"))?;
-    let (reply, rx) = reply_channel();
-    service.shrink(doc, compress, reply);
-    let estimate: crate::compress::Estimate = await_reply("compress_estimate", rx).await?;
-    Ok(Shrinkage {
-        bytes_before,
-        bytes_after: estimate.bytes_after,
-        pictures: estimate.done.pictures,
-        pictures_changed: estimate.done.pictures_changed,
-        sample: estimate.sample.as_ref().map(view).transpose()?,
+    let password = password_for(&service, doc, "compress_estimate").await;
+    let writer = outside_of(&app, service.backend());
+    let service = service.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = Path::new(&source);
+        let mut temp = tempfile::Builder::new();
+        temp.prefix("tpdf-compression-");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            temp.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        let dir = temp.tempdir().map_err(|e| e.to_string())?;
+        let path = dir.path().join("working.pdf");
+        let mut estimate = crate::compress::Estimate::default();
+        if pictures.is_some() {
+            let temporary = if plan.is_identity() {
+                None
+            } else {
+                save::write_checked_copy(
+                    source,
+                    &plan,
+                    &path,
+                    password.as_deref(),
+                    &*writer,
+                    &|_| Ok(()),
+                )
+                .map_err(|why| why.message)?;
+                let info = answered("compress_estimate", |reply| {
+                    service.open(path.clone(), true, password.clone(), reply)
+                })
+                .map_err(|why| why.reason)?;
+                Some(info.id)
+            };
+            let result = answered("compress_estimate", |reply| {
+                service.shrink(temporary.unwrap_or(doc), compress, reply)
+            });
+            if let Some(id) = temporary {
+                answered("compress_estimate", |reply| service.close(id, reply))?;
+            }
+            estimate = result?;
+        }
+        plan.compress = compress;
+        let sized = dir.path().join("compressed.pdf");
+        save::write_checked_copy(
+            source,
+            &plan,
+            &sized,
+            password.as_deref(),
+            &*writer,
+            &|_| Ok(()),
+        )
+        .map_err(|why| why.message)?;
+        Ok(Shrinkage {
+            bytes_before: file_size(source)?,
+            bytes_after: file_size(&sized)?,
+            pictures: estimate.done.pictures,
+            pictures_changed: estimate.done.pictures_changed,
+            sample: estimate.sample.as_ref().map(view).transpose()?,
+        })
     })
+    .await
+    .map_err(|e| said!("the save did not run: {e}"))?
 }
 
 /// Writes the working document to `path`, made smaller as `pictures` says: as
@@ -131,23 +209,31 @@ pub async fn compress_copy(
     source: String,
     path: String,
     pictures: Option<Pictures>,
-) -> Result<save::Copied, String> {
+) -> Result<CompressionSize, String> {
     let mut plan = edits.plan(doc)?;
     plan.compress = way(pictures)?;
     let opened_with = password_for(&service, doc, "compress_copy").await;
     let writing = outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || {
-        save::write_copy(
-            Path::new(&source),
+        let source = Path::new(&source);
+        let size = std::cell::Cell::new(None);
+        save::write_checked_copy(
+            source,
             &plan,
             Path::new(&path),
             opened_with.as_deref(),
             &*writing,
+            &|staged| {
+                size.set(Some(CompressionSize::smaller(source, staged)?));
+                Ok(())
+            },
         )
+        .map_err(|why| why.message)?;
+        size.get()
+            .ok_or_else(|| said!("the staged file was not measured"))
     })
     .await
     .map_err(|e| said!("the save did not run: {e}"))?
-    .map_err(|why| why.message)
 }
 
 #[cfg(test)]

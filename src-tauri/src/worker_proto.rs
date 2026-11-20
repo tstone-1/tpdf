@@ -65,9 +65,8 @@ pub enum Request {
         /// Defaulted for the reason [`Request::Text`]'s is.
         #[serde(default)]
         crop: Option<[f32; 4]>,
-        /// Whether to draw the page's annotations; form fields are drawn
-        /// either way. Defaulted to drawing them, which every request but a
-        /// print without its comments wants.
+        /// Draw annotations by default. OCR omits annotations and widgets.
+        /// A print without annotations still draws its form widgets.
         #[serde(default = "drawn")]
         annotations: bool,
         /// Use print visibility for annotations and optional content.

@@ -1230,8 +1230,8 @@ ROWS += [
     Mutation(
         "cli compress: replace the preview under another name",
         "src/cli/compress.rs",
-        "                .is_some_and(|output| save::same_file(output, preview))",
-        "                .is_some_and(|output| false && save::same_file(output, preview))",
+        ".map(|output| same_destination(output, preview))",
+        ".map(|_| Ok::<bool, Failure>(false))",
         "an_output_that_names_another_file_of_the_line_is_refused",
     ),
     Mutation(

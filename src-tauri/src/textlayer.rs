@@ -31,9 +31,8 @@
 //! Every word is followed by a space of its own, placed just past the word's
 //! box, so that two words whose boxes touch still read as two.
 //!
-//! Character codes are UTF-16 code units under `/Identity-H`, and the
-//! `/ToUnicode` map is the identity, so no per-document encoding is built and a
-//! word in any script is written the same way.
+//! Each used Unicode scalar has one font code and one ToUnicode entry. Words
+//! are laid out in visual order so their boxes coincide with the scanned text.
 //!
 //! ## Why the layer goes first in the page's content
 //!
@@ -44,6 +43,8 @@
 
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 use serde::{Deserialize, Serialize};
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::pagetree::{self, DisplayedPage};
 use crate::save::Upright;
@@ -115,7 +116,14 @@ pub fn write(doc: &mut Document, layers: &[Layer]) -> Result<(), String> {
         return Ok(());
     }
     let pages = pagetree::ordered_pages(doc);
-    let mut seen = std::collections::BTreeSet::new();
+    let mut page_ids = BTreeSet::new();
+    let shared: BTreeSet<_> = pages
+        .iter()
+        .copied()
+        .filter(|id| !page_ids.insert(*id))
+        .collect();
+    let mut seen = BTreeSet::new();
+    let mut codes = BTreeMap::new();
     let mut planned = Vec::new();
     for layer in layers {
         let id = *pages.get(layer.page as usize).ok_or_else(|| {
@@ -139,14 +147,19 @@ pub fn write(doc: &mut Document, layers: &[Layer]) -> Result<(), String> {
             ));
         }
         let shown = pagetree::displayed_page(doc, id);
-        if let Some(lines) = content(shown, &layer.words)? {
+        if let Some(lines) = content(shown, &layer.words, &mut codes)? {
+            if shared.contains(&id) {
+                return Err(said!(
+                    "the OCR page shares its page object with another page"
+                ));
+            }
             planned.push((id, lines));
         }
     }
     if planned.is_empty() {
         return Ok(());
     }
-    let font = add_font(doc)?;
+    let font = add_font(doc, &codes)?;
     for (page, lines) in planned {
         attach(doc, page, font, &lines)?;
     }
@@ -157,10 +170,14 @@ pub fn write(doc: &mut Document, layers: &[Layer]) -> Result<(), String> {
 ///
 /// `None` when no word is usable. The name is filled in by [`attach`], which is
 /// the first place that knows which names the page already uses.
-fn content(shown: DisplayedPage, words: &[Word]) -> Result<Option<Vec<String>>, String> {
+fn content(
+    shown: DisplayedPage,
+    words: &[Word],
+    codes: &mut BTreeMap<char, u16>,
+) -> Result<Option<Vec<String>>, String> {
     let mut lines = Vec::new();
     for word in words {
-        if let Some(line) = show(shown, word)? {
+        if let Some(line) = show(shown, word, codes)? {
             lines.push(line);
         }
     }
@@ -168,24 +185,23 @@ fn content(shown: DisplayedPage, words: &[Word]) -> Result<Option<Vec<String>>, 
 }
 
 /// One word as `Tf Tz Tm Tj` operands, with `{}` left for the font's name.
-fn show(shown: DisplayedPage, word: &Word) -> Result<Option<String>, String> {
-    let units: Vec<u16> = word
-        .text
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect::<String>()
-        .trim()
-        .encode_utf16()
-        .collect();
-    if units.len() > MAX_UNITS {
+fn show(
+    shown: DisplayedPage,
+    word: &Word,
+    codes: &mut BTreeMap<char, u16>,
+) -> Result<Option<String>, String> {
+    let cleaned: String = word.text.chars().filter(|c| !c.is_control()).collect();
+    let logical = cleaned.trim();
+    let count = logical.encode_utf16().count();
+    if count > MAX_UNITS {
         return Err(said!(
             "a word in the text layer is {count} characters long, over the limit of {MAX_UNITS}",
-            count = units.len()
+            count = count
         ));
     }
     let [left, top, right, bottom] = word.rect;
     let usable = word.rect.iter().all(|v| v.is_finite()) && right > left && bottom > top;
-    if units.is_empty() || !usable {
+    if logical.is_empty() || !usable {
         return Ok(None);
     }
 
@@ -200,7 +216,7 @@ fn show(shown: DisplayedPage, word: &Word) -> Result<Option<String>, String> {
     // the box's height makes the glyph exactly as tall as the box.
     let size = upright.height;
     let em = f64::from(EM);
-    let natural = units.len() as f64 * f64::from(ADVANCE) / em * size;
+    let natural = logical.chars().count() as f64 * f64::from(ADVANCE) / em * size;
     let scaling = upright.width / natural * 100.0;
     // The baseline sits above the box's bottom by the descender's share.
     let baseline = size * f64::from(ASCENT) / em;
@@ -210,11 +226,26 @@ fn show(shown: DisplayedPage, word: &Word) -> Result<Option<String>, String> {
     // ends from the gap before the next, and an engine's boxes touch: measured
     // 2026-10-03 with Vision on a rendered page, "REDACT ME" read back as
     // "REDACTME" and "my vow" as "myvow" until the space was written.
-    let hex: String = units
-        .iter()
-        .chain(std::iter::once(&0x0020))
-        .map(|unit| format!("{unit:04X}"))
-        .collect();
+    let bidi = unicode_bidi::ParagraphBidiInfo::new(logical, None);
+    let visual = bidi.reorder_line(0..logical.len());
+    let mut hex = String::new();
+    for ch in visual.chars().chain(std::iter::once(' ')) {
+        let next = codes.len() + 128;
+        let code = match codes.entry(ch) {
+            std::collections::btree_map::Entry::Occupied(entry) => *entry.get(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let code = if ch.is_ascii() {
+                    ch as u16
+                } else {
+                    u16::try_from(next)
+                        .map_err(|_| said!("too many distinct characters for the OCR font"))?
+                };
+                *entry.insert(code)
+            }
+        };
+        use std::fmt::Write as _;
+        write!(hex, "{code:04X}").expect("writing to a string");
+    }
 
     Ok(Some(format!(
         "/{{}} {size:.3} Tf {scaling:.3} Tz {} <{hex}> Tj",
@@ -299,7 +330,7 @@ fn dictionary_of(doc: &Document, object: &Object) -> Dictionary {
 }
 
 /// Adds the font's four objects and returns the Type 0 font.
-fn add_font(doc: &mut Document) -> Result<ObjectId, String> {
+fn add_font(doc: &mut Document, codes: &BTreeMap<char, u16>) -> Result<ObjectId, String> {
     let program = font_program();
     let length = i64::try_from(program.len()).map_err(|e| e.to_string())?;
     let mut file = Stream::new(dictionary! { "Length1" => length }, program);
@@ -344,7 +375,7 @@ fn add_font(doc: &mut Document) -> Result<ObjectId, String> {
         "CIDToGIDMap" => map,
     });
 
-    let mut to_unicode = Stream::new(Dictionary::new(), to_unicode().into_bytes());
+    let mut to_unicode = Stream::new(Dictionary::new(), to_unicode(codes).into_bytes());
     let _ = to_unicode.compress();
     let to_unicode = doc.add_object(to_unicode);
 
@@ -358,24 +389,26 @@ fn add_font(doc: &mut Document) -> Result<ObjectId, String> {
     }))
 }
 
-/// The identity map from a two-byte code to the UTF-16 unit of the same value.
-///
-/// One range per high byte, because a `bfrange` may not cross one, and at most
-/// 100 ranges per block, which is the format's limit.
-fn to_unicode() -> String {
+/// Only the codes used by this font. Each destination is a complete UTF-16 string.
+fn to_unicode(codes: &BTreeMap<char, u16>) -> String {
     let mut out = String::from(
         "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n\
          /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n\
          /CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n\
          1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
     );
-    let highs: Vec<u32> = (0..256).collect();
-    for block in highs.chunks(100) {
-        out.push_str(&format!("{} beginbfrange\n", block.len()));
-        for high in block {
-            out.push_str(&format!("<{high:02X}00> <{high:02X}FF> <{high:02X}00>\n"));
+    let entries: Vec<_> = codes.iter().collect();
+    for block in entries.chunks(100) {
+        use std::fmt::Write as _;
+        writeln!(out, "{} beginbfchar", block.len()).expect("writing to a string");
+        for &(ch, code) in block {
+            write!(out, "<{code:04X}> <").expect("writing to a string");
+            for unit in ch.encode_utf16(&mut [0; 2]) {
+                write!(out, "{unit:04X}").expect("writing to a string");
+            }
+            out.push_str(">\n");
         }
-        out.push_str("endbfrange\n");
+        out.push_str("endbfchar\n");
     }
     out.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
     out
@@ -664,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn a_character_outside_the_basic_plane_is_two_code_units() {
+    fn a_character_outside_the_basic_plane_occupies_one_glyph() {
         let (mut doc, page) = document(0);
         write(
             &mut doc,
@@ -674,7 +707,7 @@ mod tests {
             }],
         )
         .expect("written");
-        assert!(layer_text(&doc, page).contains("<D835DC9C0020> Tj"));
+        assert!(layer_text(&doc, page).contains("<00800020> Tj"));
     }
 
     #[test]
@@ -791,11 +824,33 @@ mod tests {
     }
 
     #[test]
-    fn the_unicode_map_covers_every_high_byte_once() {
-        let map = to_unicode();
-        assert_eq!(map.matches("beginbfrange").count(), 3);
-        assert_eq!(map.matches("> <").count(), 1 + 2 * 256);
-        assert!(map.contains("<4100> <41FF> <4100>\n"));
-        assert!(map.contains("<FF00> <FFFF> <FF00>\n"));
+    fn a_layer_on_a_shared_page_object_is_refused_before_writing() {
+        let (mut doc, page) = document(0);
+        let parent = doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Parent")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let tree = doc.get_dictionary_mut(parent).unwrap();
+        tree.set(
+            "Kids",
+            vec![Object::Reference(page), Object::Reference(page)],
+        );
+        tree.set("Count", 2);
+        let before = doc.objects.clone();
+        let layer = Layer {
+            page: 0,
+            words: vec![word("only first", [0., 0., 100., 20.])],
+        };
+        assert!(write(&mut doc, &[layer]).unwrap_err().contains("shares"));
+        assert_eq!(doc.objects, before);
+    }
+
+    #[test]
+    fn the_unicode_map_only_contains_complete_used_scalars() {
+        let map = to_unicode(&BTreeMap::from([('A', 65), ('\u{1D49C}', 128)]));
+        assert!(map.contains("2 beginbfchar\n<0041> <0041>\n<0080> <D835DC9C>\nendbfchar"));
     }
 }

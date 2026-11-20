@@ -147,6 +147,10 @@ export class FakeElement {
     return this.children.some((child) => child.contains(node));
   }
 
+  open = false;
+  showModal(): void { this.open = true; }
+  close(): void { this.open = false; }
+
   focus(): void {
     this.focused = true;
   }

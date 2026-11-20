@@ -3318,7 +3318,7 @@ fn every_malformed_text_or_info_line_is_refused_with_its_reason() {
         ("text a.pdf --pages", "needs a value"),
         ("text a.pdf --pages 0", "count from 1"),
         ("text a.pdf --password swordfish", "no option `--password`"),
-        ("text a.pdf --password-env A=b", "cannot be one"),
+        ("text a.pdf --password-env A=b", "environment variable name"),
         ("info", "at least one document"),
         ("info a.pdf --pages 1", "no option `--pages`"),
         ("info a.pdf --password-env", "needs a value"),

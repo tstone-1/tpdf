@@ -88,7 +88,7 @@ fn fields_and_fill_lines_parse_and_every_malformed_one_is_refused() {
         ),
         (
             "fill a.pdf -o b.pdf --values v.json --password-env A=b",
-            "cannot be one",
+            "environment variable name",
         ),
         ("fields", "needs the document"),
         ("fields a.pdf b.pdf", "second"),
