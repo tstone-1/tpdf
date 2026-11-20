@@ -27683,8 +27683,10 @@ nothing: `verify::scan` read row-differenced bytes, and the front part of a stre
 called both scanned. An `Err` arm written for "would not decode" never fires for either.
 `verify::as_drawn` now asks first whether every key the decoder consults is direct, and
 inflates each Flate stage a second time with `flate2` to learn whether it ended. LZW and
-ASCII85 have the same partial-output behaviour and no second decoder here (threat model,
-residual 42). Read this function again when the lopdf pin moves.
+ASCII85 have the same partial-output behaviour; since 2026-11-20 an LZW stage must reach its
+end code (asked of `weezl`, the decoder lopdf uses, set up as lopdf sets it up) and an ASCII85
+stage its `~>` with nothing lopdf stops at before it. Read this function again when the lopdf
+pin moves.
 
 ### A report nobody asked for, said through the message bar, replaces the one the reader has not read
 

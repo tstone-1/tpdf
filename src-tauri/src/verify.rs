@@ -260,11 +260,11 @@ struct Drawn {
 ///   PNG-predicted stream whose parameters are `9 0 R` decodes to row-differenced
 ///   bytes, the words are not in those, and the stream was counted as read.
 ///   See [`parameters_unread`].
-/// * **A Flate decode that stops part way is `Ok`.** `lopdf` logs the zlib
-///   error and returns what it produced, so a stream cut short was searched only
-///   up to the cut. See [`inflates_whole`]. Its LZW and ASCII85 decoders end
-///   the same way, and this build has no second decoder for either to ask, so a
-///   stream of those cut short is still searched up to the cut and passes.
+/// * **A decode that stops part way is `Ok`.** `lopdf` logs the zlib error
+///   and returns what it produced, so a stream cut short was searched only up
+///   to the cut. See [`inflates_whole`]. Its LZW and ASCII85 decoders end the
+///   same way, so since 2026-11-20 each of those stages has to reach its own
+///   end marker: [`lzw_ends`] and [`ascii85_ends`].
 /// * **A content stream can hold a picture of its own**, an inline image, and
 ///   reading the stream's bytes reads the words around it, not the picture.
 fn as_drawn(doc: &Document, object: u32, stream: &lopdf::Stream, filters: &[&[u8]]) -> Drawn {
@@ -398,41 +398,123 @@ fn parameters_unread(object: u32, stream: &lopdf::Stream) -> Option<String> {
     }
 }
 
-/// Whether a `/FlateDecode` stage of `filters` stopped before the end of its data.
+/// Whether a stage of `filters` stopped before the end of its data.
 ///
-/// `lopdf` answers `Ok` with whatever the inflate produced when zlib reports
-/// an error, so a stream cut short reaches the search as its first part and
-/// nothing says the rest was never read. This asks `flate2` the same question
-/// for each Flate stage and listens to the answer, once over the stage's input
-/// into a sink: nothing is kept, and the work is one more inflate of a stream
-/// `lopdf` has just inflated under the same bound.
+/// `lopdf` answers `Ok` with whatever its decoder produced when the decoder
+/// stops early, for all three filters it reads, so a stream cut short reaches
+/// the search as its first part and nothing says the rest was never read. This
+/// asks each stage the same question again and listens to the answer: `flate2`
+/// whether the inflate ran to its end ([`inflates_whole`]), `weezl` whether the
+/// LZW data reached its end code ([`lzw_ends`]), and the ASCII85 text whether
+/// it reached `~>` with nothing unreadable before it ([`ascii85_ends`]). Each
+/// runs once over the stage's input into a sink, under the same bound.
 ///
 /// A stage after the first reads what the stages before it produced, so those
 /// are decoded again on their own; a prefix that will not decode is a stage
 /// that cannot be shown whole.
 fn stopped_part_way(stream: &lopdf::Stream, filters: &[&[u8]]) -> bool {
     for (at, filter) in filters.iter().enumerate() {
-        if *filter != b"FlateDecode" {
+        if !matches!(*filter, b"FlateDecode" | b"LZWDecode" | b"ASCII85Decode") {
             continue;
         }
-        if at == 0 {
-            if !inflates_whole(&stream.content) {
-                return true;
+        let decoded;
+        let input: &[u8] = if at == 0 {
+            &stream.content
+        } else {
+            let mut before = stream.clone();
+            let names: Vec<Object> = filters[..at]
+                .iter()
+                .map(|name| Object::Name(name.to_vec()))
+                .collect();
+            before.dict.set("Filter", Object::Array(names));
+            match before.decompressed_content_with_limit(MAX_DECODE) {
+                Ok(bytes) => {
+                    decoded = bytes;
+                    &decoded
+                }
+                Err(_) => return true,
             }
-            continue;
-        }
-        let mut before = stream.clone();
-        let names: Vec<Object> = filters[..at]
-            .iter()
-            .map(|name| Object::Name(name.to_vec()))
-            .collect();
-        before.dict.set("Filter", Object::Array(names));
-        match before.decompressed_content_with_limit(MAX_DECODE) {
-            Ok(input) if inflates_whole(&input) => {}
-            _ => return true,
+        };
+        let whole = match *filter {
+            b"FlateDecode" => inflates_whole(input),
+            b"LZWDecode" => lzw_ends(input, early_change(stream, at)),
+            _ => ascii85_ends(input),
+        };
+        if !whole {
+            return true;
         }
     }
     false
+}
+
+/// The `/EarlyChange` `lopdf` decodes stage `at` with: from the stage's own
+/// entry of a `/DecodeParms` array, or from a single dictionary, and 1 when
+/// absent. [`parameters_unread`] has already refused any form it would not
+/// read as a direct integer.
+fn early_change(stream: &lopdf::Stream, at: usize) -> bool {
+    let params = match stream.dict.get(b"DecodeParms") {
+        Ok(Object::Array(items)) => items.get(at).and_then(|item| item.as_dict().ok()),
+        Ok(Object::Dictionary(params)) => Some(params),
+        _ => None,
+    };
+    params
+        .and_then(|params| params.get(b"EarlyChange").ok())
+        .and_then(|value| value.as_i64().ok())
+        .is_none_or(|value| value != 0)
+}
+
+/// Whether LZW data reaches its end code (257) inside the decode bound.
+///
+/// `lopdf` decodes with `weezl` and reads its status only to log it, so data
+/// cut short, or a code the table does not hold, ends the decode with what it
+/// had and `Ok`. The same decoder, set up as `lopdf` sets it up, is asked here
+/// whether it met the end code. Data without one is counted as stopped part
+/// way even where nothing follows: a missing end code and a cut are the same
+/// bytes, and the safe reading of both is "not read whole". Empty data holds
+/// nothing and is whole, as [`inflates_whole`] answers for an empty inflate.
+fn lzw_ends(input: &[u8], early_change: bool) -> bool {
+    use weezl::{decode::Decoder, BitOrder, LzwStatus};
+    if input.is_empty() {
+        return true;
+    }
+    let mut decoder = if early_change {
+        Decoder::with_tiff_size_switch(BitOrder::Msb, 8)
+    } else {
+        Decoder::new(BitOrder::Msb, 8)
+    };
+    let mut sink = vec![0u8; 1 << 16];
+    let mut rest = input;
+    let mut produced = 0usize;
+    loop {
+        let step = decoder.decode_bytes(rest, &mut sink);
+        rest = &rest[step.consumed_in..];
+        produced = produced.saturating_add(step.consumed_out);
+        match step.status {
+            Ok(LzwStatus::Done) => return true,
+            Ok(LzwStatus::Ok) if produced <= MAX_DECODE => {}
+            _ => return false,
+        }
+        if step.consumed_in == 0 && step.consumed_out == 0 {
+            return false;
+        }
+    }
+}
+
+/// Whether ASCII85 text reaches its end marker `~>` with every character
+/// before it one `lopdf` decodes.
+///
+/// `lopdf` stops at the first character outside `!`..`u`, `z` and white
+/// space, and keeps what it had: a stray byte mid-stream ends the decode with
+/// the rest unread, and a stream with no `~>` is decoded to wherever it was
+/// cut. Both are counted as stopped part way.
+fn ascii85_ends(input: &[u8]) -> bool {
+    if input.is_empty() {
+        return true;
+    }
+    let stop = input
+        .iter()
+        .position(|&ch| !(ch.is_ascii_whitespace() || ch == b'z' || (b'!'..=b'u').contains(&ch)));
+    matches!(stop, Some(at) if input[at..].starts_with(b"~>"))
 }
 
 /// Whether zlib data inflates to its end, as `lopdf` would read it.
@@ -476,7 +558,7 @@ fn draws_inline_picture(content: &[u8]) -> bool {
 }
 
 /// Whether `token` occurs in `content` as a word of PDF syntax.
-fn has_token(content: &[u8], token: &[u8]) -> bool {
+pub(crate) fn has_token(content: &[u8], token: &[u8]) -> bool {
     let apart = |byte: u8| {
         matches!(
             byte,
@@ -1191,16 +1273,37 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
             // decodes anything, and only for needles that actually match, so a
             // clean file pays nothing for it.
             let mut carriers: BTreeMap<String, Carriers> = BTreeMap::new();
-            // Said once for the file, however many such fonts it has: the
-            // reason is about the instrument, and it is the same reason for
-            // every one of them. Asked through the document, because the
-            // `/Subtype` that says so may be a reference, and PDFium follows it.
+            // Each needle in the byte forms a simple font's string can hold
+            // it in, worked out once for every stream: see [`spellings_of`].
+            let spellings: Vec<Vec<Vec<u8>>> =
+                needles.iter().map(|needle| spellings_of(needle)).collect();
+            // Asked through the document, because the `/Subtype` that says so
+            // may be a reference, and PDFium follows it.
             let names_a_composite_font = |object: &Object| composite_font_in(&doc, object);
-            if doc.objects.values().any(names_a_composite_font) {
+            let composite = doc.objects.values().any(names_a_composite_font);
+            // **Since 2026-11-20 a composite font is read, not refused**, where
+            // it can be: every page's strings decoded through the font that
+            // shows them (`fontread`), and searched below beside the bytes. The
+            // reason is said once for the file when any composite string could
+            // not be read that way, or when a stream that shows text was not
+            // reached by the walk, so whose font it used is unknown.
+            let fonts = crate::fontread::read(&doc, composite);
+            let mut text_unattributed = false;
+            // The same gap in a simple font, where it is narrower: a
+            // `/Differences` array that puts a character of a searched word at
+            // another byte, or names a glyph nothing here can read. Asked per
+            // word, because most such arrays only rename punctuation or add
+            // accented letters, and a file-wide reason would withhold the
+            // verdict of most typeset documents for a word they write plainly.
+            let differences = differences_in(&doc);
+            if needles
+                .iter()
+                .any(|needle| differences.writes_elsewhere(needle))
+            {
                 report.blind.push(said!(
-                    "the file draws text through a composite (Type0) font, which stores glyph \
-                     numbers rather than characters, so a copy of the words drawn through it \
-                     cannot be found by reading its bytes"
+                    "the file draws text through a font whose own encoding (/Differences) writes \
+                     some of the removed characters as other bytes, so a copy of the words drawn \
+                     through it cannot be found by reading its bytes"
                 ));
             }
             // Carriers the scan reads only as bytes, whose contents are another
@@ -1301,8 +1404,27 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                         }
                     }
                     Carrier::Scanned => {
-                        for needle in needles {
-                            if find(&drawn.decoded, needle.as_bytes()) {
+                        // The stream's string operands, decoded and joined:
+                        // see [`strings_shown`]. Lexed only when a needle is
+                        // not already in the raw bytes.
+                        let mut shown: Option<Vec<u8>> = None;
+                        let decoded_text = fonts.text.get(id);
+                        if composite
+                            && decoded_text.is_none()
+                            && may_show_text(stream)
+                            && shows_text(&drawn.decoded)
+                        {
+                            text_unattributed = true;
+                        }
+                        for (needle, spelled) in needles.iter().zip(&spellings) {
+                            let hit = find(&drawn.decoded, needle.as_bytes())
+                                || decoded_text.is_some_and(|text| find(text, needle.as_bytes()))
+                                || {
+                                    let shown =
+                                        shown.get_or_insert_with(|| strings_shown(&drawn.decoded));
+                                    spelled.iter().any(|one| find(shown, one))
+                                };
+                            if hit {
                                 report.found.insert(needle.clone());
                                 carriers.entry(needle.clone()).or_default().note(*id);
                             }
@@ -1337,6 +1459,15 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                     report.found.insert(needle.clone());
                     carriers.entry(needle.clone()).or_default().unreached = true;
                 }
+            }
+            // Said once for the file, however many such fonts or streams there
+            // are: the reason is about the instrument.
+            if composite && (!fonts.composite_read || text_unattributed) {
+                report.blind.push(said!(
+                    "the file draws text through a composite (Type0) font, which stores glyph \
+                     numbers rather than characters, so a copy of the words drawn through it \
+                     cannot be found by reading its bytes"
+                ));
             }
             // The suppressed ones, said once. A count is still a reason, so the
             // verdict a file with a million bad objects earns is the verdict it
@@ -1384,6 +1515,39 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
     report
 }
 
+/// Whether a decoded stream draws text: holds a text-showing operator as a
+/// word of PDF syntax. A string holding one counts too, which errs towards
+/// withholding.
+fn shows_text(content: &[u8]) -> bool {
+    [&b"Tj"[..], b"TJ", b"'", b"\""]
+        .iter()
+        .any(|op| has_token(content, op))
+}
+
+/// Whether a stream can be a content stream at all, by its dictionary: not a
+/// font program, a colour profile, metadata, a CMap, an embedded file or a
+/// cross-reference or object stream. Their bytes are not drawn as text, and a
+/// font program's binary can hold `Tj` by chance.
+fn may_show_text(stream: &lopdf::Stream) -> bool {
+    let named = |key: &[u8], names: &[&[u8]]| {
+        stream
+            .dict
+            .get(key)
+            .and_then(Object::as_name)
+            .is_ok_and(|name| names.contains(&name))
+    };
+    !(stream.dict.has(b"Length1")
+        || stream.dict.has(b"N")
+        || named(
+            b"Subtype",
+            &[b"Type1C", b"CIDFontType0C", b"OpenType", b"XML"],
+        )
+        || named(
+            b"Type",
+            &[b"Metadata", b"EmbeddedFile", b"CMap", b"XRef", b"ObjStm"],
+        ))
+}
+
 /// Whether `object` is, or holds, a font dictionary of subtype `/Type0`.
 ///
 /// Inside the object as well as at its top, because a font may be written
@@ -1414,6 +1578,464 @@ fn composite_font_in(doc: &Document, object: &Object) -> bool {
         inner.extend(dict.iter().map(|(_, value)| value));
     }
     false
+}
+
+/// What every `/Differences` array in a document does to the bytes a word is
+/// written as.
+///
+/// A simple font draws the byte `c` as the glyph its encoding names at `c`, and
+/// PDFium extracts the character that glyph name stands for. Where the name at
+/// `c` stands for an ASCII character other than `c` itself, that character is
+/// written as `c`, and the byte search, which looks for the character's own
+/// byte, does not find it. A ligature takes two or three letters into one byte.
+/// A name nothing here can resolve (`/g12`, a Type3 font's `/a0`) could stand
+/// for any character. Those three are the gap; a renamed punctuation mark at
+/// its own code, an accented letter above 127 or `.notdef` are not.
+///
+/// The font's own built-in encoding and a `/ToUnicode` map can move characters
+/// the same way and are not read here: residual 42 in `docs/THREAT-MODEL.md`.
+#[derive(Default)]
+struct Differences {
+    /// ASCII characters some array writes at a byte other than their own.
+    moved: BTreeSet<u8>,
+    /// The letters a ligature glyph in some array stands for.
+    ligatures: BTreeSet<&'static str>,
+    /// An array holds a glyph name, or an entry, nothing here can read.
+    opaque: bool,
+}
+
+impl Differences {
+    /// Whether a copy of `needle` drawn through one of these encodings would be
+    /// written as bytes other than its own.
+    fn writes_elsewhere(&self, needle: &str) -> bool {
+        self.opaque
+            || needle.bytes().any(|byte| self.moved.contains(&byte))
+            || self
+                .ligatures
+                .iter()
+                .any(|letters| needle.contains(letters))
+    }
+}
+
+/// Collects [`Differences`] from every dictionary in `doc` that has one,
+/// following the array and its entries through references as PDFium does.
+fn differences_in(doc: &Document) -> Differences {
+    let mut found = Differences::default();
+    for object in doc.objects.values() {
+        let mut inner: Vec<&Object> = vec![object];
+        while let Some(value) = inner.pop() {
+            let dict = match value {
+                Object::Dictionary(dict) => dict,
+                Object::Stream(stream) => &stream.dict,
+                Object::Array(items) => {
+                    inner.extend(items.iter());
+                    continue;
+                }
+                _ => continue,
+            };
+            if let Ok(array) = dict.get(b"Differences") {
+                note_differences(doc, array, &mut found);
+            }
+            inner.extend(
+                dict.iter()
+                    .filter(|(key, _)| key.as_slice() != b"Differences")
+                    .map(|(_, value)| value),
+            );
+        }
+    }
+    found
+}
+
+/// Reads one `/Differences` value into `found`: a code, then the names placed
+/// at it and the codes after it, then the next code. Anything else in it, or a
+/// value that is not an array, is opaque.
+fn note_differences(doc: &Document, array: &Object, found: &mut Differences) {
+    let Ok((_, Object::Array(items))) = doc.dereference(array) else {
+        found.opaque = true;
+        return;
+    };
+    let mut code: Option<i64> = None;
+    for item in items {
+        match doc.dereference(item).map(|(_, value)| value) {
+            Ok(Object::Integer(start)) => code = Some(*start),
+            Ok(Object::Name(name)) => {
+                let Some(at) = code else {
+                    found.opaque = true;
+                    return;
+                };
+                match glyph(name) {
+                    Glyph::Ascii(ch) if i64::from(ch) != at => {
+                        found.moved.insert(ch);
+                    }
+                    Glyph::Ligature(letters) => {
+                        found.ligatures.insert(letters);
+                    }
+                    Glyph::Opaque => found.opaque = true,
+                    Glyph::Ascii(_) | Glyph::Other => {}
+                }
+                code = Some(at.saturating_add(1));
+            }
+            _ => {
+                found.opaque = true;
+                return;
+            }
+        }
+    }
+}
+
+/// What a glyph name stands for, as far as the byte search is concerned.
+#[derive(Debug, PartialEq, Eq)]
+enum Glyph {
+    /// One printable ASCII character.
+    Ascii(u8),
+    /// A ligature of these ASCII letters.
+    Ligature(&'static str),
+    /// A known character outside ASCII, or nothing (`.notdef`).
+    Other,
+    /// A name with no known meaning.
+    Opaque,
+}
+
+/// The ASCII glyph names of the Adobe Glyph List, indexed from 0x20.
+const ASCII_NAMES: [&str; 95] = [
+    "space",
+    "exclam",
+    "quotedbl",
+    "numbersign",
+    "dollar",
+    "percent",
+    "ampersand",
+    "quotesingle",
+    "parenleft",
+    "parenright",
+    "asterisk",
+    "plus",
+    "comma",
+    "hyphen",
+    "period",
+    "slash",
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "colon",
+    "semicolon",
+    "less",
+    "equal",
+    "greater",
+    "question",
+    "at",
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N",
+    "O",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U",
+    "V",
+    "W",
+    "X",
+    "Y",
+    "Z",
+    "bracketleft",
+    "backslash",
+    "bracketright",
+    "asciicircum",
+    "underscore",
+    "grave",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h",
+    "i",
+    "j",
+    "k",
+    "l",
+    "m",
+    "n",
+    "o",
+    "p",
+    "q",
+    "r",
+    "s",
+    "t",
+    "u",
+    "v",
+    "w",
+    "x",
+    "y",
+    "z",
+    "braceleft",
+    "bar",
+    "braceright",
+    "asciitilde",
+];
+
+/// Ligature glyph names and the letters each stands for.
+const LIGATURES: &[(&str, &str)] = &[
+    ("ff", "ff"),
+    ("fi", "fi"),
+    ("fl", "fl"),
+    ("ffi", "ffi"),
+    ("ffl", "ffl"),
+    ("f_f", "ff"),
+    ("f_i", "fi"),
+    ("f_l", "fl"),
+    ("f_f_i", "ffi"),
+    ("f_f_l", "ffl"),
+    ("uniFB00", "ff"),
+    ("uniFB01", "fi"),
+    ("uniFB02", "fl"),
+    ("uniFB03", "ffi"),
+    ("uniFB04", "ffl"),
+];
+
+/// Glyph names outside ASCII that typeset documents put in `/Differences`:
+/// the Latin-1 and WinAnsi upper halves, the TeX text encodings' accents and
+/// Greek capitals, and the usual typographic marks. A name not here, not
+/// ASCII and not `uniXXXX` is [`Glyph::Opaque`].
+const OTHER_NAMES: &[&str] = &[
+    ".notdef",
+    "nbspace",
+    "sfthyphen",
+    "minus",
+    "quoteright",
+    "quoteleft",
+    "quotedblleft",
+    "quotedblright",
+    "quotesinglbase",
+    "quotedblbase",
+    "guilsinglleft",
+    "guilsinglright",
+    "guillemotleft",
+    "guillemotright",
+    "endash",
+    "emdash",
+    "bullet",
+    "dagger",
+    "daggerdbl",
+    "ellipsis",
+    "perthousand",
+    "trademark",
+    "florin",
+    "Euro",
+    "fraction",
+    "periodcentered",
+    "exclamdown",
+    "questiondown",
+    "cent",
+    "sterling",
+    "currency",
+    "yen",
+    "brokenbar",
+    "section",
+    "copyright",
+    "ordfeminine",
+    "ordmasculine",
+    "logicalnot",
+    "registered",
+    "degree",
+    "plusminus",
+    "twosuperior",
+    "threesuperior",
+    "onesuperior",
+    "mu",
+    "paragraph",
+    "onequarter",
+    "onehalf",
+    "threequarters",
+    "multiply",
+    "divide",
+    "acute",
+    "dieresis",
+    "macron",
+    "cedilla",
+    "circumflex",
+    "tilde",
+    "caron",
+    "breve",
+    "dotaccent",
+    "ring",
+    "ogonek",
+    "hungarumlaut",
+    "dotlessi",
+    "dotlessj",
+    "germandbls",
+    "ae",
+    "AE",
+    "oe",
+    "OE",
+    "oslash",
+    "Oslash",
+    "lslash",
+    "Lslash",
+    "eth",
+    "Eth",
+    "thorn",
+    "Thorn",
+    "Scaron",
+    "scaron",
+    "Zcaron",
+    "zcaron",
+    "Ydieresis",
+    "Agrave",
+    "Aacute",
+    "Acircumflex",
+    "Atilde",
+    "Adieresis",
+    "Aring",
+    "Ccedilla",
+    "Egrave",
+    "Eacute",
+    "Ecircumflex",
+    "Edieresis",
+    "Igrave",
+    "Iacute",
+    "Icircumflex",
+    "Idieresis",
+    "Ntilde",
+    "Ograve",
+    "Oacute",
+    "Ocircumflex",
+    "Otilde",
+    "Odieresis",
+    "Ugrave",
+    "Uacute",
+    "Ucircumflex",
+    "Udieresis",
+    "Yacute",
+    "agrave",
+    "aacute",
+    "acircumflex",
+    "atilde",
+    "adieresis",
+    "aring",
+    "ccedilla",
+    "egrave",
+    "eacute",
+    "ecircumflex",
+    "edieresis",
+    "igrave",
+    "iacute",
+    "icircumflex",
+    "idieresis",
+    "ntilde",
+    "ograve",
+    "oacute",
+    "ocircumflex",
+    "otilde",
+    "odieresis",
+    "ugrave",
+    "uacute",
+    "ucircumflex",
+    "udieresis",
+    "yacute",
+    "ydieresis",
+    "Gamma",
+    "Delta",
+    "Theta",
+    "Lambda",
+    "Xi",
+    "Pi",
+    "Sigma",
+    "Upsilon",
+    "Phi",
+    "Psi",
+    "Omega",
+    "suppress",
+];
+
+/// Resolves a glyph name the way the Adobe Glyph List specification does:
+/// the part before the first `.` is the name (`a.sc` is `a`), `_` joins the
+/// names of a ligature, and `uniXXXX` and `uXXXX` name code points.
+fn glyph(name: &[u8]) -> Glyph {
+    let Ok(name) = std::str::from_utf8(name) else {
+        return Glyph::Opaque;
+    };
+    if name == ".notdef" {
+        return Glyph::Other;
+    }
+    let base = name.split('.').next().unwrap_or_default();
+    if base.is_empty() {
+        return Glyph::Opaque;
+    }
+    if let Some(&(_, letters)) = LIGATURES.iter().find(|(known, _)| *known == base) {
+        return Glyph::Ligature(letters);
+    }
+    if let Some(at) = ASCII_NAMES.iter().position(|known| *known == base) {
+        return Glyph::Ascii(0x20 + at as u8);
+    }
+    if OTHER_NAMES.contains(&base) {
+        return Glyph::Other;
+    }
+    if base.contains('_') {
+        // A ligature this table does not list: opaque unless every part is
+        // a character outside ASCII, which the byte search does not read.
+        return if base
+            .split('_')
+            .all(|part| glyph(part.as_bytes()) == Glyph::Other)
+        {
+            Glyph::Other
+        } else {
+            Glyph::Opaque
+        };
+    }
+    let points = if let Some(hex) = base.strip_prefix("uni") {
+        (hex.len() % 4 == 0 && !hex.is_empty())
+            .then(|| {
+                hex.as_bytes()
+                    .chunks(4)
+                    .map(|chunk| {
+                        std::str::from_utf8(chunk)
+                            .ok()
+                            .and_then(|digits| u32::from_str_radix(digits, 16).ok())
+                    })
+                    .collect::<Option<Vec<u32>>>()
+            })
+            .flatten()
+    } else if let Some(hex) = base.strip_prefix('u') {
+        ((4..=6).contains(&hex.len()))
+            .then(|| u32::from_str_radix(hex, 16).ok().map(|point| vec![point]))
+            .flatten()
+    } else {
+        None
+    };
+    match points.as_deref() {
+        Some([point]) if (0x20..0x7F).contains(point) => Glyph::Ascii(*point as u8),
+        // `uFB01` is the ligature `uniFB01` is.
+        Some([point @ 0xFB00..=0xFB04]) => {
+            Glyph::Ligature(["ff", "fi", "fl", "ffi", "ffl"][(*point - 0xFB00) as usize])
+        }
+        Some(points) if points.iter().all(|point| *point >= 0x80) => Glyph::Other,
+        // Several code points with an ASCII one among them, or a control
+        // character: a ligature this table does not list.
+        Some(_) => Glyph::Opaque,
+        None => Glyph::Opaque,
+    }
 }
 
 /// Which carriers of another format a document holds anywhere.
@@ -1519,6 +2141,227 @@ fn count(haystack: &[u8], needle: &[u8]) -> usize {
 }
 
 /// Whether `needle` occurs in `haystack`.
+/// The bytes `needle` can be stored as in a string a simple font shows: its
+/// UTF-8, and its WinAnsi (Windows-1252) and MacRoman bytes when it has a
+/// character outside ASCII that the encoding holds. WinAnsi is what nearly
+/// every simple font with an accented letter is encoded in, and it writes `ü`
+/// as the one byte `FC`, so a UTF-8 search of `Müller` never matched a page
+/// that drew it; MacRoman writes it `9F`. A font's own `/ToUnicode` is read
+/// by `fontread`; a `/Differences` encoding without one is the reason
+/// `differences_in` gives (residual 42, `docs/THREAT-MODEL.md`).
+fn spellings_of(needle: &str) -> Vec<Vec<u8>> {
+    let mut spelled = vec![needle.as_bytes().to_vec()];
+    if !needle.is_ascii() {
+        for encode in [winansi, macroman] {
+            if let Some(bytes) = needle.chars().map(encode).collect::<Option<Vec<u8>>>() {
+                if !spelled.contains(&bytes) {
+                    spelled.push(bytes);
+                }
+            }
+        }
+    }
+    spelled
+}
+
+/// MacRomanEncoding's characters for the bytes 0x80 to 0xFF, in order, as
+/// Python's `mac_roman` codec gives them.
+const MACROMAN_HIGH: [&str; 16] = [
+    "\u{00C4}\u{00C5}\u{00C7}\u{00C9}\u{00D1}\u{00D6}\u{00DC}\u{00E1}",
+    "\u{00E0}\u{00E2}\u{00E4}\u{00E3}\u{00E5}\u{00E7}\u{00E9}\u{00E8}",
+    "\u{00EA}\u{00EB}\u{00ED}\u{00EC}\u{00EE}\u{00EF}\u{00F1}\u{00F3}",
+    "\u{00F2}\u{00F4}\u{00F6}\u{00F5}\u{00FA}\u{00F9}\u{00FB}\u{00FC}",
+    "\u{2020}\u{00B0}\u{00A2}\u{00A3}\u{00A7}\u{2022}\u{00B6}\u{00DF}",
+    "\u{00AE}\u{00A9}\u{2122}\u{00B4}\u{00A8}\u{2260}\u{00C6}\u{00D8}",
+    "\u{221E}\u{00B1}\u{2264}\u{2265}\u{00A5}\u{00B5}\u{2202}\u{2211}",
+    "\u{220F}\u{03C0}\u{222B}\u{00AA}\u{00BA}\u{03A9}\u{00E6}\u{00F8}",
+    "\u{00BF}\u{00A1}\u{00AC}\u{221A}\u{0192}\u{2248}\u{2206}\u{00AB}",
+    "\u{00BB}\u{2026}\u{00A0}\u{00C0}\u{00C3}\u{00D5}\u{0152}\u{0153}",
+    "\u{2013}\u{2014}\u{201C}\u{201D}\u{2018}\u{2019}\u{00F7}\u{25CA}",
+    "\u{00FF}\u{0178}\u{2044}\u{20AC}\u{2039}\u{203A}\u{FB01}\u{FB02}",
+    "\u{2021}\u{00B7}\u{201A}\u{201E}\u{2030}\u{00C2}\u{00CA}\u{00C1}",
+    "\u{00CB}\u{00C8}\u{00CD}\u{00CE}\u{00CF}\u{00CC}\u{00D3}\u{00D4}",
+    "\u{F8FF}\u{00D2}\u{00DA}\u{00DB}\u{00D9}\u{0131}\u{02C6}\u{02DC}",
+    "\u{00AF}\u{02D8}\u{02D9}\u{02DA}\u{00B8}\u{02DD}\u{02DB}\u{02C7}",
+];
+
+/// A character's byte in MacRomanEncoding, if it has one.
+fn macroman(ch: char) -> Option<u8> {
+    if ch.is_ascii() {
+        return u8::try_from(u32::from(ch)).ok();
+    }
+    let at = MACROMAN_HIGH
+        .iter()
+        .flat_map(|row| row.chars())
+        .position(|known| known == ch)?;
+    u8::try_from(0x80 + at).ok()
+}
+
+/// A character's byte in WinAnsiEncoding, if it has one.
+fn winansi(ch: char) -> Option<u8> {
+    let point = u32::from(ch);
+    if point < 0x80 || (0xA0..=0xFF).contains(&point) {
+        return u8::try_from(point).ok();
+    }
+    const HIGH: &[(char, u8)] = &[
+        ('\u{20AC}', 0x80),
+        ('\u{201A}', 0x82),
+        ('\u{0192}', 0x83),
+        ('\u{201E}', 0x84),
+        ('\u{2026}', 0x85),
+        ('\u{2020}', 0x86),
+        ('\u{2021}', 0x87),
+        ('\u{02C6}', 0x88),
+        ('\u{2030}', 0x89),
+        ('\u{0160}', 0x8A),
+        ('\u{2039}', 0x8B),
+        ('\u{0152}', 0x8C),
+        ('\u{017D}', 0x8E),
+        ('\u{2018}', 0x91),
+        ('\u{2019}', 0x92),
+        ('\u{201C}', 0x93),
+        ('\u{201D}', 0x94),
+        ('\u{2022}', 0x95),
+        ('\u{2013}', 0x96),
+        ('\u{2014}', 0x97),
+        ('\u{02DC}', 0x98),
+        ('\u{2122}', 0x99),
+        ('\u{0161}', 0x9A),
+        ('\u{203A}', 0x9B),
+        ('\u{0153}', 0x9C),
+        ('\u{017E}', 0x9E),
+        ('\u{0178}', 0x9F),
+    ];
+    HIGH.iter()
+        .find(|(known, _)| *known == ch)
+        .map(|(_, byte)| *byte)
+}
+
+/// Every string operand in `content`, decoded and joined with nothing between.
+///
+/// The byte search reads a stream as stored, and a string can be stored so its
+/// characters never stand next to each other: as hex (`<4A6F686E>`), with
+/// octal escapes (`(J\157hn)`), or split across a kerned `TJ` array
+/// (`[(Jo) -20 (hn)]`) or across shows (residual 40). This lexes the stream as
+/// PDF syntax --- literal strings with their escapes and nesting, hex strings,
+/// `<<` and `>>` passed over, comments skipped --- and returns the strings'
+/// bytes in order, so `John` in any of those spellings is `John` here.
+///
+/// Joining without a separator can put the end of one string beside the start
+/// of the next and match a word nobody wrote. That errs towards *found*, which
+/// withholds a verdict rather than certifying one. Applied to every decoded
+/// stream, a font program or a picture included, for the same reason: lexing
+/// bytes that are not content can only add matches. Linear in the stream, and
+/// never longer than it.
+fn strings_shown(content: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < content.len() {
+        match content[at] {
+            b'%' => {
+                while at < content.len() && !matches!(content[at], b'\n' | b'\r') {
+                    at += 1;
+                }
+            }
+            b'(' => at = literal_string(content, at + 1, &mut out),
+            b'<' if content.get(at + 1) == Some(&b'<') => at += 2,
+            b'<' => at = hex_string(content, at + 1, &mut out),
+            _ => at += 1,
+        }
+    }
+    out
+}
+
+/// Decodes the literal string whose body starts at `at` into `out`, and
+/// returns where it ends. Unterminated, it runs to the end of `content`.
+pub(crate) fn literal_string(content: &[u8], mut at: usize, out: &mut Vec<u8>) -> usize {
+    let mut depth = 1usize;
+    while at < content.len() {
+        let byte = content[at];
+        at += 1;
+        match byte {
+            b'(' => {
+                depth += 1;
+                out.push(byte);
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return at;
+                }
+                out.push(byte);
+            }
+            b'\\' => {
+                let Some(&next) = content.get(at) else {
+                    return at;
+                };
+                at += 1;
+                match next {
+                    b'n' => out.push(b'\n'),
+                    b'r' => out.push(b'\r'),
+                    b't' => out.push(b'\t'),
+                    b'b' => out.push(0x08),
+                    b'f' => out.push(0x0C),
+                    b'\r' => {
+                        // A line continuation: `\` CR LF is one break.
+                        if content.get(at) == Some(&b'\n') {
+                            at += 1;
+                        }
+                    }
+                    b'\n' => {}
+                    b'0'..=b'7' => {
+                        let mut value = u32::from(next - b'0');
+                        for _ in 0..2 {
+                            match content.get(at) {
+                                Some(&digit @ b'0'..=b'7') => {
+                                    value = value * 8 + u32::from(digit - b'0');
+                                    at += 1;
+                                }
+                                _ => break,
+                            }
+                        }
+                        // A value past 255 keeps its low byte, as PDF readers do.
+                        out.push((value & 0xFF) as u8);
+                    }
+                    // `\(`, `\)`, `\\`, and any other character stand for themselves.
+                    other => out.push(other),
+                }
+            }
+            _ => out.push(byte),
+        }
+    }
+    at
+}
+
+/// Decodes the hex string whose body starts at `at` into `out`, and returns
+/// where it ends: white space is skipped, an odd last digit is followed by 0,
+/// and a byte that is neither ends the string where it stands.
+pub(crate) fn hex_string(content: &[u8], mut at: usize, out: &mut Vec<u8>) -> usize {
+    let mut high: Option<u8> = None;
+    while at < content.len() {
+        let byte = content[at];
+        at += 1;
+        let nibble = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            b'>' => break,
+            _ if byte.is_ascii_whitespace() || byte == 0 => continue,
+            _ => {
+                at -= 1;
+                break;
+            }
+        };
+        match high.take() {
+            Some(first) => out.push(first << 4 | nibble),
+            None => high = Some(nibble),
+        }
+    }
+    if let Some(first) = high {
+        out.push(first << 4);
+    }
+    at
+}
+
 fn find(haystack: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty()
         && haystack.len() >= needle.len()
@@ -3052,27 +3895,171 @@ mod tests {
     }
 
     #[test]
-    fn a_needle_drawn_through_identity_h_is_not_certified_by_the_scan() {
+    fn a_needle_drawn_through_identity_h_is_read_through_its_to_unicode() {
         // The generated CID fixture, where PDFium extracts the word and no byte
-        // of the file spells it: the document a byte scan once called clean.
+        // of the file spells it: the document a byte scan once called clean,
+        // and until 2026-11-20 one the scan refused outright for its font.
         let path = std::path::Path::new("../testdata/text-cid.pdf");
         if !path.exists() {
             crate::fixtures::missing(
-                "[SKIP] a_needle_drawn_through_identity_h_is_not_certified_by_the_scan: \
+                "[SKIP] a_needle_drawn_through_identity_h_is_read_through_its_to_unicode: \
                  generate testdata/ (BUILD.md)",
             );
             return;
         }
         let bytes = std::fs::read(path).expect("read the fixture");
+        assert!(
+            !bytes.windows(9).any(|w| w == b"4711-0815"),
+            "the precondition: no byte of the file spells the word"
+        );
         let report = super::scan(&bytes, &["4711-0815".to_string()], None);
         assert!(
-            !report.found.contains("4711-0815"),
-            "the precondition: the scan cannot see the word in this file"
+            report.found.contains("4711-0815"),
+            "decoded through the font that shows it, the word is found: {report:?}"
         );
-        assert!(
-            matches!(report.verdict(), Verdict::NotVerified(_)),
-            "so it must not call the file clean: {report:?}"
+        // The control, and the point of reading the font: a word the page does
+        // not show is certified rather than refused for the font.
+        let absent = super::scan(&bytes, &["absent word".to_string()], None);
+        assert_eq!(absent.verdict(), Verdict::Verified, "{absent:?}");
+    }
+
+    /// A page showing `content` through `/F1`, a composite Identity-H font
+    /// with `cmap` as its `/ToUnicode` when given, and an `orphan` content
+    /// stream no page draws when given.
+    fn composite_page(cmap: Option<&[u8]>, content: &[u8], orphan: Option<&[u8]>) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let mut font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type0",
+            "BaseFont" => "Synthetic",
+            "Encoding" => "Identity-H",
+        };
+        if let Some(cmap) = cmap {
+            let map = doc.add_object(Stream::new(dictionary! {}, cmap.to_vec()));
+            font.set("ToUnicode", map);
+        }
+        let font = doc.add_object(font);
+        let body = doc.add_object(Stream::new(dictionary! {}, content.to_vec()));
+        if let Some(orphan) = orphan {
+            doc.add_object(Stream::new(dictionary! {}, orphan.to_vec()));
+        }
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => body,
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
         );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise the fixture");
+        bytes
+    }
+
+    /// `J`, `o`, `h`, `n` at codes 1 to 4.
+    const JOHN_CMAP: &[u8] = b"1 begincodespacerange <0000> <FFFF> endcodespacerange \
+        4 beginbfchar <0001> <004A> <0002> <006F> <0003> <0068> <0004> <006E> endbfchar";
+
+    fn composite_withheld(report: &Report) -> bool {
+        report
+            .blind
+            .iter()
+            .any(|why| why.contains("composite (Type0) font"))
+    }
+
+    #[test]
+    fn a_composite_font_with_a_map_is_read_and_one_it_cannot_read_is_refused() {
+        let john = vec!["John".to_string()];
+        let shown = b"BT /F1 12 Tf 72 700 Td <0001000200030004> Tj ET";
+        // Read through its map: the word is found, and an absent word is clean.
+        let read = super::scan(&composite_page(Some(JOHN_CMAP), shown, None), &john, None);
+        assert!(read.found.contains("John"), "{read:?}");
+        assert!(!composite_withheld(&read), "{read:?}");
+        let other = super::scan(
+            &composite_page(Some(JOHN_CMAP), shown, None),
+            &["Smith".to_string()],
+            None,
+        );
+        assert_eq!(other.verdict(), Verdict::Verified, "{other:?}");
+        // A code the map does not hold.
+        let gap = super::scan(
+            &composite_page(Some(JOHN_CMAP), b"BT /F1 12 Tf <00010099> Tj ET", None),
+            &john,
+            None,
+        );
+        assert!(composite_withheld(&gap), "{gap:?}");
+        // No map at all.
+        let none = super::scan(&composite_page(None, shown, None), &john, None);
+        assert!(composite_withheld(&none), "{none:?}");
+        // A map that covers every code shown and sends one glyph to a
+        // private-use code point: what it decodes to is not what is visible.
+        let private = super::scan(
+            &composite_page(
+                Some(
+                    b"1 begincodespacerange <0000> <FFFF> endcodespacerange \
+                      4 beginbfchar <0001> <004A> <0002> <E001> <0003> <0068> \
+                      <0004> <006E> endbfchar",
+                ),
+                shown,
+                None,
+            ),
+            &["Smith".to_string()],
+            None,
+        );
+        assert!(composite_withheld(&private), "{private:?}");
+        // A font the resources do not hold.
+        let unknown = super::scan(
+            &composite_page(Some(JOHN_CMAP), b"BT /F9 12 Tf <0001> Tj ET", None),
+            &john,
+            None,
+        );
+        assert!(composite_withheld(&unknown), "{unknown:?}");
+        // A stream that shows text and that no page draws.
+        let orphan = super::scan(
+            &composite_page(Some(JOHN_CMAP), shown, Some(b"BT /F1 12 Tf <0001> Tj ET")),
+            &["Smith".to_string()],
+            None,
+        );
+        assert!(composite_withheld(&orphan), "{orphan:?}");
+    }
+
+    #[test]
+    fn a_form_drawn_without_a_font_of_its_own_uses_the_one_current_where_it_is_drawn() {
+        use lopdf::{dictionary, Object, Stream};
+        let mut doc = lopdf::Document::load_mem(&composite_page(
+            Some(JOHN_CMAP),
+            b"BT /F1 12 Tf ET /X1 Do",
+            None,
+        ))
+        .expect("load");
+        let form = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            },
+            b"BT 72 700 Td <0001000200030004> Tj ET".to_vec(),
+        ));
+        for object in doc.objects.values_mut() {
+            if let Object::Dictionary(page) = object {
+                if let Ok(Object::Dictionary(resources)) = page.get_mut(b"Resources") {
+                    resources.set("XObject", dictionary! { "X1" => form });
+                }
+            }
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+        let report = super::scan(&bytes, &["John".to_string()], None);
+        assert!(report.found.contains("John"), "{report:?}");
     }
 
     /// One page whose content is `content`, drawing `xobject` as `/X1` when
@@ -3416,6 +4403,356 @@ mod tests {
             None,
         );
         assert_eq!(checksum.verdict(), Verdict::Verified, "{checksum:?}");
+    }
+
+    /// One page whose content stream is `content`, drawn through Helvetica in
+    /// WinAnsiEncoding.
+    fn showing(content: &[u8]) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let body = doc.add_object(Stream::new(dictionary! {}, content.to_vec()));
+        let font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "Encoding" => "WinAnsiEncoding",
+        };
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => body,
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise the fixture");
+        bytes
+    }
+
+    /// Each spelling a string operand can take, and a word with a WinAnsi
+    /// byte in it, is found; each control is the same spelling of another
+    /// word, so the finding is the word's and not the spelling's.
+    #[test]
+    fn a_word_in_any_spelling_of_a_string_operand_is_found() {
+        let cases: [(&str, &[u8], &[u8]); 5] = [
+            (
+                "4711-0815",
+                b"BT /F1 12 Tf 72 700 Td <343731312D30383135> Tj ET",
+                b"BT /F1 12 Tf 72 700 Td <6E6F7468696E67> Tj ET",
+            ),
+            (
+                "4711-0815",
+                b"BT /F1 12 Tf 72 700 Td (\\064711-\\060815) Tj ET",
+                b"BT /F1 12 Tf 72 700 Td (\\064700-\\060815) Tj ET",
+            ),
+            (
+                "4711-0815",
+                b"BT /F1 12 Tf 72 700 Td [(47) -20 (11-) 15 (0815)] TJ ET",
+                b"BT /F1 12 Tf 72 700 Td [(47) -20 (00-) 15 (0815)] TJ ET",
+            ),
+            (
+                "4711-0815",
+                b"BT /F1 12 Tf 72 700 Td (4711) Tj 30 0 Td (-0815) Tj ET",
+                b"BT /F1 12 Tf 72 700 Td (4700) Tj 30 0 Td (-0815) Tj ET",
+            ),
+            (
+                "M\u{fc}ller",
+                b"BT /F1 12 Tf 72 700 Td (M\xfcller) Tj ET",
+                b"BT /F1 12 Tf 72 700 Td (M\xfcnzer) Tj ET",
+            ),
+        ];
+        for (needle, shown, control) in cases {
+            let needles = vec![needle.to_string()];
+            let report = super::scan(&showing(shown), &needles, None);
+            assert!(
+                report.found.contains(needle),
+                "{needle} in {:?}: {report:?}",
+                String::from_utf8_lossy(shown)
+            );
+            let clean = super::scan(&showing(control), &needles, None);
+            assert_eq!(
+                clean.verdict(),
+                Verdict::Verified,
+                "{:?}: {clean:?}",
+                String::from_utf8_lossy(control)
+            );
+        }
+    }
+
+    #[test]
+    fn a_string_operand_is_decoded_as_pdf_syntax_says() {
+        use super::strings_shown;
+        assert_eq!(strings_shown(b"(a(b)c\\)d) Tj"), b"a(b)c)d");
+        // Three octal digits at most: `\0102` is byte 8 and then `2`.
+        assert_eq!(strings_shown(b"(\\101\\1022\\n) Tj"), b"AB2\n");
+        assert_eq!(strings_shown(b"(\\0102) Tj"), b"\x082");
+        assert_eq!(strings_shown(b"(a\\\r\nb) Tj"), b"ab");
+        assert_eq!(strings_shown(b"<4 1 4>"), b"A@");
+        assert_eq!(strings_shown(b"<</MCID 0>> BDC (x) Tj"), b"x");
+        assert_eq!(strings_shown(b"% (not a string)\n(y) Tj"), b"y");
+        assert_eq!(super::winansi('\u{20AC}'), Some(0x80));
+        assert_eq!(super::winansi('\u{0100}'), None);
+        assert_eq!(super::macroman('\u{00FC}'), Some(0x9F));
+        assert_eq!(super::macroman('\u{02C7}'), Some(0xFF));
+        assert_eq!(super::macroman('\u{0100}'), None);
+        assert_eq!(
+            super::spellings_of("M\u{fc}ller"),
+            vec![
+                "M\u{fc}ller".as_bytes().to_vec(),
+                b"M\xfcller".to_vec(),
+                b"M\x9fller".to_vec()
+            ]
+        );
+    }
+
+    /// ASCII85 of `data` with its `~>` end marker, as a PDF writer emits it.
+    fn ascii85(data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for chunk in data.chunks(4) {
+            let mut word = [0u8; 4];
+            word[..chunk.len()].copy_from_slice(chunk);
+            let mut value = u32::from_be_bytes(word);
+            if chunk.len() == 4 && value == 0 {
+                out.push(b'z');
+                continue;
+            }
+            let mut digits = [0u8; 5];
+            for digit in digits.iter_mut().rev() {
+                *digit = b'!' + (value % 85) as u8;
+                value /= 85;
+            }
+            out.extend_from_slice(&digits[..chunk.len() + 1]);
+        }
+        out.extend_from_slice(b"~>");
+        out
+    }
+
+    /// [`filtered`]'s page with its form re-encoded under `filter` alone and
+    /// then passed through `cut`.
+    fn encoded_as(filter: &str, hidden: &str, cut: impl Fn(&mut Vec<u8>)) -> Vec<u8> {
+        let mut doc = lopdf::Document::load_mem(&filtered("kept", hidden, false)).expect("load");
+        for object in doc.objects.values_mut() {
+            if let lopdf::Object::Stream(stream) = object {
+                if stream.dict.has(b"Filter") {
+                    let plain = stream.decompressed_content().expect("inflate the form");
+                    let mut encoded = match filter {
+                        "LZWDecode" => {
+                            weezl::encode::Encoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
+                                .encode(&plain)
+                                .expect("encode LZW")
+                        }
+                        _ => ascii85(&plain),
+                    };
+                    cut(&mut encoded);
+                    stream
+                        .dict
+                        .set("Filter", lopdf::Object::Name(filter.into()));
+                    stream.dict.set("Length", encoded.len() as i64);
+                    stream.content = encoded;
+                }
+            }
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+        bytes
+    }
+
+    fn stopped(report: &Report) -> bool {
+        report
+            .blind
+            .iter()
+            .any(|why| why.contains("stopped decoding part way"))
+    }
+
+    #[test]
+    fn an_lzw_stream_cut_short_withholds_the_verdict() {
+        let needles = vec!["4711-0815".to_string()];
+        // Whole, the words are found and a clean form is verified, so the
+        // encoding is the one `lopdf` decodes.
+        let found = super::scan(
+            &encoded_as("LZWDecode", "4711-0815", |_| {}),
+            &needles,
+            None,
+        );
+        assert!(found.found.contains("4711-0815"), "{found:?}");
+        let whole = super::scan(
+            &encoded_as("LZWDecode", "nothing here", |_| {}),
+            &needles,
+            None,
+        );
+        assert_eq!(whole.verdict(), Verdict::Verified, "{whole:?}");
+        // Cut before its end code: `lopdf` returns the first part as success.
+        let cut = super::scan(
+            &encoded_as("LZWDecode", "nothing here", |content| {
+                let keep = content.len() - 4;
+                content.truncate(keep);
+            }),
+            &needles,
+            None,
+        );
+        assert!(stopped(&cut), "{cut:?}");
+    }
+
+    #[test]
+    fn an_ascii85_stream_cut_short_or_broken_withholds_the_verdict() {
+        let needles = vec!["4711-0815".to_string()];
+        let found = super::scan(
+            &encoded_as("ASCII85Decode", "4711-0815", |_| {}),
+            &needles,
+            None,
+        );
+        assert!(found.found.contains("4711-0815"), "{found:?}");
+        let whole = super::scan(
+            &encoded_as("ASCII85Decode", "nothing here", |_| {}),
+            &needles,
+            None,
+        );
+        assert_eq!(whole.verdict(), Verdict::Verified, "{whole:?}");
+        // White space after the marker is still a stream read whole.
+        let spaced = super::scan(
+            &encoded_as("ASCII85Decode", "nothing here", |content| {
+                content.extend_from_slice(b"\n")
+            }),
+            &needles,
+            None,
+        );
+        assert_eq!(spaced.verdict(), Verdict::Verified, "{spaced:?}");
+        // Cut, so the marker is gone.
+        let cut = super::scan(
+            &encoded_as("ASCII85Decode", "nothing here", |content| {
+                let keep = content.len() - 7;
+                content.truncate(keep);
+            }),
+            &needles,
+            None,
+        );
+        assert!(stopped(&cut), "{cut:?}");
+        // A byte `lopdf` stops at, half way: the rest is never decoded.
+        let broken = super::scan(
+            &encoded_as("ASCII85Decode", "nothing here", |content| {
+                let middle = content.len() / 2;
+                content[middle] = b'{';
+            }),
+            &needles,
+            None,
+        );
+        assert!(stopped(&broken), "{broken:?}");
+    }
+
+    /// [`drawn_through`]'s simple-font page with `/Encoding` set on its font
+    /// to a dictionary whose `/Differences` is `differences`.
+    fn encoded_through(differences: Vec<lopdf::Object>) -> Vec<u8> {
+        use lopdf::{dictionary, Object};
+        let mut doc = lopdf::Document::load_mem(&drawn_through("Type1")).expect("load");
+        let encoding = doc.add_object(dictionary! {
+            "Type" => "Encoding",
+            "BaseEncoding" => "WinAnsiEncoding",
+            "Differences" => differences,
+        });
+        for object in doc.objects.values_mut() {
+            let Object::Dictionary(page) = object else {
+                continue;
+            };
+            let Ok(Object::Dictionary(resources)) = page.get_mut(b"Resources") else {
+                continue;
+            };
+            let Ok(Object::Dictionary(fonts)) = resources.get_mut(b"Font") else {
+                continue;
+            };
+            let Ok(Object::Dictionary(font)) = fonts.get_mut(b"F1") else {
+                continue;
+            };
+            font.set("Encoding", encoding);
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+        assert!(
+            bytes.windows(11).any(|w| w == b"Differences"),
+            "the fixture must carry the array"
+        );
+        bytes
+    }
+
+    fn names(code: i64, names: &[&str]) -> Vec<lopdf::Object> {
+        std::iter::once(lopdf::Object::Integer(code))
+            .chain(
+                names
+                    .iter()
+                    .map(|name| lopdf::Object::Name(name.as_bytes().to_vec())),
+            )
+            .collect()
+    }
+
+    fn differences_reason(report: &Report) -> bool {
+        report
+            .blind
+            .iter()
+            .any(|why| why.contains("(/Differences)"))
+    }
+
+    #[test]
+    fn a_differences_array_that_moves_a_searched_letter_withholds_the_verdict() {
+        let john = vec!["John".to_string()];
+        // "John" written as the bytes 1 to 4.
+        let moved = super::scan(
+            &encoded_through(names(1, &["J", "o", "h", "n"])),
+            &john,
+            None,
+        );
+        assert!(differences_reason(&moved), "{moved:?}");
+        assert!(matches!(moved.verdict(), Verdict::NotVerified(_)));
+        // The control: letters at their own codes, and accented letters above
+        // 127, leave "John" where the byte search looks for it.
+        let plain = super::scan(
+            &encoded_through([names(65, &["A", "B"]), names(233, &["eacute"])].concat()),
+            &john,
+            None,
+        );
+        assert_eq!(plain.verdict(), Verdict::Verified, "{plain:?}");
+    }
+
+    #[test]
+    fn a_ligature_in_a_differences_array_withholds_only_the_words_it_spells() {
+        let file = encoded_through(names(12, &["fi"]));
+        let office = super::scan(&file, &["profile".to_string()], None);
+        assert!(differences_reason(&office), "{office:?}");
+        let john = super::scan(&file, &["John".to_string()], None);
+        assert_eq!(john.verdict(), Verdict::Verified, "{john:?}");
+    }
+
+    #[test]
+    fn a_glyph_name_nothing_resolves_withholds_every_word() {
+        let file = encoded_through(names(1, &["g12"]));
+        let john = super::scan(&file, &["John".to_string()], None);
+        assert!(differences_reason(&john), "{john:?}");
+    }
+
+    #[test]
+    fn glyph_names_resolve_as_the_glyph_list_specification_says() {
+        use super::{glyph, Glyph};
+        assert_eq!(glyph(b"A"), Glyph::Ascii(b'A'));
+        assert_eq!(glyph(b"a.sc"), Glyph::Ascii(b'a'));
+        assert_eq!(glyph(b"uni004A"), Glyph::Ascii(b'J'));
+        assert_eq!(glyph(b"u004A"), Glyph::Ascii(b'J'));
+        assert_eq!(glyph(b"hyphen"), Glyph::Ascii(b'-'));
+        assert_eq!(glyph(b"fi"), Glyph::Ligature("fi"));
+        assert_eq!(glyph(b"uFB03"), Glyph::Ligature("ffi"));
+        assert_eq!(glyph(b"f_f_l.alt"), Glyph::Ligature("ffl"));
+        assert_eq!(glyph(b"eacute"), Glyph::Other);
+        assert_eq!(glyph(b"uni00E9"), Glyph::Other);
+        assert_eq!(glyph(b".notdef"), Glyph::Other);
+        assert_eq!(glyph(b"g12"), Glyph::Opaque);
+        assert_eq!(glyph(b"T_h"), Glyph::Opaque);
+        assert_eq!(glyph(b"uni00410042"), Glyph::Opaque);
     }
 
     /// `page_text` drawn on the page, and a document information dictionary

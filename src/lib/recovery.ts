@@ -31,6 +31,7 @@
 
 import { catalog } from "./i18n";
 import { spoken } from "./said";
+import { reviewGroups, reviewLines } from "./redactreview";
 
 const TEXT = catalog({
   "en-US": {
@@ -51,6 +52,9 @@ const TEXT = catalog({
     redactionNotVerified: (removed: string, why: string) =>
       `Redaction not verified. Redacted ${removed}, but tpdf could not prove the file is clean. Checks before adding the fill found: ` +
       `${why}. Treat it as unredacted until you have checked it.`,
+    redactionNotVerifiedHead: (removed: string) =>
+      `Redaction not verified. Redacted ${removed}, but tpdf could not prove the file is clean. ` +
+      "Treat it as unredacted until you have checked it.",
     redactionAlsoChanged:
       " The original also changed on disk while you had it open, so this was " +
       "built from the newer version.",
@@ -60,6 +64,9 @@ const TEXT = catalog({
       "The original is unchanged.",
     rasterNotVerified: (why: string) =>
       ` The image-only copy is not verified: tpdf could not prove it is clean. Checks of the written file found: ${why}. ` +
+      "Treat it as unredacted until you have checked it.",
+    rasterNotVerifiedHead:
+      " The image-only copy is not verified: tpdf could not prove it is clean. " +
       "Treat it as unredacted until you have checked it.",
     extracted: (pages: number, name: string) =>
       `Wrote ${pages === 1 ? "1 page" : `${pages} pages`} to ${name}.`,
@@ -94,6 +101,9 @@ const TEXT = catalog({
     redactionNotVerified: (removed: string, why: string) =>
       `Schwärzung nicht bestätigt. Geschwärzt: ${removed}, aber tpdf konnte nicht nachweisen, dass die Datei sauber ist. ` +
       `Die Prüfung vor dem Einfügen der Füllung ergab: ${why}. Behandle die Datei als ungeschwärzt, bis du sie geprüft hast.`,
+    redactionNotVerifiedHead: (removed: string) =>
+      `Schwärzung nicht bestätigt. Geschwärzt: ${removed}, aber tpdf konnte nicht nachweisen, dass die Datei sauber ist. ` +
+      "Behandle die Datei als ungeschwärzt, bis du sie geprüft hast.",
     redactionAlsoChanged:
       " Außerdem hat sich das Original auf dem Datenträger geändert, während du es geöffnet hattest. " +
       "Das Ergebnis beruht daher auf der neueren Fassung.",
@@ -103,6 +113,9 @@ const TEXT = catalog({
       "Das Original ist unverändert.",
     rasterNotVerified: (why: string) =>
       ` Die Kopie nur aus Bildern ist nicht bestätigt: tpdf konnte nicht nachweisen, dass sie sauber ist. Die Prüfung der geschriebenen Datei ergab: ${why}. ` +
+      "Behandle sie als ungeschwärzt, bis du sie geprüft hast.",
+    rasterNotVerifiedHead:
+      " Die Kopie nur aus Bildern ist nicht bestätigt: tpdf konnte nicht nachweisen, dass sie sauber ist. " +
       "Behandle sie als ungeschwärzt, bis du sie geprüft hast.",
     extracted: (pages: number, name: string) =>
       `${pages === 1 ? "1 Seite" : `${pages} Seiten`} in ${name} geschrieben.`,
@@ -130,10 +143,16 @@ const TEXT = catalog({
     redactionNotVerified: (removed: string, why: string) =>
       `Schwärzung nicht bestätigt. Geschwärzt: ${removed}, aber tpdf konnte nicht nachweisen, dass die Datei sauber ist. ` +
       `Die Prüfung vor dem Einfügen der Füllung ergab: ${why}. Behandeln Sie die Datei als ungeschwärzt, bis Sie sie geprüft haben.`,
+    redactionNotVerifiedHead: (removed: string) =>
+      `Schwärzung nicht bestätigt. Geschwärzt: ${removed}, aber tpdf konnte nicht nachweisen, dass die Datei sauber ist. ` +
+      "Behandeln Sie die Datei als ungeschwärzt, bis Sie sie geprüft haben.",
     redactionAlsoChanged: " Außerdem hat sich das Original auf dem Datenträger geändert, während Sie es geöffnet hatten. " +
       "Das Ergebnis beruht daher auf der neueren Fassung.",
     rasterNotVerified: (why: string) =>
       ` Die Kopie nur aus Bildern ist nicht bestätigt: tpdf konnte nicht nachweisen, dass sie sauber ist. Die Prüfung der geschriebenen Datei ergab: ${why}. ` +
+      "Behandeln Sie sie als ungeschwärzt, bis Sie sie geprüft haben.",
+    rasterNotVerifiedHead:
+      " Die Kopie nur aus Bildern ist nicht bestätigt: tpdf konnte nicht nachweisen, dass sie sauber ist. " +
       "Behandeln Sie sie als ungeschwärzt, bis Sie sie geprüft haben.",
     splitChanged: " Das Original hat sich auf dem Datenträger geändert, während Sie es geöffnet hatten. Ihre Änderungen " +
       "wurden deshalb auf die neuere Fassung angewendet. Prüfen Sie sie, bevor Sie sich auf sie verlassen.",
@@ -391,8 +410,19 @@ export function afterRedaction(applied: {
   why: string[];
   notes?: string[];
   changed?: boolean;
+  kinds?: string[];
 }): string {
   const removed = `${TEXT().regions(applied.regions)}, ${TEXT().removals(applied.shows)}`;
+  // The reasons grouped by what each asks of the reader, one line a group,
+  // whenever the reply says which is which (`redactreview.ts`). The sentence
+  // about a changed original joins the first line, which is the verdict's.
+  const groups = applied.verified ? null : reviewGroups(applied.why, applied.kinds);
+  if (groups !== null) {
+    const head = TEXT().redactionNotVerifiedHead(removed) +
+      (applied.changed ? TEXT().redactionAlsoChanged : "");
+    return [head, ...reviewLines(groups.map((g) => ({ ...g, reasons: g.reasons.map((w) => spoken(w)) })))]
+      .join("\n");
+  }
   const verdict = applied.verified
     ? TEXT().redactedClean(removed) +
       // What the clean verdict covers less of than usual: `redact::Applied::notes`.
@@ -430,10 +460,15 @@ export function afterRedactionCopy(applied: Parameters<typeof afterRedaction>[0]
  * success only when there are none and no note qualifies the verdict.
  */
 export function afterRasterRedaction(
-  applied: { regions: number; verified: boolean; why: string[]; notes?: string[] },
+  applied: { regions: number; verified: boolean; why: string[]; notes?: string[]; kinds?: string[] },
   name: string,
 ): { message: string; success: boolean } {
   const saved = TEXT().rasterSaved(name, applied.regions);
+  const groups = applied.verified ? null : reviewGroups(applied.why, applied.kinds);
+  if (groups !== null) {
+    const lines = reviewLines(groups.map((g) => ({ ...g, reasons: g.reasons.map((w) => spoken(w)) })));
+    return { message: [saved + TEXT().rasterNotVerifiedHead, ...lines].join("\n"), success: false };
+  }
   if (!applied.verified) {
     return {
       message: saved + TEXT().rasterNotVerified(applied.why.map((w) => spoken(w)).join("; ")),

@@ -770,6 +770,15 @@ ROWS += [
     Mutation("compress dialog: take any data URL for a PNG", "src/lib/compressdialog.ts", "  return /^data:image\\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(url);", "  return /^data:/.test(url);", "puts nothing in a picture but a PNG the backend encoded"),
     Mutation("redact list: count the pictures as drawings", "src/lib/redactlist.ts", "const drawings = (plan?.paths?.length ?? 0) +", "const drawings = (plan?.images?.length ?? 0) +", "says a drawing inside the region goes, and counts them"),
     Mutation("recovery: drop the note from a clean verdict", "src/lib/recovery.ts", '(applied.notes?.length ? TEXT().redactionNote(applied.notes.map((n) => spoken(n)).join("; ")) : "")', '""', "reports a redaction as the window does"),
+    # A verdict's reasons grouped by what each asks of the reader
+    # (`redactreview.ts`). Kinds that do not pair with the reasons must not be
+    # guessed at: a reason shown under the wrong heading tells the reader there
+    # is nothing to fix where there is.
+    Mutation("redact review: group kinds that do not pair with the reasons", "src/lib/redactreview.ts", "  if (kinds === undefined || kinds.length !== why.length || why.length === 0) return null;", "  if (kinds === undefined || why.length === 0) return null;", "answers null for kinds that do not pair one for one with the reasons"),
+    Mutation("redact review: take a kind the window does not know", "src/lib/redactreview.ts", "  if (!kinds.every((kind) => KNOWN.has(kind))) return null;", "  // every kind taken", "answers null for kinds that do not pair one for one with the reasons"),
+    Mutation("recovery: an unverified redaction's reasons left in one run", "src/lib/recovery.ts", "  if (groups !== null) {\n    const head", "  if (false && groups !== null) {\n    const head", "lay an unverified redaction out by group"),
+    Mutation("recovery: an image-only copy's reasons left in one run", "src/lib/recovery.ts", "  if (groups !== null) {\n    const lines", "  if (false && groups !== null) {\n    const lines", "lay the image-only copy's reasons out by group too"),
+    Mutation("recovery: a changed original left out of a grouped verdict", "src/lib/recovery.ts", '      (applied.changed ? TEXT().redactionAlsoChanged : "");', '      "";', "put a changed original on the first line"),
     Mutation("assurance: redactDocument write guard", "src/lib/edits.ts", "  async redactDocument(source: string, fill: Fill): Promise<Applied> {\n    await this.beforeWrite();", "  async redactDocument(source: string, fill: Fill): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("choices: compare selection arrays by identity", "src/lib/forms.ts", "a.length === b.length && a.every((v, i) => v === b[i])", "a === b", "keeps duplicate exports distinct and compares selections across IPC replies"),
     Mutation("choices: accept too many selected options", "src/lib/forms.ts", "&& value.length > 1) return", "&& value.length > 100) return", "validates option indices and selection cardinality"),

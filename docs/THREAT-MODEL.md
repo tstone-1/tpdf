@@ -5787,6 +5787,12 @@ because the arm it ran was the one written for "any other platform".
     a hex string, a kerned `TJ` array or octal escapes. `verify::scan` withholds the verdict
     for a composite font, an indirect filter, embedded files and `/PieceInfo`, and not for
     these. The decoded-stream and extraction checks of §T6.11 are what cover them.
+    **Closed for those three spellings 2026-11-20**: every decoded stream's string operands are
+    lexed, decoded (escapes, octal, hex) and joined in order (`verify::strings_shown`), and
+    each needle is searched there too, so a word split across a `TJ` array or across shows is
+    found. Joining can match across two strings nobody meant as one word, which withholds
+    rather than certifies. Measured over 81 local documents in alternating runs: no change in
+    what was found or verified, and no time difference above run-to-run noise.
 41. **A 2D code the decoder cannot read adds no reason**, added 2026-11-17. `codes.rs` decodes
     the QR, Aztec, Data Matrix and PDF417 codes on every page of the written file, and a code
     that still holds a removed text withholds *verified*. rxing reports only the codes it
@@ -5805,6 +5811,44 @@ because the arm it ran was the one written for "any other platform".
     characters searched for, the same gap a composite font had. And the image-only copy
     turns a second visible copy of a removed text on an unmarked page into pixels nobody
     reads, without saying so.
+
+    **Narrowed 2026-11-20, all three.** An LZW stage that does not reach its end code and an
+    ASCII85 stage that does not reach `~>`, or holds a byte lopdf stops at before it, are now
+    counted as stopped part way (`verify::lzw_ends`, `verify::ascii85_ends`); a stream that is
+    complete but omits its end marker is withheld with them, since the two are the same bytes.
+    A `/Differences` array withholds *verified* when it puts an ASCII character of a removed
+    text at another byte, holds a ligature that spells part of one, or names a glyph nothing
+    resolves (`verify::differences_in`); asked per removed text, so an array that renames
+    punctuation or adds accented letters does not. Over 83 local documents, 10 of them
+    real-world, the reason fired on 5, all already withheld for another reason, so it
+    withheld nothing new there. The image-only copy now searches the source's text layer on
+    every page no region marks for each removed text, and a hit withholds *verified* and names
+    the page (`redaction_steps::text_elsewhere`). A `/ToUnicode` map is read since the same
+    day: `fontread` walks every page, the forms it draws and its annotations' appearances
+    with their resources, follows `Tf` through `q` and `Q`, and decodes each string through
+    the font that shows it, and the scan searches that text beside the bytes. For a
+    composite font this replaces the file-wide refusal: the reason is now given only when a
+    composite string could not be read that way (a font that is not `Identity-H` or
+    `Identity-V`, a map that is missing, does not parse, lacks a code that is shown, or sends
+    a glyph to a private-use or control character), when a string in a file with a
+    composite font is shown through a font its resources do not hold, or when a stream that
+    shows text was reached by no walk. Measured over 82 local documents against the same
+    build with the refusal forced on: 14 had been withheld for a composite font and 1 still
+    is; 7 more are *verified* (5 of them real-world), 6 stay withheld for other reasons, and
+    none went from *verified* to withheld. A removed text outside ASCII was not found in a
+    content stream's bytes at all, because the needle was searched as UTF-8 and a simple
+    font writes `ü` as the one byte `FC` (measured 2026-11-20: a page drawing `(Müller) Tj`
+    in WinAnsi scanned *verified* for `Müller`); since that day the lexed strings are also
+    searched for the needle's WinAnsi and MacRoman bytes (`verify::spellings_of`). What is
+    still open: a simple font's built-in encoding with no `/ToUnicode` (a TeX font's
+    ligatures at codes 11 to 15, a symbolic TrueType font) is not read; the walk does not
+    enter tiling patterns, Type3 glyph procedures or soft-mask groups, so in a file with a
+    composite font such a stream that shows text withholds as unreached; and the image-only
+    copy still does not see
+    a removed text drawn as a picture on an unmarked page, or a second copy on a marked page
+    outside its regions --- where the rewritten copy withholds for any picture, the image-only
+    copy has no rule for one. No automated check drives `redact_raster_copy`, so the call that
+    joins the search to the verdict is held by review, not by a test.
 
     What closing the picture gap costs, measured the same day with
     `examples/picture_verdict_probe.rs`: every picture in a written redaction withholds

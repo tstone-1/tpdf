@@ -46,6 +46,36 @@ If you redacted a document with 26.11.5 or earlier, redact the original again wi
 or later and use the new file. If the earlier copy was already sent, assume that it can
 still hold what was redacted.
 
+## Redactions made with 26.11.10 or earlier
+
+Up to 26.11.10, five more kinds of redacted file could read *verified* while a copy of what
+was redacted was still in them.
+
+- **A redacted word with an accented letter**, such as *Müller* or *José*, drawn in an
+  ordinary font. The check looked for the word only in one byte form, and ordinary fonts
+  store *ü* as a different byte, so a copy elsewhere in the file was not found.
+- **A redacted word whose stored text is split up**: written in hexadecimal or with
+  escapes, broken by letter spacing, or drawn as several pieces. The check looked for the
+  word in one piece only.
+- **A document with a stream compressed as LZW or ASCII85 that stops part way.** The check
+  searched only the part before the break.
+- **A document whose font places letters at its own codes** (an encoding with
+  `/Differences`). The word is stored as other bytes than its letters.
+- **An image-only redacted copy of a document that shows the redacted word a second time,
+  on a page with no marked region.** That page became a picture, and nothing read it.
+
+26.11.11 finds the first two, reads the third and fourth as *not verified* with the reason,
+and checks every unmarked page of an image-only copy for the redacted words.
+
+If you redacted a document with 26.11.10 or earlier and it matches one of these, redact the
+original again with 26.11.11 or later and use the new file. If the earlier copy was already
+sent, assume that it can still hold what was redacted.
+
+The change also works the other way. A document whose text uses a composite (Type0) font
+read *not verified* up to 26.11.10, whatever was in it. 26.11.11 reads that text through
+the font's own character map, so such a document can read *verified* when the map is
+complete and nothing is left.
+
 ## Redactions made with 26.11.9 or earlier
 
 Up to 26.11.9, three more kinds of redacted file could read *verified* while a copy of what

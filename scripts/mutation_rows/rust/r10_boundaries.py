@@ -33,9 +33,68 @@ ROWS += [
         # the redacted words cannot find them and proves nothing.
         "verify: a composite font certified by the byte scan",
         "src/verify.rs",
-        "            if doc.objects.values().any(names_a_composite_font) {",
-        "            if false && doc.objects.values().any(names_a_composite_font) {",
+        "            if composite && (!fonts.composite_read || text_unattributed) {",
+        "            if false && composite && (!fonts.composite_read || text_unattributed) {",
         "a_file_with_a_composite_font_is_not_certified_by_the_byte_scan",
+    ),
+    Mutation(
+        # Since 2026-11-20 a composite font is read through its `/ToUnicode`;
+        # a code the map does not hold leaves the string unread.
+        "verify: a composite string with a code its map lacks read as whole",
+        "src/fontread.rs",
+        "                if map.decode(bytes, text).is_none() {",
+        "                if false && map.decode(bytes, text).is_none() {",
+        "a_composite_font_with_a_map_is_read_and_one_it_cannot_read_is_refused",
+    ),
+    Mutation(
+        # A map that sends glyphs to private-use code points does not say what
+        # is visible (`docs/TRAPS.md`), so it is refused, not read.
+        "verify: a private-use /ToUnicode map trusted",
+        "src/fontread.rs",
+        "    (map.width == 2 && !map.says_nothing()).then_some(map)",
+        "    (map.width == 2).then_some(map)",
+        "a_composite_font_with_a_map_is_read_and_one_it_cannot_read_is_refused",
+    ),
+    Mutation(
+        # A stream that shows text and that no walk reached has no known font.
+        "verify: an unreached text stream in a file with a composite font let through",
+        "src/verify.rs",
+        "                            text_unattributed = true;",
+        "                            let _ = text_unattributed;",
+        "a_composite_font_with_a_map_is_read_and_one_it_cannot_read_is_refused",
+    ),
+    Mutation(
+        # A form without a font of its own uses the one current where it is
+        # drawn; starting it with none decodes its strings through nothing.
+        "verify: a form's inherited font dropped",
+        "src/fontread.rs",
+        "            font: at.font,",
+        "            font: None,",
+        "a_form_drawn_without_a_font_of_its_own_uses_the_one_current_where_it_is_drawn",
+    ),
+    Mutation(
+        # lopdf returns a cut-short LZW or ASCII85 decode as success.
+        "verify: a cut-short LZW or ASCII85 stream read as whole",
+        "src/verify.rs",
+        '        if !matches!(*filter, b"FlateDecode" | b"LZWDecode" | b"ASCII85Decode") {',
+        '        if !matches!(*filter, b"FlateDecode") {',
+        "an_lzw_stream_cut_short_withholds_the_verdict",
+    ),
+    Mutation(
+        # Hex, octal, kerned `TJ` and split shows put a word's characters apart
+        # in the bytes; only the decoded strings hold it whole.
+        "verify: string operands not searched",
+        "src/verify.rs",
+        "                                    spelled.iter().any(|one| find(shown, one))",
+        "                                    false && spelled.iter().any(|one| find(shown, one))",
+        "a_word_in_any_spelling_of_a_string_operand_is_found",
+    ),
+    Mutation(
+        "verify: a /Differences array that moves a searched letter let through",
+        "src/verify.rs",
+        "            || needle.bytes().any(|byte| self.moved.contains(&byte))",
+        "            || false && needle.bytes().any(|byte| self.moved.contains(&byte))",
+        "a_differences_array_that_moves_a_searched_letter_withholds_the_verdict",
     ),
     Mutation(
         "verify: an embedded file let through",

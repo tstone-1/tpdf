@@ -723,12 +723,14 @@
   /**
    * What the two live regions say about the message bar, so a screen reader
    * hears a problem as one and a result or an instruction as one
-   * (`messagelines.ts`). The text is the bar's own: the raster offer in place
-   * of the error it explains, as the bar shows it.
+   * (`messagelines.ts`). The text is the bar's own: the message, then the
+   * raster offer when there is one, as the bar shows them.
    */
   const heard = $derived(announcement(
-    error === null ? null : offers.includes("rasterCopy") ? TEXT().rasterOffer : plainly(error),
+    error === null ? null : offers.includes("rasterCopy") ? `${plainly(error)}\n${TEXT().rasterOffer}` : plainly(error),
     messageTone));
+  /** The message bar's lines (`messagelines.ts`), the reasons of a redaction among them. */
+  const errorLines = $derived(error === null ? [] : messageLines(plainly(error)));
   // What the two regions hold, written when VoiceOver will hear it: a report
   // made as the save sheet closes was dropped (`livetext.ts`).
   const focusClock = windowClock();
@@ -7381,22 +7383,27 @@
             if (openPathName === path) say(verdict, [], tone);
           }}>{TEXT().openSavedCopy}</button>
       {/if}
+      <!--
+        The message, and after it the raster offer when there is one. Since
+        26.11.11 an unverified redaction's reasons are grouped by what each
+        asks of the reader (`redactreview.ts`), and they are what the reader
+        acts on, so they are shown; until then the offer replaced them and they
+        sat folded under the technical details.
+      -->
+      {#if errorLines.length === 1}
+        <p class="error">{plainly(error)}</p>
+      {:else}
+        <!--
+          The first line, then one row per line with its label in a column of
+          its own (`messagelines.ts`). Written on one line, with each line
+          break as a text node of its own, so the element's text is the message
+          character for character: the window checks read it.
+        -->
+        <p class="error message-lines">{#each errorLines as line, at}{#if at > 0}{"\n"}{/if}{#if line.label === null}<span class="message-line">{line.value}{#if line.detail !== null}<span class="message-detail">{DETAIL_START}{line.detail}</span>{/if}</span>{:else}<span class="message-label">{line.label}{LABEL_END}</span><span class="message-value">{line.value}{#if line.detail !== null}<span class="message-detail">{DETAIL_START}{line.detail}</span>{/if}</span>{/if}{/each}</p>
+      {/if}
       {#if offers.includes("rasterCopy")}
         <p class="error">{TEXT().rasterOffer}</p>
         <details><summary>{TEXT().technicalDetails}</summary><p class="error">{error}</p></details>
-      {:else}
-        {@const lines = messageLines(plainly(error))}
-        {#if lines.length === 1}
-          <p class="error">{plainly(error)}</p>
-        {:else}
-          <!--
-            The first line, then one row per line with its label in a column of
-            its own (`messagelines.ts`). Written on one line, with each line
-            break as a text node of its own, so the element's text is the message
-            character for character: the window checks read it.
-          -->
-          <p class="error message-lines">{#each lines as line, at}{#if at > 0}{"\n"}{/if}{#if line.label === null}<span class="message-line">{line.value}{#if line.detail !== null}<span class="message-detail">{DETAIL_START}{line.detail}</span>{/if}</span>{:else}<span class="message-label">{line.label}{LABEL_END}</span><span class="message-value">{line.value}{#if line.detail !== null}<span class="message-detail">{DETAIL_START}{line.detail}</span>{/if}</span>{/if}{/each}</p>
-        {/if}
       {/if}
       <!--
         The buttons a message carries, and never more than the message earns:

@@ -93,6 +93,12 @@ export interface Applied {
    * unless {@link verified}; optional because an older reply carries none.
    */
   notes?: string[];
+  /**
+   * What each of {@link why} asks of the reader, one each and in order
+   * (`redact::ReasonKind`); `redactreview.ts` groups the reasons by it.
+   * Optional because an older reply carries none.
+   */
+  kinds?: import("./redactreview").ReasonKind[];
 }
 
 /**

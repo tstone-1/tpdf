@@ -274,6 +274,8 @@ export default {
     "Die Dekodierung von Objekt {object} brach mittendrin ab, daher wurde alles nach dieser Stelle nicht gelesen",
   "the file draws text through a composite (Type0) font, which stores glyph numbers rather than characters, so a copy of the words drawn through it cannot be found by reading its bytes":
     "Die Datei zeichnet Text mit einer zusammengesetzten Schrift (Type0), die Glyphennummern statt Zeichen speichert, daher lässt sich eine Kopie der damit gezeichneten Wörter nicht durch Lesen der Bytes finden",
+  "the file draws text through a font whose own encoding (/Differences) writes some of the removed characters as other bytes, so a copy of the words drawn through it cannot be found by reading its bytes":
+    "Die Datei zeichnet Text mit einer Schrift, deren eigene Kodierung (/Differences) einige der entfernten Zeichen als andere Bytes schreibt, daher lässt sich eine Kopie der damit gezeichneten Wörter nicht durch Lesen der Bytes finden",
   "the file carries embedded files, which are documents of their own that nothing here reads, so a copy of the words inside one would not be found":
     "Die Datei enthält eingebettete Dateien, eigene Dokumente, die hier nichts liest, daher würde eine Kopie der Wörter in einer davon nicht gefunden",
   "the file carries an application's private data (/PieceInfo), which nothing here reads, so a copy of the words inside it would not be found":
@@ -657,6 +659,12 @@ export default {
     "Seite {n} hat mehr als {MAX_CODES} Codes; die übrigen wurden nicht mit dem Entfernten verglichen",
   "the codes on page {n} could not be read, so whether one still carries what was removed is not known: {e}":
     "Die Codes auf Seite {n} konnten nicht gelesen werden, daher ist unbekannt, ob einer noch Entferntes enthält: {e}",
+  "{needle} is also shown as text on {pages}, which no region marks; the image-only copy keeps it there as a picture":
+    "{needle} steht auch als Text auf {pages}, wo kein Bereich markiert ist; die Kopie nur aus Bildern behält es dort als Bild",
+  "page {n} could not be searched for what was removed, so whether it still shows it is not known: {e}":
+    "Seite {n} konnte nicht nach dem Entfernten durchsucht werden, daher ist unbekannt, ob sie es noch zeigt: {e}",
+  "the pages no region marks could not be searched for what was removed: {e}":
+    "Die Seiten ohne markierten Bereich konnten nicht nach dem Entfernten durchsucht werden: {e}",
   "the codes on the page could not be read: {e}":
     "Die Codes auf der Seite konnten nicht gelesen werden: {e}",
   "the codes in the written file could not be checked, so the file cannot be shown clean: {e}":

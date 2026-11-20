@@ -13,6 +13,7 @@
 use std::path::Path;
 
 use crate::docmodel::PageSource;
+use crate::redact::ReasonKind;
 use crate::render::{Backend, RenderService};
 use crate::render_reply::{await_reply, outside_at, password_for, reply_channel};
 use crate::{edits, ocr_gate, redact, save, verify};
@@ -358,8 +359,9 @@ pub(crate) async fn gate_written_file(
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct CodesRead {
     /// A reason for each code that still carries a removed text, and for each
-    /// page or code that could not be compared ([`crate::codes::reasons`]).
-    pub why: Vec<String>,
+    /// page or code that could not be compared
+    /// ([`crate::codes::reasons_of_kind`]), with what it asks of the reader.
+    pub why: Vec<(ReasonKind, String)>,
     /// What a clean verdict says about the codes: how many were read. `None`
     /// when nothing was compared, because nothing was removed as text.
     pub note: Option<String>,
@@ -399,9 +401,12 @@ pub(crate) async fn codes_written_file(
     tauri::async_runtime::spawn_blocking(move || read_codes(&service, &path, password, &needles))
         .await
         .unwrap_or_else(|e| CodesRead {
-            why: vec![said!(
+            why: vec![(
+                ReasonKind::Unchecked,
+                said!(
                 "the codes in the written file could not be checked, so the file cannot be shown \
                  clean: {e}"
+            ),
             )],
             note: None,
         })
@@ -420,10 +425,13 @@ pub(crate) fn read_codes(
         Ok(info) => info,
         Err(refusal) => {
             return CodesRead {
-                why: vec![said!(
+                why: vec![(
+                    ReasonKind::Unchecked,
+                    said!(
                     "the written file could not be reopened to read the codes on its pages, so \
                      it cannot be shown clean: {reason}",
                     reason = refusal.reason
+                ),
                 )],
                 note: None,
             }
@@ -437,12 +445,15 @@ pub(crate) fn read_codes(
         match ocr_gate::wait(|reply| service.codes(opened.id, page, reply)) {
             Ok(found) => {
                 codes += found.codes.len();
-                why.extend(crate::codes::reasons(page, &found, needles));
+                why.extend(crate::codes::reasons_of_kind(page, &found, needles));
             }
-            Err(e) => why.push(said!(
+            Err(e) => why.push((
+                ReasonKind::Unchecked,
+                said!(
                 "the codes on page {n} could not be read, so whether one still carries what was \
                  removed is not known: {e}",
                 n = page + 1
+            ),
             )),
         }
     }
@@ -477,7 +488,135 @@ pub(crate) enum Written {
     /// removal could not take is not in a file that keeps no object of the
     /// source. A code printed beside the marked area is still in the picture,
     /// and the code reader is the one that sees it.
-    Pictures,
+    ///
+    /// `elsewhere` is [`text_elsewhere`]'s answer: a removed word the source
+    /// still shows as text on a page no region marks, which the copy turns
+    /// into pixels that none of those readers look at.
+    Pictures {
+        /// Reasons, one per word found on an unmarked page, and one per page
+        /// that could not be searched.
+        elsewhere: Vec<(ReasonKind, String)>,
+    },
+}
+
+/// The output slots of `plan` with no marked region, each with the page of the
+/// opened document it is drawn from.
+///
+/// The same pairing `raster_redact::rewrite` paints the marks by: a redaction
+/// names a page of the opened document, and the slot drawing that page is the
+/// marked one. A slot drawn from another file carries no source page here; the
+/// image-only copy refuses such a plan before anything is written.
+fn unmarked_slots(plan: &edits::Plan) -> Vec<(u32, u32)> {
+    slots_without(
+        plan.pages.iter().map(|page| page.source),
+        plan.redactions.iter().map(|one| one.source),
+    )
+}
+
+/// [`unmarked_slots`] over the page sources in slot order and the marked
+/// pages of the opened document.
+fn slots_without(
+    sources: impl Iterator<Item = PageSource>,
+    marked: impl Iterator<Item = u32>,
+) -> Vec<(u32, u32)> {
+    let marked: std::collections::BTreeSet<u32> = marked.collect();
+    sources
+        .enumerate()
+        .filter_map(|(slot, source)| match source {
+            PageSource::Baseline(source) if !marked.contains(&source) => {
+                Some((u32::try_from(slot).ok()?, source))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Where the source still shows a removed word as text, outside every marked
+/// page, as reasons for the verdict of an image-only copy.
+///
+/// The rewritten copy's byte scan finds such a copy and names its page; the
+/// image-only copy has no text to scan, so a second copy of the name on an
+/// unmarked page came out of it as pixels and was certified (residual 42,
+/// `docs/THREAT-MODEL.md`). This asks the source's text layer instead, per
+/// page and per word, matching case as the byte scan does. `count` answers how
+/// many times a word occurs on a page of the opened document; an answer it
+/// cannot give is a reason too, because a page not searched is not a page
+/// shown clean.
+///
+/// What this does not see: a removed word drawn as a picture on an unmarked
+/// page, and a second copy on a marked page outside its regions.
+///
+/// `slots` is [`unmarked_slots`]'s answer.
+pub(crate) fn text_elsewhere(
+    slots: &[(u32, u32)],
+    needles: &[String],
+    count: impl Fn(u32, &str) -> Result<usize, String>,
+) -> Vec<(ReasonKind, String)> {
+    let mut why = Vec::new();
+    for needle in needles {
+        let mut pages = std::collections::BTreeSet::new();
+        for &(slot, source) in slots {
+            match count(source, needle) {
+                Ok(0) => {}
+                Ok(_) => {
+                    pages.insert(slot);
+                }
+                Err(e) => why.push((
+                    ReasonKind::Unchecked,
+                    said!(
+                        "page {n} could not be searched for what was removed, so whether it still \
+                     shows it is not known: {e}",
+                        n = slot + 1
+                    ),
+                )),
+            }
+        }
+        if !pages.is_empty() {
+            why.push((
+                ReasonKind::Found,
+                said!(
+                "{needle} is also shown as text on {pages}, which no region marks; the image-only \
+                 copy keeps it there as a picture",
+                pages = verify::Placed::of(&pages).sentence()
+            ),
+            ));
+        }
+    }
+    why.dedup();
+    why
+}
+
+/// [`text_elsewhere`] against the opened document `doc`, one search a page and
+/// a word, on a blocking thread.
+pub(crate) async fn text_elsewhere_in(
+    service: RenderService,
+    doc: u32,
+    plan: edits::Plan,
+    needles: Vec<String>,
+) -> Vec<(ReasonKind, String)> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let options = crate::search::Options {
+            match_case: true,
+            whole_word: false,
+            regex: false,
+        };
+        text_elsewhere(&unmarked_slots(&plan), &needles, |page, needle| {
+            let found = ocr_gate::wait(|reply| {
+                service.search(doc, vec![page], needle.to_string(), options, None, reply)
+            })?;
+            match found.problem {
+                Some(problem) => Err(problem),
+                None => Ok(found.matches.len()),
+            }
+        })
+    })
+    .await
+    .unwrap_or_else(|e| {
+        vec![(
+            ReasonKind::Unchecked,
+            said!("the pages no region marks could not be searched for what was removed: {e}"),
+        )]
+    })
 }
 
 /// What [`read_back`] needs from an [`Asked`], borrowed, so a test can build it.
@@ -515,6 +654,9 @@ impl Asked {
 pub(crate) struct Judged {
     /// Empty exactly when the file can be called clean.
     pub why: Vec<String>,
+    /// What each of [`Judged::why`] asks of the reader, one each, in order
+    /// ([`redact::ReasonKind`]).
+    pub kinds: Vec<ReasonKind>,
     /// [`redact::notes_for`]'s answer.
     pub notes: Vec<String>,
 }
@@ -552,7 +694,7 @@ pub(crate) async fn read_back(
             )
             .await
         }
-        Written::Pictures => Vec::new(),
+        Written::Pictures { .. } => Vec::new(),
     };
     // Then the codes in the file, which no other reader can see: a payment
     // code beside the marked name holds the name too (`codes.rs`).
@@ -580,40 +722,77 @@ pub(crate) fn judge(
     gate: Vec<String>,
     codes: CodesRead,
 ) -> Judged {
-    let mut why: Vec<String> = Vec::new();
+    let mut why: Vec<(ReasonKind, String)> = Vec::new();
+    let mut add = |kind: ReasonKind, reasons: &mut dyn Iterator<Item = String>| {
+        why.extend(reasons.map(|reason| (kind, reason)));
+    };
     let mut sizing: Vec<String> = Vec::new();
     let mut taken_here: Vec<String> = Vec::new();
     match written {
         Written::Rewritten { report, also } => {
-            why.extend(asked.concerns.iter().cloned());
-            if let verify::Verdict::NotVerified(reasons) = report.verdict() {
-                why.extend(reasons);
+            // The objects a region covers that the removal could not take are
+            // pictures and drawings; the form that could not be read is not.
+            for concern in asked.concerns {
+                let kind = if asked.needles_short.contains(concern) {
+                    ReasonKind::Unchecked
+                } else {
+                    ReasonKind::Pictures
+                };
+                add(kind, &mut std::iter::once(concern.clone()));
             }
-            why.extend(redact::short_needle_note(&report));
-            why.extend(redact::marked_pages_note(&report, asked.marked));
-            why.extend(redact::inserted_pages_note(
-                asked.inserted,
-                &report.found,
-                report.placed(),
-            ));
-            why.extend(also);
-            why.extend(gate);
+            // `Report::verdict`'s order: the words found, then what could not
+            // be read, then the pictures nobody read.
+            if let verify::Verdict::NotVerified(reasons) = report.verdict() {
+                let found = report.found.len();
+                let blind = report.blind.len();
+                for (at, reason) in reasons.into_iter().enumerate() {
+                    let kind = if at < found {
+                        ReasonKind::Found
+                    } else if at < found + blind {
+                        ReasonKind::Unchecked
+                    } else {
+                        ReasonKind::Pictures
+                    };
+                    add(kind, &mut std::iter::once(reason));
+                }
+            }
+            add(
+                ReasonKind::Unchecked,
+                &mut redact::short_needle_note(&report).into_iter(),
+            );
+            add(
+                ReasonKind::Found,
+                &mut redact::marked_pages_note(&report, asked.marked).into_iter(),
+            );
+            add(
+                ReasonKind::Unchecked,
+                &mut redact::inserted_pages_note(asked.inserted, &report.found, report.placed())
+                    .into_iter(),
+            );
+            add(ReasonKind::Found, &mut also.into_iter());
+            add(ReasonKind::Pictures, &mut gate.into_iter());
             sizing = ocr_gate::sizing_notes(asked.gate);
             // A picture taken off one page and left in the file for the
             // others: true of a rewrite, and of nothing a picture copy keeps.
             taken_here = asked.taken_here.to_vec();
         }
-        Written::Pictures => {
+        Written::Pictures { elsewhere } => {
             // Only what limits the one reader that still applies: a form
             // answer under a marked area that could not be read is a word the
-            // code reader was never given to look for.
-            why.extend(asked.needles_short.iter().cloned());
+            // code reader was never given to look for. Then a removed word the
+            // source shows on an unmarked page, which the copy keeps.
+            add(
+                ReasonKind::Unchecked,
+                &mut asked.needles_short.iter().cloned(),
+            );
+            why.extend(elsewhere);
         }
     }
     why.extend(codes.why);
     sizing.extend(codes.note);
     let notes = redact::notes_for(why.is_empty(), sizing, taken_here);
-    Judged { why, notes }
+    let (kinds, why) = why.into_iter().unzip();
+    Judged { why, kinds, notes }
 }
 
 /// Why a redaction to a new file stopped before it had a verdict.
@@ -826,12 +1005,13 @@ pub async fn redact_copy_asked(
         verified: judged.why.is_empty(),
         notes: judged.notes,
         why: judged.why,
+        kinds: judged.kinds,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{judge, CodesRead, Judged, Parts, Written};
+    use super::{judge, CodesRead, Judged, Parts, ReasonKind, Written};
 
     /// Every part a verdict reads, each a sentence naming itself, so an
     /// assertion on `why` says which reader put each line there.
@@ -871,7 +1051,10 @@ mod tests {
 
     fn code(why: &[&str]) -> CodesRead {
         CodesRead {
-            why: why.iter().map(ToString::to_string).collect(),
+            why: why
+                .iter()
+                .map(|reason| (ReasonKind::Found, (*reason).to_string()))
+                .collect(),
             note: Some("1 code was read".to_string()),
         }
     }
@@ -900,6 +1083,17 @@ mod tests {
                 "a code still carries it".to_string(),
             ],
             "the objects left first, then the scan, the extra reader, the gate and the codes"
+        );
+        assert_eq!(
+            judged.kinds,
+            vec![
+                ReasonKind::Pictures,
+                ReasonKind::Found,
+                ReasonKind::Found,
+                ReasonKind::Pictures,
+                ReasonKind::Found,
+            ],
+            "one kind per reason, decided by the reader that gave it"
         );
         // Not clean, so no note qualifies a clean verdict; the picture left in
         // the file is said whatever the verdict.
@@ -934,6 +1128,7 @@ mod tests {
             clean,
             Judged {
                 why: Vec::new(),
+                kinds: Vec::new(),
                 notes: vec!["1 code was read".to_string()],
             }
         );
@@ -948,7 +1143,7 @@ mod tests {
         };
         let judged = judge(
             &asked.parts(),
-            Written::Pictures,
+            pictures(Vec::new()),
             Vec::new(),
             code(&["the QR code on page 1 still holds 4711-0815"]),
         );
@@ -966,22 +1161,102 @@ mod tests {
     #[test]
     fn an_image_only_copy_is_judged_on_what_applies_to_pictures() {
         let asked = Asked::full();
-        let judged = judge(&asked.parts(), Written::Pictures, Vec::new(), code(&[]));
+        let judged = judge(&asked.parts(), pictures(Vec::new()), Vec::new(), code(&[]));
         assert_eq!(
             judged.why,
             vec!["the form fields could not be read".to_string()]
+        );
+        // A word the source still shows on an unmarked page comes after it.
+        let elsewhere = judge(
+            &asked.parts(),
+            pictures(vec!["4711-0815 is also shown".to_string()]),
+            Vec::new(),
+            code(&[]),
+        );
+        assert_eq!(
+            elsewhere.why,
+            vec![
+                "the form fields could not be read".to_string(),
+                "4711-0815 is also shown".to_string(),
+            ]
         );
         let readable = Asked {
             needles_short: Vec::new(),
             ..Asked::full()
         };
-        let clean = judge(&readable.parts(), Written::Pictures, Vec::new(), code(&[]));
+        let clean = judge(
+            &readable.parts(),
+            pictures(Vec::new()),
+            Vec::new(),
+            code(&[]),
+        );
         assert_eq!(
             clean,
             Judged {
                 why: Vec::new(),
+                kinds: Vec::new(),
                 notes: vec!["1 code was read".to_string()],
             }
+        );
+    }
+
+    fn pictures(elsewhere: Vec<String>) -> Written {
+        Written::Pictures {
+            elsewhere: elsewhere
+                .into_iter()
+                .map(|reason| (ReasonKind::Found, reason))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn only_the_slots_of_unmarked_pages_of_this_document_are_searched() {
+        use crate::docmodel::PageSource;
+        // Slot 0 draws marked page 2, slot 1 unmarked page 0, slot 2 a blank
+        // page, slot 3 unmarked page 1.
+        let sources = [
+            PageSource::Baseline(2),
+            PageSource::Baseline(0),
+            PageSource::Blank(crate::docmodel::Size {
+                width: 595.0,
+                height: 842.0,
+            }),
+            PageSource::Baseline(1),
+        ];
+        assert_eq!(
+            super::slots_without(sources.into_iter(), [2].into_iter()),
+            vec![(1, 0), (3, 1)]
+        );
+    }
+
+    #[test]
+    fn a_removed_word_on_an_unmarked_page_is_a_reason_naming_the_output_page() {
+        let needles = vec!["4711-0815".to_string(), "Smith".to_string()];
+        // Page 5 of the opened document is output slot 1, and shows the
+        // number once; nothing shows the name.
+        let why = super::text_elsewhere(&[(0, 4), (1, 5)], &needles, |page, needle| {
+            Ok(usize::from(page == 5 && needle == "4711-0815"))
+        });
+        assert_eq!(
+            why,
+            vec![(
+                ReasonKind::Found,
+                "4711-0815 is also shown as text on page 2, which no region marks; the \
+                 image-only copy keeps it there as a picture"
+                    .to_string()
+            )]
+        );
+        // The control: no hit is no reason.
+        assert!(super::text_elsewhere(&[(0, 4), (1, 5)], &needles, |_, _| Ok(0)).is_empty());
+        // A page that cannot be searched is not one shown clean.
+        let failed = super::text_elsewhere(&[(0, 4)], &needles[..1], |_, _| {
+            Err("the worker stopped".to_string())
+        });
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].0, ReasonKind::Unchecked);
+        assert!(
+            failed[0].1.starts_with("page 1 could not be searched"),
+            "{failed:?}"
         );
     }
 }

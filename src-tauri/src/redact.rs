@@ -607,6 +607,33 @@ pub struct Applied {
     /// [`ocr_gate::sizing_notes`].
     #[serde(default)]
     pub notes: Vec<String>,
+    /// What each reason in `why` asks of the reader, one per reason and in
+    /// the same order. The window groups the reasons by it
+    /// (`src/lib/redactreview.ts`); the command-line tool does not use it.
+    #[serde(default)]
+    pub kinds: Vec<ReasonKind>,
+}
+
+/// What a reason for *not verified* asks of the reader.
+///
+/// **Decided where the reason is produced, never read off its sentence**: each
+/// reader of a written redaction knows which of the three it is reporting, and a
+/// sentence is translated and reworded, so a pattern over it would drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasonKind {
+    /// A copy of what was removed was found: the scan's words, a word on a
+    /// marked page, a code that still carries it, a word on a page the
+    /// image-only copy keeps as a picture.
+    Found,
+    /// Something drawn as a picture or a drawing was not read or not taken: a
+    /// picture nobody read, an object under a region the removal could not
+    /// take, the OCR gate's findings. The image-only copy is the step that
+    /// handles these.
+    Pictures,
+    /// Part of the file the check cannot read, or a question it cannot settle:
+    /// nothing in the document for the reader to fix.
+    Unchecked,
 }
 
 /// Which of a page's objects a region covers.

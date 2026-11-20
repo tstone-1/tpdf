@@ -11,12 +11,13 @@ Free, MIT-licensed, no account, no telemetry; your documents are not uploaded an
 
 ## Download
 
-**If you redacted documents with tpdf 26.11.9 or earlier, redact the originals again with
-26.11.10 or later.** A redacted file from those versions can still hold a copy of what was
+**If you redacted documents with tpdf 26.11.10 or earlier, redact the originals again with
+26.11.11 or later.** A redacted file from those versions can still hold a copy of what was
 removed, even where tpdf said *verified*. Updating tpdf does not change files it has already
 written: redo the redaction from the original and use the new file. If the older file was
 already sent, assume it can still hold what was redacted.
-What was affected: [up to 26.11.9](SECURITY.md#redactions-made-with-26119-or-earlier) and
+What was affected: [up to 26.11.10](SECURITY.md#redactions-made-with-261110-or-earlier),
+[up to 26.11.9](SECURITY.md#redactions-made-with-26119-or-earlier) and
 [up to 26.11.5](SECURITY.md#redactions-made-with-26115-or-earlier).
 
 Take the file for your computer from the
@@ -132,6 +133,11 @@ pictures. From 26.11.10 on that holds for every picture, however it is stored; 2
 earlier said it only for JPEG and fax-coded pictures and passed the others. The result
 names each picture as a reason, wherever in the document it is. Look at those pictures
 yourself, or make the image-only copy and check what it shows.
+
+From 26.11.11 on, a result that is not verified groups its reasons under three headings,
+each with its next step: *Still in the file* (a copy was found; mark it where named and
+redact the original again), *Not read in pictures*, and *Could not be checked* (a part of
+the file the check cannot read; the marked regions were still removed).
 
 ![Two regions marked for removal and listed for review](docs/img/redact.png)
 
@@ -900,8 +906,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   checked structurally and rendered back before it is saved, and the QR and other 2D codes
   on its pages are read as they are for the other copies: a code that still holds a removed
   text makes the result *not verified*, with the reason. A second copy of the removed words
-  on a page you did not mark becomes pixels like the rest of that page, and nothing reads
-  it. It is the one removal a
+  on a page you did not mark becomes pixels like the rest of that page; from 26.11.11 on,
+  the original's text on every such page is searched first, and a removed word found there
+  makes the result *not verified* and names the page. A copy that is itself a picture on
+  such a page is still not read. It is the one removal a
   document holding pages from another file cannot have, because every page of the copy is
   drawn through the engine that holds the document you opened.
   <!-- built: file.redactRasterCopy -->
@@ -2437,9 +2445,11 @@ unbuilt while they shipped.
 - **PDFium is not usable for redaction.** Its edit path regenerates whole content streams
   and discards marked content, and `set_text()` silently draws `.notdef` for glyphs
   outside a subsetted font. Surgical `lopdf` operator rewriting does neither.
-- A **byte scan cannot verify a redaction** on any document with a Type0 font, because the
-  content stream carries glyph ids rather than text. A verifier that cannot decode a
-  carrier reports "not verified", never "clean".
+- A **byte scan cannot verify a redaction** on its own on a document with a Type0 font,
+  because the content stream carries glyph ids rather than text. Since 26.11.11 the check
+  decodes each string through the `/ToUnicode` map of the font that shows it, and reports
+  "not verified" wherever that map is missing, incomplete or maps to private-use
+  characters. A verifier that cannot decode a carrier reports "not verified", never "clean".
 
 Known limit carried into Phase 1: on an A0 vector sheet the scroller holds a flawless
 60 fps over a screen that is 6--10% sharp while moving. Nothing goes blank — the
@@ -2474,8 +2484,9 @@ the worked-out position rather than a paragraph of reassurance: the trust bounda
 sandbox profile in full, and the residual risks in one list, with every claim either
 measured and attributed to the spike that measured it, or marked untested.
 
-A redaction made with 26.11.9 or earlier can still hold what it removed; `SECURITY.md` has
+A redaction made with 26.11.10 or earlier can still hold what it removed; `SECURITY.md` has
 which documents, and what to redo, for
+[26.11.10 and earlier](SECURITY.md#redactions-made-with-261110-or-earlier), for
 [26.11.9 and earlier](SECURITY.md#redactions-made-with-26119-or-earlier) and for
 [26.11.5 and earlier](SECURITY.md#redactions-made-with-26115-or-earlier).
 

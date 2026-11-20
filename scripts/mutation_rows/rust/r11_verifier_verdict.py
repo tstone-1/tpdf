@@ -103,8 +103,8 @@ ROWS += [
     Mutation(
         "redaction: an image-only copy forgets a form it could not read",
         "src/redaction_steps.rs",
-        "            why.extend(asked.needles_short.iter().cloned());",
-        "            let _ = asked.needles_short;",
+        "                &mut asked.needles_short.iter().cloned(),",
+        "                &mut std::iter::empty(),",
         "an_image_only_copy_is_judged_on_what_applies_to_pictures",
     ),
     Mutation(
@@ -112,15 +112,25 @@ ROWS += [
         # object the removal left is not true of it.
         "redaction: an image-only copy reports the objects a rewrite left",
         "src/redaction_steps.rs",
-        "            why.extend(asked.needles_short.iter().cloned());",
-        "            why.extend(asked.concerns.iter().cloned());",
+        "                &mut asked.needles_short.iter().cloned(),",
+        "                &mut asked.concerns.iter().cloned(),",
         "an_image_only_copy_is_judged_on_what_applies_to_pictures",
     ),
     Mutation(
         "redaction: the extra reader's findings left out of a rewrite's verdict",
         "src/redaction_steps.rs",
-        "            why.extend(also);",
+        "            add(ReasonKind::Found, &mut also.into_iter());",
         "            let _ = also;",
+        "a_rewrite_is_judged_on_every_reader_in_order",
+    ),
+    Mutation(
+        # The window groups the reasons by this kind (`redactreview.ts`); a
+        # word the scan found shown as a part it could not read tells the
+        # reader there is nothing to fix.
+        "redaction: a word the scan found given the kind of an unread part",
+        "src/redaction_steps.rs",
+        "                    let kind = if at < found {",
+        "                    let kind = if false && at < found {",
         "a_rewrite_is_judged_on_every_reader_in_order",
     ),
     Mutation(

@@ -34,6 +34,8 @@
 
 use std::collections::HashSet;
 
+use crate::redact::ReasonKind;
+
 /// The formats read: the four 2D codes that carry free text.
 ///
 /// Linear barcodes are left out: an EAN or a Code 128 on a document is a product
@@ -237,8 +239,24 @@ pub fn terms_of(needle: &str) -> Vec<String> {
 /// finding of its own, because nothing could be compared. A code that holds none
 /// of the removed words adds nothing: what else it carries is the document's,
 /// and the redaction did not ask about it.
+#[cfg(test)]
 #[must_use]
 pub fn reasons(page: u32, found: &Page2dCodes, needles: &[String]) -> Vec<String> {
+    reasons_of_kind(page, found, needles)
+        .into_iter()
+        .map(|(_, reason)| reason)
+        .collect()
+}
+
+/// [`reasons`], each with what it asks of the reader: a code that still
+/// carries a removed text is [`ReasonKind::Found`], one that could not be
+/// compared is [`ReasonKind::Unchecked`].
+#[must_use]
+pub fn reasons_of_kind(
+    page: u32,
+    found: &Page2dCodes,
+    needles: &[String],
+) -> Vec<(ReasonKind, String)> {
     let mut out = Vec::new();
     // Nothing was removed as text --- a region over a picture or a drawing ---
     // so there is nothing a code could still carry, and a code whose content
@@ -256,11 +274,14 @@ pub fn reasons(page: u32, found: &Page2dCodes, needles: &[String]) -> Vec<String
         .collect();
     for code in &found.codes {
         if !code.plain {
-            out.push(said!(
-                "page {n} has a {kind} whose content is not plain text, so whether it still \
+            out.push((
+                ReasonKind::Unchecked,
+                said!(
+                    "page {n} has a {kind} whose content is not plain text, so whether it still \
                  carries what was removed could not be checked",
-                n = page + 1,
-                kind = code.kind
+                    n = page + 1,
+                    kind = code.kind
+                ),
             ));
             continue;
         }
@@ -273,28 +294,34 @@ pub fn reasons(page: u32, found: &Page2dCodes, needles: &[String]) -> Vec<String
         }
         if let Some(first) = carried.first() {
             let others = carried.len() - 1;
-            out.push(if others == 0 {
-                said!(
+            out.push((
+                ReasonKind::Found,
+                if others == 0 {
+                    said!(
                     "page {n} has a {kind} that still carries \"{first}\", which the redaction \
                      removed; redact the code too",
                     n = page + 1,
                     kind = code.kind
                 )
-            } else {
-                said!(
+                } else {
+                    said!(
                     "page {n} has a {kind} that still carries \"{first}\" and {others} more of \
                      what the redaction removed; redact the code too",
                     n = page + 1,
                     kind = code.kind
                 )
-            });
+                },
+            ));
         }
     }
     if found.more {
-        out.push(said!(
+        out.push((
+            ReasonKind::Unchecked,
+            said!(
             "page {n} has more than {MAX_CODES} codes, and the ones after those were not compared \
              with what was removed",
             n = page + 1
+        ),
         ));
     }
     out

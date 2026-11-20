@@ -17,6 +17,50 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.11] - 2026-11-20
+
+### Changed
+
+- **A redaction that is not verified now says what to do about each reason.** The reasons
+  are grouped under three headings, each with its next step: *Still in the file* (a copy
+  was found: mark it where named and redact the original again), *Not read in pictures*
+  (check them yourself; an image-only copy removes everything inside the marked regions)
+  and *Could not be checked* (the marked regions were removed, but the check cannot read
+  that part of the file). After a copy the reasons are shown above the offer of an
+  image-only copy; until now the offer replaced them and they were folded under
+  *Technical details*. The command-line tool's report is unchanged.
+- Dependency updates within their ranges: `svelte` 5.58.1 and `uuid` 1.29.3.
+
+### Security
+
+- **`SECURITY.md`, the README and the release notes say what to redo for a redaction made
+  with 26.11.10 or earlier**: the five kinds of document below that could read *verified*
+  with a copy left, and that the original is to be redacted again with 26.11.11.
+
+- **A redaction is no longer called *verified* when an LZW or ASCII85 stream in the written
+  file stops before its end marker.** lopdf returns what it decoded up to the cut as success,
+  so the rest of such a stream was never searched. Flate streams have been checked this way
+  since 26.11.10. A complete stream that leaves out its end marker is withheld too, since the
+  bytes cannot tell the two apart.
+- **A font whose `/Differences` encoding writes a removed word as other bytes now withholds
+  *verified*.** That covers a letter of the word placed at another code, a ligature such as
+  *fi* inside it, and a glyph name nothing can resolve. It is asked per removed word, so an
+  encoding that only renames punctuation or adds accented letters changes nothing. Over 83
+  local test documents it withheld no verdict that was not already withheld.
+- **A document whose text uses a composite (Type0) font can now be *verified*.** Until now
+  any such font withheld the verdict, because its text is stored as glyph numbers. The check
+  now decodes each piece of text through the font that draws it, using the font's own
+  character map, and searches the result. The verdict is still withheld where that map is
+  missing, incomplete or uninformative. Over 82 local test documents, 7 more are *verified*,
+  5 of them real-world, and none that was *verified* before is withheld now.
+- **The check after a redaction now finds a removed word however its text is stored**: in
+  hex, with octal escapes, split across a kerned `TJ` array or across several shows, through
+  a font's own character map, and with accented letters in WinAnsi or MacRoman bytes. Before, a page still drawing `Müller` in an ordinary
+  font could be called *verified* for `Müller`, because the word was looked for only as UTF-8.
+- **An image-only copy is no longer called *verified* when the original still shows a removed
+  word as text on a page no region marks.** The copy turns that page into a picture, and
+  nothing read it. The reason names the page.
+
 ## [26.11.10] - 2026-11-20
 
 ### Security

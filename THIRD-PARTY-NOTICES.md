@@ -3555,7 +3555,7 @@ SOFTWARE.
 | utf16string | 0.2.0 | MIT OR Apache-2.0 |
 | utf8_iter | 1.1.0 | Apache-2.0 OR MIT |
 | utf_types | 1.0.0 | Apache-2.0 OR MIT |
-| uuid | 1.29.2 | Apache-2.0 OR MIT |
+| uuid | 1.29.3 | Apache-2.0 OR MIT |
 | vecmath | 1.0.0 | MIT |
 | walkdir | 2.5.0 | Unlicense/MIT |
 | want | 0.3.2 | MIT |
@@ -13462,7 +13462,7 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 | @tauri-apps/plugin-dialog | 2.8.4 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-updater | 2.14.1 | MIT OR Apache-2.0 |
-| svelte | 5.58.0 | MIT |
+| svelte | 5.58.1 | MIT |
 
 ### Copyright notices
 

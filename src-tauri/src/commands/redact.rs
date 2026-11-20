@@ -82,12 +82,19 @@ pub async fn redact_raster_copy(
     .await
     .map_err(|e| said!("The image-only copy did not run: {e}"))?
     .map_err(|why| why.message)?;
+    let elsewhere = crate::redaction_steps::text_elsewhere_in(
+        service.inner().clone(),
+        doc,
+        asked.plan.clone(),
+        asked.needles.clone(),
+    )
+    .await;
     let judged = read_back(
         service.inner().clone(),
         path,
         key,
         &asked,
-        Written::Pictures,
+        Written::Pictures { elsewhere },
     )
     .await;
     Ok(redact::Applied {
@@ -97,6 +104,7 @@ pub async fn redact_raster_copy(
         verified: judged.why.is_empty(),
         notes: judged.notes,
         why: judged.why,
+        kinds: judged.kinds,
     })
 }
 
@@ -318,5 +326,6 @@ pub async fn redact_document(
         verified: judged.why.is_empty(),
         notes: judged.notes,
         why: judged.why,
+        kinds: judged.kinds,
     })
 }

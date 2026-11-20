@@ -50,6 +50,7 @@ pub mod fields;
 pub mod fingerprint;
 #[cfg(test)]
 pub(crate) mod fixtures;
+pub(crate) mod fontread;
 pub mod formedit;
 pub mod formfields;
 pub mod forms;

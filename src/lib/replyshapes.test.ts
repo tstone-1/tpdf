@@ -182,6 +182,7 @@ const SCHEMA = {
     verified: ["boolean"],
     why: ["array"],
     notes: ["array"],
+    kinds: ["array"],
   } satisfies Shape<Applied>,
   Comments: {
     items: ["array"],

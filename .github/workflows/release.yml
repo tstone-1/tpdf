@@ -567,13 +567,28 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
-          **Redacted with 26.11.9 or earlier? Redact the originals again.**
+          **Redacted with 26.11.10 or earlier? Redact the originals again.**
           A redacted file from those versions can still hold a copy of what
           was removed, even where tpdf said verified. Updating tpdf does not
           change files it has already written: redo the redaction from the
-          original with 26.11.10 or later and use the new file. If the older
+          original with 26.11.11 or later and use the new file. If the older
           file was already sent, assume it can still hold what was redacted.
-          Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-26119-or-earlier
+          Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-261110-or-earlier
+
+          **New in 26.11.11.** A redaction is checked more thoroughly. A
+          removed word is now found however its text is stored: with
+          accented letters, in hexadecimal or with escapes, broken by
+          letter spacing, or drawn as several pieces. Text drawn through a
+          composite font, which is most output of Word and LaTeX, is read
+          through the font's own character map, so such a document can
+          now read verified; until now it never could. An LZW or ASCII85
+          stream that stops part way, and a font that places letters at
+          its own codes, are reported as not verified, with the reason.
+          The image-only copy checks every page with no marked region for
+          the removed words. A result that is not verified now groups its
+          reasons under three headings, each with its next step: still in
+          the file, not read in pictures, and could not be checked.
+          Dependency updates.
 
           **New in 26.11.10.** A redaction is checked more strictly. A
           picture stored losslessly, a stream the check could not decode

@@ -1,6 +1,6 @@
 [package]
 name = "tpdf"
-version = "26.11.10"
+version = "26.11.11"
 description = "Fast, lightweight PDF viewer and editor"
 authors = ["tstone-1"]
 edition = "2021"
@@ -72,6 +72,10 @@ regex = { version = "1", default-features = false, features = ["std", "perf", "u
 
 # Low-level PDF object graph and content-stream operators.
 lopdf = "0.46"
+# The LZW decoder lopdf itself decodes with, asked by `verify.rs` whether a
+# stream reached its end code: lopdf returns a cut-short decode as success.
+# Already in the tree through lopdf, so it adds no package. MIT OR Apache-2.0.
+weezl = "0.2"
 
 # Reading QR codes and other 2D codes on a redacted page, in `codes.rs`, inside
 # the worker: an invoice's payment code carries the payee's name and IBAN, a
