@@ -198,6 +198,12 @@ pub enum Request {
         #[serde(default)]
         changes: Vec<crate::textedit::Change>,
     },
+    /// Preview a GUI draft, which can request an installed face even if the
+    /// bundled fallback cannot render the draft.
+    TextDraft {
+        page: u32,
+        changes: Vec<crate::textedit::Change>,
+    },
     /// The same runs, each outlined where `changes` leaves it: an edited run
     /// at its box, a run an edit pushed along its line or moved down its
     /// paragraph where it now is. No preview is rendered. The editor asks for
@@ -1057,7 +1063,7 @@ mod tests {
             ("Outline", "outline"),
             ("Comments", "comments"),
             ("Form", "form"),
-            ("TextRuns", "text_runs"),
+            ("TextDraft", "text_runs"),
             // The same method with `outlines` set: `Workers` picks the variant.
             ("TextOutlines", "text_runs"),
             ("Links", "links"),
@@ -1072,6 +1078,10 @@ mod tests {
 
         /// Variants that reach a worker by another route, and why.
         const UNCARRIED: &[(&str, &str)] = &[
+            (
+                "TextRuns",
+                "CLI commands and probes request a final layout from a private worker",
+            ),
             (
                 "PageUnits",
                 "the CLI requests physical units from its private worker",
@@ -1391,6 +1401,10 @@ mod tests {
             Request::Form,
             Request::TextRuns {
                 page: 0,
+                changes: Vec::new(),
+            },
+            Request::TextDraft {
+                page: 2,
                 changes: Vec::new(),
             },
             Request::TextOutlines {

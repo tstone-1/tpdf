@@ -833,11 +833,12 @@
   let textEditor = $state<TextEditor | null>(null);
   let textEditorGeneration = 0;
 
-  function commitPopups(): void {
+  function commitPopups(waitForNotes = false): Promise<void> | void {
     committingPopup = true;
     try {
       formLayer?.commit();
       textEditor?.commit();
+      if (waitForNotes) return viewer?.settleNotes();
       viewer?.closeMark();
       viewer?.closeComment();
     } finally { committingPopup = false; }
@@ -892,22 +893,14 @@
    * Rejects when a draft cannot be committed, with the sentence to show.
    */
   async function settleDrafts(): Promise<void> {
-    commitPopups();
-    // The document on the other side too, when there is one: a note left open
-    // there is as unsaved as one here, and closing the window or every tab
-    // reads both documents' state. Committed before the first wait, like the
-    // line above, and each as its own document.
-    const beside = stage.parked.map((id) => asDocument(id, () => {
-      commitPopups();
-      return Promise.all([pendingEdit, formLayer?.settle(), textEditor?.settle()]);
-    }));
-    // Named before the first wait: after it the variables may hold the other
-    // document, whose drafts are the ones waited for just below.
-    const pending = pendingEdit, form = formLayer, editor = textEditor;
-    await pending;
-    await form?.settle();
-    await editor?.settle();
-    await Promise.all(beside);
+    // Start every commit before yielding the permission to edit during a save.
+    // Capture each view's outstanding work while its controls are in scope.
+    const settleView = async () => {
+      const notes = commitPopups(true);
+      const work = [notes, pendingEdit, formLayer?.settle(), textEditor?.settle()];
+      await Promise.all(work);
+    };
+    await Promise.all([settleView(), ...stage.parked.map((id) => asDocument(id, settleView))]);
   }
 
   async function settleDocument(): Promise<void> {
@@ -3229,11 +3222,17 @@
    * than dropping them (`edithold.ts`): the box can be typed in while an
    * update downloads, which refuses every edit.
    */
-  function typedEdit(run: (edits: Edits) => Promise<EditState>, words: string): Promise<EditState | null> {
+  async function typedEdit(run: (edits: Edits) => Promise<EditState>, words: string): Promise<EditState | string> {
     const view = openView;
-    return ranOr((edit) => applyEdit(edit, view), run, () => {
+    let refusal: string | undefined;
+    const write = async (model: Edits) => {
+      try { return await run(model); }
+      catch (error) { refusal = spokenError(error); throw error; }
+    };
+    const state = await ranOr((edit) => applyEdit(edit, view), write, () => {
       asDocument(view, () => say(typedNotTaken(words)));
     });
+    return state ?? refusal ?? typedNotTaken(words);
   }
 
   async function editExistingText(): Promise<void> {
@@ -3587,7 +3586,8 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || !viewer) return;
-      await settleDrafts();
+      try { await settleDrafts(); }
+      catch (error) { say(spokenError(error)); return; }
       const path = openPathName;
       const place = currentPlace(false);
       try {
@@ -6628,7 +6628,7 @@
       onMarkNote: (mark, note) => {
         if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, note), note);
         const to = scannedForm && edits ? fieldRenamed(scannedForm, edits.state, mark, note) : null;
-        if (typeof to === "string") return say(to);
+        if (typeof to === "string") { say(to); return to; }
         return to ? typedEdit((e) => e.refield([to]), note) : undefined;
       },
       // The lines for a text box's words while they are being typed, from
@@ -6646,7 +6646,7 @@
       // here anyway --- `setComments` closes a popup whose comment has gone.
       onCommentEdit: (comment, body) => {
         const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
-        if (to) void typedEdit((e) => e.rewrite(to.object, to.page, body), body);
+        return to ? typedEdit((e) => e.rewrite(to.object, to.page, body), body) : typedNotTaken(body);
       },
       // The same two lookups as the rewrite above and for its reasons: a
       // comment the file wrote as a direct dictionary has no object to name,
@@ -6666,7 +6666,7 @@
       // for once.
       onCommentReply: (comment, body) => {
         const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
-        if (to) void typedEdit((e) => e.reply(to.page, to.object, comment.rect, body), body);
+        return to ? typedEdit((e) => e.reply(to.page, to.object, comment.rect, body), body) : typedNotTaken(body);
       },
       onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),
       // A colour picked in the swatch row, or by a `Colour:` command with a
@@ -7441,6 +7441,11 @@
               <button data-testid="offer-saveCopy" disabled={busyNow}
                 onclick={() => void saveCopy()}
                 >{TEXT().offerSaveCopy}</button
+              >
+            {:else if offer === "requestReload"}
+              <button data-testid="offer-requestReload" disabled={busyNow}
+                onclick={() => void reloadDocument()}
+                >{TEXT().offerReload}</button
               >
             {:else if offer === "reload"}
               <button data-testid="offer-reload" disabled={busyNow}

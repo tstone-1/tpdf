@@ -4,6 +4,22 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Pending edits, saves and disk changes (2026-11-21)
+
+On macOS, the native tabs check passed 26/26. A Helvetica text box containing
+Greek alpha stopped Save, retained the editable sentence and left the source bytes
+intact. Correcting the sentence and saving again put the corrected words in the PDF.
+The disk-change check passed 11/11, including an edit made after the reload notice.
+On both WebKit and Chromium a blank required field settled with zero writes, while
+an unsupported typed answer was refused. Two immediate disk checks emitted zero
+change reports.
+
+Native text-edit round trips checked both orders of a push against saved pixels.
+Two replacements that overprint when combined were refused in both orders, while
+each passed alone. The same intrusion was refused at all four page rotations.
+A generated installed font supplied U+E000 after the bundled fonts refused it.
+Its preview matched the saved pixels and the original file was preserved.
+
 ### Updater 2.14.1 with a required signed version (26.10.27, 2026-10-28)
 
 `tauri-plugin-updater` 2.13.3 to 2.14.1 in Cargo and npm, which moved `zip` from 4.6.1 to

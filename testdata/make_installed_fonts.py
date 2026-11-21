@@ -146,6 +146,7 @@ def generate() -> dict[str, bytes]:
     full = build(FULL)
     return {
         "full.ttf": full,
+        "symbol.ttf": build(SUBSET + "\ue000"),
         "subset.ttf": build(SUBSET),
         "sparse.ttf": build(FULL.replace("D", "")),
         "collection.ttc": collection(build(FULL, ps_name="TPDFOtherSans"), full),

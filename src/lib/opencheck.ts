@@ -1427,10 +1427,32 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         host.tabs().length === 2 && host.edits()?.doc === a.id && host.edits()?.state.pages[0]?.turns === 1);
       await host.open(`${first}.missing`);
       check("a failed open leaves both tabs and the active document intact", host.tabs().length === 2 && host.edits()?.doc === a.id && host.hasViewer());
+      await host.apply((edits) => edits.mark("textbox", edits.state.pages[0]!.id, [50, 100, 220, 140], [], "Original text"));
+      const mark = host.edits()?.state.marks.find((item) => item.kind === "textbox");
+      if (!mark) throw new Error("the text box is missing");
+      const shown = host.viewer()!;
+      shown.showMark(mark.id);
+      const field = shown.markNoteField;
+      const unsupported = "Coefficient α";
+      field.value = unsupported;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      host.run("file.save");
+      await host.idle();
+      const refused = document.querySelector('[data-testid="problem"]')?.textContent ?? "";
+      check("Save reports the character the text box cannot draw", refused.includes("Helvetica"));
+      check("a refused note stops Save with its words still editable",
+        host.edits()?.doc === a.id && shown.markOpen === mark.id && field.value === unsupported && !field.readOnly);
+      check("the refused save left the source bytes alone",
+        await call("document_differs", { doc: a.id, path: first }) === false);
+      const corrected = "Corrected tab note";
+      field.value = corrected;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
       host.run("file.save");
       await host.idle();
       check("saving replaces only the active handle", host.tabs().length === 2 && host.tabs()[0]?.path === first && host.tabs()[1]?.id === b.id && host.edits()?.doc !== a.id);
       check("saving resets the active journal", host.edits()?.state.dirty === false);
+      const comments = await call("document_comments", { doc: host.edits()!.doc });
+      check("correcting the refused note saves its new words", comments.items.some((entry) => entry.body === corrected));
       await host.activate(b.id);
       check("saving leaves the other tab usable", host.path() === second && host.edits()?.doc === b.id && host.hasViewer());
       const saved = host.tabs().find((tab) => tab.path === first);

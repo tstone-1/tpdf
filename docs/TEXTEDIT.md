@@ -22,6 +22,11 @@ replacements need existing validated glyphs and must fit the original width.
 checks contained preview/save pixel agreement and unchanged adjacent pixels;
 request examples are in `src-tauri/src/probes/text_edit_roundtrip.rs`. Keep private inputs,
 request files and outputs in ignored directories, never in fixtures or assertions.
+The preview uses the placement computed for the complete pending batch. Before saving,
+the writer compares the replacement lines across edits on each page, using the line's
+cross-axis to measure grazing at every page rotation. Installed-font lookup can proceed
+even when the bundled fallback has no glyph for the replacement.
+
 Line movement and both hit/ink envelopes use the transformed text axes. Skew and
 mirrored final text are not offered for editing. `textedit/rotation_tests.rs` checks crop/page turns, clipping on
 every edge, bounded replacements and preserved positioning.

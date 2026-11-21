@@ -363,6 +363,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             // file: a sample with no `source` would let the key sets agree
             // while the one key an imported page adds went unmirrored.
             source: Some(1),
+            font_retry: None,
             preview: Some(crate::textedit::Preview {
                 png: vec![137, 80, 78, 71],
                 font: "Noto Sans".into(),

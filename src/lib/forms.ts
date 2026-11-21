@@ -489,7 +489,7 @@ export class FormLayer {
   /** Wait for validation before any operation can discard the mounted controls. */
   async settle(): Promise<void> {
     await Promise.all([...this.pending]);
-    const invalid = this.controls.find((control) => control.input.validationMessage);
+    const invalid = this.controls.find((control) => control.input.validity.customError);
     if (invalid) throw new Error(invalid.input.validationMessage);
   }
 
@@ -499,7 +499,7 @@ export class FormLayer {
     this.fields = state.fields ?? [];
     const widgets = this.controls.map((control) => control.widget);
     for (const control of this.controls) {
-      const clean = !control.pending && sameAnswer(this.read(control), control.accepted) && !control.input.validationMessage;
+      const clean = !control.pending && sameAnswer(this.read(control), control.accepted) && !control.input.validity.customError;
       const kind = control.widget.control;
       if (kind.kind === "choice") {
         const choices = shownChoices(control.widget, this.fields, widgets)

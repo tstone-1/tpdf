@@ -21,6 +21,13 @@ have the binary.)
 
 ### Fixed
 
+- Saving keeps a refused text or comment draft open for correction. An untouched
+  required form field can be left blank when closing the document.
+- Reload checks for new edits when the disk-change notice is clicked. The file
+  must keep the same stamp for a full second before the viewer acts.
+- Text layout checks new lines from different edits against one another at every
+  page rotation. The preview includes shifts caused by earlier edits, and an exact
+  installed font can supply characters missing from the bundled fonts.
 - Merging a filled appendix preserves its saved appearance behind either a plain cover
   or an editable form. A missing appearance stops the merge before it writes.
 - Page numbering and watermarking refuse a placement entirely outside a selected page.

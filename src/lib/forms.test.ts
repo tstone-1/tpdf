@@ -246,6 +246,25 @@ describe("Tab in the form's controls", () => {
     return { layer, inputs, revealed, tab };
   }
 
+  it("settles an untouched empty required field and reports a refused draft", async () => {
+    const widget = { ...text, value: "", required: true };
+    let writes = 0;
+    const layer = new FormLayer(dom.root as unknown as HTMLElement, { widgets: [widget] },
+      () => null, async () => { writes++; }, () => {}, () => {});
+    const input = dom.root.children[0]!.children[0]!;
+    expect(input.validationMessage).not.toBe("");
+    layer.commit();
+    await expect(layer.settle()).resolves.toBeUndefined();
+    expect(writes).toBe(0);
+    input.value = "a".repeat(21);
+    expect(() => layer.commit()).toThrow();
+    await expect(layer.settle()).rejects.toThrow();
+    input.value = "";
+    layer.commit();
+    await expect(layer.settle()).resolves.toBeUndefined();
+    layer.destroy();
+  });
+
   it("moves an arrow key's answer to the next button that is shown", () => {
     // Mutation: the handler taking the neighbour whatever it shows. An arrow
     // key in a radio group also answers, so it answered with a button the

@@ -759,6 +759,7 @@ impl Found {
                 revision,
                 runs: Vec::new(),
                 preview: None,
+                font_retry: None,
             },
             continued: BTreeSet::new(),
             font_operators: BTreeMap::new(),

@@ -96,13 +96,15 @@ const FIELD = one(2, "field", { quads: [100, 300, 300, 330], note: "Name" });
 const HIGHLIGHT = one(3, "highlight", { quads: [100, 500, 300, 512], note: "a remark" });
 const MARKS = [BOX, FIELD, HIGHLIGHT];
 
-function build(wrap = true): Viewer {
+function build(wrap = true, refuse?: (note: string) => string | undefined): Viewer {
   const viewer = new Viewer(dom.root as unknown as HTMLElement, {
     doc: 1,
     pageCount: 1,
     pages: [{ width_pt: 600, height_pt: 800 }],
     onMarkNote: (mark, note) => {
       notes.push({ mark, note });
+      const problem = refuse?.(note);
+      if (problem) return Promise.resolve(problem);
       return new Promise<void>((done) => {
         settleEdit = done;
       });
@@ -274,6 +276,30 @@ describe("what the page draws while a note is typed", () => {
     // Refused: no new marks, and the edit is over.
     settleEdit();
     expect(await painted()).toEqual(["old", "words", "Name"]);
+  });
+
+  it("keeps a refused draft editable and waits for its correction before writing", async () => {
+    const viewer = build(false, (note) => note.includes("α") ? "unsupported character" : undefined);
+    viewer.showMark(1);
+    viewer.markNoteField.readOnly = false;
+    type(viewer, "a + α");
+    let writes = 0;
+    const save = async () => { await viewer.settleNotes(); writes++; };
+    await expect(save()).rejects.toThrow("unsupported character");
+    const field = viewer.markNoteField;
+    expect(viewer.markOpen).toBe(1);
+    expect(field.value).toBe("a + α");
+    expect(field.readOnly).toBe(false);
+    expect(writes).toBe(0);
+    type(viewer, "a + alpha");
+    const saved = save();
+    expect(viewer.markOpen).toBe(1);
+    expect(writes).toBe(0);
+    settleEdit();
+    await saved;
+    expect(viewer.markOpen).toBe(-1);
+    expect(writes).toBe(1);
+    expect(notes.map(({ note }) => note)).toEqual(["a + α", "a + alpha"]);
   });
 
   it("asks again for a text box resized under its open box", async () => {

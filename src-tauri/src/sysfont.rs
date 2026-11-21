@@ -64,7 +64,12 @@ pub(crate) fn supply(
     runs: &PageRuns,
     lookup: impl FnOnce(&str) -> Option<Found>,
 ) -> bool {
-    let Some(name) = runs.preview.as_ref().and_then(|p| p.wants.as_deref()) else {
+    let name = runs
+        .font_retry
+        .as_ref()
+        .map(|retry| retry.name.as_str())
+        .or_else(|| runs.preview.as_ref().and_then(|p| p.wants.as_deref()));
+    let Some(name) = name else {
         return false;
     };
     let Some(layout) = draft.layout.as_mut() else {
@@ -117,6 +122,9 @@ where
         if supply(draft, &runs, lookup) {
             runs = ask(changes).await?;
         }
+    }
+    if let Some(retry) = runs.font_retry {
+        return Err(retry.refusal);
     }
     let installed = take(&mut runs);
     Ok((runs, installed))

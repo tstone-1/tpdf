@@ -1527,10 +1527,10 @@ ROWS += [
 # prompt for a file that was only touched, or lost edits.
 ROWS += [
     Mutation("disk watch: act on the first sight of a new stamp", "src/lib/diskwatch.ts",
-        "        this.seen = now;\n        return;\n", "        this.seen = now;\n",
+        "        this.seenAt = this.clock();\n        return;\n", "        this.seenAt = -Infinity;\n",
         "reports a changed file once, and only after the stamp held still"),
     Mutation("disk watch: report the same change on every check", "src/lib/diskwatch.ts",
-        "      if (now === this.judged) return;\n", "",
+        "now === this.judged || this.clock()", "this.clock()",
         "reports a changed file once, and only after the stamp held still"),
     Mutation("disk watch: report a file whose bytes did not change", "src/lib/diskwatch.ts",
         "      if ((await this.probe.differs(doc, path)) === false) {",
@@ -1540,8 +1540,8 @@ ROWS += [
     # now equals the `null` that `judged` starts at, so the next line returns.
     # Run and it survived, which is how that was found.
     Mutation("disk watch: report a document that has no stamp from its open", "src/lib/diskwatch.ts",
-        "      if (opened === null || now === null) return;",
-        "      if (now === null) return;",
+        "      if (opened === null || now === null) {",
+        "      if (now === null) {",
         "says nothing when either stamp could not be read"),
     Mutation("disk watch: drop a report nobody acted on", "src/lib/diskwatch.ts",
         "      if (await this.report(doc)) this.judged = now;",
@@ -2326,8 +2326,8 @@ ROWS += [
         '',
         "drops the draft when the mark is removed under the box"),
     Mutation("draft on the page: draw the old words between the close and the model's answer", "src/lib/viewer.ts",
-        '        this.drafts.committed(mark, note, this.opts.onMarkNote?.(mark, note)),',
-        '        void this.opts.onMarkNote?.(mark, note),',
+        '        this.drafts.committed(mark, note, submitted);\n',
+        '',
         "on Escape sends the note and keeps drawing it until the model has answered"),
     Mutation("draft on the page: a resized text box keeps the lines of its old width", "src/lib/viewer.ts",
         '    if (open) this.drafts.refit(open);\n',

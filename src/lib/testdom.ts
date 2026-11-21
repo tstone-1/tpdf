@@ -30,6 +30,14 @@ export class FakeElement {
   readonly attributes = new Map<string, string>();
   readonly listeners = new Map<string, Set<(event: unknown) => void>>();
   textContent = "";
+  declare value: string; // Form controls acquire a value when the layer fills them.
+  required = false;
+  private customError = "";
+  setCustomValidity(message: string): void { this.customError = message; }
+  get validity() { return { customError: this.customError !== "" }; }
+  get validationMessage(): string {
+    return this.customError || (this.required && !this.value ? "Please fill out this field." : "");
+  }
   tabIndex = 0;
   width = 0;
   height = 0;

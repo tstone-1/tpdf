@@ -45,6 +45,11 @@ fn context_of(page: &Inspection, show: u32) -> Option<&Context> {
 
 pub(super) struct Prepared {
     pub operations: Vec<Operation>,
+    // Each non-empty replacement line as measured by the writer, its original
+    // hit rectangle, and its cross-axis on the displayed page.
+    inks: Vec<[f64; 4]>,
+    original: [f64; 4],
+    cross: usize,
     pub fallback: Option<fonts::fallback::Font>,
     pub name: Vec<u8>,
     pub label: String,
@@ -1508,15 +1513,11 @@ fn lands(
 /// block's own pitches below, so each meets its neighbours exactly as the
 /// source's lines met theirs; a box's lines are held to the same
 /// (`BUILD.md`, *A wrap's lines against the lines beside them*).
-fn strikes(shown: [f64; 4], other: [f64; 4], own: [f64; 4]) -> bool {
-    let intersection = [
-        shown[0].max(other[0]),
-        shown[1].max(other[1]),
-        shown[2].min(other[2]),
-        shown[3].min(other[3]),
-    ];
-    let graze =
-        intersection[3] - intersection[1] <= GRAZE * (shown[3] - shown[1]).min(other[3] - other[1]);
+fn strikes(shown: [f64; 4], other: [f64; 4], own: [f64; 4], cross: usize) -> bool {
+    let intersection = intersection(shown, other);
+    let end = cross + 2;
+    let graze = intersection[end] - intersection[cross]
+        <= GRAZE * (shown[end] - shown[cross]).min(other[end] - other[cross]);
     intersection[2] > intersection[0] + 0.1
         && intersection[3] > intersection[1] + 0.1
         && !graze
@@ -1524,6 +1525,29 @@ fn strikes(shown: [f64; 4], other: [f64; 4], own: [f64; 4]) -> bool {
             || intersection[1] < own[1] - 0.1
             || intersection[2] > own[2] + 0.1
             || intersection[3] > own[3] + 0.1)
+}
+
+fn intersection(shown: [f64; 4], other: [f64; 4]) -> [f64; 4] {
+    [
+        shown[0].max(other[0]),
+        shown[1].max(other[1]),
+        shown[2].min(other[2]),
+        shown[3].min(other[3]),
+    ]
+}
+
+impl Prepared {
+    /// A batch must also keep the newly drawn lines of distinct edits clear
+    /// of each other. An overlap already inside both source runs can remain.
+    pub(super) fn overlaps(&self, other: &Self) -> bool {
+        let shared = intersection(self.original, other.original);
+        self.inks.iter().any(|&a| {
+            other.inks.iter().any(|&b| {
+                strikes(a, b, shared, self.cross)
+                    || (self.cross != other.cross && strikes(b, a, shared, other.cross))
+            })
+        })
+    }
 }
 
 /// How deep a laid-out line may overlap another line's box, as a share of the
@@ -1646,7 +1670,7 @@ fn cascade(
         for (index, rects) in blocks.iter().enumerate() {
             let mut far = 0_f64;
             for (_, other) in rects {
-                if inks.iter().any(|ink| strikes(*ink, *other, own)) {
+                if inks.iter().any(|ink| strikes(*ink, *other, own, cross)) {
                     far = full;
                 }
                 for (old, went) in &fixed {
@@ -2175,6 +2199,7 @@ type Wrapped = (
     [f32; 4],
     Vec<(u32, Vec<Operation>)>,
     (Placed, Vec<[f32; 4]>, Links),
+    Vec<[f64; 4]>,
 );
 /// The links a wrap moves, each with how far on the displayed page.
 type Links = Vec<(ObjectId, [f64; 2])>;
@@ -2306,6 +2331,105 @@ fn on_display(geometry: &crate::pagetree::DisplayedPage, bounds: [f64; 4]) -> [f
     )
 }
 
+struct SourceFont<'a> {
+    font_at: usize,
+    original_name: &'a [u8],
+    original_metrics: fonts::Metrics,
+    resources: &'a Dictionary,
+    font_table: &'a Dictionary,
+    font_dict: &'a Dictionary,
+    gap: f64,
+    encodable: bool,
+    wanted: Option<String>,
+}
+
+fn source_font<'a>(
+    doc: &'a Document,
+    page: &'a Inspection,
+    change: &Change,
+    settings: &super::Layout,
+) -> Result<SourceFont<'a>, String> {
+    let font_at = *page
+        .font_operators
+        .get(&change.operator)
+        .ok_or_else(|| said!("missing text font"))?;
+    let original_name = page.content.operations[font_at].operands[0]
+        .as_name()
+        .map_err(|e| e.to_string())?;
+    let resources = resources(doc, page.id)?;
+    let original_metrics = font(doc, resources, original_name)?.preferring(&super::shown(
+        &page.content,
+        &page.groups,
+        change.operator,
+    ));
+    let font_table = dictionary(doc, resources.get(b"Font").map_err(|e| e.to_string())?)?;
+    let font_dict = dictionary(
+        doc,
+        font_table.get(original_name).map_err(|e| e.to_string())?,
+    )?;
+    // The run's own word gap, for a font that shows spaces as displacements.
+    let gap = page
+        .gaps
+        .get(&change.operator)
+        .copied()
+        .unwrap_or(super::DEFAULT_GAP);
+    // Encoding alone is not coverage: a simple font's Latin-1 slots encode
+    // whether or not its subset has the glyph, and only measuring finds the
+    // hole. Until 2026-09-30 a missing letter in such a subset refused the
+    // automatic preview instead of reaching a fallback.
+    let encodable = change.replacement.split('\n').all(|line| {
+        original_metrics.items(line, gap).is_ok()
+            && original_metrics
+                .gapped_layout(line, 1., 0., 0., gap)
+                .is_ok()
+    });
+    let restricted = original_metrics.is_restricted();
+    let wanted = if settings.font == EditFont::Auto
+        && !change.replacement.is_empty()
+        && !encodable
+        && !restricted
+    {
+        fonts::installed::postscript_name(doc, font_dict)
+    } else {
+        None
+    };
+    Ok(SourceFont {
+        font_at,
+        original_name,
+        original_metrics,
+        resources,
+        font_table,
+        font_dict,
+        gap,
+        encodable,
+        wanted,
+    })
+}
+
+/// Whether an installed face could set a draft whose first layout failed.
+/// Only the source font is needed here. Neither a Noto glyph nor a box that
+/// fits Noto is required to ask the app process for the document's own face.
+pub(super) fn requested_font(doc: &Document, change: &Change) -> Option<String> {
+    let settings = change.layout.as_ref()?;
+    if settings.font != EditFont::Auto
+        || settings.installed.is_some()
+        || change.replacement.chars().count() > super::MAX_TEXT
+    {
+        return None;
+    }
+    let page = super::inspect(doc, change.page).ok()?;
+    if page.runs.revision != change.revision
+        || !page
+            .runs
+            .runs
+            .iter()
+            .any(|r| r.operator == change.operator && r.text == change.original)
+    {
+        return None;
+    }
+    source_font(doc, &page, change, settings).ok()?.wanted
+}
+
 /// Everything `prepare` checks before laying an edit out, in the order it
 /// checks it, and what it settles: the box, the font, the room on the line.
 fn validate<'a>(
@@ -2354,49 +2478,23 @@ fn validate<'a>(
     {
         return Err(said!("Text transformation exceeds its limit"));
     }
-    let font_at = *page
-        .font_operators
-        .get(&run.operator)
-        .ok_or_else(|| said!("missing text font"))?;
-    let original_name = page.content.operations[font_at].operands[0]
-        .as_name()
-        .map_err(|e| e.to_string())?;
-    let resources = resources(doc, page.id)?;
-    let original_metrics = font(doc, resources, original_name)?.preferring(&super::shown(
-        &page.content,
-        &page.groups,
-        run.operator,
-    ));
-    let font_table = dictionary(doc, resources.get(b"Font").map_err(|e| e.to_string())?)?;
-    let font_dict = dictionary(
-        doc,
-        font_table.get(original_name).map_err(|e| e.to_string())?,
-    )?;
+    let SourceFont {
+        font_at,
+        original_name,
+        original_metrics,
+        resources,
+        font_table,
+        font_dict,
+        gap,
+        encodable,
+        wanted,
+    } = source_font(doc, page, change, settings)?;
     let original_label = font_dict
         .get(b"BaseFont")
         .and_then(Object::as_name)
         .ok()
         .map(|name| String::from_utf8_lossy(name).into_owned())
         .unwrap_or_else(|| said!("Original font"));
-    // The run's own word gap, for a font that shows spaces as displacements.
-    let gap = page
-        .gaps
-        .get(&run.operator)
-        .copied()
-        .unwrap_or(super::DEFAULT_GAP);
-    // Encoding alone is not coverage: a simple font's Latin-1 slots encode
-    // whether or not its subset has the glyph, and only measuring finds the
-    // hole. Until 2026-09-30 a missing letter in such a subset refused the
-    // automatic preview instead of reaching a fallback.
-    let encodable = change.replacement.split('\n').all(|line| {
-        original_metrics.items(line, gap).is_ok()
-            && original_metrics
-                .gapped_layout(line, 1., 0., 0., gap)
-                .is_ok()
-    });
-    // A font whose embedding rights forbid editing is read but never written
-    // in: automatic layout sets the replacement in Noto, and the reader who
-    // asked for the original font is told which to choose instead.
     let restricted = original_metrics.is_restricted();
     // The source line's width as drawn, for a centred line: what it and the
     // replacement differ by is what the line grew. Its own advance, kerns and
@@ -2421,24 +2519,18 @@ fn validate<'a>(
     let mut wants = None;
     let mut accepted = None;
     let mut declined = None;
-    if settings.font == EditFont::Auto
-        && !change.replacement.is_empty()
-        && !encodable
-        && !restricted
-    {
-        if let Some(wanted) = fonts::installed::postscript_name(doc, font_dict) {
-            match &settings.installed {
-                None => wants = Some(wanted),
-                Some(supplied) => match fonts::installed::accept(
-                    supplied,
-                    &wanted,
-                    &original_metrics.declared(),
-                    &change.replacement,
-                ) {
-                    Ok(found) => accepted = Some(found),
-                    Err(refusal) => declined = Some(refusal.reason(&wanted)),
-                },
-            }
+    if let Some(wanted) = wanted {
+        match &settings.installed {
+            None => wants = Some(wanted),
+            Some(supplied) => match fonts::installed::accept(
+                supplied,
+                &wanted,
+                &original_metrics.declared(),
+                &change.replacement,
+            ) {
+                Ok(found) => accepted = Some(found),
+                Err(refusal) => declined = Some(refusal.reason(&wanted)),
+            },
         }
     }
     let chosen = match settings.font {
@@ -2599,6 +2691,13 @@ fn validate<'a>(
 type Kept = (Vec<Object>, f64, [f64; 2], bool);
 
 impl Edit<'_> {
+    /// Text x is the writing direction in page space. An odd page rotation
+    /// exchanges display x and y, including for a quarter-turned text matrix.
+    fn cross_axis(&self) -> usize {
+        let horizontal = self.run.matrix[0].abs() >= self.run.matrix[1].abs();
+        usize::from(horizontal) ^ usize::from(self.geometry.turns % 2)
+    }
+
     fn display(&self, bounds: [f64; 4]) -> [f32; 4] {
         on_display(&self.geometry, bounds)
     }
@@ -2805,7 +2904,7 @@ impl Edit<'_> {
                     if moving && *moves {
                         continue;
                     }
-                    if strikes(shown, *other, free.own) {
+                    if strikes(shown, *other, free.own, self.cross_axis()) {
                         return Err(said!("Text would overlap another line. Reduce the font size or change the box dimensions."));
                     }
                 }
@@ -3196,7 +3295,14 @@ impl Edit<'_> {
             .filter(|other| flowing.contains(&other.operator))
             .map(|other| other.display_rect)
             .collect();
-        Ok((operations, lines, rect, lowered, (placed, vacated, links)))
+        Ok((
+            operations,
+            lines,
+            rect,
+            lowered,
+            (placed, vacated, links),
+            inks,
+        ))
     }
 }
 
@@ -3315,13 +3421,13 @@ pub(super) fn prepare(
             }
         }
     }
-    let (mut operations, line_count, used, wrap) = match wrapped {
-        Some((operations, lines, rect, lowered, moved)) => {
-            (operations, lines, 0., Some((rect, lowered, moved)))
+    let (mut operations, line_count, used, inks, wrap) = match wrapped {
+        Some((operations, lines, rect, lowered, moved, inks)) => {
+            (operations, lines, 0., inks, Some((rect, lowered, moved)))
         }
         None => {
-            let (operations, lines, used, ..) = outcome?;
-            (operations, lines, used, None)
+            let (operations, lines, used, _, inks) = outcome?;
+            (operations, lines, used, inks, None)
         }
     };
     // How far the text ran past the room the line already had, which is exactly
@@ -3455,6 +3561,9 @@ pub(super) fn prepare(
         BTreeSet::new()
     };
     Ok(Prepared {
+        inks,
+        original: run.display_rect.map(f64::from),
+        cross: edit.cross_axis(),
         operations,
         fallback: edit.fallback,
         name: edit.name,

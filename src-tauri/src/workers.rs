@@ -2123,7 +2123,7 @@ impl Engine for Workers {
         let request = if outlines {
             Request::TextOutlines { page, changes }
         } else {
-            Request::TextRuns { page, changes }
+            Request::TextDraft { page, changes }
         };
         match self.ask(doc, &request)? {
             Reply::TextRuns(runs) => Ok(runs),

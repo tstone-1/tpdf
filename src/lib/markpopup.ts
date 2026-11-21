@@ -58,7 +58,7 @@
 import type { MarkKind, MarkView } from "./pages";
 import { catalog, message } from "./i18n";
 import { PointerDrag, type DragPoint } from "./drag";
-import { place, POPUP_WIDTH, type Anchor } from "./popup";
+import { place, POPUP_WIDTH, submitPopup, type Anchor } from "./popup";
 import {
   cssColor,
   PALETTE,
@@ -72,7 +72,7 @@ export interface MarkPopupOptions {
   /** Change a signature's size while keeping its proportions. */
   onSignatureSize?: (mark: number, width: number) => void;
   /** The note was changed and the popup is closing. Only ever with new text. */
-  onNote: (mark: number, note: string) => void;
+  onNote: (mark: number, note: string) => unknown;
   /**
    * What the box holds changed while it is open on this mark.
    *
@@ -524,6 +524,22 @@ export class MarkPopup {
     this.element.style.display = "none";
     this.input.value = "";
     this.opts.onOpen(null);
+  }
+
+  /** File operations close this box only after its words are in the journal. */
+  async settleDraft(): Promise<void> {
+    const mark = this.shown;
+    if (mark === null) return;
+    const words = this.input.value;
+    const before = this.was;
+    if (words !== before) {
+      // A click-away during the write must not submit the same edit twice.
+      this.was = words;
+      await submitPopup(this.input, () => this.opts.onNote(mark, words), () => {
+        if (this.shown === mark) this.was = before;
+      });
+    }
+    if (this.shown === mark) this.opts.onClose();
   }
 
   /** Moves the popup to a new anchor, without rebuilding it. See `popup.ts`. */

@@ -1839,9 +1839,17 @@ fn a_wrap_on_lines_closer_than_their_boxes_are_tall_wraps() {
     // new line's ink against the other line's box, and these lines are
     // capitals, whose ink is well inside their 15 pt box: a box overlap of
     // 30% still grazes, and 35% does not.
-    edit(&close(0.3)).unwrap();
-    let error = edit(&close(0.35)).unwrap_err();
-    assert!(error.contains("onto what is below it"), "{error}");
+    for turns in [0, 90, 180, 270] {
+        let turned = |share| {
+            let mut doc = close(share);
+            let page = crate::pagetree::ordered_pages(&doc)[0];
+            doc.get_dictionary_mut(page).unwrap().set("Rotate", turns);
+            doc
+        };
+        edit(&turned(0.3)).unwrap();
+        let error = edit(&turned(0.35)).unwrap_err();
+        assert!(error.contains("onto what is below it"), "{turns}: {error}");
+    }
     // Text that stays below the paragraph, where the wrap's next line reaches
     // it, is still in the way: SIDE is in a block with a line at the top of
     // the page, so the wrap cannot move it down, and the lines moving towards

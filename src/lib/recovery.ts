@@ -172,7 +172,7 @@ const TEXT = catalog({
  * forgetting the quiet outcome, arriving in the one place where the wrong
  * button is worse than no button.
  */
-export type Offer = "reload" | "saveCopy" | "redact" | "rasterCopy";
+export type Offer = "requestReload" | "reload" | "saveCopy" | "redact" | "rasterCopy";
 
 /**
  * The half of a refusal these rules read.

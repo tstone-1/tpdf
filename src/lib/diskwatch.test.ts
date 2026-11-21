@@ -6,6 +6,7 @@ import {
   DISK_CHANGE_MODES,
   DiskWatch,
   MODE_KEY,
+  WATCH_INTERVAL_MS,
   onDiskChange,
   readDiskChangeMode,
   writeDiskChangeMode,
@@ -15,6 +16,7 @@ import {
 
 /** A probe whose answers a test sets, and which counts the reads it was asked for. */
 function scripted(opened: string | null = "10:1") {
+  let elapsed = 0;
   const state = {
     opened,
     now: opened as string | null,
@@ -32,23 +34,24 @@ function scripted(opened: string | null = "10:1") {
       return Promise.resolve(state.differs);
     },
   };
-  return { state, probe };
+  const tick = () => (elapsed += WATCH_INTERVAL_MS);
+  return { state, probe, tick };
 }
 
 describe("DiskWatch", () => {
   it("says nothing about a file that has not moved, and reads nothing", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     for (let i = 0; i < 5; i++) await watch.check(1, "a.pdf");
     expect(reported).toEqual([]);
     expect(state.reads).toBe(0);
   });
 
   it("reports a changed file once, and only after the stamp held still", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     await watch.check(1, "a.pdf");
     state.now = "20:2";
     await watch.check(1, "a.pdf");
@@ -62,10 +65,34 @@ describe("DiskWatch", () => {
     expect(state.reads).toBe(1);
   });
 
-  it("waits for a file that is still being written", async () => {
+  it.each(["missing", "failed"])("waits one full interval after a %s observation", async (gap) => {
     const { state, probe } = scripted();
+    let elapsed = 0;
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), () => elapsed);
+    state.now = "20:2";
+    await watch.check(1, "a.pdf");
+    await watch.check(1, "a.pdf"); // focus and timer in the same instant
+    elapsed = WATCH_INTERVAL_MS - 1;
+    await watch.check(1, "a.pdf");
+    expect(state.reads).toBe(0);
+    state.now = gap === "missing" ? null : "20:2";
+    state.failing = gap === "failed";
+    await watch.check(1, "a.pdf");
+    elapsed += WATCH_INTERVAL_MS;
+    state.now = "20:2";
+    state.failing = false;
+    await watch.check(1, "a.pdf");
+    expect(state.reads).toBe(0);
+    elapsed += WATCH_INTERVAL_MS;
+    await watch.check(1, "a.pdf");
+    expect(reported).toEqual([1]);
+  });
+
+  it("waits for a file that is still being written", async () => {
+    const { state, probe, tick } = scripted();
+    const reported: number[] = [];
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     for (const now of ["11:2", "12:3", "13:4"]) {
       state.now = now;
       await watch.check(1, "a.pdf");
@@ -77,9 +104,9 @@ describe("DiskWatch", () => {
   });
 
   it("reports a second change after the first", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     state.now = "20:2";
     await watch.check(1, "a.pdf");
     await watch.check(1, "a.pdf");
@@ -90,9 +117,9 @@ describe("DiskWatch", () => {
   });
 
   it("compares a touched file by content once, and stays quiet", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     state.now = "10:99";
     state.differs = false;
     for (let i = 0; i < 5; i++) await watch.check(1, "a.pdf");
@@ -101,9 +128,9 @@ describe("DiskWatch", () => {
   });
 
   it("treats a content comparison that could not answer as a change", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     state.now = "20:2";
     state.differs = null;
     await watch.check(1, "a.pdf");
@@ -112,9 +139,9 @@ describe("DiskWatch", () => {
   });
 
   it("says nothing when either stamp could not be read", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     state.now = null;
     for (let i = 0; i < 3; i++) await watch.check(1, "a.pdf");
     state.now = "20:2";
@@ -125,10 +152,10 @@ describe("DiskWatch", () => {
   });
 
   it("reports again when the report was not acted on", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     let acting = false;
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), acting));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), acting), tick);
     state.now = "20:2";
     await watch.check(1, "a.pdf");
     await watch.check(1, "a.pdf");
@@ -141,9 +168,9 @@ describe("DiskWatch", () => {
   });
 
   it("starts over for another document", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     state.now = "20:2";
     await watch.check(1, "a.pdf");
     await watch.check(1, "a.pdf");
@@ -156,9 +183,9 @@ describe("DiskWatch", () => {
   });
 
   it("forgets a change that was undone", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     state.now = "20:2";
     await watch.check(1, "a.pdf");
     state.now = "10:1";
@@ -170,9 +197,9 @@ describe("DiskWatch", () => {
   });
 
   it("survives a backend that rejects, and asks again", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const reported: number[] = [];
-    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true));
+    const watch = new DiskWatch(probe, (doc) => (reported.push(doc), true), tick);
     state.failing = true;
     await expect(watch.check(1, "a.pdf")).resolves.toBeUndefined();
     state.failing = false;
@@ -212,7 +239,7 @@ describe("afterDiskChange", () => {
   it("asks, and offers a reload", () => {
     expect(afterDiskChange("ask", false, "a.pdf")).toEqual({
       message: "a.pdf changed on disk.",
-      offers: ["reload"],
+      offers: ["requestReload"],
     });
   });
 
@@ -283,7 +310,7 @@ describe("onDiskChange", () => {
     // A prompt reloads nothing, and settling closes the box a note is typed in.
     const asking = host({ mode: () => "ask" });
     expect(await onDiskChange(asking.host)).toBe(true);
-    expect(asking.done).toEqual(["say:reload"]);
+    expect(asking.done).toEqual(["say:requestReload"]);
 
     const ignoring = host({ mode: () => "ignore" });
     expect(await onDiskChange(ignoring.host)).toBe(true);
@@ -296,14 +323,14 @@ describe("onDiskChange", () => {
   });
 
   it("is waited for by the watch, which reports again after a 'not now'", async () => {
-    const { state, probe } = scripted();
+    const { state, probe, tick } = scripted();
     const answers = [false, true];
     const reported: number[] = [];
     const watch = new DiskWatch(probe, async (doc) => {
       reported.push(doc);
       await Promise.resolve();
       return answers.shift() ?? true;
-    });
+    }, tick);
     state.now = "20:2";
     for (let i = 0; i < 5; i++) await watch.check(1, "a.pdf");
     // Seen, reported and not acted on, reported and acted on, then quiet.

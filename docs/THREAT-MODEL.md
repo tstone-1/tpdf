@@ -1523,7 +1523,10 @@ content, writes, or parses the file: the app process calls `stat` and hashes. Th
 than `open_document` already grants a caller who can reach it. A reload that follows is
 `file.reload`, which opens the file again through a worker like any other open; in the
 automatic mode nobody is asked first, so a file another program put there is parsed without a
-click, inside the same sandbox as a file the reader chose.
+click, inside the same sandbox as a file the reader chose. Focus and timer checks can
+arrive together. The changed stamp must last at least one second, and an unreadable
+stamp restarts that interval. Clicking Reload on a change notice checks drafts and
+unsaved edits again before the open document can be discarded.
 
 **The modification time is deliberately not part of the deep comparison, and that narrows
 what this paragraph may claim.** A file whose mtime moved and whose bytes did not is

@@ -210,7 +210,17 @@ fn worker<'a>(
         asked.set(asked.get() + 1);
         std::future::ready((|| {
             let preview = match changes.iter().rev().find(|change| change.layout.is_some()) {
-                Some(change) => Some(preview_layout(doc, change)?),
+                Some(change) => match preview_layout(doc, change) {
+                    Ok(preview) => Some(preview),
+                    Err(refusal) => {
+                        return crate::textedit::retry_with_font(
+                            doc,
+                            change.page,
+                            &changes,
+                            refusal,
+                        )
+                    }
+                },
                 None => None,
             };
             Ok(PageRuns {
@@ -291,6 +301,66 @@ fn the_journal_keeps_the_subset_the_worker_built_and_it_needs_no_lookup_again() 
     .unwrap();
     assert_eq!(plain.layout.unwrap().installed, None);
     assert_eq!(asked.get(), 1);
+}
+
+/// Noto cannot draw the private-use glyph. Only the installed face can
+/// complete either the preview or the Apply that journals its subset.
+#[test]
+fn an_installed_only_glyph_does_not_require_a_noto_preview() {
+    let doc = document();
+    let mut change = draft(&doc, EditFont::Auto);
+    change.replacement = "TITLE \u{e000}".into();
+    let fallback_error = preview_layout(&doc, &change).unwrap_err();
+    assert!(
+        fallback_error.contains("does not contain a required character"),
+        "{fallback_error}"
+    );
+    let asked = std::cell::Cell::new(0);
+    let lookup = |name: &str| {
+        assert_eq!(name, NAME);
+        Some(Found {
+            bytes: include_bytes!("../textedit/fonts/installed/symbol.ttf").to_vec(),
+            index: None,
+        })
+    };
+    let (runs, subset) = tauri::async_runtime::block_on(ask_with_installed(
+        vec![change.clone()],
+        worker(&doc, &asked),
+        lookup,
+    ))
+    .unwrap();
+    assert_eq!(asked.get(), 2);
+    assert_eq!(
+        runs.preview.unwrap().font,
+        "TPDF Installed Sans (installed)"
+    );
+    assert!(runs.font_retry.is_none());
+    let recorded = tauri::async_runtime::block_on(replacement(
+        change.clone(),
+        vec![],
+        worker(&doc, &asked),
+        lookup,
+    ))
+    .unwrap();
+    assert!(subset.is_some());
+    assert_eq!(recorded.layout.as_ref().unwrap().installed, subset);
+    let mut saved = doc.clone();
+    crate::textedit::write(&mut saved, &[recorded]).unwrap();
+    assert_eq!(
+        crate::textedit::scan(&saved, 0).unwrap().runs[0].text,
+        change.replacement
+    );
+
+    let refusal = tauri::async_runtime::block_on(ask_with_installed(
+        vec![change],
+        worker(&doc, &asked),
+        |name| {
+            assert_eq!(name, NAME);
+            None
+        },
+    ))
+    .unwrap_err();
+    assert_eq!(refusal, fallback_error);
 }
 
 #[test]

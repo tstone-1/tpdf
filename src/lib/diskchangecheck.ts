@@ -74,7 +74,7 @@ export async function diskChangeCheck(host: OpenCheckHost, expected: string, rep
   const [first, second] = expected.split("|");
   if (!first || !second) throw new Error("two disposable copies in one folder required");
   const shown = () => document.querySelector('[data-testid="problem"]')?.textContent?.trim() ?? "";
-  const reloadOffer = () => document.querySelector<HTMLButtonElement>('[data-testid="offer-reload"]');
+  const reloadOffer = () => document.querySelector<HTMLButtonElement>('[data-testid="offer-requestReload"]');
   const dismiss = () => document.querySelector<HTMLButtonElement>('[data-testid="problem-dismiss"]')?.click();
   const doc = () => host.edits()?.doc ?? -1;
   const tail = promptTail();
@@ -120,8 +120,17 @@ export async function diskChangeCheck(host: OpenCheckHost, expected: string, rep
     const controlMs = performance.now() - started;
     report.check("with the bar empty, a change on disk is asked about at once", answered,
       `${Math.round(controlMs)} ms; ${state()}`);
-    dismiss();
-    await settle(() => shown() === "", SETTLE_MS);
+    const invited = doc();
+    await host.apply((edits) => edits.rotate(edits.state.pages[0]!.id, 1));
+    reloadOffer()?.click();
+    const discard = () => document.querySelector<HTMLButtonElement>('[data-testid="offer-reload"]');
+    report.check("Reload checks edits made after the invitation",
+      await settle(() => discard() !== null, SETTLE_MS) && doc() === invited
+        && document.querySelector('[data-testid="offer-saveCopy"]') !== null, state());
+    discard()?.click();
+    report.check("the confirmed discard reloads the document",
+      await settle(() => doc() >= 0 && doc() !== invited, SETTLE_MS), state());
+    await host.idle();
 
     // 2. Mode `ask`, a message on screen.
     host.run("file.previousInFolder");

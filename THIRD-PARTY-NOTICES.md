@@ -13462,7 +13462,7 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 | @tauri-apps/plugin-dialog | 2.8.4 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-updater | 2.14.1 | MIT OR Apache-2.0 |
-| svelte | 5.58.1 | MIT |
+| svelte | 5.59.1 | MIT |
 
 ### Copyright notices
 

@@ -583,7 +583,7 @@ export interface ViewerOptions {
    * behind it still shows comments, and the Edit button simply does not appear
    * to save anything.
    */
-  onCommentEdit?: (comment: Comment, body: string) => void;
+  onCommentEdit?: (comment: Comment, body: string) => unknown;
   /**
    * Called when the reader typed a reply to a comment and the editor closed.
    *
@@ -594,7 +594,7 @@ export interface ViewerOptions {
    * Optional for {@link onMarkNote}'s reason: a viewer with no model behind it
    * still shows comments, and the Reply button simply does not save anything.
    */
-  onCommentReply?: (comment: Comment, body: string) => void;
+  onCommentReply?: (comment: Comment, body: string) => unknown;
   /**
    * The reader deleted a comment the file came with.
    *
@@ -1967,8 +1967,11 @@ export class Viewer {
     // The reader's own marks get their own box, for the reason `markpopup.ts`
     // gives. Hosted by the root and built once, exactly as above.
     this.markNote = new MarkPopup(root, {
-      onNote: (mark, note) =>
-        this.drafts.committed(mark, note, this.opts.onMarkNote?.(mark, note)),
+      onNote: (mark, note) => {
+        const submitted = this.opts.onMarkNote?.(mark, note);
+        this.drafts.committed(mark, note, submitted);
+        return submitted;
+      },
       onDraft: (id, note) => {
         const mark = this.markById(id);
         if (mark) this.drafts.typed(mark, note);
@@ -6537,6 +6540,14 @@ export class Viewer {
     if (sameColor(mark.color, want)) return false;
     this.opts.onMarkRecolor?.(id, want);
     return true;
+  }
+
+  private settlingNotes: Promise<void> | null = null;
+
+  /** A save or a tab change waits until both popup editors have committed. */
+  settleNotes(): Promise<void> {
+    return this.settlingNotes ??= Promise.all([this.markNote.settleDraft(), this.popup.settleDraft()])
+      .then(() => {}).finally(() => { this.settlingNotes = null; });
   }
 
   /** Closes the note editor, committing what was typed in it. */

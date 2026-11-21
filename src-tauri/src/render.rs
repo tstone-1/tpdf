@@ -1829,7 +1829,11 @@ impl Engine for InProcess {
     ) -> Result<textedit::PageRuns, String> {
         let docs = self.docs.borrow();
         let document = open_slot(&docs, doc)?;
-        text_edit_runs(self.bindings, document, page, changes, outlines)
+        if outlines {
+            text_edit_runs(self.bindings, document, page, changes, true)
+        } else {
+            text_edit_draft(self.bindings, document, page, changes)
+        }
     }
 
     fn comments(&self, doc: u32) -> Result<Comments, String> {
@@ -2103,7 +2107,7 @@ pub(crate) fn text_edit_runs(
             .rev()
             .find(|change| change.page == page && change.layout.is_some())
         {
-            let mut preview = textedit::preview_layout(document.graph().parsed()?, change)?;
+            let mut preview = textedit::preview_batch(document.graph().parsed()?, changes, change)?;
             let original = runs
                 .runs
                 .iter()
@@ -2147,6 +2151,19 @@ pub(crate) fn text_edit_runs(
             runs.preview = Some(preview);
         }
         Ok(runs)
+    })
+}
+
+/// A GUI draft can continue a layout refused in Noto by supplying the
+/// document's installed face. CLI and probe requests have no OS lookup.
+pub(crate) fn text_edit_draft(
+    bindings: Bindings,
+    document: &OpenDocument,
+    page: u32,
+    changes: &[textedit::Change],
+) -> Result<textedit::PageRuns, String> {
+    text_edit_runs(bindings, document, page, changes, false).or_else(|refusal| {
+        textedit::retry_with_font(document.graph().parsed()?, page, changes, refusal)
     })
 }
 

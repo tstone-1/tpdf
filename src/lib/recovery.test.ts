@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { afterDiskChange } from "./diskwatch";
 import app from "../App.svelte?raw";
 import { functionIn, missingFrom, withoutComments } from "./sourcetext";
 import {
@@ -217,7 +218,9 @@ describe("the offers these rules can return", () => {
         .map((arm) => arm[1] ?? "")
         .filter((offer) => block.includes(`data-testid="offer-${offer}"`)),
     );
+    const diskChange = afterDiskChange("ask", false, "a.pdf");
     const everything: Offer[] = [
+      ...(diskChange && diskChange !== "reload" ? diskChange.offers : []),
       ...afterRefusal({ message: "x", changed: true }).offers,
       ...afterRefusal({ message: "x", changed: true, reopen: true }).offers,
       ...afterRefusal({ message: "x" }).offers,
@@ -508,14 +511,14 @@ describe("App.svelte sends what arrives on its own through `whereUnasked`", () =
 
 describe("App.svelte sends the edits that lost something when refused through `ranOr`", () => {
   it("says what a note, a comment rewritten or a reply would have added", () => {
-    expect(missingFrom(functionIn(app, "function typedEdit("), [
-      "return ranOr((edit) => applyEdit(edit, view), run, () => { asDocument(view, () => say(typedNotTaken(words))); });",
+    expect(missingFrom(functionIn(app, "async function typedEdit("), [
+      "const state = await ranOr((edit) => applyEdit(edit, view), write, () => { asDocument(view, () => say(typedNotTaken(words))); });",
     ])).toEqual([]);
     expect(missingFrom(app, [
       "if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, note), note);",
       "return to ? typedEdit((e) => e.refield([to]), note) : undefined;",
-      "if (to) void typedEdit((e) => e.rewrite(to.object, to.page, body), body);",
-      "if (to) void typedEdit((e) => e.reply(to.page, to.object, comment.rect, body), body);",
+      "return to ? typedEdit((e) => e.rewrite(to.object, to.page, body), body) : typedNotTaken(body);",
+      "return to ? typedEdit((e) => e.reply(to.page, to.object, comment.rect, body), body) : typedNotTaken(body);",
     ])).toEqual([]);
   });
 

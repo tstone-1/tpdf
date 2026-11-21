@@ -376,6 +376,77 @@ fn two_edits_on_one_line_compose() {
     );
 }
 
+#[test]
+fn the_draft_preview_follows_a_pending_push() {
+    let doc = pair(100.);
+    let pending = in_default_box(&doc, 0, "FIRSTFIRSTF");
+    let draft = in_default_box(&doc, 1, "FIRSTFIRSTFIRST");
+    let changes = [pending, draft];
+    let preview = preview_batch(&doc, &changes, &changes[1]).unwrap();
+
+    let mut saved = doc.clone();
+    write(&mut saved, &changes).unwrap();
+    let reopened = find(&saved, "FIRSTFIRSTFIRST");
+    assert!((reopened.display_rect[0] - 122.2).abs() < 0.001);
+    assert!((preview.rect[0] - reopened.display_rect[0]).abs() < 0.001);
+    assert!(preview.extent[0] <= reopened.display_rect[0] + 0.001);
+    assert!(preview.extent[2] >= reopened.display_rect[2] - 0.001);
+
+    // The reader can edit the right-hand run first. The draft on the left
+    // then pushes an already expanded run and must show its entire new width.
+    let reversed = [changes[1].clone(), changes[0].clone()];
+    let preview = preview_batch(&doc, &reversed, &reversed[1]).unwrap();
+    assert!(preview.extent[2] >= reopened.display_rect[2] - 0.001);
+    assert!((preview.rect[0] - 40.).abs() < 0.001);
+}
+
+#[test]
+fn pending_layouts_cannot_paint_over_each_other_in_previously_blank_space() {
+    let doc =
+        synthetic("BT /F1 12 Tf 100 200 Td (FIRST) Tj ET BT /F1 12 Tf 20 170 Td (FIRST) Tj ET");
+    let sized = |index, text: &str| {
+        let mut change = in_default_box(&doc, index, text);
+        let layout = change.layout.as_mut().unwrap();
+        layout.grow = false;
+        layout.wrap = true;
+        layout.width = 150.;
+        layout.height = 65.;
+        change
+    };
+    // The top edit's third baseline meets the lower one. The lower edit's
+    // room overlaps that line in both cases; only the longer lettering does.
+    let top = sized(0, "FIRST\nFIRST\nFIRST");
+    let short = sized(1, "FIRSTFIRST");
+    let long = sized(1, "FIRSTFIRSTFIRST");
+    write(&mut doc.clone(), &[top.clone(), short]).unwrap();
+    for change in [&top, &long] {
+        write(&mut doc.clone(), std::slice::from_ref(change)).unwrap();
+    }
+    for pair in [[top.clone(), long.clone()], [long, top]] {
+        let mut copy = doc.clone();
+        let reason = write(&mut copy, &pair).unwrap_err();
+        assert!(reason.contains("overlap another line"), "{reason}");
+        assert_eq!(copy.objects, doc.objects);
+    }
+}
+
+#[test]
+fn a_sized_edit_refuses_a_same_line_intrusion_at_every_page_turn() {
+    for turns in [0, 90, 180, 270] {
+        let mut doc = synthetic(
+            "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 120 180 Td (FIRSTFIRST) Tj ET",
+        );
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        doc.get_dictionary_mut(page).unwrap().set("Rotate", turns);
+        let mut change = in_default_box(&doc, 0, "FIRSTFIRSTFI");
+        let layout = change.layout.as_mut().unwrap();
+        layout.grow = false;
+        layout.width = 150.;
+        let reason = write(&mut doc, &[change]).unwrap_err();
+        assert!(reason.contains("overlap another line"), "{turns}: {reason}");
+    }
+}
+
 // Undoing to the text that was there is the journal replaying a shorter set of
 // changes against the source, so the run that was pushed has to come back to
 // exactly where its own bytes put it -- which is why the displacement is always

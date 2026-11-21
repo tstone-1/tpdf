@@ -84,6 +84,36 @@ pub struct PageRuns {
     pub runs: Vec<Run>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<Preview>,
+    /// Internal reply to a GUI draft. The app retries with the named font if
+    /// it finds it and otherwise delivers the original layout refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_retry: Option<FontRetry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FontRetry {
+    pub name: String,
+    pub refusal: String,
+}
+
+pub(crate) fn retry_with_font(
+    doc: &Document,
+    page: u32,
+    changes: &[Change],
+    refusal: String,
+) -> Result<PageRuns, String> {
+    let name = changes
+        .last()
+        .filter(|change| change.page == page)
+        .and_then(|change| layout::requested_font(doc, change));
+    match name {
+        Some(name) => Ok(PageRuns {
+            page,
+            font_retry: Some(FontRetry { name, refusal }),
+            ..PageRuns::default()
+        }),
+        None => Err(refusal),
+    }
 }
 
 /// A bounded crop rendered by the same worker/writer used for the saved PDF.
@@ -169,21 +199,47 @@ mod base64_bytes {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn preview_layout(doc: &Document, change: &Change) -> Result<Preview, String> {
-    // One change, so no other edit on its line has pushed it and none of the
-    // shows it pushes is being replaced beside it. A batch that does both is
-    // written by `write`; what the reader sees while typing is this one draft.
-    let prepared = layout::prepare(
-        doc,
-        &inspect(doc, change.page)?,
-        change,
-        &layout::Placement::default(),
-    )?;
+    preview_batch(doc, std::slice::from_ref(change), change)
+}
+
+/// The draft as the whole pending batch places it, including the distance an
+/// earlier edit pushed it along its line. These are the writer's own extents.
+pub(crate) fn preview_batch(
+    doc: &Document,
+    changes: &[Change],
+    draft: &Change,
+) -> Result<Preview, String> {
+    let mut batch = prepare_batch(doc, changes)?;
+    let page = batch
+        .get_mut(&draft.page)
+        .ok_or("text preview source disappeared")?;
+    let prepared = page
+        .expanded
+        .remove(&(draft.operator as usize))
+        .ok_or("text preview source disappeared")?;
+    // The push leaves other pending replacements to their own layout. Include
+    // those layouts (and any later replacements they in turn push) in this
+    // draft's crop. Stream order is the direction a push travels.
+    let mut extent = prepared.extent;
+    let mut pushed = prepared.line;
+    for (operator, other) in &page.expanded {
+        if pushed.contains(&(*operator as u32)) {
+            pushed.extend(&other.line);
+            extent = [
+                extent[0].min(other.extent[0]),
+                extent[1].min(other.extent[1]),
+                extent[2].max(other.extent[2]),
+                extent[3].max(other.extent[3]),
+            ];
+        }
+    }
     Ok(Preview {
         png: Vec::new(),
         font: prepared.label,
         rect: prepared.rect,
-        extent: prepared.extent,
+        extent,
         lines: prepared.lines,
         wants: prepared.wants,
         installed: prepared.installed,
@@ -1633,6 +1689,16 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
         show.operator = "TJ".into();
         show.operands[0] = moved;
         page.patched.insert(*operator as usize);
+    }
+    // Check the final replacement lines after resolving pushes and wraps.
+    // A conflict over moving the same source run keeps its more specific error.
+    for page in prepared.values() {
+        let mut remaining = page.expanded.values();
+        while let Some(edit) = remaining.next() {
+            if remaining.clone().any(|other| edit.overlaps(other)) {
+                return Err(said!("Text would overlap another line. Reduce the font size or change the box dimensions."));
+            }
+        }
     }
     // Logical replacement strings are patched with their owning show, and a
     // structure Span's ActualText is rewritten with the run it describes.

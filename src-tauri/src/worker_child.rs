@@ -692,6 +692,12 @@ fn handle(
                 Err(error) => Response::err(error),
             }
         }
+        Request::TextDraft { page, changes } => {
+            match render::text_edit_draft(bindings, document, *page, changes) {
+                Ok(runs) => Response::reply(Reply::TextRuns(runs)),
+                Err(error) => Response::err(error),
+            }
+        }
         Request::TextOutlines { page, changes } => {
             match render::text_edit_runs(bindings, document, *page, changes, true) {
                 Ok(runs) => Response::reply(Reply::TextRuns(runs)),

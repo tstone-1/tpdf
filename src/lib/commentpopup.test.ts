@@ -69,7 +69,7 @@ describe("CommentPopup", () => {
   let replies: { object: [number, number]; body: string }[] = [];
   let discards: [number, number][] = [];
 
-  function popup(): CommentPopup {
+  function popup(refuse?: (body: string) => string | undefined): CommentPopup {
     // A host with a size, since the placement clamps against it.
     dom.root.clientWidth = 900;
     dom.root.clientHeight = 700;
@@ -84,9 +84,11 @@ describe("CommentPopup", () => {
         // Recorded rather than asserted here: a recorder that threw would fail
         // the test that *provoked* the call rather than the one reading it.
         if (comment.object) rewrites.push({ object: comment.object, body });
+        return refuse?.(body);
       },
       onReply: (comment, body) => {
         if (comment.object) replies.push({ object: comment.object, body });
+        return refuse?.(body);
       },
       onDiscard: (comment) => {
         if (comment.object) discards.push(comment.object);
@@ -388,6 +390,24 @@ describe("CommentPopup", () => {
     // The assertion that keeps the two apart, and it is the whole risk in this
     // feature: a reply must never arrive as an edit to the comment it answers.
     expect(rewrites).toEqual([]);
+  });
+
+  it.each(["edit", "reply"] as const)("keeps the refused %s available to correct and retry", async (mode) => {
+    const note = popup((body) => body === "refused" ? "cannot store these words" : undefined);
+    note.show(comment({ id: 1, object: [12, 0] }), [], anchor(), false);
+    note[mode]();
+    const field = editorOf(note)!;
+    field.value = "refused";
+    await expect(note.settleDraft()).rejects.toThrow("cannot store these words");
+    expect(editorOf(note)?.value).toBe("refused");
+    expect(closed).toBe(0);
+    await expect(note.settleDraft()).rejects.toThrow("cannot store these words");
+    field.value = "corrected";
+    await note.settleDraft();
+    expect(closed).toBe(1);
+    expect((mode === "edit" ? rewrites : replies).map(({ body }) => body))
+      .toEqual(["refused", "refused", "corrected"]);
+    expect(mode === "edit" ? replies : rewrites).toEqual([]);
   });
 
   it("sends no reply when the box is closed with nothing in it", () => {

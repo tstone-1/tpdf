@@ -101,7 +101,7 @@ export function afterDiskChange(
     };
   }
   if (mode === "reload") return "reload";
-  return { message: TEXT().changed(name), offers: ["reload"] };
+  return { message: TEXT().changed(name), offers: ["requestReload"] };
 }
 
 const TEXT = catalog({
@@ -200,7 +200,7 @@ export interface DiskProbe {
  * {@link check} is called on a timer. What it holds between calls:
  *
  * - **`seen`**: the last stamp that differed from the open one. A change is
- *   acted on only when two consecutive checks read the same stamp, so a
+ *   acted on only when consecutive checks a full interval apart read the same stamp, so a
  *   program still writing the file in place is waited for rather than
  *   reloaded half-written.
  * - **`judged`**: the stamp a verdict was already reached on. A changed file is
@@ -213,6 +213,7 @@ export interface DiskProbe {
 export class DiskWatch {
   private doc = -1;
   private seen: string | null = null;
+  private seenAt = 0;
   private judged: string | null = null;
   private checking = false;
 
@@ -226,6 +227,7 @@ export class DiskWatch {
   constructor(
     private readonly probe: DiskProbe,
     private readonly report: (doc: number) => boolean | Promise<boolean>,
+    private readonly clock: () => number = () => performance.now(),
   ) {}
 
   /** One look at `doc`'s file. Never rejects; overlapping calls are dropped. */
@@ -241,17 +243,21 @@ export class DiskWatch {
       const [opened, now] = await this.probe.stamp(doc, path);
       // Cannot tell is not "changed": a file that is briefly missing while it
       // is being replaced must not reach a reload that would find nothing.
-      if (opened === null || now === null) return;
+      if (opened === null || now === null) {
+        this.seen = null;
+        return;
+      }
       if (now === opened) {
         this.seen = null;
         this.judged = null;
         return;
       }
-      if (now === this.judged) return;
       if (now !== this.seen) {
         this.seen = now;
+        this.seenAt = this.clock();
         return;
       }
+      if (now === this.judged || this.clock() - this.seenAt < WATCH_INTERVAL_MS) return;
       // The stamp differs and held still for a whole interval. Only now is the
       // file read. `null` counts as changed: the stamp already says it is.
       if ((await this.probe.differs(doc, path)) === false) {
@@ -260,6 +266,7 @@ export class DiskWatch {
       }
       if (await this.report(doc)) this.judged = now;
     } catch {
+      this.seen = null;
       // A failed question is no answer. The next check asks again.
     } finally {
       this.checking = false;

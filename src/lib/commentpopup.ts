@@ -51,7 +51,7 @@
 
 import { bylineOf, labelFor, noCommentLabel, type Comment } from "./comments";
 import { catalog } from "./i18n";
-import { place, POPUP_WIDTH, type Anchor } from "./popup";
+import { place, POPUP_WIDTH, submitPopup, type Anchor } from "./popup";
 
 const TEXT = catalog({
   "en-US": {
@@ -92,7 +92,7 @@ export interface CommentPopupOptions {
    * bare numbers and a slot and an id are both `number` --- the mistake this
    * repository has already paid for once. The caller translates.
    */
-  onRewrite: (comment: Comment, body: string) => void;
+  onRewrite: (comment: Comment, body: string) => unknown;
   /**
    * A reply was typed and the editor is closing. Only ever with text in it.
    *
@@ -106,7 +106,7 @@ export interface CommentPopupOptions {
    * boolean deciding which would put the distinction in the caller, where a
    * wrong value silently edits somebody else's comment instead of answering it.
    */
-  onReply: (comment: Comment, body: string) => void;
+  onReply: (comment: Comment, body: string) => unknown;
   /**
    * The reader deleted the comment on show.
    *
@@ -355,6 +355,24 @@ export class CommentPopup {
     this.mode = null;
     this.element.style.display = "none";
     this.element.replaceChildren();
+  }
+
+  /** Keeps a refused rewrite or reply in its own editor for correction. */
+  async settleDraft(): Promise<void> {
+    const comment = this.subject;
+    if (!comment) return;
+    const field = this.editor;
+    const mode = this.mode;
+    const before = this.was;
+    if (field && mode && field.value !== before && (mode === "body" || field.value.trim())) {
+      const words = field.value;
+      this.was = words;
+      const write = mode === "body" ? this.opts.onRewrite : this.opts.onReply;
+      await submitPopup(field, () => write(comment, words), () => {
+        if (this.editor === field) this.was = before;
+      });
+    }
+    if (this.subject === comment && this.editor === field) this.opts.onClose();
   }
 
   /** Sends what the editor holds, to whichever destination armed it. */
