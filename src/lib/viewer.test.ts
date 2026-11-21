@@ -1320,6 +1320,24 @@ describe("Viewer history", () => {
     return { viewer, said: () => count };
   }
 
+  it("announces a printed label that arrives after the first frame without another page turn", () => {
+    let printed: string | null = null;
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1, pageCount: 8, pages: [{ width_pt: 600, height_pt: 800 }],
+      printedOf: () => printed,
+    });
+    try {
+      dom.runFrames();
+      const status = dom.root.children.find((child) => child.getAttribute("role") === "status");
+      expect(status?.textContent).toBe("Page 1 of 8");
+      printed = "i";
+      viewer.setLinks([]);
+      expect(status?.textContent).toBe("Page 1 of 8, printed as i");
+    } finally {
+      viewer.destroy();
+    }
+  });
+
   /**
    * A web link is reported, and is not treated as a refusal or as a jump.
    *

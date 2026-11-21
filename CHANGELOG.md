@@ -21,6 +21,7 @@ have the binary.)
 
 ### Fixed
 
+- Screen readers announce the printed page number when it arrives after first paint.
 - Merging preserves the base page labels and accepts indirect page-child arrays.
   Incoming named links cannot jump into the base document. Layered inputs are
   refused, and partial insertion removes unused pictures in shared page resources.

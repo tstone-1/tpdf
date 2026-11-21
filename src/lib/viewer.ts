@@ -4202,6 +4202,9 @@ export class Viewer {
     // sees: without it a table of contents is announced as ordinary prose, with
     // nothing for a screen reader to tell one from the other.
     this.a11y.setLinks(items);
+    // The outline can supply printed labels after the last frame. Refresh the
+    // current announcement alongside the page names rebuilt above.
+    this.a11y.announce(this.currentPage());
   }
 
   /**

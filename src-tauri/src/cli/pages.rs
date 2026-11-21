@@ -893,9 +893,15 @@ mod tests {
         std::fs::write(&target, b"late arrival").unwrap();
         assert!(Temporary::publish(&[], &staged, &target, false).is_err());
         assert_eq!(std::fs::read(&target).unwrap(), b"late arrival");
+        // An occupied name is already refused by the preflight. A fresh name
+        // must link the completed staging file atomically, even after that check.
+        let fresh = root.join("fresh.pdf");
+        Temporary::publish(&[], &staged, &fresh, false).unwrap();
+        assert!(save::same_file(&staged, &fresh));
         let scratch = temp.0.clone();
         drop(temp);
         assert!(!scratch.exists());
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"new");
         assert_eq!(std::fs::read(&target).unwrap(), b"late arrival");
         std::fs::remove_dir_all(root).unwrap();
     }
