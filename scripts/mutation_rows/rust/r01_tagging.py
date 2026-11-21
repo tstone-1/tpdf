@@ -1700,7 +1700,7 @@ ROWS += [
     Mutation('intent: skip graphics state intent validation', 'src/textedit/graphics.rs', '(b"RI", Object::Name(name)) => super::colors::intent(name)?,', '(b"RI", Object::Name(_)) => {},', 'textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions'),
     Mutation('intent: setter positions a following show', 'src/textedit.rs', '("ri", [Object::Name(name)]) => colors::intent(name)?,', '("ri", [Object::Name(name)]) => { colors::intent(name)?; object.positioned = true; },', 'textedit_rendering_intents_refuse_unknown_names_types_and_implicit_positions'),
 
-    Mutation('spacing: ignore nonzero character spacing', 'src/textedit/fonts.rs', 'if spacing == 0. && word_spacing == 0. {', 'if true {', 'textedit_spacing_measures_character_steps_and_tj_fragments'),
+    Mutation('spacing: ignore nonzero character spacing in a replacement', 'src/textedit/fonts.rs', 'if spacing == 0. && word_spacing == 0. {', 'if true {', 'textedit_spacing_replacement_advance_and_ink_are_both_checked_atomically'),
     Mutation('spacing: omit trailing character step', 'src/textedit/fonts.rs', 'cursor += step;', 'cursor += width;', 'textedit_spacing_measures_character_steps_and_tj_fragments'),
     Mutation('spacing: omit relative size limit', 'src/textedit/fonts.rs', '!spacing.is_finite() || spacing.abs() > size * 0.25', '!spacing.is_finite()', 'textedit_spacing_bounds_and_malformed_setters_remain_refused'),
     Mutation('spacing: allow nonpositive glyph steps', 'src/textedit/fonts.rs', 'if step <= 0. {', 'if false {', 'textedit_spacing_bounds_and_malformed_setters_remain_refused'),
