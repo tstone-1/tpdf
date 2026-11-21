@@ -684,6 +684,7 @@ export interface AppActions {
   openInFolder(step: 1 | -1): void;
   /** Whether the page being read is a favourite. */
   isFavourite(): boolean;
+  canAddFavourite(): boolean;
   /** Marks the page being read as a favourite, named `name` or after its number. */
   addFavourite(name: string): void;
   /** Unmarks the page being read. */
@@ -1880,7 +1881,7 @@ export function registerAppCommands(
     {
       id: "nav.addFavourite",
       title: TEXT(locale).addFavourite,
-      enabled: withDocument,
+      enabled: () => withDocument() && actions.canAddFavourite(),
       argument: {
         placeholder: TEXT(locale).favouritePlaceholder,
         problem: () => null,

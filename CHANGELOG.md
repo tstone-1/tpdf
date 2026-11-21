@@ -21,6 +21,13 @@ have the binary.)
 
 ### Fixed
 
+- Session updates preserve the previous record after a read failure. A protected
+  foreground tab no longer delays automatic restore, and favourites follow their
+  pages through reordering and deletion.
+- Compression preserves the resolution of images shared with stamps, previews
+  changes to transparency masks, and measures encrypted copies before quoting a size.
+- Document Properties discards late certificate results after a document switch
+  and identifies rejected signature ranges.
 - Reload keeps a form answer entered while the replacement opens. Tab restore
   recognises aliases and respects a tab closed during launch. Folder navigation
   skips aliases and keeps edited tabs. Quit waits for the last session writes.

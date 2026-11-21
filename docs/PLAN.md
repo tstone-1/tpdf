@@ -2002,7 +2002,7 @@ offers Save only for one that is smaller.
 source and refuses; the window does not offer the choice.
 
 **An encrypted document keeps its password and gets no object streams**: `lopdf` writes
-them only in the clear, and says so. An estimate for one is the size before encryption.
+them only in the clear, and says so. The CLI and the window measure a temporary encrypted copy for that estimate.
 
 Not done: recompressing a JPEG without scaling it; indexed, CMYK and JPEG 2000 pictures;
 pictures in patterns and annotation appearances; removing unused fonts or subsetting;

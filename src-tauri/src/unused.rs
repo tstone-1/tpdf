@@ -375,7 +375,7 @@ fn leans_on_page(doc: &Document, page: ObjectId) -> bool {
     if entries(b"Font").iter().any(type3) {
         return true;
     }
-    appearances(doc, page).iter().any(bare)
+    appearances(doc, page).into_iter().any(bare)
 }
 
 /// The `/Resources` dictionary `page` uses, its own or an ancestor's.
@@ -395,7 +395,7 @@ fn resources_of(doc: &Document, page: ObjectId) -> Option<&Dictionary> {
 }
 
 /// Every appearance stream of every annotation on `page`.
-fn appearances(doc: &Document, page: ObjectId) -> Vec<Object> {
+pub(crate) fn appearances(doc: &Document, page: ObjectId) -> Vec<&Object> {
     let mut out = Vec::new();
     let Some(annotations) = doc
         .get_object(page)
@@ -422,9 +422,9 @@ fn appearances(doc: &Document, page: ObjectId) -> Vec<Object> {
         for (_, state) in states.iter() {
             match doc.dereference(state).map(|(_, value)| value) {
                 Ok(Object::Dictionary(by_state)) => {
-                    out.extend(by_state.iter().map(|(_, value)| value.clone()));
+                    out.extend(by_state.iter().map(|(_, value)| value));
                 }
-                Ok(_) => out.push(state.clone()),
+                Ok(_) => out.push(state),
                 Err(_) => {}
             }
         }

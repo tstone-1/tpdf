@@ -1290,6 +1290,21 @@
     return Math.max(0, (status?.page ?? 1) - 1);
   }
 
+  function favouriteSource(): number | undefined {
+    return edits?.map.sourceOf(readingPage());
+  }
+
+  function nextFavourite(step: 1 | -1): number | null {
+    const map = edits?.map;
+    if (!map) return null;
+    return favourites.step(openPathName, readingPage(), step, (source) => map.slotOf(source));
+  }
+
+  /** A successful in-place write makes the working order the new file order. */
+  function rebaseFavourites(path: string, model: Edits): void {
+    if (favourites.rebase(path, (source) => model.map.slotOf(source))) saveFavourites();
+  }
+
   /** Offers each favourite in the palette, and writes the list down. */
   function saveFavourites(): void {
     offerFavourites();
@@ -1304,14 +1319,15 @@
 
   /**
    * Opens a favourite's document, or brings its tab forward, and goes to the
-   * page. The page is the file's: a document with pages deleted and not saved
-   * since counts them as they are on screen.
+   * corresponding slot in its current page order.
    */
   async function goToFavourite(favourite: Favourite): Promise<void> {
     await openPath(favourite.path);
     // Only in the favourite's document: when it would not open, the one in
     // front is still another, and its page is not the one marked.
-    if ((await matchingTab(favourite.path, openView))?.view === openView) viewer?.goToPage(favourite.page);
+    if ((await matchingTab(favourite.path, openView))?.view !== openView) return;
+    const slot = edits?.map.slotOf(favourite.page);
+    if (slot !== undefined) viewer?.goToPage(slot);
   }
 
   /**
@@ -1931,23 +1947,28 @@
     canReopenClosedTab: () => closedTabs.latest((path) => tabs.forPath(path) !== undefined) !== null,
     reopenClosedTab: () => void reopenClosedTab(),
     openInFolder: (step: 1 | -1) => void openInFolder(step),
-    isFavourite: () => openPathName !== "" && favourites.has(openPathName, readingPage()),
+    canAddFavourite: () => favouriteSource() !== undefined,
+    isFavourite: () => {
+      const page = favouriteSource();
+      return page !== undefined && favourites.has(openPathName, page);
+    },
     addFavourite: (name: string) => {
-      if (!openPathName) return;
+      const page = favouriteSource();
+      if (!openPathName || page === undefined) return;
       try {
-        favourites.add(openPathName, readingPage(), name);
+        favourites.add(openPathName, page, name);
         saveFavourites();
       } catch (error) {
         say(error instanceof Error ? error.message : String(error));
       }
     },
     removeFavourite: () => {
-      if (openPathName && favourites.remove(openPathName, readingPage())) saveFavourites();
+      const page = favouriteSource();
+      if (page !== undefined && favourites.remove(openPathName, page)) saveFavourites();
     },
-    canStepFavourite: (step: 1 | -1) =>
-      openPathName !== "" && favourites.step(openPathName, readingPage(), step) !== null,
+    canStepFavourite: (step: 1 | -1) => nextFavourite(step) !== null,
     stepFavourite: (step: 1 | -1) => {
-      const page = openPathName ? favourites.step(openPathName, readingPage(), step) : null;
+      const page = nextFavourite(step);
       if (page !== null) viewer?.goToPage(page);
     },
     sides: () => ({
@@ -3631,8 +3652,9 @@
       if (!edits.dirty) return;
       const path = openPathName;
       const place = currentPlace(false);
+      const model = edits;
       try {
-        await edits.save(path);
+        await model.save(path);
       } catch (e) {
         if (e instanceof SaveCancelled) return;
         // Read through the seam rather than cast here, so that what a rejection
@@ -3666,6 +3688,7 @@
         if (!error) say(prompt.message, prompt.offers);
         return;
       }
+      rebaseFavourites(path, model);
       await reopenAfterWrite(path, place);
     });
   }
@@ -4315,11 +4338,12 @@
       await settleDrafts(edits);
       const path = openPathName;
       const place = currentPlace(false);
+      const model = edits;
       say(null);
       let said: string;
       let success = false;
       try {
-        const result = afterRedactionCopy(await edits.redactDocument(path, redactionFill));
+        const result = afterRedactionCopy(await model.redactDocument(path, redactionFill));
         said = result.message;
         success = result.success;
       } catch (e) {
@@ -4336,6 +4360,7 @@
         if (!error) say(prompt.message, prompt.offers);
         return;
       }
+      rebaseFavourites(path, model);
       await reopenAfterWrite(path, place);
       if (!error) say(said, [], resultTone(success));
     });
@@ -4687,14 +4712,14 @@
     }
 
     const wanted = openDoc, view = openView, model = edits;
-    propertiesDialog.show(null, "");
+    const display = propertiesDialog.show(null, "");
     try {
       const answer = await call("document_properties", { doc: wanted });
-      if (!stillIn(view, model) || !propertiesDialog.isOpen) return;
+      if (!stillIn(view, model) || !propertiesDialog.isShowing(display)) return;
       asDocument(view, () => { properties = answer; });
       propertiesDialog.show(answer, "");
     } catch (e) {
-      if (!stillIn(view, model) || !propertiesDialog.isOpen) return;
+      if (!stillIn(view, model) || !propertiesDialog.isShowing(display)) return;
       // Shown in the dialog rather than in the status line, because the dialog
       // is what the reader is looking at and an empty one beside a message
       // somewhere else reads as a document that states nothing.
@@ -5852,7 +5877,7 @@
               TEXT().discardChangesOnQuit(unsaved.length),
               { title: TEXT().closeTpdf, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
             )) return;
-            await Promise.all([places.settled(), tabRecorder.settled()]);
+            await Promise.all([places.settled(), tabRecorder.settled(), favouriteWrites.settled()]);
             await getCurrentWindow().destroy();
           } catch (e) {
             // As `closeTab`: a draft that cannot be committed is said, and the
@@ -5976,7 +6001,7 @@
         return unopened.length > 0;
       };
       if (plan.behind.length) {
-        void firstPaint()
+        void (openView === NO_VIEW ? Promise.resolve() : firstPaint())
           .then(() => openBehind(plan.behind, plan.order, tabHost(false)))
           // Before the recorder is released: a quit between the two would
           // otherwise record the tabs that came back as one side.
@@ -6158,6 +6183,7 @@
         // lands, and this is the only step in the path that can wait.
         await places.settled();
         await tabRecorder.settled();
+        await favouriteWrites.settled();
         const { relaunch } = await import("@tauri-apps/plugin-process");
         await relaunch();
       },
@@ -6324,8 +6350,7 @@
     return {
       openBehind: (path) => opens.run(async () => {
         if (await matchingTab(path, tabs.active)) return;
-        const doc = asking ? await openOrAsk(path) : await openWithPassword(
-          (password) => call("open_document", { path, password }), null);
+        const doc = await openOrAsk(path, asking);
         if (!doc.pages[0]) {
           await call("close_document", { doc: doc.id }).catch(console.warn);
           throw new Error("document reports no pages");
@@ -6380,10 +6405,10 @@
    * right place for. A refusal that is not about the password, and a reader who
    * declines to answer one, both arrive at the caller's `catch` as the refusal.
    */
-  async function openOrAsk(path: string): Promise<DocumentInfo> {
+  async function openOrAsk(path: string, asking = true): Promise<DocumentInfo> {
     // Captured once, so the closure cannot see it become null between the
     // check and the call --- and so the type-checker can see that too.
-    const dialog = passwordDialog;
+    const dialog = asking ? passwordDialog : null;
     return openWithPassword(
       (password) => call("open_document", { path, password }),
       dialog ? (problem) => dialog.ask(basename(path), problem) : null,
@@ -7112,7 +7137,7 @@
    * Never called directly --- {@link openPath} is the entry point, and going
    * around it reintroduces the interleaving described there.
    *
-   * `resuming` is set only by the launch restore, and changes one thing: a
+   * `resuming` is set only by the launch restore. It suppresses password prompts, and a
    * document that no longer opens is not an error to report. Someone who chose
    * a file and cannot have it needs to be told; someone who launched the app and
    * whose last document has since been deleted or unmounted needs an empty
@@ -7147,7 +7172,7 @@
     // write already closed: an open that fails takes it down (`abandonedBy`).
     const written = afterWrite ? tabs.forPath(path, tabs.active) : undefined;
     try {
-      const doc = retained?.doc ?? await openOrAsk(path);
+      const doc = retained?.doc ?? await openOrAsk(path, !resuming);
       acquired = retained ? -1 : doc.id;
       // The replacement file is open. Confirmed Reload drops its document's
       // drafts on teardown, leaving editors in unrelated panes alone.

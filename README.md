@@ -351,7 +351,8 @@ project conventions.
   or its number; each favourite is then in the command palette as *Go to favourite*, and
   opens its document at that page from any other. *Next favourite in this document* and
   *Previous favourite in this document* step between them, and *Remove this page from
-  favourites* unmarks one. The list is kept between launches.
+  favourites* unmarks one. Favourites follow the original page through unsaved edits.
+  Save a newly inserted page before marking it. The list is kept between launches.
   <!-- built: nav.addFavourite nav.removeFavourite nav.nextFavourite nav.previousFavourite -->
 - **Web links open in your browser, after you confirm the site.** `http` and `https` only —
   everything else a `/URI` can name is still declined — and the confirmation shows the host
@@ -411,8 +412,8 @@ project conventions.
   check off. Unsaved edits are never discarded without asking. The choice is remembered.
   <!-- built: file.onDiskChange.ask file.onDiskChange.reload file.onDiskChange.ignore -->
 - Session restore: the most recent document, page, zoom and rotation you left on.
-  *At launch: reopen all tabs* brings back every tab instead, in the order they had,
-  with the one you were on in front; it is off until you choose it, and tpdf then
+  *At launch: reopen all tabs* remembers the first 32 distinct documents in tab order,
+  with the active document in front if it is among them; it is off until you choose it, and tpdf then
   remembers it. The other tabs open behind the first one, after its first page is on
   screen. *Reopen the tabs from last time* does the same once, whatever
   the setting. A tab that cannot be opened, such as one whose file is gone, is named in a
@@ -2037,9 +2038,8 @@ streams. A signed document needs `--invalidate-signatures`, an existing output n
 (`screen`, `balanced`, `print`, `custom`, or `null` when no picture was asked to change),
 `dpi`, `quality`, `jpeg`, `bytes_before`, `bytes_after`, `saved_percent` (rounded down),
 `pictures_total` and `pictures_changed` (counted only by a dry run or a preview, `null`
-otherwise), `preview`, `signatures_invalidated` and `signatures_unknown`. For a document
-with a password a dry run's `bytes_after` is the size before encryption, a few bytes a
-stream less than the copy. The window's *Save a smaller copy* offers the same choices with
+otherwise), `preview`, `signatures_invalidated` and `signatures_unknown`. For a protected document,
+the dry run measures a temporary copy written with the same encryption as the output. The window's *Save a smaller copy* offers the same choices with
 their sizes and the same before and after.
 
 **Adding form fields.** `tpdf form letter.pdf -o form.pdf --fields fields.json` writes a

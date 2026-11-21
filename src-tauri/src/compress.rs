@@ -215,7 +215,7 @@ pub struct Done {
 struct Shown {
     width: f64,
     height: f64,
-    /// The first page that draws it, counted from 0.
+    /// A page where the maximum horizontal extent occurs, counted from 0.
     page: u32,
 }
 
@@ -304,6 +304,9 @@ impl Walk<'_> {
             match stream.dict.get(b"Subtype").and_then(Object::as_name) {
                 Ok(b"Image") => {
                     self.unfollowed.insert(id);
+                    if let Some(mask) = soft_mask(doc, id) {
+                        self.unfollowed.insert(mask);
+                    }
                 }
                 Ok(b"Form") if depth < MAX_NESTING => {
                     if let Some(own) = stream
@@ -389,7 +392,11 @@ impl Walk<'_> {
                 match ctm {
                     // The unit square under the matrix: its two sides.
                     Some([a, b, c, d, ..]) => {
-                        entry.width = entry.width.max(a.hypot(b));
+                        let width = a.hypot(b);
+                        if width > entry.width {
+                            entry.page = page;
+                            entry.width = width;
+                        }
                         entry.height = entry.height.max(c.hypot(d));
                     }
                     // Drawn under a matrix that would not read: its size is
@@ -465,6 +472,20 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
                 .into_iter()
                 .filter_map(|id| doc.get_dictionary(id).ok()),
         );
+        // Appearance coordinates include the annotation rectangle. Preserve the
+        // resolution of images these streams may use, including named states.
+        for appearance in crate::unused::appearances(doc, page) {
+            let own = resolved(doc, appearance)
+                .and_then(|o| o.as_stream().ok())
+                .and_then(|stream| stream.dict.get(b"Resources").ok())
+                .and_then(|o| resolved(doc, o))
+                .and_then(|o| o.as_dict().ok());
+            if let Some(own) = own {
+                walk.unfollowed_in(&[own]);
+            } else {
+                walk.unfollowed_in(&resources);
+            }
+        }
         let Ok(data) = doc.get_page_content_with_limit(page, MAX_CONTENT_BYTES) else {
             walk.unfollowed_in(&resources);
             continue;
@@ -484,8 +505,10 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
     if walk.lost {
         walk.shown.values_mut().for_each(unknown);
     } else {
-        for id in &walk.unfollowed {
-            if let Some(shown) = walk.shown.get_mut(id) {
+        for (id, shown) in &mut walk.shown {
+            if walk.unfollowed.contains(id)
+                || soft_mask(doc, *id).is_some_and(|mask| walk.unfollowed.contains(&mask))
+            {
                 unknown(shown);
             }
         }
@@ -905,6 +928,18 @@ fn shrink(
     true
 }
 
+fn soft_mask(doc: &Document, id: ObjectId) -> Option<ObjectId> {
+    doc.get_object(id)
+        .ok()?
+        .as_stream()
+        .ok()?
+        .dict
+        .get(b"SMask")
+        .ok()?
+        .as_reference()
+        .ok()
+}
+
 /// Shrinks the pictures the pages draw. Returns how many there are, how many
 /// were stored smaller and how many are drawn at a size that is not known.
 fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize, usize) {
@@ -913,19 +948,13 @@ fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize, usize) {
         .values()
         .filter(|shown| !shown.width.is_finite() || !shown.height.is_finite())
         .count();
-    let mut changed = 0usize;
+    let mut changed = BTreeSet::new();
     // A mask is scaled once, for the largest any of its pictures is shown.
     let mut masks: BTreeMap<ObjectId, Shown> = BTreeMap::new();
 
     for (id, shown) in &shown {
         // A parent with an unsupported colour space can still depend on a shared mask.
-        if let Some(mask) = doc
-            .get_object(*id)
-            .ok()
-            .and_then(|obj| obj.as_stream().ok())
-            .and_then(|stream| stream.dict.get(b"SMask").ok())
-            .and_then(|obj| obj.as_reference().ok())
-        {
+        if let Some(mask) = soft_mask(doc, *id) {
             let entry = masks.entry(mask).or_default();
             entry.width = entry.width.max(shown.width);
             entry.height = entry.height.max(shown.height);
@@ -938,17 +967,22 @@ fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize, usize) {
         } else if picture(doc, *id, false)
             .is_some_and(|found| shrink(doc, *id, &found, *shown, how, false))
         {
-            changed += 1;
+            changed.insert(*id);
         }
     }
     for (id, extent) in masks {
-        if picture(doc, id, true).is_some_and(|found| shrink(doc, id, &found, extent, how, true))
-            && shown.contains_key(&id)
-        {
-            changed += 1;
+        if picture(doc, id, true).is_some_and(|found| shrink(doc, id, &found, extent, how, true)) {
+            changed.insert(id);
         }
     }
-    (shown.len(), changed, unknown)
+    let affected = shown
+        .keys()
+        .filter(|id| {
+            changed.contains(*id)
+                || soft_mask(doc, **id).is_some_and(|mask| changed.contains(&mask))
+        })
+        .count();
+    (shown.len(), affected, unknown)
 }
 
 /// Deflates every stream stored without a filter. Returns how many.
@@ -1250,11 +1284,16 @@ fn focus(before: &Document, after: &Document, shown: &BTreeMap<ObjectId, Shown>)
     }
     let (shown, old, new) = shown
         .iter()
-        .filter(|(id, _)| content(before, **id) != content(after, **id))
+        .flat_map(|(id, shown)| {
+            std::iter::once(*id)
+                .chain(soft_mask(before, *id))
+                .map(move |stream| (stream, shown))
+        })
+        .filter(|(id, _)| content(before, *id) != content(after, *id))
         .filter_map(|(id, shown)| {
-            let old = size(before, *id)?;
-            let new = size(after, *id)?;
-            let filter = &after.get_object(*id).ok()?.as_stream().ok()?.dict;
+            let old = size(before, id)?;
+            let new = size(after, id)?;
+            let filter = &after.get_object(id).ok()?.as_stream().ok()?.dict;
             let jpeg = filter.get(b"Filter").and_then(Object::as_name).ok() == Some(b"DCTDecode");
             (old != new || jpeg).then_some((*shown, old, new))
         })

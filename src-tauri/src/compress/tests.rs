@@ -423,6 +423,79 @@ fn the_preview_ignores_a_larger_losslessly_reencoded_image() {
 }
 
 #[test]
+fn a_shared_images_preview_names_the_page_where_its_dpi_was_measured() {
+    let (mut doc, image) = one_picture(image(600, 600, "DeviceGray".into()), noise(600 * 600));
+    let first = doc.get_pages()[&1];
+    let mut second = doc.get_dictionary(first).unwrap().clone();
+    let pages = second.get(b"Parent").unwrap().as_reference().unwrap();
+    let content = doc.add_object(Stream::new(
+        dictionary! {},
+        b"q 288 0 0 288 0 0 cm /Im Do Q".to_vec(),
+    ));
+    second.set("Contents", content);
+    let second = doc.add_object(second);
+    let root = doc.get_dictionary_mut(pages).unwrap();
+    root.set(
+        "Kids",
+        vec![Object::Reference(first), Object::Reference(second)],
+    );
+    root.set("Count", 2);
+    let estimate = super::estimate(&doc, SCREEN).unwrap();
+    let focus = estimate.focus.unwrap();
+    assert_eq!(
+        (focus.page, focus.dpi_before, focus.dpi_after),
+        (1, 150, 110)
+    );
+    assert_eq!(whole(&doc, image, b"Width"), 600);
+}
+
+#[test]
+fn a_page_logo_also_used_by_a_stamp_keeps_its_resolution() {
+    let (mut doc, id) = one_picture(image(400, 400, "DeviceGray".into()), noise(400 * 400));
+    let page = doc.get_pages()[&1];
+    let form = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Form",
+            "Resources" => dictionary! { "XObject" => dictionary! { "Logo" => id } },
+            "BBox" => vec![0.into(), 0.into(), 1.into(), 1.into()],
+        },
+        b"/Logo Do".to_vec(),
+    ));
+    let stamp = doc.add_object(dictionary! { "Subtype" => "Stamp", "Rect" => vec![0.into(), 0.into(), 360.into(), 360.into()], "AP" => dictionary! { "N" => form } });
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Annots", vec![Object::Reference(stamp)]);
+    let done = apply(&mut doc, SCREEN);
+    assert_eq!(done.pictures_unsized, 1);
+    assert_eq!(whole(&doc, id, b"Width"), 400);
+}
+
+#[test]
+fn a_change_only_to_opacity_counts_the_parent_and_selects_a_preview() {
+    let pixels = vec![80; 72 * 72];
+    let mut parent = image(72, 72, "DeviceGray".into());
+    parent.set("Filter", "DCTDecode");
+    let (mut doc, id) = one_picture(parent, super::jpeg(&pixels, 72, 72, 1, 80).unwrap());
+    let mask = doc.add_object(Stream::new(
+        image(400, 400, "DeviceGray".into()),
+        noise(400 * 400),
+    ));
+    doc.get_object_mut(id)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("SMask", mask);
+    let estimate = super::estimate(&doc, SCREEN).unwrap();
+    assert_eq!(estimate.estimate.done.pictures_changed, 1);
+    let focus = estimate.focus.unwrap();
+    assert_eq!(
+        (focus.page, focus.dpi_before, focus.dpi_after),
+        (0, 400, 110)
+    );
+}
+
+#[test]
 fn a_soft_mask_is_scaled_with_its_picture_and_never_stored_as_jpeg() {
     let mut doc = Document::with_version("1.7");
     let mask = doc.add_object(

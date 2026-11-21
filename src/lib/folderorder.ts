@@ -27,7 +27,20 @@ export async function neighbourIn(
   sameFile: (path: string) => Promise<boolean>,
 ): Promise<string | null> {
   const sorted = folderOrder(paths);
-  const at = sorted.indexOf(current);
+  let at = sorted.indexOf(current);
+  if (at < 0) {
+    // The same file can also have a differently named alias at the other
+    // end of this folder. Prefer the listing that corresponds to this name.
+    const name = basename(current).normalize().toLowerCase();
+    const candidates = sorted.map((path, i) => ({ i, path, sameName: basename(path).normalize().toLowerCase() === name }));
+    candidates.sort((a, b) => Number(b.sameName) - Number(a.sameName));
+    for (const { i, path } of candidates) {
+      if (await sameFile(path)) {
+        at = i;
+        break;
+      }
+    }
+  }
   if (at < 0) return null;
   for (let i = at + step; i >= 0 && i < sorted.length; i += step) {
     const candidate = sorted[i]!;

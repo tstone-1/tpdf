@@ -56,8 +56,8 @@ ROWS = [
     Mutation(
         "compress: a picture of unknown size given a size",
         "src/compress.rs",
-        "            if let Some(shown) = walk.shown.get_mut(id) {\n                unknown(shown);",
-        "            if let Some(shown) = walk.shown.get_mut(id) {\n                let _ = shown;",
+        "                unknown(shown);",
+        "                let _ = shown;",
         "a_picture_drawn_where_content_could_not_be_followed_is_not_scaled",
     ),
     Mutation(

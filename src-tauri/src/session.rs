@@ -2,13 +2,12 @@
 //!
 //! A reader that opens on an empty window every morning is not the default
 //! reader, whatever else it does --- so this is a Phase 1 item rather than
-//! polish. It stores one *place* per document, most-recently-read first, and
-//! nothing else: no window geometry, no scroll history, no per-page state.
+//! polish. It stores reading positions, favourites, tabs, pane layout and preferences.
 //!
 //! Two decisions here are deliberate and worth stating, because both look like
 //! omissions.
 //!
-//! **A malformed or unreadable file is an empty session, never an error.** The
+//! **Startup tolerates a malformed or unreadable session.** The
 //! session is a convenience; refusing to start because it could not be parsed
 //! would trade the whole application for the feature. Every path through
 //! [`Session::load`] returns a `Session`.
@@ -21,10 +20,9 @@
 //! a text editor --- refusing it would discard every *other* document's place
 //! over one bad number. See [`Place::sanitized`].
 
-use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -279,13 +277,19 @@ impl Session {
     /// only question the caller has.
     #[must_use]
     pub fn load(path: &Path) -> Self {
-        let Ok(raw) = fs::read(path) else {
-            return Self::default();
+        Self::read_for_update(path).unwrap_or_default()
+    }
+
+    /// Start a new session only if the file is absent. Mutations must preserve
+    /// an existing record when its contents could not be read.
+    pub(crate) fn read_for_update(path: &Path) -> io::Result<Self> {
+        let raw = match fs::read(path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) => return Err(error),
         };
-        let Ok(session) = serde_json::from_slice::<Self>(&raw) else {
-            return Self::default();
-        };
-        Self {
+        let session: Self = serde_json::from_slice(&raw)?;
+        Ok(Self {
             places: session
                 .places
                 .into_iter()
@@ -302,7 +306,7 @@ impl Session {
             ..Self::default()
         }
         .with_tabs(session.tabs, session.active_tab, session.sides)
-        .with_ocr_language(session.ocr_language)
+        .with_ocr_language(session.ocr_language))
     }
 
     /// A legacy relative filename lost its launch directory when the process
@@ -450,12 +454,15 @@ impl Session {
     /// Two processes writing concurrently is last-writer-wins. The rename keeps
     /// each write whole, so the loser's places are dropped, never interleaved.
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let temp = temp_beside(path);
-        fs::write(&temp, serde_json::to_vec_pretty(self)?)?;
-        fs::rename(&temp, path)
+        let dir = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        fs::create_dir_all(dir)?;
+        let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+        io::Write::write_all(temp.as_file_mut(), &serde_json::to_vec_pretty(self)?)?;
+        temp.persist(path)?;
+        Ok(())
     }
 }
 
@@ -475,20 +482,6 @@ pub struct Loaded {
     pub session: Session,
     /// The reader's home folder, when the platform names one.
     pub home: Option<String>,
-}
-
-/// A scratch name in the same directory as `path`.
-///
-/// The same directory because `rename` is only atomic within one filesystem, and
-/// a temp file in `/tmp` may well be on another. Built by appending rather than
-/// by `with_extension`, which would replace `.json` instead of adding to it and
-/// so could collide with a real session file.
-fn temp_beside(path: &Path) -> PathBuf {
-    let mut name = path
-        .file_name()
-        .map_or_else(|| OsString::from("session.json"), OsString::from);
-    name.push(".tmp");
-    path.with_file_name(name)
 }
 
 #[cfg(test)]
@@ -1175,24 +1168,23 @@ mod tests {
     }
 
     #[test]
-    fn saving_goes_through_the_scratch_file_and_consumes_it() {
-        // What pins the write to `rename`. A save that wrote the target
-        // directly would satisfy every other test here -- it produces the right
-        // bytes and leaves no scratch file *it* created. So the scratch file is
-        // planted first: only a save that renames over it removes it.
-        let dir = TempDir::new("atomic");
-        let scratch = super::temp_beside(&dir.file());
-        std::fs::write(&scratch, b"left over from a write that died").expect("plant");
-
-        let mut session = Session::default();
-        session.remember(place("/tmp/a.pdf"));
-        session.save(&dir.file()).expect("save");
-
-        assert!(
-            !scratch.exists(),
-            "a save that does not rename leaves the scratch file where it was"
-        );
-        assert_eq!(Session::load(&dir.file()).places.len(), 1);
+    fn concurrent_saves_publish_complete_records() {
+        let dir = TempDir::new("concurrent-sessions");
+        let path = dir.file();
+        std::thread::scope(|scope| {
+            for name in ["first.pdf", "second.pdf"] {
+                let path = &path;
+                scope.spawn(move || {
+                    let mut session = Session::default();
+                    session.remember(place(name));
+                    for _ in 0..20 {
+                        session.save(path).expect("independent save");
+                        let seen = Session::read_for_update(path).expect("complete JSON");
+                        assert!(matches!(seen.places.as_slice(), [p] if ["first.pdf", "second.pdf"].contains(&p.path.as_str())));
+                    }
+                });
+            }
+        });
     }
 
     #[test]
@@ -1222,16 +1214,6 @@ mod tests {
         assert_eq!(
             loaded.most_recent().map(|p| p.path.as_str()),
             Some("/tmp/c.pdf")
-        );
-    }
-
-    #[test]
-    fn the_scratch_file_sits_beside_the_target() {
-        let target = std::path::Path::new("/some/where/session.json");
-        assert_eq!(
-            super::temp_beside(target),
-            std::path::Path::new("/some/where/session.json.tmp"),
-            "a rename is only atomic within one filesystem"
         );
     }
 }

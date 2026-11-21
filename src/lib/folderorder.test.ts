@@ -28,6 +28,12 @@ describe("neighbourIn", () => {
     expect(await neighbourIn(paths.slice(0, 3), "a", 1, alias)).toBeNull();
   });
 
+  it("locates a differently spelled current filename by filesystem identity", async () => {
+    const same = async (p: string) => p === "/d/Page 2.pdf" || p === "/d/appendix.pdf";
+    expect(await neighbourIn(FOLDER, "/d/page 2.pdf", 1, same)).toBe("/d/page 10.pdf");
+    expect(await neighbourIn(FOLDER, "/d/page 2.pdf", -1, same)).toBe("/d/page 1.pdf");
+  });
+
   it("stops at either end rather than going round", async () => {
     expect(await neighbourIn(FOLDER, "/d/page 10.pdf", 1, async () => false)).toBeNull();
     expect(await neighbourIn(FOLDER, "/d/appendix.pdf", -1, async () => false)).toBeNull();

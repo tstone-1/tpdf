@@ -73,7 +73,12 @@ pub(crate) fn with_session<F: FnOnce(&mut session::Session)>(
     edit: F,
 ) -> Result<(), String> {
     let _guard = SESSION_WRITE.lock();
-    let mut session = session::Session::load(path);
+    let mut session = session::Session::read_for_update(path).map_err(|e| {
+        said!(
+            "could not read the session file {path}: {e}",
+            path = path.display()
+        )
+    })?;
     edit(&mut session);
     // Named, because this string crosses the IPC boundary and is the only thing
     // the reader is shown. `io::Error`'s own text is "permission denied" with no

@@ -48,6 +48,19 @@ describe("Favourites", () => {
     expect(list.has("/b.pdf", 4)).toBe(true);
   });
 
+  it("steps in working order and changes stored pages only when that order is saved", () => {
+    const list = new Favourites();
+    list.add("one", 0, "deleted");
+    list.add("one", 1, "B");
+    list.add("one", 2, "C");
+    list.add("two", 1, "other");
+    const slotOf = (source: number) => [undefined, 1, 0][source];
+    expect(list.step("one", 1, -1, slotOf)).toBe(0);
+    expect(list.has("one", 2)).toBe(true);
+    expect(list.rebase("one", slotOf)).toBe(true);
+    expect(list.all.map(({ page, name }) => [name, page])).toEqual([["B", 1], ["C", 0], ["other", 1]]);
+  });
+
   it("steps to the nearest favourite page of the same document, either way", () => {
     const list = new Favourites();
     for (const page of [9, 2, 5]) list.add("/a.pdf", page, "");

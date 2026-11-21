@@ -2400,20 +2400,11 @@ ROWS += [
         "a_budget_smaller_than_the_target_refuses_before_hashing",
     ),
     Mutation(
-        # Check a document timestamp over whatever range it states, without
-        # the rule that the hole is exactly its own value.
-        "integrity: check a document timestamp over a range nobody vouched for",
+        # Keep a refused range distinguishable from an unreadable certificate.
+        "integrity: misreport why a document timestamp range was refused",
         "src/integrity.rs",
-        """    let Some(pieces) = covered(bytes, range, contents) else {
-        return Integrity::unchecked(Why::Range);
-    };""",
-        """    let Some(pieces) = covered(bytes, range, contents).or_else(|| {
-        let [_, first, second, last] = range else { return None };
-        let (first, second, last) = (usize::try_from(*first).ok()?, usize::try_from(*second).ok()?, usize::try_from(*last).ok()?);
-        (document_timestamp && second + last <= bytes.len()).then(|| [&bytes[..first], &bytes[second..second + last]])
-    }) else {
-        return Integrity::unchecked(Why::Range);
-    };""",
+        "let Some(pieces) = pieces else {\n        return Integrity::unchecked(Why::Range);",
+        "let Some(pieces) = pieces else {\n        return Integrity::unchecked(Why::Unreadable);",
         "a_document_timestamp_whose_range_does_not_frame_its_value_is_not_checked",
     ),
     Mutation(

@@ -219,6 +219,16 @@ pub fn check(
     kind: &str,
     budget: &mut u64,
 ) -> Integrity {
+    check_pieces(covered(bytes, range, contents), blob, kind, budget)
+}
+
+/// Checks integrity over the same verified range reported to the reader.
+pub(crate) fn check_pieces(
+    pieces: Option<[&[u8]; 2]>,
+    blob: Option<&[u8]>,
+    kind: &str,
+    budget: &mut u64,
+) -> Integrity {
     // The detached CMS subfilters are the ones where the blob signs the bytes
     // of the range directly. A document timestamp's blob is a token whose
     // imprint is over those same bytes --- a different computation, done in
@@ -231,7 +241,7 @@ pub fn check(
     // The same vouching rule for both: a token's imprint over a range that
     // leaves something else uncovered would be a timestamp of bytes the field
     // does not protect, exactly as a detached signature's digest would be.
-    let Some(pieces) = covered(bytes, range, contents) else {
+    let Some(pieces) = pieces else {
         return Integrity::unchecked(Why::Range);
     };
     let Some(blob) = blob else {

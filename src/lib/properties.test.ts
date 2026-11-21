@@ -153,6 +153,15 @@ describe("formatBytes", () => {
 });
 
 describe("coverageOf", () => {
+  it("reports a rejected byte range as unverified", () => {
+    const sig = signed();
+    sig.covers_whole_file = false;
+    sig.integrity = { verdict: "unchecked", why: "range", digest: "", method: "" };
+    expect(coverageOf(sig, 1024)).toEqual({
+      name: "Covers", value: "the stated byte range could not be verified", warn: true,
+    });
+  });
+
   it("names the container it cannot cover, rather than claiming the whole file", () => {
     // It said "the whole file" until 2026-08-25, which is false of every
     // signature there is: the `/Contents` hex string holding the hash cannot be

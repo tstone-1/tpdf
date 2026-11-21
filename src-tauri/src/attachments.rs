@@ -75,9 +75,10 @@ pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
             count = found.len()
         ));
     };
-    let name = describe(document, key, *spec).name;
-    let stream = spec
-        .and_then(|spec| resolve(document, spec).as_dict().ok())
+    let name = describe(document, key, spec).name;
+    let stream = resolve(document, spec)
+        .as_dict()
+        .ok()
         .and_then(|spec| spec.get(b"EF").ok())
         .and_then(|ef| resolve(document, ef).as_dict().ok())
         .and_then(|ef| ef.get(b"UF").or_else(|_| ef.get(b"F")).ok())
@@ -330,7 +331,7 @@ pub fn save(
 
 #[derive(Default)]
 struct Entries<'a> {
-    files: Vec<(Vec<u8>, Option<&'a Object>)>,
+    files: Vec<(Vec<u8>, &'a Object)>,
     incomplete: bool,
 }
 
@@ -386,16 +387,18 @@ fn walk<'a>(
         .ok()
         .and_then(|names| resolve(document, names).as_array().ok())
     {
-        for pair in pairs.chunks(2) {
+        let complete = pairs.chunks_exact(2);
+        out.incomplete |= !complete.remainder().is_empty();
+        for pair in complete {
             if out.files.len() >= MAX_FILES {
                 out.incomplete = true;
                 return;
             }
-            let key = match pair.first().map(|key| resolve(document, key)) {
-                Some(Object::String(bytes, _)) => bytes.clone(),
+            let key = match resolve(document, &pair[0]) {
+                Object::String(bytes, _) => bytes.clone(),
                 _ => Vec::new(),
             };
-            out.files.push((key, pair.get(1)));
+            out.files.push((key, &pair[1]));
         }
     } else if dict.has(b"Names") {
         out.incomplete = true;
@@ -419,8 +422,8 @@ fn walk<'a>(
 
 /// What the list says of one entry: `/UF`, then `/F`, then the tree's key for
 /// the name.
-fn describe(document: &Document, key: &[u8], spec: Option<&Object>) -> Embedded {
-    let spec = spec.and_then(|spec| resolve(document, spec).as_dict().ok());
+fn describe(document: &Document, key: &[u8], spec: &Object) -> Embedded {
+    let spec = resolve(document, spec).as_dict().ok();
     let text = |name: &[u8]| -> Option<String> {
         match spec?.get(name).ok().map(|value| resolve(document, value)) {
             Some(Object::String(bytes, _)) => Some(decode_text_string(bytes)),
@@ -700,6 +703,31 @@ mod tests {
         let names = doc.add_object(dictionary! { "EmbeddedFiles" => root });
         doc.catalog_mut().unwrap().set("Names", names);
         assert_eq!(list_with_count(&doc), (vec![], None));
+    }
+
+    #[test]
+    fn a_dangling_name_leaves_the_valid_attachment_available_and_the_total_unknown() {
+        let mut doc = carrying(&[("a", "a.txt", b"contents", false)], false);
+        let names = doc.catalog().unwrap().get(b"Names").unwrap();
+        let tree = resolve(&doc, names)
+            .as_dict()
+            .unwrap()
+            .get(b"EmbeddedFiles")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        doc.get_dictionary_mut(tree)
+            .unwrap()
+            .get_mut(b"Names")
+            .unwrap()
+            .as_array_mut()
+            .unwrap()
+            .push(Object::string_literal("unpaired"));
+        let (files, total) = list_with_count(&doc);
+        assert_eq!(total, None);
+        assert_eq!(files.len(), 1);
+        assert_eq!(content(&doc, 0).unwrap(), b"contents");
+        assert!(content(&doc, 1).is_err());
     }
 
     #[test]

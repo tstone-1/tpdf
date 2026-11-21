@@ -50,6 +50,7 @@ export default {
   "This page has no editable original text": "Diese Seite hat keinen ursprünglichen Text, der sich bearbeiten ließe",
 
   // commands/session.rs
+  "could not read the session file {path}: {e}": "Die Sitzungsdatei {path} konnte nicht gelesen werden: {e}",
   "could not write the session file {path}: {e}": "Die Sitzungsdatei {path} konnte nicht geschrieben werden: {e}",
   "the session write did not run: {e}": "Das Schreiben der Sitzung ist nicht gelaufen: {e}",
 

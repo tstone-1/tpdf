@@ -765,7 +765,13 @@ fn copy_with(
     if let Some(check) = check {
         // Removed on a refusal, and `stage` created it, so removing it cannot
         // take anything that was not ours.
-        if let Err(why) = check(&staged) {
+        let checked = check(&staged).and_then(|()| {
+            if let Some(opened) = &ready.verified {
+                opened.agrees_with(source).map_err(Refusal::changed)?;
+            }
+            Ok(())
+        });
+        if let Err(why) = checked {
             let _ = std::fs::remove_file(&staged);
             return Err(why);
         }

@@ -336,6 +336,21 @@ describe("SessionWriter", () => {
     expect(sent.map((p) => p.page)).toEqual([1, 2]);
   });
 
+  it("retries an identical position after a failed write", async () => {
+    const send = vi.fn().mockRejectedValueOnce(Error("unavailable")).mockResolvedValue(undefined);
+    const writer = new SessionWriter(send, 1000);
+    const current = place({ page: 2 });
+    writer.note(current);
+    await writer.settled();
+    writer.note(current);
+    writer.flush();
+    await writer.settled();
+    writer.note(current);
+    writer.flush();
+    expect(send.mock.calls).toEqual([[current], [current]]);
+    writer.stop();
+  });
+
   it("keeps writing after one fails", async () => {
     // A rejected write must not poison the chain: one full disk should not stop
     // every later position from being recorded.

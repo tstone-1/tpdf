@@ -384,6 +384,7 @@ export async function appCommandChecks(
     canReopenClosedTab: () => false,
     reopenClosedTab: () => fired.push("reopenClosedTab"),
     openInFolder: (step: number) => fired.push(`openInFolder:${step}`),
+    canAddFavourite: () => true,
     isFavourite: () => true,
     addFavourite: (name: string) => fired.push(`addFavourite:${name}`),
     removeFavourite: () => fired.push("removeFavourite"),

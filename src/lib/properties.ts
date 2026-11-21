@@ -108,6 +108,7 @@ const TEXT = catalog({
             ? "locked by this signature, form filling, signing and comments permitted"
             : "",
     covers: "Covers",
+    invalidRange: "the stated byte range could not be verified",
     noRange: "no byte range stated, so nothing could be checked",
     wholeFile: "the whole file, except the signature container it cannot cover",
     upToSignature: (appended: string): string =>
@@ -282,6 +283,7 @@ const TEXT = catalog({
             ? "durch diese Signatur gesperrt, Ausfüllen von Formularen, Signieren und Kommentare erlaubt"
             : "",
     covers: "Erfasst",
+    invalidRange: "Der angegebene Bytebereich konnte nicht bestätigt werden",
     noRange: "kein Bytebereich angegeben, daher konnte nichts geprüft werden",
     wholeFile: "die ganze Datei außer dem Signaturcontainer, den sie nicht erfassen kann",
     upToSignature: (appended: string): string =>
@@ -779,6 +781,7 @@ export function coverageOf(signature: Signature, bytes: number): Row {
       warn: true,
     };
   }
+  if (signature.integrity?.why === "range") return { name: said.covers, value: said.invalidRange, warn: true };
   if (signature.covers_whole_file) {
     // Not "the whole file", which was the old wording and is false of every
     // signature: the container is excluded and always will be. Saying so once,

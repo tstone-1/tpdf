@@ -40,6 +40,22 @@ describe("Serial", () => {
     expect(started).toEqual(["a", "b"]);
   });
 
+  it("drains both the pending write and the one queued behind it before quit", async () => {
+    const queue = new Serial();
+    const first = deferred<void>();
+    const second = deferred<void>();
+    const seen: string[] = [];
+    void queue.run(() => first.promise);
+    void queue.run(async () => { await second.promise; seen.push("second write"); });
+    const quitting = queue.settled().then(() => seen.push("quit"));
+    first.resolve();
+    await settle();
+    expect(seen).toEqual([]);
+    second.resolve();
+    await quitting;
+    expect(seen).toEqual(["second write", "quit"]);
+  });
+
   it("starts bodies in the order they were queued", async () => {
     const serial = new Serial();
     const order: number[] = [];

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use super::args::{lexically_same, unknown, value};
 use super::fill::SignedState;
 use super::pages::{
-    check_target, copy_of, publish_copy, read_input, same_sizes, unchanged, Temporary,
+    check_target, checked_copy, copy_of, publish_copy, read_input, same_sizes, unchanged, Temporary,
 };
 use super::report::{self, SCHEMA};
 use super::text::{declined, password, variable};
@@ -295,8 +295,23 @@ impl Compress {
 
         let before = self.source_size(input.opened_as())?;
         let mut after = estimate.as_ref().map_or(0, |estimate| estimate.bytes_after);
+        input.plan.compress = self.way();
+        if self.dry_run && input.encrypted {
+            let staging = Temporary::beside(&std::env::temp_dir().join("compressed.pdf"))?;
+            let staged = staging.0.join("compressed.pdf");
+            after = checked_copy(
+                &[(self.input.as_path(), input.opened_as())],
+                &staged,
+                copy_of(env, &self.input, &input.plan, key.as_deref()),
+                |()| {
+                    staged
+                        .metadata()
+                        .map(|m| m.len())
+                        .map_err(|e| Failure::new(Exit::Internal, e.to_string()))
+                },
+            )?;
+        }
         if let Some(output) = &self.output {
-            input.plan.compress = self.way();
             // The staged file, in a fresh worker, which shares no code with the
             // writer's own read-back: PDFium decides whether it opens.
             let unpublished = |what: &str| {

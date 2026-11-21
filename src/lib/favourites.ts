@@ -50,6 +50,19 @@ export class Favourites {
     return added;
   }
 
+  /** Updates file page numbers after a saved reorder and drops deleted pages. */
+  rebase(path: string, slotOf: (source: number) => number | undefined): boolean {
+    let changed = false;
+    this.list = this.list.flatMap((entry) => {
+      if (entry.path !== path) return [entry];
+      const page = slotOf(entry.page);
+      if (page === entry.page) return [entry];
+      changed = true;
+      return page === undefined ? [] : [{ ...entry, page }];
+    });
+    return changed;
+  }
+
   /** Unmarks a page, answering whether it was marked. */
   remove(path: string, page: number): boolean {
     const before = this.list.length;
@@ -61,8 +74,9 @@ export class Favourites {
    * The favourite page of `path` after (`1`) or before (`-1`) `page`, or
    * `null` past the last or before the first.
    */
-  step(path: string, page: number, step: 1 | -1): number | null {
-    const pages = this.list.filter((one) => one.path === path).map((one) => one.page);
+  step(path: string, page: number, step: 1 | -1, slotOf = (source: number): number | undefined => source): number | null {
+    const pages = this.list.filter((one) => one.path === path)
+      .map((one) => slotOf(one.page)).filter((slot) => slot !== undefined);
     const beyond = pages.filter((one) => (step > 0 ? one > page : one < page));
     if (beyond.length === 0) return null;
     return step > 0 ? Math.min(...beyond) : Math.max(...beyond);

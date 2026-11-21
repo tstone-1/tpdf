@@ -69,6 +69,7 @@ export const DIALOG_CLASS = "tpdf-properties";
  * they are stepping back and forth in.
  */
 export class PropertiesDialog {
+  private display = 0;
   private readonly backdrop: HTMLElement;
   private readonly panel: HTMLElement;
   private readonly body: HTMLElement;
@@ -133,6 +134,11 @@ export class PropertiesDialog {
     return this.backdrop.style.display !== "none";
   }
 
+  /** A late reply belongs only to the display that requested it. */
+  isShowing(display: number): boolean {
+    return this.isOpen && this.display === display;
+  }
+
   /**
    * Shows a readout, or the reason there is not one.
    *
@@ -144,7 +150,8 @@ export class PropertiesDialog {
    * `said` is what became of asking Windows for a root, when there is something
    * to say.
    */
-  show(properties: Properties | null, problem: string, said = ""): void {
+  show(properties: Properties | null, problem: string, said = ""): number {
+    this.display += 1;
     this.body.replaceChildren();
 
     if (problem) {
@@ -159,6 +166,7 @@ export class PropertiesDialog {
     }
 
     this.open();
+    return this.display;
   }
 
   /**
@@ -175,14 +183,15 @@ export class PropertiesDialog {
     button.addEventListener("click", () => {
       button.disabled = true;
       button.textContent = TEXT().askingRoot;
+      const display = this.display;
       this.askRoot().then(
         (answer) => {
-          if (this.isOpen) {
+          if (this.isShowing(display)) {
             this.show(answer, "", rootsMayBeFetched(answer) ? TEXT().rootNotFound : "");
           }
         },
         (why) => {
-          if (this.isOpen) this.show(properties, "", String(why));
+          if (this.isShowing(display)) this.show(properties, "", String(why));
         },
       );
     });

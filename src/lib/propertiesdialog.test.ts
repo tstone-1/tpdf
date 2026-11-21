@@ -98,6 +98,29 @@ describe("the offer to ask Windows for a root", () => {
     expect(offer()).toBeUndefined();
   });
 
+  it.each(["success", "failure"])("ignores a late %s after Properties is reopened", async (outcome) => {
+    let resolve!: (properties: Properties) => void;
+    let reject!: (reason: string) => void;
+    const pending = new Promise<Properties>((yes, no) => { resolve = yes; reject = no; });
+    const shown = dialog(() => pending);
+    vi.stubGlobal("HTMLElement", dom.root.constructor);
+    try {
+      shown.show(withTrust(missing), "");
+      offer()!.dispatch("click", {});
+      shown.close();
+      shown.show(withTrust(missing), "");
+      const second = offer();
+      if (outcome === "success") resolve(withTrust(trusted));
+      else reject("previous file changed");
+      await settle();
+      expect(offer()).toBe(second);
+      expect(second).toBeDefined();
+      expect(said("previous file changed")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("says so when the answer did not change, and a failure keeps the first answer", async () => {
     let answer = () => Promise.resolve(withTrust(missing));
     dialog(() => answer()).show(withTrust(missing), "");

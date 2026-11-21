@@ -42,6 +42,7 @@ function harness(locale?: UiLocale) {
     canCloseTabs: () => false,
     canReopenClosedTab: () => false,
     hasOutline: () => false,
+    canAddFavourite: () => true,
     isFavourite: () => false,
     canStepFavourite: () => false,
     fieldPicked: () => false,

@@ -6530,6 +6530,21 @@ fn a_checked_copy_is_shown_the_staged_file_before_it_has_its_name() {
 }
 
 #[test]
+fn a_checked_copy_refuses_a_source_replaced_during_validation() {
+    let scratch = Scratch::new("changed-during-check");
+    let (source, plan) = staging_subject(&scratch, "source.pdf").unwrap();
+    let out = scratch.join("copy.pdf");
+    std::fs::write(&out, b"previous output").unwrap();
+    let writer = FakeWriter::writing(Ok(b"small".to_vec()));
+    let result = write_checked_copy(&source, &plan, &out, None, &writer, &|_| {
+        std::fs::write(&source, b"another document").unwrap();
+        Ok(())
+    });
+    assert!(result.unwrap_err().changed);
+    assert_eq!(std::fs::read(out).unwrap(), b"previous output");
+}
+
+#[test]
 fn a_smaller_copy_checks_the_finished_edit_before_replacing_the_destination() {
     use crate::commands::compress::CompressionSize;
     let scratch = Scratch::new("smaller-copy-size");
@@ -6541,7 +6556,10 @@ fn a_smaller_copy_checks_the_finished_edit_before_replacing_the_destination() {
         let writer = FakeWriter::writing(Ok(vec![42; length]));
         let measured = std::cell::Cell::new(None);
         let result = write_checked_copy(&source, &plan, &out, None, &writer, &|staged| {
-            measured.set(Some(CompressionSize::smaller(&source, staged)?));
+            measured.set(Some(CompressionSize::smaller(
+                original.len() as u64,
+                staged,
+            )?));
             Ok(())
         });
         if length < original.len() {

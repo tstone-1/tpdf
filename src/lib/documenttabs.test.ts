@@ -328,7 +328,7 @@ describe("a close whose drafts cannot be committed", () => {
     ])).toEqual([]);
     const close = withoutCommentsOf(app).slice(withoutCommentsOf(app).indexOf("onCloseRequested("));
     expect(close.slice(0, close.indexOf("void updates.checkOnLaunch();"))).toMatch(
-      /await settled;[\s\S]*await Promise\.all\(\[places\.settled\(\), tabRecorder\.settled\(\)\]\);\s*await getCurrentWindow\(\)\.destroy\(\);[\s\S]*\} catch \(e\) \{\s*say\(String\(e\)\);\s*\} finally \{ opening = false; release\(\); \}/,
+      /await settled;[\s\S]*await Promise\.all\(\[places\.settled\(\), tabRecorder\.settled\(\), favouriteWrites\.settled\(\)\]\);\s*await getCurrentWindow\(\)\.destroy\(\);[\s\S]*\} catch \(e\) \{\s*say\(String\(e\)\);\s*\} finally \{ opening = false; release\(\); \}/,
     );
   });
 });

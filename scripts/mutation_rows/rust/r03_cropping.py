@@ -1999,8 +1999,8 @@ ROWS += [
         # the half of the check that reading the code calls redundant.
         "docinfo: check only where the signed range ends, not where it starts",
         "src/docinfo.rs",
-        "        out.covers_whole_file = end == Some(size) && out.starts_at_zero;",
-        "        out.covers_whole_file = end == Some(size);",
+        "    out.covers_whole_file = pieces.is_some() && out.appended_bytes == 0;",
+        "    out.covers_whole_file = out.appended_bytes == 0;",
         "a_range_that_skips_the_start_of_the_file_is_not_whole_coverage",
     ),
     Mutation(
@@ -2165,8 +2165,8 @@ ROWS += [
         # Re-aimed 2026-10-16: the count is the length of `attachments::list`,
         # which reads the tree's `/Names` in pairs.
         "src/attachments.rs",
-        "        for pair in pairs.chunks(2) {",
-        "        for pair in pairs.chunks(1) {",
+        "            out.files.push((key, &pair[1]));",
+        "            out.files.push((key.clone(), &pair[1]));\n            out.files.push((key, &pair[1]));",
         "attachments_are_counted_as_pairs_because_a_name_tree_interleaves_them",
     ),
     Mutation(

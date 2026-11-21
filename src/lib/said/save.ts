@@ -15,6 +15,7 @@ export default {
     "Für ein importiertes Formularfeld ist keine verwendbare Darstellung vorhanden.",
   "Page {number}: the removed area could not be checked on the written page: {why}":
     "Seite {number}: Der entfernte Bereich konnte auf der gespeicherten Seite nicht geprüft werden: {why}",
+  "the source could not be verified": "Die Quelldatei konnte nicht überprüft werden",
   "the copy would not be smaller than the source": "Die Kopie wäre nicht kleiner als die Quelldatei",
   "the staged file was not measured": "Die Größe der vorbereiteten Datei wurde nicht ermittelt",
   "the document's page labels could not be remapped":

@@ -102,8 +102,7 @@ pub struct CompressionSize {
 }
 
 impl CompressionSize {
-    pub(crate) fn smaller(source: &Path, staged: &Path) -> Result<Self, String> {
-        let bytes_before = file_size(source)?;
+    pub(crate) fn smaller(bytes_before: u64, staged: &Path) -> Result<Self, String> {
         let bytes_after = file_size(staged)?;
         if bytes_after >= bytes_before {
             return Err(said!("the copy would not be smaller than the source"));
@@ -138,6 +137,11 @@ pub async fn compress_estimate(
     let service = service.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let source = Path::new(&source);
+        let bytes_before = plan
+            .opened_as
+            .as_ref()
+            .ok_or_else(|| said!("the source could not be verified"))?
+            .len;
         let mut temp = tempfile::Builder::new();
         temp.prefix("tpdf-compression-");
         #[cfg(unix)]
@@ -187,7 +191,7 @@ pub async fn compress_estimate(
         )
         .map_err(|why| why.message)?;
         Ok(Shrinkage {
-            bytes_before: file_size(source)?,
+            bytes_before,
             bytes_after: file_size(&sized)?,
             pictures: estimate.done.pictures,
             pictures_changed: estimate.done.pictures_changed,
@@ -216,6 +220,11 @@ pub async fn compress_copy(
     let writing = outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || {
         let source = Path::new(&source);
+        let bytes_before = plan
+            .opened_as
+            .as_ref()
+            .ok_or_else(|| said!("the source could not be verified"))?
+            .len;
         let size = std::cell::Cell::new(None);
         save::write_checked_copy(
             source,
@@ -224,7 +233,7 @@ pub async fn compress_copy(
             opened_with.as_deref(),
             &*writing,
             &|staged| {
-                size.set(Some(CompressionSize::smaller(source, staged)?));
+                size.set(Some(CompressionSize::smaller(bytes_before, staged)?));
                 Ok(())
             },
         )

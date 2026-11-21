@@ -1945,6 +1945,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_failed_session_read_cannot_be_published_as_a_first_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("session.json");
+        with_session(&file, |s| s.remember(place_at("seed.pdf"))).expect("first save");
+        std::fs::write(&file, b"unreadable record").unwrap();
+        assert!(with_session(&file, |s| s.invert_pages = true).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"unreadable record");
+        assert!(
+            session::Session::load(&file).places.is_empty(),
+            "startup may recover"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_existing_session_survives_a_preference_update() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.json");
+        with_session(&path, |s| s.remember(place_at("saved.pdf"))).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o200)).unwrap();
+        if std::fs::read(&path).is_ok() {
+            // A privileged test process can still read this file.
+            return;
+        }
+        assert!(with_session(&path, |s| s.invert_pages = true).is_err());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
     /// Two writers on the pool must not lose each other's edits.
     ///
     /// This is the property the main thread used to provide for free. Both

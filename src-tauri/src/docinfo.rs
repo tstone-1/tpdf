@@ -1561,7 +1561,7 @@ fn read_signature(
 
     // Every entry an integer, or nothing: the verdict must not be computed over
     // a range from which a non-integer was quietly dropped, which shifts every
-    // pair after it. The coverage rows below keep their older, lenient reading.
+    // pair after it. The byte counts below keep their older, lenient reading.
     let mut strict: Vec<i64> = Vec::new();
     if let Some(range) = sig
         .get(b"ByteRange")
@@ -1600,7 +1600,6 @@ fn read_signature(
             .and_then(|end| u64::try_from(end).ok());
         out.appended_bytes = end.map_or(0, |end| size.saturating_sub(end));
         out.starts_at_zero = numbers.first() == Some(&0);
-        out.covers_whole_file = end == Some(size) && out.starts_at_zero;
     }
 
     // A *document* timestamp is a signature whose `/Contents` is the token
@@ -1617,10 +1616,16 @@ fn read_signature(
     out.certification = certification_of(document, sig);
     out.lock = lock_of(document, field, sig);
     out.certificate = read_certificate(document, sig, limits);
-    // For a document timestamp this is the token's verdict: `integrity::check`
-    // vouches for the range and hands the token to `integrity::token`.
-    let integrity = integrity_of(document, sig, bytes, &strict, &out.kind, budget);
+    // Coverage and the cryptographic verdict use the same validated byte range.
+    let contents = sig
+        .get(b"Contents")
+        .ok()
+        .and_then(|o| resolve(document, o).as_str().ok());
+    let pieces = contents.and_then(|raw| crate::integrity::covered(bytes, &strict, raw));
+    out.covers_whole_file = pieces.is_some() && out.appended_bytes == 0;
     let blob = signature_contents(document, sig, MAX_SIG_BLOB, &mut limits.timestamps_unread);
+
+    let integrity = crate::integrity::check_pieces(pieces, blob.as_deref(), &out.kind, budget);
 
     // What this signature's own CMS carries toward revocation, and its
     // token's: the Adobe archival attribute, the `crls` sets, and both
@@ -2092,30 +2097,6 @@ fn now_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
-}
-
-/// Whether the signature still covers the bytes it was made over.
-///
-/// The blob goes through the same [`signature_contents`] the certificate
-/// reader uses, bounded the same way, so the verdict and the certificate rows
-/// are read from one preparation of one blob. Its refusals are not counted
-/// here: the certificate reader has already counted the same blob, and the
-/// verdict states its own refusal as [`crate::integrity::Why::Unreadable`].
-fn integrity_of(
-    document: &Document,
-    sig: &Dictionary,
-    bytes: &[u8],
-    range: &[i64],
-    kind: &str,
-    budget: &mut u64,
-) -> crate::integrity::Integrity {
-    let raw = sig
-        .get(b"Contents")
-        .ok()
-        .and_then(|o| resolve(document, o).as_str().ok())
-        .unwrap_or_default();
-    let blob = signature_contents(document, sig, MAX_SIG_BLOB, &mut 0);
-    crate::integrity::check(bytes, range, raw, blob.as_deref(), kind, budget)
 }
 
 /// Whether a verdict leaves anything to attribute to a signer.
@@ -4622,10 +4603,13 @@ mod tests {
         // Read against a size the range does reach, and then against one it does
         // not --- the same document, so the only thing that moved is the file
         // length the range is compared with.
+        let mut file = vec![b' '; 340];
+        file[100..109].copy_from_slice(b"<6a756e6b");
+        file[299] = b'>';
         let covering = read_signatures(
             &parse(&bytes),
             340,
-            &[],
+            &file,
             &mut Limits::default(),
             &mut 0,
             &judging(),
@@ -4633,10 +4617,11 @@ mod tests {
         assert!(covering[0].covers_whole_file);
         assert_eq!(covering[0].covered_bytes, 140);
 
+        file.resize(900, b' ');
         let short = read_signatures(
             &parse(&bytes),
             900,
-            &[],
+            &file,
             &mut Limits::default(),
             &mut 0,
             &judging(),
@@ -5254,6 +5239,7 @@ mod tests {
         let mut edited = bytes.clone();
         edited[close..close + 5].copy_from_slice(b" 1.5]");
         let read = scan(&edited, 1, None).expect("parses");
+        assert!(!read.signatures[0].covers_whole_file);
         let verdict = read.signatures[0].integrity.clone().expect("signed");
         assert_eq!(verdict.verdict, crate::integrity::Verdict::Unchecked);
         assert_eq!(verdict.why, Some(crate::integrity::Why::Range));

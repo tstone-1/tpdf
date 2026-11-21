@@ -238,10 +238,21 @@ def check_tabs(binary: str, pdf: str, scratch: Path, timeout: float) -> bool:
     ok &= report(out, code, PHASE_SIDES_VERIFY)
 
     # Last, because it deletes a file the phases above open.
+    locked = scratch / "tabs-protected.json"
+    shutil.copyfile(again, locked)
     front.unlink()
     rest = [path for path in tabs if path != front]
     code, out = launch(binary, f"tabs-verify:{tabs_argument(rest, rest[0])}", again, timeout)
     ok &= report(out, code, PHASE_TABS_MISSING)
+
+    # A protected foreground tab must not block the two ordinary tabs on launch.
+    protected = Path(__file__).resolve().parents[1] / "testdata" / "incr-encrypted-pw.pdf"
+    shutil.copyfile(protected, front)
+    code, out = launch(binary, f"tabs-verify:{tabs_argument(rest, rest[0])}", locked, timeout)
+    ok &= report(out, code, "tabs: a protected foreground tab remains available for retry")
+    retained = str(front) in json.loads(locked.read_text()).get("tabs", [])
+    print(f"{'[OK]' if retained else '[FAIL]'} protected tab retained for retry")
+    ok &= retained
     return bool(ok)
 
 

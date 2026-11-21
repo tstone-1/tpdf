@@ -240,8 +240,7 @@ impl Sink {
 /// The name the current file is rotated to.
 ///
 /// Built by appending rather than through `with_extension`, which would replace
-/// `.log` instead of adding to it --- the same reasoning, and the same shape, as
-/// `temp_beside` in `session.rs`.
+/// the original `.log` suffix.
 fn previous(path: &Path) -> PathBuf {
     let mut name = path
         .file_name()

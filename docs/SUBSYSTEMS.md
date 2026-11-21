@@ -235,7 +235,10 @@ Save/reload replaces the handle in the same tab. File writes block tab transitio
 tab closure releases its handle, and window closure checks all tabs for unsaved work.
 Foreground and background opens resolve file identity before allocating a journal.
 Reload checks the journal and live drafts again after acquiring the replacement.
-Ordinary quit waits for outstanding place and tab writes before destroying the window.
+Quit and update relaunch wait for pending reading positions, tabs and favourites.
+A missing session permits a first save. An existing session that cannot be read or
+decoded is left intact by updates. Each writer creates its own temporary file beside
+the destination before publishing the complete record.
 The strip's paths and the active tab are written to the session file on every change
 (`TabRecorder` in `src/lib/tabrestore.ts`); with *At launch: reopen all tabs* chosen,
 `launchPlan` shows the tab that was in front and `openBehind` opens the others without
@@ -596,6 +599,10 @@ Pictures are found by `drawn`, which walks page content and the blocks it draws 
 matrix at each `Do`, including the page’s `UserUnit`; `shrink` scales and re-encodes one picture and leaves it when the new
 form is not a tenth smaller. The JPEG encoder is the `image` crate's, already in the tree
 through `pdfium-render`; the decoder is `zune-jpeg`, as for `tpdf images`.
+Annotation appearance resources can use a page image at another resolution. Their images
+retain their pixel dimensions. A resized transparency mask counts as a change to every
+displayed parent and can supply the before-and-after preview. Preview DPI is taken from
+a page where the image is drawn at the measured width.
 
 The window measures a temporary copy made from the current edit plan. For a picture preview, it
 asks the worker for `Request::Shrink` on the working document, including unsaved changes. On save

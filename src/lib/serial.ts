@@ -40,6 +40,11 @@ export class Serial {
    */
   private tail: Promise<unknown> = Promise.resolve();
 
+  /** Waits for every operation already queued, including a failed one. */
+  async settled(): Promise<void> {
+    await this.tail;
+  }
+
   /**
    * Queues `body`, and resolves with its result.
    *

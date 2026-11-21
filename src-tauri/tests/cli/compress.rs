@@ -356,6 +356,28 @@ pub(super) fn writes_a_smaller_copy(report: &mut Report) {
                 ],
                 &[("KEY", "swordfish")],
             );
+            let (dry, json, _) = tool(
+                &[
+                    "compress",
+                    &locked,
+                    "--password-env",
+                    "KEY",
+                    "--dry-run",
+                    "--json",
+                ],
+                &[("KEY", "swordfish")],
+            );
+            let predicted = parsed(&json)["bytes_after"].as_u64();
+            report.check(
+                "the protected dry run measures the same bytes as the real writer",
+                dry == 0
+                    && predicted.is_some_and(|bytes| match code {
+                        0 => bytes == size(&out),
+                        3 => stderr.contains(&format!("would be {bytes} bytes")),
+                        _ => false,
+                    }),
+                &format!("dry run {json}; write {stderr}"),
+            );
             // A small fixture may not shrink; either answer has to keep the lock.
             let (without, _, _) = tool(&["text", &out], &[]);
             let (with, _, _) = tool(

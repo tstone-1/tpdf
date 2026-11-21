@@ -279,6 +279,16 @@ def remote(args: argparse.Namespace, sha: str) -> str:
                          limit=int(args.timeout), start=start)
 
 
+def prepare_clone(path: str) -> str:
+    """Remote setup uses a single shell word for the clone, including a leading ~/."""
+    if path == "~" or path.startswith("~/"):
+        clone = '"$HOME"' + shlex.quote(path[1:])
+    else:
+        clone = shlex.quote(path)
+    return (f'clone={clone}; test -d "$clone/.git" && mkdir -p "$clone-check-run" '
+            '&& rm -f "$clone-check-run/tree.bundle"')
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True)
@@ -316,7 +326,7 @@ def main() -> int:
         # `git bundle` refuses to write an empty one.
         folder = f"{args.clone}-check-run"
         # Nothing is made on the other Mac until the clone is seen to be there.
-        prepare = f'test -d {args.clone}/.git && mkdir -p {folder} && rm -f {folder}/tree.bundle'
+        prepare = prepare_clone(args.clone)
         asked = subprocess.run(["ssh", "-T", *quiet, args.host, prepare], check=False).returncode
         if asked != 0:
             print(f"[FAIL] {args.host} does not answer" if asked == 255

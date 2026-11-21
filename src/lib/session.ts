@@ -317,6 +317,9 @@ export class SessionWriter {
     );
     // A failed write must not poison the chain, or the first error stops every
     // later position from being recorded.
-    this.queue = this.queue.catch(() => undefined);
+    const issued = this.count;
+    this.queue = this.queue.catch(() => {
+      if (this.count === issued) this.written = null;
+    });
   }
 }
