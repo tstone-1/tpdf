@@ -173,7 +173,7 @@ pub(super) fn geometric(
     let drawn: Vec<[f64; 4]> = page
         .graphics
         .iter()
-        .chain(&page.form_text_bounds)
+        .chain(&page.fixed_text_bounds)
         .map(|rect| user(*rect))
         .collect();
     // The next line down that a segment is joined to, with the pitch. That is

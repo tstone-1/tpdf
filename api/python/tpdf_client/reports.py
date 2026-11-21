@@ -1343,7 +1343,12 @@ class RedactedPage(TypedDict):
     left: list[str]
 
 
-class RedactReport(TypedDict):
+class _RedactSignatureInventory(TypedDict, total=False):
+    # Older CLI versions omit this field.
+    signatures_unknown: bool
+
+
+class RedactReport(_RedactSignatureInventory):
     """`redact --json`, for a written copy and for a dry run."""
 
     schema: int

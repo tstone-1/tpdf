@@ -15,7 +15,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from tpdf_client import CommandError, CommandTimeout, ProtocolError, Tpdf
+from tpdf_client import CommandError, CommandTimeout, ProtocolError, Result, Tpdf
 
 ROOT = Path(__file__).resolve().parents[2]
 TARGET = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'src-tauri' / 'target'))
@@ -278,6 +278,17 @@ class ClientTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.pdf.mark_matches(self.source, nothing, texts=['synthetic'], **bad)
         self.assertFalse(nothing.exists())
+
+    def test_mark_matches_explains_an_older_cli_without_retrying(self):
+        error = CommandError(Result({}, 2, "invalid edit plan: unknown field `source_sha256`"))
+        output = self.root / 'marked.pdf'
+        output.write_bytes(b'previous')
+        with patch.object(self.pdf, 'edit', side_effect=error) as edit:
+            with self.assertRaisesRegex(CommandError, 'same checkout') as refused:
+                self.pdf.mark_matches(self.source, output, texts=['SYNTHETIC'])
+        edit.assert_called_once()
+        self.assertIs(refused.exception.result, error.result)
+        self.assertEqual(output.read_bytes(), b'previous')
 
     def test_mark_matches_refuses_partial_geometry(self):
         output = self.root / 'marked.pdf'

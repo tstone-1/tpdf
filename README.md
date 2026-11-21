@@ -302,8 +302,8 @@ project conventions.
   page behind them. The copy is a PNG on a transparent background, for pasting into a picture
   editor, at 600 dpi up to about 63 cm² (9.7 square inches); a larger graphic is held to
   3.5 million pixels, so a figure the size of half an A4 page comes out at about 270 dpi. The saved file is an SVG (vectors scale and embedded pictures keep their resolution), a PNG, or,
-  for a JPEG photo, the JPEG the document stores. A drawing with text or a gradient in it is
-  saved as PNG only. A click on a picture or drawing selects it, and Ctrl+C or either command
+  for a JPEG photo, the JPEG the document stores. Drawings with text, patterns, gradients, unsupported transparency or mitered stroke joins
+  can be saved as PNG when SVG cannot preserve their appearance. A click on a picture or drawing selects it, and Ctrl+C or either command
   then takes that one without a drag.
   <!-- built: edit.copyGraphic file.saveGraphic -->
 - **Copy page for PowerPoint** (Windows): the page in view goes to the clipboard as a picture
@@ -656,9 +656,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   click on the last corner finishes them. Each is a real annotation of its own kind rather than ink pretending to
   be one, so another reader gets a comment they can open and a shape they can select. What
   you have drawn can be dragged to somewhere else on its page afterwards, and a box, an
-  ellipse or a text box can be resized by its lower right corner. *Copy mark*, *Cut mark* and
-  *Paste mark* (also on a mark's right-click menu) copy marks you placed and put them on the
-  page in front, in this document or another tab. *Add a link* is dragged like a box, and
+  ellipse or a text box can be resized by its lower right corner. Right-click a mark for *Copy mark* or *Cut mark*.
+  Right-click the page for *Paste mark*, in this document or another tab. *Add a link* is dragged like a box, and
   where it goes is typed in the box that opens on it: a page number or a web address.
   *Add a picture from a file* takes a PNG or JPEG, turns a photograph upright, and places it
   by a drag at its own proportions; it can be moved, resized and copied like a mark. *Paste a
@@ -1184,7 +1183,8 @@ tpdf help redact
 tpdf redact --help
 tpdf render report.pdf --page 2 --dpi 144 -o page.png --json
 tpdf hidden released.pdf --pages 1-20 --json
-tpdf ocr scan.pdf -o searchable.pdf --language de-DE --json
+tpdf ocr scan.pdf -o searchable.pdf --language de-DE --json  # macOS or Windows
+tpdf ocr scan.pdf -o searchable.pdf --language de --json     # Linux
 NEW=... tpdf protect report.pdf -o locked.pdf --new-password-env NEW --json
 KEY=... tpdf unprotect locked.pdf -o open.pdf --password-env KEY --json
 tpdf images front.jpg back.jpg plan.png -o album.pdf --paper a4 --json
@@ -1753,7 +1753,12 @@ for change in report["changes"]:
     print(change["old_page"], change["kind"], change["removed"], "->", change["added"])
 ```
 
-`mark_matches()` searches a snapshot and writes a copy in which every match is marked.
+The PyPI client 0.1.0 works with the released CLI. Its `mark_matches()` searches the
+original path and can mark the available rectangles of a partially located match.
+For snapshot checking and complete geometry, install the client and build the CLI
+from the same checkout. Released CLIs through 26.11.11 lack the revision check.
+
+The checkout version of `mark_matches()` searches a snapshot and writes a copy in which every match is marked.
 If the source changes before the edit, the command refuses to publish the copy.
 `kind=` is `"highlight"` (the default), `"underline"`, `"strikeout"` or `"squiggly"`, and
 `color=` is red, green and blue from 0 to 1. It returns the edit report, or `None` when
@@ -1908,7 +1913,8 @@ already gave a text layer, and it gets nothing more, even where that program rea
 differently. Any other page with text is left as it is, so running the command on a mixed
 document reads only its scanned pages. `--pages 1-3,7` limits which pages are considered.
 `--language de-DE` names the language to expect, as a BCP-47 tag, and may be repeated with
-the most likely first; on Windows the first of them that is installed in Settings is
+the most likely first. The bundled Linux models use `de` for German and `en` for English.
+On Windows the first of them that is installed in Settings is
 used, and with none installed the recogniser reads with its own. A page is read at up to 300 DPI and no finer than a
 16 MB image allows, which is about 210 DPI for A4; a page too large to read at 100 DPI is
 refused by number. The recogniser can misread, and tpdf does not check its words against
@@ -2248,7 +2254,9 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `true` covers less of than usual: a page whose marked areas held no text is checked at the
   size of the smallest print left on it, and the size is named), `summary` (the sentence the
   application shows after a redaction, word for word, or `null`), `regions` (rectangles
-  marked), `removals` (runs of text and pictures they take), `signatures_invalidated`,
+  marked), `removals` (runs of text and pictures they take), `signatures_invalidated`
+  (known signatures affected by the write, or by the proposed write in a dry run),
+  `signatures_unknown` (the signature inventory is incomplete),
   `searches` — one per `--text` and `--pattern`, text first, each with `kind` (`text` or
   `pattern`), `query` and `matches` — and `pages`, each page with a match or a region: `page`
   (counted from 1), `hits` (each match starting there, as the page spells it), `regions`,

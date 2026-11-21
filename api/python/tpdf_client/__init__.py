@@ -56,13 +56,14 @@ class Result:
 class CommandError(RuntimeError):
     """A CLI refusal, failed verification, or internal failure; report is retained."""
 
-    def __init__(self, result: Result):
+    def __init__(self, result: Result, *, advice: str = ""):
         self.result = result
         self.report = result.report
         self.exit_code = result.exit_code
         error = result.report.get('error')
         message = error.get('message') if isinstance(error, dict) else None
-        super().__init__(message or result.stderr.strip() or f'tpdf exited {result.exit_code}')
+        reason = message or result.stderr.strip() or f'tpdf exited {result.exit_code}'
+        super().__init__(f'{reason}. {advice}' if advice else reason)
 
 
 class ProtocolError(RuntimeError):
@@ -646,8 +647,16 @@ class Tpdf:
                 operations.append(operation)
         if not operations:
             return None
-        return self.edit(source, output, operations, force=force, source_sha256=digest.hexdigest(),
-                         invalidate_signatures=invalidate_signatures, password=password)
+        try:
+            return self.edit(source, output, operations, force=force, source_sha256=digest.hexdigest(),
+                             invalidate_signatures=invalidate_signatures, password=password)
+        except CommandError as error:
+            if 'unknown field `source_sha256`' in str(error):
+                raise CommandError(error.result, advice=(
+                    'This CLI cannot check the source revision. Use a CLI built from the same '
+                    'checkout as the Python client.'
+                )) from error
+            raise
 
     def verify(
         self, *paths: str | os.PathLike[str], strict: bool = False, fetch_roots: bool = False

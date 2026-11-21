@@ -148,6 +148,7 @@ pub(in crate::textedit) fn read_only(doc: &Document, font: &Dictionary) -> Optio
     Some(Metrics {
         restricted: false,
         opaque: None,
+        painted_space: true,
         unicode: None,
         vertical_bounds: Some([bottom.min(0.), top.max(0.)]),
         widths: Box::new([None; 256]),
@@ -274,6 +275,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         return Ok(Metrics {
             restricted: false,
             opaque: None,
+            painted_space: unicode.painted_space,
             unicode: Some(unicode),
             vertical_bounds: Some(vertical_bounds),
             widths: Box::new([None; 256]),
@@ -294,6 +296,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         return Ok(Metrics {
             restricted: false,
             opaque: None,
+            painted_space: unicode.painted_space,
             unicode: Some(unicode),
             vertical_bounds: Some(vertical_bounds),
             widths: Box::new([None; 256]),
@@ -314,6 +317,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             return Ok(Metrics {
                 restricted: false,
                 opaque: None,
+                painted_space: unicode.painted_space,
                 unicode: Some(unicode),
                 vertical_bounds: Some(vertical_bounds),
                 widths: Box::new([None; 256]),
@@ -325,6 +329,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     };
     let unit = 1000. / f64::from(face.units_per_em());
     let mut result = Box::new([None; 256]);
+    let mut painted_space = false;
     let mut vertical_bounds = [0_f64; 2];
     let mut horizontal_overhangs = Box::new([[0_f64; 2]; 256]);
     for (&code, &ch) in &codes {
@@ -351,6 +356,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             {
                 vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);
                 vertical_bounds[1] = vertical_bounds[1].max(top * unit);
+                painted_space |= ch == b' ';
                 horizontal_overhangs[ch as usize] = [
                     (left * unit).min(0.),
                     (right * unit - width).max(0.),
@@ -364,6 +370,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     Ok(Metrics {
         restricted: false,
         opaque: None,
+        painted_space,
         unicode: None,
         vertical_bounds: Some(vertical_bounds),
         widths: result,

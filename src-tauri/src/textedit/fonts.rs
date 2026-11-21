@@ -133,6 +133,8 @@ pub(super) struct Opaque {
 }
 
 pub(super) struct Metrics {
+    /// A glyph decoded as a space has ink (or its outline is unavailable).
+    pub(super) painted_space: bool,
     unicode: Option<unicode::Metrics>,
     // Union of all offered glyphs, in thousandths of an em, including baseline.
     // Any width-fitting replacement is therefore covered by the same envelope.
@@ -250,6 +252,7 @@ impl Metrics {
         Self {
             restricted: false,
             opaque: None,
+            painted_space: false,
             unicode: None,
             vertical_bounds: None,
             widths,
@@ -843,6 +846,7 @@ pub(super) fn unembedded(doc: &Document, font: &Dictionary) -> Result<Metrics, S
     Ok(Metrics {
         restricted: false,
         opaque: None,
+        painted_space: true,
         unicode: None,
         vertical_bounds: Some([bottom.min(0.), top.max(0.)]),
         widths: result,
@@ -925,6 +929,7 @@ fn opaque_metrics(opaque: Box<[Option<Opaque>; 256]>, bottom: f64, top: f64) -> 
     Metrics {
         restricted: false,
         opaque: Some(opaque),
+        painted_space: true,
         unicode: None,
         vertical_bounds: Some([bottom.min(0.), top.max(0.)]),
         widths: Box::new([None; 256]),
@@ -1119,6 +1124,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     }
     let unit = 1000. / f64::from(face.units_per_em());
     let mut result = Box::new([None; 256]);
+    let mut painted_space = false;
     let mut vertical_bounds = [0_f64; 2];
     let mut horizontal_overhangs = Box::new([[0_f64; 2]; 256]);
     // MacRoman shares only ASCII codes; WinAnsi, with or without ToUnicode,
@@ -1219,6 +1225,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
             {
                 vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);
                 vertical_bounds[1] = vertical_bounds[1].max(top * unit);
+                painted_space |= byte == b' ';
                 horizontal_overhangs[byte as usize] =
                     [(left * unit).min(0.), (right * unit - width).max(0.)];
             }
@@ -1230,6 +1237,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     Ok(Metrics {
         restricted: false,
         opaque: kept.contains(&true).then_some(opaque),
+        painted_space,
         unicode: None,
         vertical_bounds: Some(vertical_bounds),
         widths: result,

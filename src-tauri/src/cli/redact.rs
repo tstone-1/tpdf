@@ -669,18 +669,6 @@ pub fn still_found(found: &Found, queries: &[(SearchKind, String, Prepared)]) ->
         .collect()
 }
 
-fn discard(output: &std::path::Path, err: &mut dyn Write, program: &str) {
-    if let Err(e) = std::fs::remove_file(output) {
-        say(
-            err,
-            &format!(
-                "{program}: {} could not be removed ({e}); it is not a redacted copy to rely on",
-                output.display()
-            ),
-        );
-    }
-}
-
 /// The report's pages: every page with a hit or a region, in page order.
 fn report_pages(
     found: &Found,
@@ -732,6 +720,7 @@ struct Draft {
     output: Option<String>,
     dry_run: bool,
     signatures: usize,
+    signatures_unknown: bool,
     searches: Vec<report::Search>,
     pages: Vec<RedactedPage>,
     regions: usize,
@@ -759,11 +748,12 @@ impl Draft {
             summary,
             regions: self.regions,
             removals: self.removals,
-            signatures_invalidated: if written || self.dry_run {
+            signatures_invalidated: if written || (self.dry_run && self.regions > 0) {
                 self.signatures
             } else {
                 0
             },
+            signatures_unknown: self.signatures_unknown,
             searches: self.searches,
             pages: self.pages,
         }
@@ -816,20 +806,28 @@ pub fn plain(report: &report::Redacted) -> String {
         }
     }
     if report.signatures_invalidated > 0 {
-        lines.push(format!(
-            "The input's {} signature{} no longer cover{} the written copy.",
-            report.signatures_invalidated,
-            if report.signatures_invalidated == 1 {
-                ""
-            } else {
-                "s"
-            },
-            if report.signatures_invalidated == 1 {
-                "s"
-            } else {
-                ""
-            },
-        ));
+        let count = report.signatures_invalidated;
+        let noun = if count == 1 {
+            "signature"
+        } else {
+            "signatures"
+        };
+        let effect = if report.dry_run {
+            "would no longer cover the copy"
+        } else if count == 1 {
+            "no longer covers the written copy"
+        } else {
+            "no longer cover the written copy"
+        };
+        let known = if report.signatures_unknown {
+            "known "
+        } else {
+            ""
+        };
+        lines.push(format!("The input's {count} {known}{noun} {effect}."));
+    }
+    if report.signatures_unknown {
+        lines.push("The input's signatures could not all be counted.".into());
     }
     match (&report.summary, report.dry_run, report.regions) {
         (Some(summary), _, _) => lines.push(summary.clone()),
@@ -932,9 +930,12 @@ fn run_redact(
 
     // Signatures, by the window's rule: a document whose status could not be
     // read is treated as signed, never as unsigned.
-    let state = match wait(|reply| service.properties(doc, reply)) {
-        Ok(properties) => signed_state(&properties),
-        Err(_) => Some(SignedState::Unknown),
+    let (state, signatures_unknown) = match wait(|reply| service.properties(doc, reply)) {
+        Ok(properties) => (
+            signed_state(&properties),
+            super::fill::signatures_unknown(&properties),
+        ),
+        Err(_) => (Some(SignedState::Unknown), true),
     };
     if let Some(why) = signed_refusal(&shown, state, command.invalidate_signatures) {
         return Err(Failure::new(Exit::Refused, why));
@@ -1020,6 +1021,7 @@ fn run_redact(
         output: command.output.as_ref().map(|o| o.display().to_string()),
         dry_run: command.dry_run,
         signatures,
+        signatures_unknown,
         searches,
         pages: report_pages(&found, &counts, &[]),
         regions: regions_total,
@@ -1080,37 +1082,46 @@ fn run_redact(
         search_back(&service, path, key, &pages, &queries)
     };
     let asked_notes = asked.notes.clone();
-    let written = tauri::async_runtime::block_on(redact_copy_asked(
-        &service,
-        env.library_dir.clone(),
-        doc,
-        asked,
-        command.input.display().to_string(),
-        output.display().to_string(),
-        Some(&read_back),
-    ));
-    let applied = match written {
-        Ok(applied) => applied,
-        Err(Stopped::Refused(why)) => {
-            return Err(Failure::new(Exit::Refused, format!("{shown}: {why}")))
-        }
-        Err(Stopped::Failed { message, written }) => {
-            if written {
-                discard(&output, err, &env.program);
-            }
-            return Err(Failure::new(
-                Exit::Internal,
-                format!("{message}; nothing was kept"),
-            ));
-        }
-    };
-    if applied.changed {
-        discard(&output, err, &env.program);
-        return Err(Failure::new(
+    let mut inputs = vec![command.input.clone()];
+    inputs.extend(
+        command
+            .regions
+            .iter()
+            .filter(|r| r.as_path() != Path::new("-"))
+            .cloned(),
+    );
+    let opened_as = asked.plan.opened_as.clone().ok_or_else(|| {
+        Failure::new(
             Exit::Refused,
-            format!("{shown} changed while it was being redacted, so the copy was not kept"),
-        ));
-    }
+            "could not verify the original file before publication",
+        )
+    })?;
+    let applied = super::pages::publish_copy(
+        &inputs,
+        &[(&command.input, &opened_as)],
+        &output,
+        command.force,
+        |staged| {
+            let staged = staged.to_str().ok_or_else(|| {
+                Failure::new(Exit::Refused, "the output directory is not a UTF-8 path")
+            })?;
+            let applied = tauri::async_runtime::block_on(redact_copy_asked(
+                &service,
+                env.library_dir.clone(),
+                doc,
+                asked,
+                shown.clone(),
+                staged.to_owned(),
+                Some(&read_back),
+            ))
+            .map_err(|stop| match stop {
+                Stopped::Refused(why) => Failure::new(Exit::Refused, format!("{shown}: {why}")),
+                Stopped::Failed { message, .. } => Failure::new(Exit::Internal, message),
+            })?;
+            Ok((applied.changed, applied))
+        },
+        |_, applied| Ok(applied),
+    )?;
     let (verified, why, exit) = outcome(applied.why, unmarked);
     // A note about how small the print is that was vouched for qualifies a
     // clean verdict; with a reason from this side as well the verdict is not

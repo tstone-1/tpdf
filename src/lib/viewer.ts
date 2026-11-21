@@ -6550,6 +6550,8 @@ export class Viewer {
       .then(() => {}).finally(() => { this.settlingNotes = null; });
   }
 
+  saveOpenMarkDraft(): Promise<void> { return this.markNote.saveDraft(); }
+
   get hasNoteDraft(): boolean { return this.markNote.hasDraft || this.popup.hasDraft; }
 
   /** Closes the note editor, committing what was typed in it. */

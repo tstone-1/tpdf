@@ -441,6 +441,7 @@ fn redacted(dry_run: bool, written: bool, verified: Option<bool>) -> report::Red
         regions: 0,
         removals: 0,
         signatures_invalidated: 0,
+        signatures_unknown: false,
         searches: Vec::new(),
         pages: Vec::new(),
     }
@@ -487,6 +488,21 @@ fn nothing_matched_over_an_existing_forced_output_says_the_file_is_not_this_runs
         None
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_dry_run_qualifies_an_incomplete_signature_inventory() {
+    let mut report = redacted(true, false, None);
+    report.signatures_invalidated = 1;
+    report.signatures_unknown = true;
+    let message = plain(&report);
+    assert!(message.contains("would no longer cover"));
+    assert!(message.contains("could not all be counted"));
+    assert!(!message.contains("the written copy"));
+    report.signatures_invalidated = 0;
+    assert!(plain(&report).contains("could not all be counted"));
+    report.signatures_unknown = false;
+    assert!(!plain(&report).contains("could not all be counted"));
 }
 
 #[test]
@@ -563,6 +579,7 @@ pub(super) fn redact_samples() -> (report::Redacted, report::Redacted) {
         regions: 3,
         removals: 3,
         signatures_invalidated: 1,
+        signatures_unknown: false,
         searches: searches.clone(),
         pages: pages.clone(),
     };
@@ -572,7 +589,6 @@ pub(super) fn redact_samples() -> (report::Redacted, report::Redacted) {
         written: false,
         verified: None,
         summary: None,
-        signatures_invalidated: 0,
         ..written.clone()
     };
     (written, dry)

@@ -179,6 +179,8 @@ pub(super) struct Word {
     /// space and any kerns beside it. Empty for the first word.
     pub before: Vec<Object>,
     pub items: Vec<Object>,
+    /// Source ink and hit bounds in text space, relative to this word's origin.
+    pub bounds: [f64; 4],
     pub from: f64,
     pub to: f64,
 }
@@ -198,6 +200,12 @@ pub(super) fn words(
 ) -> Option<Vec<Word>> {
     let atoms = atoms(values, metrics)?;
     let space = |atom: &Atom<'_>| atom.text() == " ";
+    if atoms
+        .windows(2)
+        .any(|pair| space(&pair[0]) && space(&pair[1]))
+    {
+        return None;
+    }
     let advance = |end: usize| -> Option<f64> {
         if end == 0 {
             return Some(0.);
@@ -210,6 +218,9 @@ pub(super) fn words(
                 .1,
         )
     };
+    let [bottom, top] = metrics.vertical_bounds.unwrap_or([0.; 2]);
+    let bottom = size * (-0.25_f64).min(bottom / 1000.);
+    let top = size * 1_f64.max(top / 1000.);
     let mut words = Vec::new();
     let mut previous_last = None;
     let mut index = 0;
@@ -227,9 +238,6 @@ pub(super) fn words(
             .filter(|at| matches!(atoms[*at], Atom::Glyph(..)))
             .collect();
         let (&first, &last) = (glyphs.first()?, glyphs.last()?);
-        if index < atoms.len() && index + 1 < atoms.len() && space(&atoms[index + 1]) {
-            return None;
-        }
         let mut before = Vec::new();
         if let Some(previous) = previous_last {
             emit(&atoms[previous + 1..first], &mut before);
@@ -244,6 +252,7 @@ pub(super) fn words(
         }
         words.push(Word {
             before,
+            bounds: [read.2[0], bottom, read.2[1], top],
             items,
             from: advance(first)?,
             to: advance(last + 1)?,

@@ -363,6 +363,11 @@ async function checkSplitDrafts(host: OpenCheckHost, path: string): Promise<void
   await otherSide("right");
   check("the refused right-hand draft is still editable on return",
     host.viewer()?.markNoteField === right && right.isConnected && right.value === "Right α" && !right.readOnly);
+  const partner = host.tabs().find(tab => tab.id !== host.edits()?.doc)!;
+  host.run("file.compareWith", name(partner.path).replace(/\.pdf$/i, ""));
+  await host.idle(); await host.openings(); await host.idle();
+  check("comparison stops when a visible pane refuses its draft",
+    !host.viewer()?.differenceMarks && !host.beside()?.differenceMarks && right.value === "Right α");
   right.value = "Corrected right";
   right.dispatchEvent(new Event("input", { bubbles: true }));
   host.run("file.save");
@@ -375,6 +380,12 @@ async function checkSplitDrafts(host: OpenCheckHost, path: string): Promise<void
   await otherSide("left");
   const left = await editNote("Keep β");
   await otherSide("right");
+  const panels = host.saveSuggestions().length;
+  host.answerSave(""); // Cancel at the picker after settling only the active PDF.
+  host.run("file.saveCopy");
+  await host.idle();
+  check("Save a Copy reaches its picker with a refused draft in the other PDF",
+    host.saveSuggestions().length === panels + 1 && left.value === "Keep β");
   host.run("file.save");
   await host.idle();
   const reopened = host.edits()!.doc;

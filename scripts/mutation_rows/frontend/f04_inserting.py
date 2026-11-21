@@ -2007,8 +2007,8 @@ ROWS += [
 # `App.svelte`, read as source because nothing imports that file.
 ROWS += [
     Mutation("start page: cut a folder at a forward slash only", "src/lib/startpage.ts",
-        '  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\\\"));',
-        '  const cut = path.lastIndexOf("/");',
+        '  const leaf = path.split(pathSeparators(path)).at(-1) ?? "";',
+        '  const leaf = path.split("/").at(-1) ?? "";',
         "is everything before the last separator, of either kind"),
     Mutation("start page: name the root of a POSIX path as nothing", "src/lib/startpage.ts",
         '  if (folder === "" || /^[A-Za-z]:$/.test(folder)) return path.slice(0, cut + 1);',

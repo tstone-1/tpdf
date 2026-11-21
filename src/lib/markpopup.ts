@@ -536,6 +536,22 @@ export class MarkPopup {
   async settleDraft(restoreFocus = true): Promise<void> {
     const mark = this.shown;
     if (mark === null) return;
+    await this.saveDraft();
+    if (this.shown === mark) this.opts.onClose(restoreFocus);
+  }
+
+  private saving: Promise<void> | null = null;
+
+  /** Submit once and keep this subject selected for a clipboard operation. */
+  saveDraft(): Promise<void> {
+    if (!this.hasDraft) return this.saving ?? Promise.resolve();
+    if (this.saving) return this.saving.then(() => this.saveDraft());
+    return this.saving = this.writeDraft().finally(() => { this.saving = null; });
+  }
+
+  private async writeDraft(): Promise<void> {
+    const mark = this.shown;
+    if (mark === null) return;
     const words = this.input.value;
     const before = this.was;
     if (words !== before) {
@@ -548,7 +564,6 @@ export class MarkPopup {
         }
       });
     }
-    if (this.shown === mark) this.opts.onClose(restoreFocus);
   }
 
   /** Moves the popup to a new anchor, without rebuilding it. See `popup.ts`. */

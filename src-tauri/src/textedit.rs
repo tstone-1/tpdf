@@ -379,22 +379,12 @@ fn dictionary<'a>(doc: &'a Document, value: &'a Object) -> Result<&'a Dictionary
 }
 
 fn resources(doc: &Document, page: ObjectId) -> Result<&Dictionary, String> {
-    let mut id = page;
-    let mut seen = BTreeSet::new();
-    for _ in 0..64 {
-        if !seen.insert(id) {
-            break;
-        }
-        let node = doc.get_dictionary(id).map_err(|e| e.to_string())?;
-        if let Ok(value) = node.get(b"Resources") {
-            return dictionary(doc, value);
-        }
-        id = node
-            .get(b"Parent")
-            .and_then(Object::as_reference)
-            .map_err(|e| e.to_string())?;
-    }
-    Err(said!("text resource inheritance exceeds its limit"))
+    crate::pagetree::resources(doc, page)
+        .map_err(|error| match error {
+            lopdf::Error::ReferenceLimit => said!("text resource inheritance exceeds its limit"),
+            _ => said!("invalid text resources"),
+        })?
+        .ok_or_else(|| said!("invalid text resources"))
 }
 
 // A layer named in the page's Properties resource: an optional content group
@@ -760,7 +750,8 @@ struct Inspection {
     // Validated non-diagonal text is preserved byte-for-byte. It supplies
     // collision bounds but never an editable operator address.
     preserved: Vec<Run>,
-    form_text_bounds: Vec<[f32; 4]>,
+    // Text inside fixed forms and ink painted by ActualText separators.
+    fixed_text_bounds: Vec<[f32; 4]>,
     /// Everything the page paints that is not text: a painted rectangle, a
     /// painted path, an image, and a preserved form's whole BBox, in the
     /// original displayed page.
@@ -1137,7 +1128,7 @@ fn inspect_pinning(
         patched: BTreeSet::new(),
         runs: found.runs,
         preserved: found.preserved,
-        form_text_bounds: found.form_text_bounds,
+        fixed_text_bounds: found.fixed_text_bounds,
         graphics: found.graphics,
         paths: found.paths,
         actual_text: BTreeMap::new(),

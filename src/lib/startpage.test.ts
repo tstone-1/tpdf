@@ -87,6 +87,7 @@ describe("folderOf", () => {
   });
 
   it("names a root by its separator", () => {
+    expect(folderOf("/work/2026\\report.pdf")).toBe("/work");
     expect(folderOf("/report.pdf")).toBe("/");
     expect(folderOf("C:\\report.pdf")).toBe("C:\\");
     expect(folderOf("C:/report.pdf")).toBe("C:/");

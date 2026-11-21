@@ -35,11 +35,11 @@ ROWS = [
         "says the tabs a launch could not open through it"),
     # --- the document tasks settle the drafts -----------------------------------------
     Mutation("drafts: print builds its job without the answer in the field", "src/App.svelte",
-        "        await settleDrafts();\n        // macOS's print panel draws the job itself.",
+        "        await settleDrafts(edits);\n        // macOS's print panel draws the job itself.",
         "        // macOS's print panel draws the job itself.",
         "settle the drafts before their first wait"),
     Mutation("drafts: Save a copy settles after its panel", "src/App.svelte",
-        "        await settleDrafts();\n        const chosen = await saveDialog({\n          title: TEXT().saveCopy,",
+        "        await settleDrafts(edits);\n        const chosen = await saveDialog({\n          title: TEXT().saveCopy,",
         "        const chosen = await saveDialog({\n          title: TEXT().saveCopy,",
         "settle the drafts before their first wait"),
     # --- documentopen.ts: a write's reopen, and what is busy --------------------------

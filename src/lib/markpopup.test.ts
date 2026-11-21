@@ -49,11 +49,11 @@ describe("MarkPopup", () => {
     dom.restore();
   });
 
-  function popup(): MarkPopup {
+  function popup(onNote: (id: number, note: string) => unknown = (id, note) => sent.push(`note:${id}:${note}`)): MarkPopup {
     dom.root.clientWidth = 900;
     dom.root.clientHeight = 700;
     return new MarkPopup(dom.root as unknown as HTMLElement, {
-      onNote: (id, note) => sent.push(`note:${id}:${note}`),
+      onNote,
       onRecolor: (id, color) => sent.push(`color:${id}:${color.join(",")}`),
       onRemove: (id) => sent.push(`remove:${id}`),
       onClose: () => {
@@ -66,6 +66,18 @@ describe("MarkPopup", () => {
       onDraft: (id, note) => drafts.push(`${id}:${note}`),
     });
   }
+
+  it("keeps a refused clipboard draft open for retry", async () => {
+    let answer: string | undefined = "note refused";
+    const note = popup(() => answer);
+    note.show(mark({ id: 7, kind: "textbox" }), anchor(), false);
+    note.field.value = "still typing";
+    await expect(note.saveDraft()).rejects.toThrow("note refused");
+    expect([note.openId, note.text, note.hasDraft]).toEqual([7, "still typing", true]);
+    answer = undefined;
+    await note.saveDraft();
+    expect([note.openId, note.text, note.hasDraft]).toEqual([7, "still typing", false]);
+  });
 
   /**
    * The box a reader types in.

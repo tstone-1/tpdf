@@ -41,7 +41,7 @@ pub(super) fn settle(page: &mut Inspection, turned: bool) {
                 .chain(&page.preserved)
                 .filter(|other| other.operator != run.operator && !other.text.trim().is_empty())
                 .map(|other| &other.display_rect)
-                .chain(&page.form_text_bounds)
+                .chain(&page.fixed_text_bounds)
                 .any(|other| beside(run, other, cross))
         })
         .map(|run| run.operator)

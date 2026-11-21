@@ -15,6 +15,7 @@ pub(super) struct Glyph {
 }
 
 pub(super) struct Metrics {
+    pub(super) painted_space: bool,
     codes: BTreeMap<u16, String>,
     glyphs: BTreeMap<u16, (f64, [f64; 2])>,
     reverse: BTreeMap<String, u16>,
@@ -117,6 +118,7 @@ impl Metrics {
         let mut identities = BTreeMap::new();
         let mut opaque = BTreeSet::new();
         let mut vertical = [0_f64; 2];
+        let mut painted_space = false;
         let reach = super::type1::OPAQUE_REACH;
         for (&code, text) in &codes {
             let Some(Glyph {
@@ -181,6 +183,7 @@ impl Metrics {
                 }
                 _ => continue,
             };
+            painted_space |= ink.is_some() && text.bytes().all(|ch| ch == b' ');
             glyphs.insert(code, (width, bounds));
             if !opaque.contains(&code) {
                 identities.insert(code, (id, width.to_bits()));
@@ -195,6 +198,7 @@ impl Metrics {
                 ambiguous,
                 identities,
                 opaque,
+                painted_space,
                 single_byte: false,
             },
             vertical,
@@ -265,6 +269,7 @@ impl Metrics {
             ambiguous,
             identities,
             opaque: BTreeSet::new(),
+            painted_space: false,
             single_byte: true,
         }
     }

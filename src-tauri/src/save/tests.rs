@@ -7292,6 +7292,10 @@ fn a_document_from_pictures_is_not_written_over_one_of_them_or_from_none() {
         why.message
     );
 
+    let missing = vec![scratch.join("missing.png"); 501];
+    let why = write_images(&missing, &out, options, &Here).unwrap_err();
+    assert!(why.message.contains("at most 500"), "{}", why.message);
+
     // A file that is not a picture stops the whole document, and nothing is
     // left where it was going.
     let notes = scratch.join("notes.txt");

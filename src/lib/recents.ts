@@ -41,12 +41,17 @@ export function recentCommandId(index: number): string {
  */
 export const RECENT_PREFIX = "file.recent.";
 
+/** Absolute POSIX names may contain literal backslashes. */
+export function pathSeparators(path: string): RegExp {
+  return path.startsWith("/") ? /\/+/ : /[\\/]+/;
+}
+
 /** A path split into its segments, with the separator it was written with. */
 function split(path: string): { segments: string[]; separator: string } {
   // An absolute POSIX path can contain a literal backslash. Drive-letter and
   // backslash UNC paths accept either separator, regardless of the host OS.
   const separator = path.includes("\\") && !path.includes("/") ? "\\" : "/";
-  return { segments: path.split(path.startsWith("/") ? /\/+/ : /[\\/]+/).filter(Boolean), separator };
+  return { segments: path.split(pathSeparators(path)).filter(Boolean), separator };
 }
 
 /** The last `depth` segments of a path, joined as they were written. */

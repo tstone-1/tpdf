@@ -657,6 +657,11 @@ mod tests {
     #[test]
     fn an_asked_language_is_read_alone() {
         let offered = vec!["en".to_string(), "de".to_string()];
+        assert_eq!(codes_for(&["de".into()], &offered), Ok("deu".into()));
+        assert!(matches!(
+            codes_for(&["de-DE".into()], &offered),
+            Err(RecogniseError::Unavailable(_))
+        ));
         assert_eq!(codes_for(&["DE".into()], &offered), Ok("deu".into()));
         assert_eq!(
             codes_for(&["fr".into(), "en".into()], &offered),

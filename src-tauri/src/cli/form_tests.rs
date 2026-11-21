@@ -549,6 +549,18 @@ fn a_signed_or_certified_document_or_one_whose_signatures_were_not_all_read_is_r
         field: "Waiting".into(),
         ..Signature::default()
     };
+    let partial = with(
+        vec![signed.clone()],
+        Limits {
+            unreadable: 1,
+            ..Limits::default()
+        },
+    );
+    assert_eq!(
+        super::fill::signed_state(&partial),
+        Some(super::fill::SignedState::Signed(1))
+    );
+    assert!(super::fill::signatures_unknown(&partial));
     for (properties, refused) in [
         (with(vec![signed], Limits::default()), true),
         (with(vec![certifying], Limits::default()), true),

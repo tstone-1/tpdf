@@ -2187,7 +2187,7 @@ ROWS += [
         # The count is the bound on how long one request runs.
         'images: take any number of pictures',
         'src/imagepages.rs',
-        '    if images.len() > MAX_IMAGES {',
+        '    if count > MAX_IMAGES {',
         '    if false {',
         'a_picture_that_cannot_be_used_is_named_and_stops_the_document',
     ),

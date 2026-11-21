@@ -1008,6 +1008,7 @@ impl Request {
                 | Self::Text { .. }
                 | Self::Search { .. }
                 | Self::Content { .. }
+                | Self::Graphic(_)
                 | Self::PageCopy { .. }
         )
     }

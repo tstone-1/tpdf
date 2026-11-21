@@ -460,6 +460,7 @@ fn measured(
     let mut result = Box::new([None; 256]);
     let mut slot_names: [Option<&[u8]>; 256] = [None; 256];
     let mut codes = Box::new([None; 256]);
+    let mut painted_space = false;
     let mut vertical_bounds = [0_f64; 2];
     let mut overhangs = Box::new([[0_f64; 2]; 256]);
     let mut opaque = Box::new([None; 256]);
@@ -527,6 +528,7 @@ fn measured(
                     slot_names[slot as usize] = Some(name);
                     result[slot as usize] = Some(width);
                     if let Some([left, _, right, _]) = glyph.bounds {
+                        painted_space |= slot == b' ';
                         overhangs[slot as usize] = [left.min(0.), (right - width).max(0.)];
                     }
                     codes[code] = Some(slot);
@@ -564,6 +566,7 @@ fn measured(
     Ok(Metrics {
         restricted: false,
         opaque: Some(opaque),
+        painted_space,
         unicode: None,
         widths: result,
         codes: Some(Codes::Single(codes)),

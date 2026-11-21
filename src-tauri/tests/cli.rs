@@ -152,6 +152,18 @@ mod redact;
 #[path = "../src/integrity/test_tsa.rs"]
 mod test_tsa;
 
+/// Waits for one render service reply, with a bounded failure for a lost reply.
+fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
+    call: impl FnOnce(Box<dyn FnOnce(Result<T, E>) + Send>),
+) -> Result<T, E> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    call(Box::new(move |result| {
+        let _ = tx.send(result);
+    }));
+    rx.recv_timeout(std::time::Duration::from_secs(120))
+        .unwrap_or_else(|_| Err(E::from("the render service did not answer".to_string())))
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     // `redact` runs the OCR gate, whose engine is this binary re-executed with

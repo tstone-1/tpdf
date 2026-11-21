@@ -57,18 +57,35 @@ const INHERITABLE: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate
 /// grandparent's. The difference is only reachable on a document that states
 /// `/Rotate (ninety)`, and answering upright is the safer of the two.
 pub(crate) fn inherited(doc: &Document, page: ObjectId, key: &[u8]) -> Option<Object> {
+    inherited_value(doc, page, key).ok().flatten().cloned()
+}
+
+/// Borrow the effective resources without cloning a dictionary (which may
+/// contain direct streams). A missing resource dictionary is valid on a page
+/// drawn entirely with the built-in graphics operators.
+pub(crate) fn resources(doc: &Document, page: ObjectId) -> lopdf::Result<Option<&Dictionary>> {
+    inherited_value(doc, page, b"Resources")?
+        .map(|value| doc.dereference(value)?.1.as_dict())
+        .transpose()
+}
+
+fn inherited_value<'a>(
+    doc: &'a Document,
+    page: ObjectId,
+    key: &[u8],
+) -> lopdf::Result<Option<&'a Object>> {
     let mut at = page;
     for _ in 0..MAX_PARENTS {
-        let dictionary = doc.get_object(at).and_then(Object::as_dict).ok()?;
-        if let Ok(value) = dictionary.get(key) {
-            return Some(value.clone());
+        let node = doc.get_dictionary(at)?;
+        if let Ok(value) = node.get(key) {
+            return Ok(Some(value));
         }
-        at = dictionary
-            .get(b"Parent")
-            .and_then(Object::as_reference)
-            .ok()?;
+        let Ok(parent) = node.get(b"Parent") else {
+            return Ok(None);
+        };
+        at = parent.as_reference()?;
     }
-    None
+    Err(lopdf::Error::ReferenceLimit)
 }
 
 /// Every page's quarter-turns, in page order.

@@ -55,6 +55,41 @@ use std::collections::HashMap;
 /// there on.
 pub const MAX_WORDS: usize = 2_000_000;
 
+/// Maximum extracted characters per document, including whitespace.
+pub const MAX_CHARACTERS: usize = 16_000_000;
+
+/// Tokenized pages accumulated as the worker reads them. Plain CLI output
+/// can release each page's character boxes immediately.
+#[derive(Default)]
+pub(crate) struct ComparisonInput {
+    words: Vec<Word>,
+    pages: Pages,
+    characters: usize,
+}
+
+impl ComparisonInput {
+    pub(crate) fn add(&mut self, page: u32, codes: &[u32], which: &str) -> Result<(), String> {
+        if codes.len() > MAX_CHARACTERS - self.characters {
+            return Err(said!(
+                "the {which} document exceeds the character limit for comparison"
+            ));
+        }
+        self.characters += codes.len();
+        let before = self.words.len();
+        append_words(&mut self.words, page, codes, which)?;
+        self.pages.position.insert(page, self.pages.count);
+        if self.words.len() == before {
+            self.pages.unread.push((self.pages.count, page));
+        }
+        self.pages.count += 1;
+        Ok(())
+    }
+
+    pub(crate) fn page_count(&self) -> usize {
+        self.pages.count
+    }
+}
+
 /// The most changes one comparison reports.
 ///
 /// Past this the documents are not two versions of one text in any sense a
@@ -195,15 +230,26 @@ pub struct Comparison {
 ///
 /// A side with more than [`MAX_WORDS`] words, as one sentence.
 pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, String> {
-    let left_words = words(left, "first")?;
-    let right_words = words(right, "second")?;
-    let left_pages = Pages::new(left, &left_words);
-    let right_pages = Pages::new(right, &right_words);
+    let collect = |pages: &[PageCodes], which: &str| {
+        let mut input = ComparisonInput::default();
+        for page in pages {
+            input.add(page.page, &page.codes, which)?;
+        }
+        Ok::<_, String>(input)
+    };
+    Ok(compare_inputs(
+        &collect(left, "first")?,
+        &collect(right, "second")?,
+    ))
+}
 
+pub(crate) fn compare_inputs(left: &ComparisonInput, right: &ComparisonInput) -> Comparison {
+    let left_words = &left.words;
+    let right_words = &right.words;
     // Interned, so the diff compares integers and the table holds `u32`.
     let mut ids: HashMap<&str, u32> = HashMap::new();
-    let a = intern(&mut ids, &left_words);
-    let b = intern(&mut ids, &right_words);
+    let a = intern(&mut ids, left_words);
+    let b = intern(&mut ids, right_words);
 
     let mut aligner = Aligner {
         a: &a,
@@ -237,28 +283,57 @@ pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, St
         // Words with no match, where the other side has a page with no text
         // in the same place, may be on that page: they are not compared, and
         // listing them as removed or added would say something nobody read.
-        let facing_unread = (pa > ai && right_pages.unread_between(&right_words, bi, pb))
-            || (pb > bi && left_pages.unread_between(&left_words, ai, pa));
-        if facing_unread {
-            left_unread += pa - ai;
-            right_unread += pb - bi;
-        } else if pa > ai || pb > bi {
-            removed_words += pa - ai;
-            added_words += pb - bi;
-            if fallback_starts.binary_search(&ai).is_ok() {
-                unaligned += 1;
-            }
+        let mut removed = ai..pa;
+        let mut added = bi..pb;
+        if !removed.is_empty() && right.pages.unread_between(right_words, bi, pb) {
+            left_unread += removed.len();
+            removed.end = ai;
+        }
+        if !added.is_empty() && left.pages.unread_between(left_words, ai, pa) {
+            right_unread += added.len();
+            added.end = bi;
+        }
+        let fallback = fallback_starts.binary_search(&ai).is_ok();
+        let mut record = |removed: std::ops::Range<usize>, added: std::ops::Range<usize>| {
+            removed_words += removed.len();
+            added_words += added.len();
+            let before = if removed.start == ai && added.start == bi {
+                previous_run
+            } else {
+                0
+            };
+            let after = if (removed.is_empty() || removed.end == pa)
+                && (added.is_empty() || added.end == pb)
+            {
+                run.len()
+            } else {
+                0
+            };
             total += 1;
             if changes.len() < MAX_CHANGES {
                 changes.push(change(
-                    &left_words,
-                    ai..pa,
-                    &right_words,
-                    bi..pb,
-                    previous_run,
-                    run.len(),
+                    left_words,
+                    removed,
+                    right_words,
+                    added,
+                    ai - before.min(CONTEXT_WORDS)..ai,
+                    pa..pa + after.min(CONTEXT_WORDS),
                 ));
             }
+        };
+        if fallback && removed.is_empty() && !added.is_empty() && ai < pa {
+            excess_runs(&b[bi..pb], &a[ai..pa], |r| {
+                record(ai..ai, bi + r.start..bi + r.end)
+            });
+        } else if fallback && added.is_empty() && !removed.is_empty() && bi < pb {
+            excess_runs(&a[ai..pa], &b[bi..pb], |r| {
+                record(ai + r.start..ai + r.end, bi..bi)
+            });
+        } else if !removed.is_empty() || !added.is_empty() {
+            if fallback && !removed.is_empty() && !added.is_empty() {
+                unaligned += 1;
+            }
+            record(removed, added);
         }
         if let Some(&(last_a, last_b)) = run.last() {
             ai = last_a + 1;
@@ -268,7 +343,7 @@ pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, St
     }
 
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    Ok(Comparison {
+    Comparison {
         left_words: count(left_words.len()),
         right_words: count(right_words.len()),
         removed_words: count(removed_words),
@@ -278,40 +353,46 @@ pub fn compare(left: &[PageCodes], right: &[PageCodes]) -> Result<Comparison, St
         unaligned,
         left_unread: count(left_unread),
         right_unread: count(right_unread),
-        left_without_words: left_pages.unread.iter().map(|&i| left[i].page).collect(),
-        right_without_words: right_pages.unread.iter().map(|&i| right[i].page).collect(),
-    })
+        left_without_words: left.pages.unread.iter().map(|&(_, page)| page).collect(),
+        right_without_words: right.pages.unread.iter().map(|&(_, page)| page).collect(),
+    }
+}
+
+/// In a fallback passage the aligner has not established which words match.
+/// When a scan hides one side, only excess occurrences on the readable side
+/// are certain. Keep their positions without marking intervening shared words.
+fn excess_runs(words: &[u32], opposite: &[u32], mut record: impl FnMut(std::ops::Range<usize>)) {
+    let mut available = HashMap::<u32, usize>::new();
+    for id in opposite {
+        *available.entry(*id).or_default() += 1;
+    }
+    let mut start = None;
+    for (i, id) in words.iter().enumerate() {
+        if let Some(count) = available.get_mut(id).filter(|n| **n > 0) {
+            *count -= 1;
+            if let Some(from) = start.take() {
+                record(from..i);
+            }
+        } else {
+            start.get_or_insert(i);
+        }
+    }
+    if let Some(from) = start {
+        record(from..words.len());
+    }
 }
 
 /// One side's pages in the order given, and which of them have no words.
+#[derive(Default)]
 struct Pages {
     /// Each page number's position in the order given.
     position: HashMap<u32, usize>,
-    /// The positions of pages with no words, ascending.
-    unread: Vec<usize>,
+    /// Positions of pages with no words, ascending, and their caller-supplied page IDs.
+    unread: Vec<(usize, u32)>,
     count: usize,
 }
 
 impl Pages {
-    fn new(pages: &[PageCodes], words: &[Word]) -> Self {
-        let position: HashMap<u32, usize> = pages
-            .iter()
-            .enumerate()
-            .map(|(at, page)| (page.page, at))
-            .collect();
-        let mut read = vec![false; pages.len()];
-        for word in words {
-            if let Some(&at) = position.get(&word.page) {
-                read[at] = true;
-            }
-        }
-        Pages {
-            unread: (0..pages.len()).filter(|&at| !read[at]).collect(),
-            position,
-            count: pages.len(),
-        }
-    }
-
     /// Whether a page with no words lies between word `first - 1` and word
     /// `next` of `words`, both pages included: the stretch of this side where
     /// the other side's unmatched words would stand. The start of the side
@@ -330,7 +411,12 @@ impl Pages {
             .get(next)
             .and_then(at)
             .unwrap_or(self.count.saturating_sub(1));
-        self.unread.iter().any(|&page| from <= page && page <= to)
+        let first = self
+            .unread
+            .partition_point(|&(position, _)| position < from);
+        self.unread
+            .get(first)
+            .is_some_and(|&(position, _)| position <= to)
     }
 }
 
@@ -345,47 +431,44 @@ fn intern<'w>(ids: &mut HashMap<&'w str, u32>, side: &'w [Word]) -> Vec<u32> {
 }
 
 /// The words of one side, in page order as given.
-fn words(pages: &[PageCodes], which: &str) -> Result<Vec<Word>, String> {
-    let mut out = Vec::new();
-    for page in pages {
-        let mut current: Option<Word> = None;
-        for (index, code) in page.codes.iter().enumerate() {
-            let index = u32::try_from(index).unwrap_or(u32::MAX);
-            // A code that is not a scalar value separates words, as whitespace
-            // does: it has no character to compare.
-            let ch = char::from_u32(*code).filter(|ch| !ch.is_whitespace() && !ch.is_control());
-            match ch {
-                Some(SOFT_HYPHEN) => {
-                    if let Some(word) = current.as_mut() {
-                        word.end = index + 1;
-                    }
-                }
-                Some(ch) => {
-                    let word = current.get_or_insert_with(|| Word {
-                        page: page.page,
-                        start: index,
-                        end: index,
-                        text: String::new(),
-                    });
-                    word.text.push(ch);
+fn append_words(out: &mut Vec<Word>, page: u32, codes: &[u32], which: &str) -> Result<(), String> {
+    let mut current: Option<Word> = None;
+    for (index, code) in codes.iter().enumerate() {
+        let index = u32::try_from(index).unwrap_or(u32::MAX);
+        // A code that is not a scalar value separates words, as whitespace
+        // does: it has no character to compare.
+        let ch = char::from_u32(*code).filter(|ch| !ch.is_whitespace() && !ch.is_control());
+        match ch {
+            Some(SOFT_HYPHEN) => {
+                if let Some(word) = current.as_mut() {
                     word.end = index + 1;
                 }
-                None => {
-                    if let Some(word) = current.take() {
-                        out.push(word);
-                    }
+            }
+            Some(ch) => {
+                let word = current.get_or_insert_with(|| Word {
+                    page,
+                    start: index,
+                    end: index,
+                    text: String::new(),
+                });
+                word.text.push(ch);
+                word.end = index + 1;
+            }
+            None => {
+                if let Some(word) = current.take() {
+                    out.push(word);
                 }
             }
-            if out.len() > MAX_WORDS {
-                return Err(said!(
-                    "the {which} document has more than {MAX_WORDS} words, which is more \
+        }
+        if out.len() > MAX_WORDS {
+            return Err(said!(
+                "the {which} document has more than {MAX_WORDS} words, which is more \
                      than tpdf compares"
-                ));
-            }
+            ));
         }
-        if let Some(word) = current.take() {
-            out.push(word);
-        }
+    }
+    if let Some(word) = current.take() {
+        out.push(word);
     }
     if out.len() > MAX_WORDS {
         return Err(said!(
@@ -393,7 +476,7 @@ fn words(pages: &[PageCodes], which: &str) -> Result<Vec<Word>, String> {
              compares"
         ));
     }
-    Ok(out)
+    Ok(())
 }
 
 /// The words of `range` as per-page spans, first word's start to last word's
@@ -455,16 +538,14 @@ fn change(
     a: std::ops::Range<usize>,
     right: &[Word],
     b: std::ops::Range<usize>,
-    previous_run: usize,
-    next_run: usize,
+    before: std::ops::Range<usize>,
+    after: std::ops::Range<usize>,
 ) -> Change {
     let kind = match (a.is_empty(), b.is_empty()) {
         (false, true) => Kind::Removed,
         (true, false) => Kind::Added,
         _ => Kind::Replaced,
     };
-    let before = a.start - previous_run.min(CONTEXT_WORDS)..a.start;
-    let after = a.end..a.end + next_run.min(CONTEXT_WORDS);
     Change {
         kind,
         left: spans(left, a.clone()),
@@ -804,10 +885,33 @@ mod tests {
             &[(0, "header"), (1, &left)],
             &[(0, "header"), (1, "\u{ad}"), (2, &right)],
         );
-        assert_eq!((c.total_changes, c.unaligned), (0, 0));
-        assert_eq!((c.left_unread, c.right_unread), (2100, 2100));
+        assert_eq!((c.total_changes, c.unaligned), (1, 0));
+        assert_eq!((c.left_unread, c.right_unread), (2100, 0));
+        assert_eq!(c.changes[0].kind, Kind::Added);
+        assert_eq!(c.added_words, 2100);
         assert_eq!(c.right_without_words, vec![1]);
         assert!(c.left_without_words.is_empty());
+    }
+
+    #[test]
+    fn an_unaligned_passage_beside_a_scan_only_marks_excess_occurrences() {
+        let old = format!("{}old", "old shared ".repeat(2100));
+        let new = format!("{}new", "new shared ".repeat(2100));
+        let result = run(&[(0, &old)], &[(0, ""), (1, &new)]);
+        assert_eq!(result.added_words, 2101);
+        assert_eq!(result.removed_words, 0);
+        assert!(result.changes.iter().all(|c| c.added == "new"));
+    }
+
+    #[test]
+    fn input_stops_at_its_character_budget_even_with_one_word() {
+        let mut input = ComparisonInput {
+            characters: MAX_CHARACTERS - 1,
+            ..Default::default()
+        };
+        input.add(0, &[97], "first").unwrap();
+        assert!(input.add(1, &[97], "first").is_err());
+        assert_eq!(input.page_count(), 1);
     }
 
     #[test]

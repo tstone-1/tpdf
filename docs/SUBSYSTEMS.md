@@ -22,6 +22,10 @@ per dimension; animations and changing dimensions are refused.
 PDFium and PDFKit pixel readers and fixture commands are in `BUILD.md`.
 This creates visual marks only; it does not create certificate-based signatures.
 
+The mark clipboard resolves selected IDs against the marks drawn on the page,
+including saved form widgets. Cut waits for an open note to reach the edit
+journal. A refused note stays open with its typed text.
+
 Before any save/copy writing command, the application reads digital-signature
 metadata from the worker and asks for consent if signatures/certification exist
 or enumeration was incomplete. DocMDP permission to fill forms does not bypass
@@ -356,6 +360,11 @@ registered as a resource identifies its holders. Never clean up by image name:
 the installed application may be running alongside the test build.
 
 ## What the worker writes and reads, and the password
+
+PDFium can report a tile pattern as flat gray. For a path selection the SVG
+exporter checks the page's effective resources. For a form selection it checks
+nested form resources too. The exporter offers PNG if these resources could
+supply a pattern, including for solid paths sharing those resources.
 
 The attachment picker lists files from the open document graph. At extraction, the parent
 copies the source into anonymous shared memory and checks the snapshot against the
@@ -773,13 +782,16 @@ Words are runs between whitespace; a soft hyphen is left out of the word and kep
 span. The diff is patience over interned word ids: words unique to both sides anchor, common
 words at either end of a stretch are taken off, and a stretch with no unique word in common is
 aligned by an LCS table up to `MAX_TABLE_CELLS`, past which it is one replacement and counted
-in `unaligned`. Bounds: `MAX_WORDS` a side (refused), `MAX_CHANGES` listed (the total is
+in `unaligned`. Both callers stop extracting when a side exceeds 16 million characters or two million words.
+The CLI retains page geometry only for JSON output. Bounds: `MAX_WORDS` a side (refused), `MAX_CHANGES` listed (the total is
 kept), and a recursion depth. Every caller says that only the words were compared.
 
 A page with no words may hold any of the other side's words, so a stretch with no match is not
 a change when the other side has such a page where the stretch would stand: between the pages
-of the shared words just before and after it, both included. Its words are counted in
-`left_unread` and `right_unread` and listed nowhere. Before 2026-10-19 they were listed as
+of the shared words just before and after it, both included. The counts are directional: only words facing the textless page enter the unread count.
+The same gap can still contain a definite addition or removal on the readable side.
+When a large mixed gap cannot be aligned, only occurrences in excess of the opposite
+passage are marked. Shared words inside it keep their original positions and stay unmarked. Before 2026-10-19 they were listed as
 removed, and the user-test kit's inspection report, whose final page 2 is a scan, read as
 "1 change: the whole of page 2 removed" with the real change, *passed* to *failed*, invisible.
 Both callers refuse a document with no words on any page. The tokenizer identifies the pages

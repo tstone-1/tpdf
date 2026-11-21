@@ -89,6 +89,8 @@ const count = (n: number, locale: string) => n.toLocaleString(locale);
 
 const TEXT = catalog({
   "en-US": {
+    tooManyWords: "The document exceeds the word limit for comparison.",
+    tooLong: "The document exceeds the character limit for comparison.",
     starting: "Reading both documents...",
     comparing: "Comparing the words...",
     notCompared:
@@ -133,6 +135,8 @@ const TEXT = catalog({
       `${pages === 1 ? "was" : "were"} not compared. A scanned page has to be recognised first.`,
   },
   "de-DE": {
+    tooManyWords: "Das Dokument überschreitet die Wortgrenze für den Vergleich.",
+    tooLong: "Das Dokument überschreitet die Zeichengrenze für den Vergleich.",
     starting: "Beide Dokumente werden gelesen...",
     comparing: "Die Wörter werden verglichen...",
     notCompared:
@@ -204,12 +208,32 @@ export async function gather(
   name: string,
   slots: number,
   load: (slot: number) => Promise<PageText | null>,
+  maxCharacters = 16_000_000, // MAX_CHARACTERS per side in compare.rs
+  maxWords = 2_000_000, // MAX_WORDS
 ): Promise<PageCodes[]> {
   const pages: PageCodes[] = [];
+  let characters = 0;
+  let words = 0;
   try {
     for (let slot = 0; slot < slots; slot++) {
       const text = await load(slot);
-      pages.push({ page: slot, codes: text?.codes ?? [] });
+      const codes = text?.codes ?? [];
+      characters += codes.length;
+      if (characters > maxCharacters) throw new Error(TEXT().tooLong);
+      // Same boundaries as compare.rs: a page ends its last word and a soft
+      // hyphen can extend an existing word but cannot start one.
+      let inWord = false;
+      for (const code of codes) {
+        if (code === 0xad) continue;
+        if (code < 33 || code === 127 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
+          || (code > 127 && /[\p{White_Space}\p{Cc}]/u.test(String.fromCodePoint(code)))) {
+          inWord = false;
+        } else if (!inWord) {
+          inWord = true;
+          if (++words > maxWords) throw new Error(TEXT().tooManyWords);
+        }
+      }
+      pages.push({ page: slot, codes });
     }
   } catch (error) {
     throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });

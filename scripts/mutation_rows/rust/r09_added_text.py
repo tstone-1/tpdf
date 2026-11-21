@@ -171,8 +171,8 @@ ROWS = [
     Mutation(
         "compare: a soft hyphen kept in the word",
         "src/compare.rs",
-        "                Some(SOFT_HYPHEN) => {",
-        "                Some('\\u{0}') => {",
+        "            Some(SOFT_HYPHEN) => {",
+        "            Some('\\u{0}') => {",
         "a_soft_hyphen_is_not_part_of_the_word_but_is_inside_its_span",
     ),
     Mutation(

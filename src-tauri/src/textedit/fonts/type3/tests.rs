@@ -122,6 +122,34 @@ fn type3_single_byte_word_spacing_and_curve_bounds_are_measured() {
 }
 
 #[test]
+fn tab_leader_reserves_only_a_space_glyph_that_can_paint() {
+    for painted in [true, false] {
+        let (mut doc, _, glyph, cmap) = fixture();
+        doc.get_object_mut(cmap)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .set_content(MAP.replace("<20> <0042>", "<20> <0020>").into_bytes());
+        if !painted {
+            doc.get_object_mut(glyph)
+                .unwrap()
+                .as_stream_mut()
+                .unwrap()
+                .set_content(b"600 0 0 0 0 0 d1".to_vec());
+        }
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        doc.change_page_content(page, b"BT /F1 12 Tf 40 160 Td (FIRST) Tj ET BT /T3 12 Tf 83 160 Td /Span << /ActualText <09> >> BDC <20> Tj EMC ET".to_vec()).unwrap();
+        let change = textedit::layout_tests::in_default_box(&doc, 0, "FIRST LONG TITLE");
+        let result = textedit::write(&mut doc, &[change]);
+        if painted {
+            assert!(result.unwrap_err().contains("other text follows"));
+        } else {
+            result.unwrap();
+        }
+    }
+}
+
+#[test]
 fn type3_header_is_literal_bounded_and_preserves_comments() {
     let (mut doc, _, glyph, _) = fixture();
     for bytes in [

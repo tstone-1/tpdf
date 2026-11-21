@@ -714,8 +714,8 @@
    * the left half stays on the left and every other tab goes to the right.
    */
   async function dropTab(id: ViewId, side: Side): Promise<void> {
-    if (panes.split) return moveTab(id, side);
-    await moveTab(id, "right");
+    if (panes.split) { await moveTab(id, side); return; }
+    if (!await moveTab(id, "right")) return;
     if (side === "left" && panes.split && panes.sideOf(id) === "right") switchSides();
   }
   let sidebarHost = $state<HTMLDivElement | null>(null);
@@ -895,14 +895,14 @@
    * else, so a caller that raised its own flag first would have the draft
    * refused in silence. The commit is made in the call itself, before the
    * first wait, which is what lets a copy task call this, raise its flag and
-   * only then wait: `const settled = settleDrafts(); copyTaskBusy = true;` and
+   * only then wait: `const settled = settleDrafts(edits); copyTaskBusy = true;` and
    * `await settled` inside its `try`.
    *
    * Rejects when a draft cannot be committed, with the sentence to show.
    */
-  async function settleDrafts(only?: Edits): Promise<void> {
+  async function settleDrafts(only?: Edits | null): Promise<void> {
     const settle = (restoreFocus: boolean) => {
-      if (!only || only === edits) return settleView(restoreFocus);
+      if (only === undefined || (only && only === edits)) return settleView(restoreFocus);
     };
     await Promise.all([settle(true), ...stage.parked.map((id) => asDocument(id, () => settle(false)))]);
   }
@@ -1090,9 +1090,9 @@
   }
 
   /** Moves a tab to `to`, which starts the split when nothing is on the right. */
-  function moveTab(id: ViewId, to: Side): Promise<void> {
+  function moveTab(id: ViewId, to: Side): Promise<boolean> {
     return documentTasks.idle().then(() => opens.run(async () => {
-      if (!tabs.find(id) || tabs.all.length < 2) return;
+      if (!tabs.find(id) || tabs.all.length < 2) return false;
       opening = true;
       try {
         await settleDocument();
@@ -1100,7 +1100,8 @@
         panes.move(id, to, tabs.all.map((entry) => entry.view));
         await showPanes();
         if (before) fitNewSplit(before);
-      } catch (e) { say(String(e)); }
+        return panes.front(to) === id && stage.holds(id);
+      } catch (e) { say(String(e)); return false; }
       finally { opening = false; refreshMenu(); }
     }));
   }
@@ -2765,7 +2766,10 @@
     const state = model?.state;
     if (!mounted || !model || !state) return;
     const named = [...mounted.namedMarks()];
-    const marks = state.marks.filter((mark) => named.includes(mark.id));
+    const ids = new Set(named);
+    const selected = (state: EditState) => shownMarks(state).filter((mark) => ids.has(mark.id));
+    const marks = selected(state);
+    if (cut && marks.length !== named.length) { say(TEXT().nothingCopied); return; }
     const page = marks[0]?.page;
     if (page === undefined) return;
     const refused = marks.flatMap((mark) => notCopied(mark.kind) ?? []);
@@ -2786,7 +2790,16 @@
     }
     if (!stillIn(view, model, mounted)) return;
     if (cut && !markClipboard.sameSelection(named, mounted.namedMarks())) return;
-    const { copied, refused: unread } = markClipboard.copy(marks, { doc: model.doc, page }, pixels, cut);
+    if (cut && mounted.markOpen !== -1) {
+      try { await mounted.saveOpenMarkDraft(); }
+      catch (error) { if (stillIn(view, model, mounted)) say(spokenError(error)); return; }
+    }
+    if (!stillIn(view, model, mounted) || !model.state) return;
+    if (cut && !markClipboard.sameSelection(named, mounted.namedMarks())) return;
+    const current = selected(model.state).map(mark => mark.id === mounted.markOpen
+      ? { ...mark, note: mounted.markNoteText } : mark);
+    if (cut && current.length !== named.length) return;
+    const { copied, refused: unread } = markClipboard.copy(current, { doc: model.doc, page }, pixels, cut);
     if (copied === 0) {
       say(unread[0] ?? TEXT().nothingCopied);
       return;
@@ -3662,7 +3675,7 @@
       try {
         // Before the panel: it takes the keyboard from a form control, whose
         // answer would then commit inside this task and be refused.
-        await settleDrafts();
+        await settleDrafts(edits);
         const chosen = await saveDialog({
           title: TEXT().saveCopy,
           defaultPath: TEXT().copySuggested(suggested),
@@ -3707,7 +3720,7 @@
       if (!edits || !openPathName) return;
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
-        await settleDrafts();
+        await settleDrafts(edits);
         const chosen = await saveDialog({
           title: TEXT().redactSaveAs,
           defaultPath: TEXT().redactedName(suggested),
@@ -3743,7 +3756,7 @@
       if (!edits || !openPathName || !viewer || copyTaskBusy) return;
       // Closing the note journals its last text synchronously. Do this before the
       // busy guard starts refusing new edits, then wait for that queued edit below.
-      const settled = settleDrafts();
+      const settled = settleDrafts(edits);
       copyTaskBusy = true;
       refreshMenu();
       try {
@@ -3800,7 +3813,7 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || copyTaskBusy) return;
-      const settled = settleDrafts();
+      const settled = settleDrafts(edits);
       copyTaskBusy = true;
       refreshMenu();
       try {
@@ -3851,7 +3864,7 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || copyTaskBusy) return;
-      const settled = settleDrafts();
+      const settled = settleDrafts(edits);
       copyTaskBusy = true;
       refreshMenu();
       try {
@@ -3894,7 +3907,7 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || copyTaskBusy) return;
-      const settled = settleDrafts();
+      const settled = settleDrafts(edits);
       copyTaskBusy = true;
       refreshMenu();
       try {
@@ -3929,7 +3942,7 @@
     await documentTasks.run(async () => {
       const shown = viewer, view = openView;
       if (!shown || !edits || copyTaskBusy) return;
-      await settleDrafts();
+      await settleDrafts(edits);
       if (viewer !== shown || openView !== view) return;
       if (edits.dirty) { say(SAVE_FIRST); return; }
       const slot = Math.max(0, (status?.page ?? 1) - 1);
@@ -3968,7 +3981,7 @@
     const done: { path?: string; said?: string } = {};
     await documentTasks.run(async () => {
       if (!edits || !openPathName || copyTaskBusy) return;
-      const settled = settleDrafts();
+      const settled = settleDrafts(edits);
       copyTaskBusy = true;
       refreshMenu();
       try {
@@ -4043,7 +4056,7 @@
     if (opening) return;
     await documentTasks.run(async () => {
       if (!edits || copyTaskBusy) return;
-      const settled = settleDrafts();
+      const settled = settleDrafts(edits);
       copyTaskBusy = true;
       refreshMenu();
       try {
@@ -4093,7 +4106,7 @@
     const partner = besidePartners()[index];
     if (!partner || opening) return;
     const older = openView, newer = partner.tab.view;
-    await moveTab(newer, otherSide(panes.focused));
+    if (!await moveTab(newer, otherSide(panes.focused))) return;
     // Moving a tab takes the reader with it; they asked to compare from the
     // document they were in, so they are put back there.
     const home = panes.sideOf(older);
@@ -4106,10 +4119,8 @@
       blockingTask = COMPARE_STARTING;
       refreshMenu();
       try {
-        const [a, b] = await Promise.all([
-          gather(names.left, left.slotCount, (slot) => left.loadText(slot)),
-          gather(names.right, right.slotCount, (slot) => right.loadText(slot)),
-        ]);
+        const a = await gather(names.left, left.slotCount, (slot) => left.loadText(slot));
+        const b = await gather(names.right, right.slotCount, (slot) => right.loadText(slot));
         blockingTask = COMPARING;
         const result = await call("compare_texts", { left: a, right: b });
         const refused = refusal(names, result);
@@ -4290,7 +4301,7 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || !viewer) return;
-      await settleDrafts();
+      await settleDrafts(edits);
       const path = openPathName;
       const place = currentPlace(false);
       say(null);
@@ -4338,7 +4349,7 @@
       if (!edits || !openPathName || slots.length === 0) return;
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
-        await settleDrafts();
+        await settleDrafts(edits);
         const chosen = await saveDialog({
           title: TEXT().extractPages,
           defaultPath: `${suggested} ${namePages(slots)}.pdf`,
@@ -4381,7 +4392,7 @@
       if (!edits || !openPathName || groups.length < 2) return;
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
-        await settleDrafts();
+        await settleDrafts(edits);
         const chosen = await nativeSaveDialog({
           title: TEXT().splitDocument,
           defaultPath: `${suggested}.pdf`,
@@ -4441,7 +4452,7 @@
     return documentTasks.run(async () => {
       if (!edits || !openPathName) return;
       try {
-        await settleDrafts();
+        await settleDrafts(edits);
         const picked = await openDialog({
           multiple: true,
           directory: false,
@@ -4840,7 +4851,7 @@
       // Named for where the tab goes. With one side, the right one is made.
       id: "tab.moveSide", title: TEXT().moveToSide(across),
       enabled: () => tabs.find(id) === tab && tabs.all.length > 1 && !opening && !documentBusy,
-      run: () => moveTab(id, across),
+      run: async () => { await moveTab(id, across); },
     }, {
       id: "tab.reveal",
       title: revealTitle(),
@@ -5046,9 +5057,8 @@
    * properties of a screen, and a printed page that came out inverted because
    * the room was dark would be a genuinely expensive mistake.
    *
-   * Resolves when the panel has been *asked for*, not when it closes --- the
-   * backend cannot tell a cancel from a failure (see `print_macos::present`),
-   * so there is no outcome here worth waiting for.
+   * The macOS call returns after requesting the panel. The interactive preview
+   * waits for the reader to confirm or discard the prepared job.
    */
   async function printDocument() {
     if (opening) return;
@@ -5068,7 +5078,7 @@
         // The job is built from the model, so a form answer still in its
         // control would be missing from the paper. Ctrl+P reaches here from
         // inside a field.
-        await settleDrafts();
+        await settleDrafts(edits);
         // macOS's print panel draws the job itself. Windows' and GTK's do not,
         // so there the job is shown first (`printpreviewdialog.ts`), and on
         // Windows the preview is the print dialog: GTK's offers a scale and
@@ -6046,7 +6056,7 @@
         setRestoreTabs,
         reopenLastTabs,
         tabsSettled: () => tabRecorder.settled(),
-        moveToOtherSide: () => moveTab(openView, otherSide(panes.focused)),
+        moveToOtherSide: async () => { await moveTab(openView, otherSide(panes.focused)); },
         recentCommands: () =>
           commands
             .all()

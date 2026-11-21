@@ -21,6 +21,20 @@ have the binary.)
 
 ### Fixed
 
+- Cut preserves mixed selections that include a saved form field. Copy and Cut
+  keep the words currently visible in an annotation editor.
+- Text wrapping preserves double-space indents and checks the painted bounds of
+  neighbouring letters and tab leaders. Patterned drawings are offered as PNG.
+- OCR accepts a line-end hyphen on a mixed-direction page. The picture-count
+  limit is checked before reading files, and recent documents show the correct
+  folder for POSIX filenames containing a backslash.
+- CLI redaction verifies a private copy before replacing the destination, and
+  reports when the input signature count is incomplete.
+- Compare with waits for accepted drafts and retains definite word changes
+  beside textless pages. Both comparison interfaces enforce input limits
+  while reading. Single-document print and copy commands settle only their PDF.
+- Graphic export includes unsaved caption edits. Drawings with blend states or
+  miter joins that SVG export cannot preserve can still be exported as PNG.
 - Print preview keeps Print disabled until the current settings are valid. It
   recovers when a remembered printer disappears and finishes drawing the new
   page range. Windows keeps the driver's copy count and starts each software

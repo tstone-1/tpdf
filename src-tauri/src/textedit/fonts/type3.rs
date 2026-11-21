@@ -301,7 +301,8 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     }
     let mut glyphs = BTreeMap::new();
     let mut vertical = [0_f64; 2];
-    for &code in codes.keys() {
+    let mut painted_space = false;
+    for (&code, text) in &codes {
         let name = names.get(&code).ok_or_else(invalid)?;
         let &(advance, bounds) = outlines.get(name).ok_or_else(invalid)?;
         let width = *widths
@@ -326,12 +327,14 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
         {
             return Err(said!("Type3 glyph bounds exceed editable limits"));
         }
+        painted_space |= bounds != [0.; 4] && text.bytes().all(|ch| ch == b' ');
         vertical = [vertical[0].min(bottom), vertical[1].max(top)];
         glyphs.insert(code, (width, [left.min(0.), (right - width).max(0.)]));
     }
     Ok(Metrics {
         restricted: false,
         opaque: None,
+        painted_space,
         unicode: Some(unicode::Metrics::single(codes, glyphs)),
         vertical_bounds: Some(vertical),
         widths: Box::new([None; 256]),

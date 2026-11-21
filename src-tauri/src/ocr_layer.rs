@@ -413,13 +413,8 @@ fn rtl_words_read_back(layer: &Layer, read: &PageText) -> bool {
         .zip(read.boxes.chunks_exact(4))
         .enumerate()
         .filter_map(|(i, (&code, b))| {
-            let ch = char::from_u32(code)?;
-            (!ch.is_control() && !ch.is_whitespace()).then_some((
-                (b[1] + b[3]) * 0.5,
-                (b[0] + b[2]) * 0.5,
-                i,
-                ch,
-            ))
+            let ch = read_character(code)?;
+            Some(((b[1] + b[3]) * 0.5, (b[0] + b[2]) * 0.5, i, ch))
         })
         .collect();
     glyphs.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -458,17 +453,16 @@ fn rtl_words_read_back(layer: &Layer, read: &PageText) -> bool {
 
 /// A page's characters as [`reads_back`] counts them.
 fn characters(page: &PageText) -> impl Iterator<Item = char> + '_ {
-    page.codes
-        .iter()
-        .map(|code| {
-            if *code == LINE_END_HYPHEN {
-                u32::from('-')
-            } else {
-                *code
-            }
-        })
-        .filter_map(char::from_u32)
-        .filter(|c| !c.is_whitespace() && !c.is_control())
+    page.codes.iter().copied().filter_map(read_character)
+}
+
+fn read_character(code: u32) -> Option<char> {
+    let ch = if code == LINE_END_HYPHEN {
+        '-'
+    } else {
+        char::from_u32(code)?
+    };
+    (!ch.is_whitespace() && !ch.is_control()).then_some(ch)
 }
 
 #[cfg(test)]
@@ -685,6 +679,23 @@ mod tests {
             read.codes.reverse();
             assert!(!reads_back(&layer, &none(), &read));
         }
+    }
+
+    #[test]
+    fn line_end_hyphen_keeps_its_position_on_a_bidirectional_page() {
+        let hebrew = [0., 0., 20., 10.];
+        let latin = [0., 20., 20., 30.];
+        let layer = layer_of(0, vec![word("אב", hebrew), word("a-", latin)]).unwrap();
+        let mut read = typed("אב", hebrew);
+        read.boxes.rotate_left(4);
+        let tail = typed("a-", latin);
+        read.boxes.extend(tail.boxes);
+        read.codes.extend(tail.codes);
+        assert!(reads_back(&layer, &none(), &read));
+        *read.codes.last_mut().unwrap() = LINE_END_HYPHEN;
+        assert!(reads_back(&layer, &none(), &read));
+        read.codes.pop();
+        assert!(!reads_back(&layer, &none(), &read));
     }
 
     #[test]

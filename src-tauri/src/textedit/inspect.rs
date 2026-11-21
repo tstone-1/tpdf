@@ -693,7 +693,7 @@ impl<'a> Checked<'a> {
                 ];
             }
             if bounds[0] < bounds[2] && bounds[1] < bounds[3] {
-                found.form_text_bounds.push(found.to_display(bounds));
+                found.fixed_text_bounds.push(found.to_display(bounds));
             }
         }
         Ok(())
@@ -723,7 +723,7 @@ pub(super) struct Found {
     pub span_shows: BTreeMap<ObjectId, (Vec<u32>, bool)>,
     pub preserved: Vec<Run>,
     pub centred: BTreeSet<u32>,
-    pub form_text_bounds: Vec<[f32; 4]>,
+    pub fixed_text_bounds: Vec<[f32; 4]>,
     pub graphics: Vec<[f32; 4]>,
     pub paths: BTreeMap<usize, DrawnPath>,
     pub sheet: crate::pagetree::DisplayedPage,
@@ -775,7 +775,7 @@ impl Found {
             span_shows: BTreeMap::new(),
             preserved: Vec::new(),
             centred: BTreeSet::new(),
-            form_text_bounds: Vec::new(),
+            fixed_text_bounds: Vec::new(),
             graphics: Vec::new(),
             paths: BTreeMap::new(),
             sheet,
@@ -1090,6 +1090,9 @@ impl Found {
         }
         if let Some(spacer) = &marked.spacer {
             spacer.text(&text)?;
+            if state.render != 3 && metrics.painted_space && !text.contains(fonts::OPAQUE) {
+                self.fixed_text_bounds.push(display_rect);
+            }
             if !text.contains(fonts::OPAQUE) {
                 return Ok(());
             }

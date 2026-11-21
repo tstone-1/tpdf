@@ -28,7 +28,7 @@ use super::regions::{regions_on, Half};
 use super::report::{self, HitRect, SCHEMA};
 use super::text::{password, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
-use crate::compare::{self, Change, Comparison, PageCodes, Span};
+use crate::compare::{self, Change, Comparison, ComparisonInput, Span};
 use crate::save_outside::Declined;
 use crate::text::PageText;
 use crate::worker_proto::{Reply, Request};
@@ -101,12 +101,19 @@ pub fn parse(args: &[String]) -> Result<Compare, String> {
 /// One document's pages, read.
 struct Read {
     shown: String,
+    input: ComparisonInput,
     /// Every page's text, counted from 0.
     texts: Vec<PageText>,
 }
 
 /// Reads every page of `path` through a worker.
-fn read(env: &Env<'_>, path: &Path, password: Option<&str>) -> Result<Read, Failure> {
+fn read(
+    env: &Env<'_>,
+    path: &Path,
+    password: Option<&str>,
+    which: &str,
+    geometry: bool,
+) -> Result<Read, Failure> {
     let shown = path.display().to_string();
     let declined = |why: Declined| -> Failure {
         match why {
@@ -142,6 +149,7 @@ fn read(env: &Env<'_>, path: &Path, password: Option<&str>) -> Result<Read, Fail
             ))
         }
     };
+    let mut input = ComparisonInput::default();
     let mut texts = Vec::new();
 
     for page in 0..count {
@@ -149,7 +157,14 @@ fn read(env: &Env<'_>, path: &Path, password: Option<&str>) -> Result<Read, Fail
             .ask(Request::Text { page, crop: None })
             .map_err(declined)?
         {
-            Reply::Text(text) => texts.push(text),
+            Reply::Text(text) => {
+                input
+                    .add(page, &text.codes, which)
+                    .map_err(|why| Failure::new(Exit::Refused, why))?;
+                if geometry {
+                    texts.push(text);
+                }
+            }
             other => {
                 return Err(Failure::new(
                     Exit::Internal,
@@ -162,7 +177,11 @@ fn read(env: &Env<'_>, path: &Path, password: Option<&str>) -> Result<Read, Fail
             }
         }
     }
-    Ok(Read { shown, texts })
+    Ok(Read {
+        shown,
+        input,
+        texts,
+    })
 }
 
 impl Subcommand for Compare {
@@ -173,21 +192,9 @@ impl Subcommand for Compare {
         err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
         let password = password(self.password_env.as_deref())?;
-        let old = read(env, &self.old, password.as_deref())?;
-        let new = read(env, &self.new, password.as_deref())?;
-
-        let codes = |side: &Read| -> Vec<PageCodes> {
-            side.texts
-                .iter()
-                .zip(0u32..)
-                .map(|(text, page)| PageCodes {
-                    page,
-                    codes: text.codes.clone(),
-                })
-                .collect()
-        };
-        let comparison = compare::compare(&codes(&old), &codes(&new))
-            .map_err(|why| Failure::new(Exit::Refused, why))?;
+        let old = read(env, &self.old, password.as_deref(), "first", self.json)?;
+        let new = read(env, &self.new, password.as_deref(), "second", self.json)?;
+        let comparison = compare::compare_inputs(&old.input, &new.input);
         for (side, words) in [
             (&old, comparison.left_words),
             (&new, comparison.right_words),
@@ -298,7 +305,7 @@ fn compared(
 ) -> report::Compared {
     let file = |side: &Read, words: u32, unread: u32, empty: &[u32]| report::ComparedFile {
         path: side.shown.clone(),
-        pages: u32::try_from(side.texts.len()).unwrap_or(u32::MAX),
+        pages: u32::try_from(side.input.page_count()).unwrap_or(u32::MAX),
         pages_without_text: empty.iter().map(|&page| page + 1).collect(),
         words,
         words_not_compared: unread,

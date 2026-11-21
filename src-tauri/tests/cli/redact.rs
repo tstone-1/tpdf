@@ -43,6 +43,7 @@ use tpdf_lib::cli::report::SearchKind;
 use tpdf_lib::render::{Backend, RenderService};
 use tpdf_lib::search::{Options, Prepared};
 
+use super::wait;
 use super::{fixture, library_dir, scratch, strings, tool, Report};
 
 /// Each line of each page: the words `contacts_pdf` draws, one text object a
@@ -1674,18 +1675,6 @@ fn installed() -> String {
         have.push("qpdf --qdf");
     }
     have.join(", ")
-}
-
-/// A page's text as the service's workers extract it.
-fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
-    call: impl FnOnce(Box<dyn FnOnce(Result<T, E>) + Send>),
-) -> Result<T, E> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    call(Box::new(move |result| {
-        let _ = tx.send(result);
-    }));
-    rx.recv_timeout(std::time::Duration::from_secs(120))
-        .unwrap_or_else(|_| Err(E::from("the render service did not answer".to_string())))
 }
 
 /// The regions file for `line` on `page` (counted from 1), measured from the

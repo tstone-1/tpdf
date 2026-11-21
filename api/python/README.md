@@ -36,6 +36,12 @@ for file in pdf.search("a.pdf", "b.pdf", texts=["North Pier"])["files"]:
         print(file["path"], match["page"], match["hit"])
 ```
 
+For revision-checked `mark_matches`, use the client and CLI built from the
+same checkout. The PyPI 0.1.0 client can mark partially located matches and
+does not check whether the source changed. Released CLIs through 26.11.11
+cannot process a revision-checked edit plan.
+
+
 `pdf.run(command, *arguments)` runs commands that produce JSON and returns a `Result`; its `typed`
 property is the report, which the methods above return under the shape `tpdf_client.reports` names.
 

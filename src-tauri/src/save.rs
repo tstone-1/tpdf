@@ -1201,9 +1201,7 @@ pub fn write_images(
     options: crate::imagepages::Options,
     maker: &dyn Rewriter,
 ) -> Result<Made, Refusal> {
-    if images.is_empty() {
-        return Err(said!("choose at least one picture").into());
-    }
+    crate::imagepages::check_count(images.len())?;
     if let Some(same) = images.iter().find(|image| same_file(image, out)) {
         return Err(said!(
             "tpdf cannot write the document over {name}, which is one of the pictures going into it", name = name_of(same))

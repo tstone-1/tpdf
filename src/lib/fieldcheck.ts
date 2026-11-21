@@ -460,6 +460,40 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       `at ${at0}; pages ${JSON.stringify(host.edits()?.state.pages.map((page) => [page.id, page.source]))}; widget pages ${form.widgets.map((w) => w.page).join()}`,
     );
     check("and puts the controls for filling away", filling() === 0, `${filling()} shown`);
+    // A saved widget is selectable but cannot be cut. Make sure a mixed
+    // selection keeps the widget, the new square and the previous clipboard.
+    host.run("edit.addTextBox");
+    drag(root, at(0.65, 0.64), at(0.79, 0.72));
+    await settle(() => marks().some(mark => mark.kind === "textbox"), SETTLE_MS);
+    const textbox = marks().find(mark => mark.kind === "textbox");
+    if (!textbox) throw new Error("the clipboard control text box was not placed");
+    viewer.showMark(textbox.id);
+    await settle(() => viewer.markOpen === textbox.id, SETTLE_MS);
+    viewer.markNoteField.value = "typed before Cut";
+    viewer.markNoteField.dispatchEvent(new Event("input", { bubbles: true }));
+    host.run("edit.cutMark");
+    const removed = await settle(() => !marks().some(mark => mark.id === textbox.id), SETTLE_MS);
+    check("Cut removes the open text box after its draft is accepted", removed);
+    host.run("edit.drawBox");
+    drag(root, at(0.65, 0.64), at(0.74, 0.71));
+    await settle(() => marks().some(mark => mark.kind === "square"), SETTLE_MS);
+    const square = marks().find(mark => mark.kind === "square");
+    if (!square) throw new Error("the clipboard control square was not placed");
+    viewer.closeMark();
+    viewer.pick([square.id, id]);
+    const beforeCut = host.edits()?.state;
+    const mixed = viewer.namedMarks().length === 2;
+    host.run("edit.cutMark");
+    await host.idle();
+    check("cutting a square with a saved field keeps both and creates no edit",
+      mixed && host.edits()?.state === beforeCut && !!viewer.markAnchor(id)
+        && marks().some(mark => mark.id === square.id), shown());
+    viewer.pick([]);
+    host.run("edit.pasteMark");
+    const pasted = await settle(() => marks().some(mark => mark.kind === "textbox" && mark.note === "typed before Cut"), SETTLE_MS);
+    check("the refused cut keeps the previous clipboard", pasted);
+    for (let i = 0; i < 2; i++) { host.run("edit.undo"); await host.idle(); }
+    viewer.pick([]);
     // The line round the field, on the page picture: a strip over its left
     // edge where the file has the field, and the same strip where the drag
     // puts it. The picture and not the overlay, which draws the rectangle a

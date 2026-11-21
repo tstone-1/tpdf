@@ -206,6 +206,31 @@ describe("rows and places", () => {
 });
 
 describe("gather", () => {
+  it("counts comparable words page by page before requesting the rest", async () => {
+    const asked: number[] = [];
+    const load = async (slot: number) => {
+      asked.push(slot);
+      return { codes: [0xad, 97, 0xad, 98, 0x85, 0xad, 0xd800], boxes: [],
+        width_pt: 1, height_pt: 1, quarter_turns: 0, extract_ms: 0 };
+    };
+    expect(await gather("one.pdf", 1, load, 100, 1)).toHaveLength(1);
+    asked.length = 0;
+    await expect(gather("two.pdf", 3, load, 100, 1)).rejects.toThrow("word limit");
+    expect(asked).toEqual([0, 1]);
+  });
+
+  it("stops requesting pages when a side exceeds the character budget", async () => {
+    const asked: number[] = [];
+    const load = async (slot: number) => {
+      asked.push(slot);
+      return { codes: [97, 98], boxes: [], width_pt: 1, height_pt: 1, quarter_turns: 0, extract_ms: 0 };
+    };
+    expect(await gather("short.pdf", 1, load, 2)).toHaveLength(1);
+    asked.length = 0;
+    await expect(gather("long.pdf", 3, load, 2)).rejects.toThrow("long.pdf");
+    expect(asked).toEqual([0, 1]);
+  });
+
   it("sends every slot in order, a page with no text as empty", async () => {
     const texts: (PageText | null)[] = [
       { codes: [97], boxes: [], width_pt: 1, height_pt: 1, quarter_turns: 0, extract_ms: 0 },

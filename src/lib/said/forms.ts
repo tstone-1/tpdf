@@ -391,8 +391,12 @@ export default {
     "Sie enthält einen Farbverlauf, den das SVG noch nicht zeichnen kann; speichere sie als PNG",
   "SVG export cannot preserve this clipping path; save as PNG":
     "Dieser Beschneidungspfad lässt sich als SVG nicht erhalten; speichere sie als PNG.",
+  "SVG export cannot preserve this transparency or blend mode; save as PNG":
+    "Diese Transparenz oder Füllmethode lässt sich als SVG nicht erhalten. Speichere die Grafik als PNG.",
   "SVG export cannot preserve this stroke; save as PNG":
     "Diese Linie lässt sich als SVG nicht erhalten; speichere sie als PNG.",
+  "SVG export cannot rule out patterned paint; save as PNG":
+    "Die Grafik kann ein Muster enthalten. Speichere sie als PNG.",
   "the region holds more than one picture, or a drawing":
     "Der Bereich enthält mehr als ein Bild oder eine Zeichnung",
   "the picture has no size": "Das Bild hat keine Größe",
@@ -424,8 +428,12 @@ export const sie = {
     "Sie enthält einen Farbverlauf, den das SVG noch nicht zeichnen kann; speichern Sie sie als PNG",
   "SVG export cannot preserve this clipping path; save as PNG":
     "Dieser Beschneidungspfad lässt sich als SVG nicht erhalten; speichern Sie sie als PNG.",
+  "SVG export cannot preserve this transparency or blend mode; save as PNG":
+    "Diese Transparenz oder Füllmethode lässt sich als SVG nicht erhalten. Speichern Sie die Grafik als PNG.",
   "SVG export cannot preserve this stroke; save as PNG":
     "Diese Linie lässt sich als SVG nicht erhalten; speichern Sie sie als PNG.",
+  "SVG export cannot rule out patterned paint; save as PNG":
+    "Die Grafik kann ein Muster enthalten. Speichern Sie sie als PNG.",
   "Choose one available radio button":
     "Wählen Sie ein vorhandenes Optionsfeld",
   "Choose available options without duplicates":

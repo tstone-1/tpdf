@@ -95,6 +95,8 @@ fn parse(args: &[String]) -> Result<Images, String> {
 
 impl Images {
     fn run_images(&self, env: &Env<'_>, out: &mut dyn Write) -> Result<Exit, Failure> {
+        crate::imagepages::check_count(self.inputs.len())
+            .map_err(|why| Failure::new(Exit::Refused, why))?;
         check_target(&self.inputs, &self.output, self.force)?;
         // No source is held to what it was: the inputs are pictures, read
         // once by the writer, and nothing of them was read before it.

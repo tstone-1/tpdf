@@ -301,9 +301,7 @@ pub(super) fn read_input(
             sizes: pages,
             encrypted: properties.encryption.is_some(),
             signed: signed_state(&properties),
-            signatures_unknown: properties.limits.locked
-                || properties.limits.unreadable > 0
-                || properties.limits.signatures_dropped > 0,
+            signatures_unknown: super::fill::signatures_unknown(&properties),
         },
         session,
     ))

@@ -253,7 +253,7 @@ fn obstacles<'a>(page: &'a Inspection, run: &'a Run) -> impl Iterator<Item = Aro
                 .filter(|other| !other.text.trim().is_empty())
                 .map(|other| Around::Kept(other.operator, &other.display_rect)),
         )
-        .chain(page.form_text_bounds.iter().map(Around::Fixed))
+        .chain(page.fixed_text_bounds.iter().map(Around::Fixed))
 }
 
 impl Around<'_> {
@@ -3144,10 +3144,6 @@ impl Edit<'_> {
             moving_rects.extend(run_rect(*show).map(|rect| (*show, rect, corner(0., -drop))));
             lowered.push((*show, wrap::lowered(page, *show, along(0., -drop))?));
         }
-        // Where one text-space position along the edited line is on the
-        // displayed page, along the display axis the line runs on.
-        let unit_x = corner(1., 0.);
-        let axis = usize::from(unit_x[1].abs() > unit_x[0].abs());
         for (index, unit) in plan.after.iter().enumerate() {
             let mine: Vec<&wrap::Piece> =
                 places.iter().filter(|piece| piece.unit == index).collect();
@@ -3164,25 +3160,36 @@ impl Edit<'_> {
             // Cut: one show (`unit_words`), drawn once per piece.
             let show = unit.shows[0];
             let (spans, items) = &cuts[index];
-            let source = run_rect(show).ok_or_else(|| said!("text run no longer exists"))?;
+            let other = page
+                .runs
+                .runs
+                .iter()
+                .find(|run| run.operator == show)
+                .ok_or_else(|| said!("text run no longer exists"))?;
+            let stroke = page.contexts[&show].stroke;
             let mut drawn = Vec::new();
             for piece in &mine {
                 let words = piece
                     .words
                     .clone()
                     .ok_or_else(|| said!("invalid text patch"))?;
-                let (from, to) = (spans[words.start].0, spans[words.end - 1].1);
-                // The piece's own stretch of the run's rectangle.
-                let at = |x: f64| {
-                    let base = if unit_x[axis] > 0. {
-                        source[axis]
-                    } else {
-                        source[axis + 2]
-                    };
-                    base + unit_x[axis] * (x - unit.start)
-                };
-                let mut rect = source;
-                (rect[axis], rect[axis + 2]) = (at(from).min(at(to)), at(from).max(at(to)));
+                let from = spans[words.start].0;
+                let chunk = &items[words.clone()];
+                let left = chunk
+                    .iter()
+                    .map(|w| w.from + w.bounds[0])
+                    .fold(f64::INFINITY, f64::min);
+                let right = chunk
+                    .iter()
+                    .map(|w| w.from + w.bounds[2])
+                    .fold(f64::NEG_INFINITY, f64::max);
+                // All pieces of this show share the same font and vertical envelope.
+                // Project all four corners before checking the translated rectangle.
+                let [l, b, r, t] = text_bounds(
+                    other.matrix,
+                    [left, chunk[0].bounds[1], right, chunk[0].bounds[3]],
+                );
+                let rect = display([l - stroke, b - stroke, r + stroke, t + stroke]).map(f64::from);
                 moving_rects.push((show, rect, corner(piece.at - from, dy(piece))));
                 drawn.push((
                     along(piece.at - unit.start, dy(piece)),

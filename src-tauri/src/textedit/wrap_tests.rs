@@ -1259,6 +1259,49 @@ fn text_after_the_edit_starts_its_new_line_without_its_leading_space() {
     );
 }
 
+#[test]
+fn two_leading_spaces_move_with_an_intentionally_indented_show() {
+    let doc = split_line_with(52., "", "  ONCE AND DONE");
+    let saved = wrapped(
+        &doc,
+        "FIFTY NINE",
+        "FIFTY NINE THEN FIRST SECONDANDSECONDANDSE",
+    );
+    assert!(near(
+        at(&placed_runs(&saved), "  ONCE AND DONE"),
+        (20., 158.)
+    ));
+}
+
+#[test]
+fn wrapped_neighbour_keeps_the_first_letters_ink_on_the_page() {
+    let body = content(52., "").replace("20 200 Td", "0 200 Td").replace(
+        &format!("({WIDEST}) Tj"),
+        "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ",
+    );
+    let mut doc = tagged(&body, &[&[0, 1, 2], &[3]]);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    doc.get_dictionary_mut(page).unwrap().set(
+        "MediaBox",
+        vec![Object::from(0), 0.into(), 280.into(), 240.into()],
+    );
+    let replacement = "FIFTY NINE THEN FIRST AND SECOND AND";
+    let saved = wrapped(&doc, "FIFTY NINE", replacement);
+    assert!(near(at(&placed_runs(&saved), "DONE"), (0., 158.)));
+
+    let (_, _, _, program) = fonts::tests::fixture();
+    let stream = doc
+        .get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    stream.content = fonts::ink_tests::with_components(
+        stream.content.clone(),
+        [('B', 0, 0, 16384), ('D', -100, 0, 16384)],
+    );
+    assert!(refusal(&doc, "FIFTY NINE", replacement).contains("cannot wrap"));
+}
+
 // A cut keeps the run's own kerning: the kern inside `ONCE` stays in the piece
 // that holds it, and the pieces sit where their words did relative to each
 // other.

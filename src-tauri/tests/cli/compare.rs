@@ -97,6 +97,33 @@ fn nearby_changes_and_wordless_pages(dir: &Path, report: &mut Report) {
             && err.contains("page 2 has no text"),
         &format!("exit {exit}: {incomplete} {err}"),
     );
+    for reverse in [false, true] {
+        let (readable, scanned) = if reverse { (&new, &old) } else { (&old, &new) };
+        document(readable, &[&["Header"], &["passed"], &["Footer"]]);
+        document(scanned, &[&["Header"], &[], &["failed"], &["Footer"]]);
+        let (exit, result, err) = compare();
+        let (side, other, field) = if reverse {
+            ("new", "old", "removed")
+        } else {
+            ("old", "new", "added")
+        };
+        report.check(
+            "compare: retain a definite change opposite a wholly readable document",
+            exit == 1
+                && result["total_changes"] == 1
+                && result["changes"][0][field] == "failed"
+                && result["changes"][0]["before"] == "Header"
+                && result["changes"][0]["after"] == "Footer"
+                && result[side]["words_not_compared"] == 1
+                && result[other]["words_not_compared"] == 0
+                && !err.contains(&format!(
+                    "where {} has a page with no text",
+                    readable.display()
+                )),
+            &format!("{result} {err}"),
+        );
+    }
+
     document(&new, &[&["\u{ad}"]]);
     let (exit, _, err) = compare();
     report.check(

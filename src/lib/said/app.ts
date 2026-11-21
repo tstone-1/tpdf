@@ -307,6 +307,8 @@ export default {
   "this link is not an address the system could read": "Dieser Link ist keine Adresse, die das System lesen kann",
   "the system could not open this link": "Das System konnte diesen Link nicht öffnen",
   "the system could not open this link: {e}": "Das System konnte diesen Link nicht öffnen: {e}",
+  "the {which} document exceeds the character limit for comparison": (a) =>
+    `Das ${SIDE[a.which!] ?? a.which} Dokument überschreitet die Zeichengrenze für den Vergleich`,
   "the {which} document has more than {MAX_WORDS} words, which is more than tpdf compares": (a) =>
     `Das ${SIDE[a.which!] ?? a.which} Dokument hat mehr als ${a.MAX_WORDS} Wörter, mehr als tpdf vergleicht`,
   "{name} is encrypted, and tpdf cannot insert pages from an encrypted file yet. Save an unencrypted copy of it first.":

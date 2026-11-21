@@ -255,6 +255,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     let encoding = encoding::slots(doc, font)?;
     let mut result = Box::new([None; 256]);
     let mut codes = Box::new([None; 256]);
+    let mut painted_space = false;
     let mut vertical_bounds = [0_f64; 2];
     let mut overhangs = Box::new([[0_f64; 2]; 256]);
     for (code, slot) in encoding.slots.iter().enumerate() {
@@ -282,6 +283,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             {
                 vertical_bounds[0] = vertical_bounds[0].min(bottom);
                 vertical_bounds[1] = vertical_bounds[1].max(top);
+                painted_space |= slot == 32;
                 overhangs[slot] = [left.min(0.), (right - width).max(0.)];
             }
             Ok(None) if matches!(slot, 32 | 160) => {}
@@ -296,6 +298,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     Ok(Metrics {
         restricted: false,
         opaque: None,
+        painted_space,
         unicode: None,
         widths: result,
         codes: Some(Codes::Single(codes)),

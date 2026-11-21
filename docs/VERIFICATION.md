@@ -7231,3 +7231,15 @@ changing either its selected index or its display label without changing the
 export value caused verification to refuse publication. Two widgets of one
 terminal field remained editable by name. Two distinct fields sharing a name
 were reported as ambiguous before a fill was attempted.
+
+The form-window check cut a text box with its draft still open, then tried to
+cut a square together with a saved widget. The mixed cut kept the same edit
+state and selection subjects. Pasting recovered the text typed into the cut box.
+The fields phase completed while the separate mark launcher reported a locked
+macOS screen. That preflight alone cannot establish which window checks ran.
+
+The worker exported alternating 8-point red and blue tiles as PNG and declined
+SVG. The solid red control still produced a red SVG path. At the left page edge
+a wrapped, untouched D with a 1.2-point overhang refused the edit. The same word
+with an ordinary D fitted. A painted tab leader stopped a longer edit, and a
+Type 3 space with an empty glyph program left room for it.

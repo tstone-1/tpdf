@@ -490,7 +490,10 @@ async function run(host: MarkCheckHost): Promise<void> {
     // from a paste lands a step down and to the right of them.
     if (arrow) {
       viewer.showMark(arrow.id);
-      const copied = await settle(() => viewer.markOpen === arrow.id) && host.run("edit.copyMark");
+      const ready = await settle(() => viewer.markOpen === arrow.id);
+      viewer.markNoteField.value = "arrow draft";
+      viewer.markNoteField.dispatchEvent(new Event("input", { bubbles: true }));
+      const copied = ready && host.run("edit.copyMark");
       before = new Set(host.marks().map((mark) => mark.id));
       const pasted = copied && host.run("edit.pasteMark");
       await settle(() => added(before, host.marks()) !== null);
@@ -500,7 +503,7 @@ async function run(host: MarkCheckHost): Promise<void> {
       const step = to.map((value, at) => value - (from[at] ?? 0));
       check(
         "a copied arrow pastes as an arrow a step down and to the right",
-        pasted && copy?.kind === "arrow" && step.length === 4 && step.every((delta) => Math.abs(delta - 12) < 0.01),
+        pasted && copy?.kind === "arrow" && copy.note === "arrow draft" && step.length === 4 && step.every((delta) => Math.abs(delta - 12) < 0.01),
         copy ? `a ${copy.kind}, moved by ${step.map((delta) => delta.toFixed(2)).join(", ")}` : "the model gained nothing",
       );
     } else {
@@ -508,7 +511,10 @@ async function run(host: MarkCheckHost): Promise<void> {
     }
     if (polygon) {
       viewer.showMark(polygon.id);
-      const cut = await settle(() => viewer.markOpen === polygon.id) && host.run("edit.cutMark");
+      const ready = await settle(() => viewer.markOpen === polygon.id);
+      viewer.markNoteField.value = "polygon draft";
+      viewer.markNoteField.dispatchEvent(new Event("input", { bubbles: true }));
+      const cut = ready && host.run("edit.cutMark");
       const gone = cut && (await settle(() => !host.marks().some((mark) => mark.id === polygon.id)));
       before = new Set(host.marks().map((mark) => mark.id));
       const pasted = gone && host.run("edit.pasteMark");
@@ -516,7 +522,7 @@ async function run(host: MarkCheckHost): Promise<void> {
       const back = added(before, host.marks());
       check(
         "a cut polygon leaves the page, and pastes back as a polygon",
-        gone && pasted && back?.kind === "polygon" && back.strokes[0]?.length === 6,
+        gone && pasted && back?.kind === "polygon" && back.note === "polygon draft" && back.strokes[0]?.length === 6,
         back ? `a ${back.kind} of ${(back.strokes[0]?.length ?? 0) / 2} corner(s)` : gone ? "nothing pasted" : "the cut removed nothing",
       );
     } else {

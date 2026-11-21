@@ -35,7 +35,7 @@
 import type { Command } from "./commands";
 import { catalog } from "./i18n";
 import { isOpenRefusal } from "./ipc";
-import { labelsFor, MAX_RECENTS, recentCommandId } from "./recents";
+import { labelsFor, MAX_RECENTS, pathSeparators, recentCommandId } from "./recents";
 import type { Place, Session, SessionWriter } from "./session";
 import { spokenError } from "./said";
 
@@ -78,13 +78,11 @@ export const UNOPENED = TEXT().unopened;
 /**
  * The folder `path` is in, as it was written.
  *
- * Both separators, for `recents.ts`'s reason: a session file is read by
- * whichever machine has it, and records paths from whichever machine wrote
- * them. Cut at the last separator of either kind rather than split and joined,
- * so a path that mixes the two comes back with the ones it had.
+ * Use the same path syntax as the label and preserve the original separators.
  */
 export function folderOf(path: string): string {
-  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  const leaf = path.split(pathSeparators(path)).at(-1) ?? "";
+  const cut = path.length - leaf.length - 1;
   if (cut < 0) return "";
   const folder = path.slice(0, cut);
   // The root is its separator: `/report.pdf` is in `/`, and `C:\report.pdf` is

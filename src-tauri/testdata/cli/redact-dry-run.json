@@ -13,7 +13,8 @@
   "summary": null,
   "regions": 3,
   "removals": 3,
-  "signatures_invalidated": 0,
+  "signatures_invalidated": 1,
+  "signatures_unknown": false,
   "searches": [
     {
       "kind": "pattern",

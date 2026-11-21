@@ -216,7 +216,8 @@ remain subject to normal font, coordinate and clipping validation; their shows
 are excluded from editable runs. Nested sequences, state changes, visible text,
 extra semantic properties and more than 32 separators are refused. The byte
 patcher preserves the entire sequence, and preceding edits retain its origin. An
-undecodable spacer glyph can paint visible ink, so its bounds remain a fixed obstacle.
+undecodable spacer glyph or a glyph mapped to space with a painted outline keeps
+its measured bounds as a fixed obstacle. A validated empty space leaves room for the edit.
 `textedit/spacers.rs` owns these checks; generate independent fixtures with
 `scripts/text_continuation_check.py --generate <path> --inline tab|bell|tabs`.
 Use `text-edit-probe --continued` and `text_edit_pdfkit.swift --inline` for readback.
@@ -634,6 +635,10 @@ changed middle is encoded, and a kern between a kept and a changed glyph is
 dropped. The candidate is read back through `array_text` and used only if it
 reads as the replacement and fits; otherwise the run is rewritten whole. On the
 arXiv sample this takes transposition edits from 24 to 69 of 80 lines.
+A wrap uses advances to place neighbouring words and the glyph ink bounds of each
+moved piece to check the page edge, clipping and collisions. Two consecutive
+spaces keep the show together, including an indent at the start of the show.
+
 Both writers get their items from `textedit::own_items`, and the editor's layout
 (which every edit in the application sends) uses them for a one-line replacement
 at the run's own font and size, placed at its own origin and held to the box and

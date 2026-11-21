@@ -216,6 +216,7 @@ impl Font {
         let metrics = super::Metrics {
             restricted: false,
             opaque: None,
+            painted_space: unicode.painted_space,
             unicode: Some(unicode),
             vertical_bounds: Some(vertical),
             widths: Box::new([None; 256]),

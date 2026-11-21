@@ -520,11 +520,15 @@ pub fn signed_state(properties: &Properties) -> Option<SignedState> {
     if signed > 0 {
         return Some(SignedState::Signed(signed));
     }
-    let limits = &properties.limits;
-    if limits.locked || limits.unreadable > 0 || limits.signatures_dropped > 0 {
+    if signatures_unknown(properties) {
         return Some(SignedState::Unknown);
     }
     None
+}
+
+pub(super) fn signatures_unknown(properties: &Properties) -> bool {
+    let limits = &properties.limits;
+    limits.locked || limits.unreadable > 0 || limits.signatures_dropped > 0
 }
 
 /// Why a document must not be filled by this writer, when it must not.

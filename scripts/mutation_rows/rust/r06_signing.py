@@ -1441,7 +1441,7 @@ ROWS += [
     Mutation(
         "cli: fill rewrites a document whose signatures were not all read",
         "src/cli/fill.rs",
-        "    if limits.locked || limits.unreadable > 0 || limits.signatures_dropped > 0 {",
+        "    if signatures_unknown(properties) {",
         "    if false {",
         "a_signed_or_certified_document_or_one_whose_signatures_were_not_all_read_is_refused",
     ),

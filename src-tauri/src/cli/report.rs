@@ -1198,6 +1198,9 @@ pub struct Redacted {
     /// Signatures the input carried, every one of which the rewrite
     /// invalidates; nonzero only with `--invalidate-signatures`.
     pub signatures_invalidated: usize,
+    /// Whether additional signatures may have gone unread.
+    #[serde(default)]
+    pub signatures_unknown: bool,
     /// Each `--text` and `--pattern`, in the order given, with how many times
     /// it matched on the pages searched.
     pub searches: Vec<Search>,

@@ -7,7 +7,7 @@
 //! matrix that stretches it, a picture with a mask, a JPEG, and a line of
 //! text. The page-wide rectangle is the control for *alone*: it lies under
 //! every region, and a graphic drawn with it would have no transparent pixel.
-use super::{library_dir, scratch, Report};
+use super::{library_dir, scratch, wait, Report};
 use lopdf::{dictionary, Document, Object, Stream};
 use std::path::Path;
 use tpdf_lib::graphic::{GraphicFormat, GraphicFound, GraphicRequest};
@@ -62,7 +62,9 @@ q 80 0 0 40 100 500 cm /Pic Do Q \
 q 64 0 0 64 300 480 cm /Photo Do Q \
 BT /F1 14 Tf 0 0 0 rg 100 300 Td (Words) Tj ET \
 q 30 180 m 70 180 l 30 220 l h W n 0 g 30 180 40 40 re f Q \
-q 0 G 0 w 100 180 m 140 220 l S Q"
+q 0 G 0 w 100 180 m 140 220 l S Q \
+q 2 M 2 w 180 180 m 195 218 l 200 180 l S Q \
+q /Blend gs 0 0 1 rg 246 182 24 28 re f Q"
         .to_vec();
     let stream = doc.add_object(Stream::new(dictionary! {}, content));
     let page = doc.add_object(dictionary! {
@@ -70,12 +72,30 @@ q 0 G 0 w 100 180 m 140 220 l S Q"
         "Contents"=>stream,
         "Resources"=>dictionary! {
             "Font"=>dictionary! {"F1"=>font},
+            "Pattern"=>dictionary! {},
+            "ExtGState"=>dictionary! {"Blend"=>dictionary! {"BM"=>"Multiply"}},
             "XObject"=>dictionary! {"Logo"=>logo, "Pic"=>picture, "Photo"=>photo},
         },
     });
+    let tiles = doc.add_object(Stream::new(
+        dictionary! {
+            "Type"=>"Pattern", "PatternType"=>1, "PaintType"=>1, "TilingType"=>1,
+            "BBox"=>vec![Object::from(0), 0.into(), 8.into(), 8.into()],
+            "XStep"=>8, "YStep"=>8, "Resources"=>dictionary! {},
+        },
+        b"1 0 0 rg 0 0 8 8 re f 0 0 1 rg 0 0 4 8 re f".to_vec(),
+    ));
+    let stripes = doc.add_object(Stream::new(
+        dictionary! {},
+        b"/Pattern cs /Tiles scn 30 30 100 100 re f".to_vec(),
+    ));
+    let patterned_page = doc.add_object(dictionary! {
+        "Type"=>"Page", "Parent"=>tree, "MediaBox"=>vec![Object::from(0), 0.into(), 595.into(), 842.into()],
+        "Contents"=>stripes, "Resources"=>dictionary! {"Pattern"=>dictionary! {"Tiles"=>tiles}},
+    });
     doc.objects.insert(
         tree,
-        dictionary! {"Type"=>"Pages", "Kids"=>vec![Object::Reference(page)], "Count"=>1}.into(),
+        dictionary! {"Type"=>"Pages", "Kids"=>vec![Object::Reference(page), Object::Reference(patterned_page)], "Count"=>2}.into(),
     );
     let catalog = doc.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>tree});
     doc.trailer.set("Root", catalog);
@@ -121,8 +141,70 @@ fn decoded(png: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     (info.color_type == png::ColorType::Rgba).then_some((info.width, info.height, pixels))
 }
 
+/// Compare the worker's pending revision with the same edit saved and reopened.
+fn pending_caption(dir: &Path) -> Result<(), String> {
+    use tpdf_lib::textedit;
+    let source = dir.join("caption.pdf");
+    fixture(&source);
+    let mut doc = Document::load(&source).map_err(|e| e.to_string())?;
+    let page = doc.get_pages()[&1];
+    doc.change_page_content(
+        page,
+        b"BT /F1 14 Tf 1 0 0 1 100 300 Tm (Words) Tj ET".to_vec(),
+    )
+    .map_err(|e| e.to_string())?;
+    doc.save(&source).map_err(|e| e.to_string())?;
+    let runs = textedit::scan(&doc, 0)?;
+    let run = runs.runs.first().ok_or("no editable caption")?;
+    let change = textedit::Change {
+        page: 0,
+        revision: runs.revision,
+        operator: run.operator,
+        original: run.text.clone(),
+        replacement: "Other".into(),
+        layout: None,
+    };
+    use tpdf_lib::{
+        edits::Edits,
+        render::{Backend, RenderService},
+    };
+    let service = RenderService::start_with(library_dir(), Backend::Worker);
+    let edits = Edits::default();
+    service.follow_text_edits(&edits);
+    let open = |path: &Path| {
+        wait(|reply| service.open(path.to_owned(), false, None, reply))
+            .map(|info| info.id)
+            .map_err(|why| why.reason)
+    };
+    let request = region(90, 270, 220, 330, GraphicFormat::Png);
+    let png = |id| wait(|reply| service.graphic(id, request, reply)).map(|(bytes, _)| bytes);
+    let id = open(&source)?;
+    edits.open(id, 1, None);
+    let original = png(id)?;
+    edits.replace_text(id, 1, change.clone())?;
+    let pending = png(id)?;
+    textedit::write(&mut doc, &[change])?;
+    let saved = dir.join("saved-caption.pdf");
+    doc.save(&saved).map_err(|e| e.to_string())?;
+    let reopened = png(open(&saved)?)?;
+    let pixels = decoded(&pending).ok_or("pending caption had no pixels")?;
+    if Some(&pixels) != decoded(&reopened).as_ref() || Some(&pixels) == decoded(&original).as_ref()
+    {
+        return Err(
+            "pending caption differs from the saved revision or still shows the original".into(),
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn exports_what_the_region_holds(report: &mut Report) {
     let dir = scratch("graphic");
+    let caption = pending_caption(&dir);
+    report.check(
+        "export draws the accepted caption before saving",
+        caption.is_ok(),
+        &format!("{caption:?}"),
+    );
     let source = dir.join("graphic.pdf");
     fixture(&source);
     let mut worker = match Worker::spawn(&source, &library_dir()) {
@@ -236,7 +318,12 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
         &format!("{described:?} / {refused:?}"),
     );
 
-    for (left, reason) in [(25, "clipping path"), (95, "stroke")] {
+    for (left, reason) in [
+        (25, "clipping path"),
+        (95, "stroke"),
+        (167, "stroke"),
+        (235, "blend mode"),
+    ] {
         let area = |format| region(left, 175, left + 50, 225, format);
         let svg = export(&mut worker, area(GraphicFormat::Svg));
         let png = export(&mut worker, area(GraphicFormat::Png))
@@ -249,6 +336,33 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
             "SVG must refuse the operation and PNG must paint it",
         );
     }
+
+    let stripes = |format| GraphicRequest {
+        page: 1,
+        ..region(20, 20, 140, 140, format)
+    };
+    let description = export(&mut worker, stripes(GraphicFormat::Describe));
+    let svg = export(&mut worker, stripes(GraphicFormat::Svg));
+    let pixels = export(&mut worker, stripes(GraphicFormat::Png))
+        .ok()
+        .filter(|(_, found)| {
+            found
+                .no_svg
+                .as_ref()
+                .is_some_and(|why| why.contains("pattern"))
+        })
+        .and_then(|(bytes, _)| decoded(&bytes));
+    report.check(
+        "a tiled path offers PNG with both stripe colors",
+        description.is_ok_and(|(_, found)| found.no_svg.is_some_and(|why| why.contains("pattern")))
+            && svg.is_err_and(|why| why.contains("pattern"))
+            && pixels.is_some_and(|(_, _, rgba)| {
+                [[255, 0, 0, 255], [0, 0, 255, 255]]
+                    .iter()
+                    .all(|color| rgba.chunks_exact(4).any(|pixel| pixel == color))
+            }),
+        "both colors must survive and SVG must be refused",
+    );
 
     let empty = export(&mut worker, region(400, 100, 450, 150, GraphicFormat::Png));
     report.check(
@@ -316,9 +430,9 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
 
     let page = export(&mut worker, region(0, 0, 595, 842, GraphicFormat::Describe));
     report.check(
-        "a region around the whole page takes all seven objects, the page white included",
+        "a region around the whole page takes all nine objects, the page white included",
         page.as_ref()
-            .is_ok_and(|(_, found)| found.objects == 7 && found.original.is_none()),
+            .is_ok_and(|(_, found)| found.objects == 9 && found.original.is_none()),
         &format!("{page:?}"),
     );
 }

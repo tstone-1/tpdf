@@ -500,6 +500,20 @@ mod engine {
             for &object in &chosen {
                 cannot_draw(bindings, object, &mut problems);
             }
+            // PDFium's RGB getters can return a flat gray for a pattern.
+            // Check the source resources before offering SVG for any path.
+            if problems.is_empty()
+                && chosen
+                    .iter()
+                    .any(|&o| matches!(bindings.FPDFPageObj_GetType(o), PATH | FORM))
+            {
+                let nested = chosen
+                    .iter()
+                    .any(|&o| bindings.FPDFPageObj_GetType(o) == FORM);
+                if !pattern_free(document, request.page, pages, nested) {
+                    problems.push(Unsupported::Pattern);
+                }
+            }
             let single = (chosen.len() == 1
                 && matches!(rectangular_clip(bindings, chosen[0]), Ok(None))
                 && bindings.FPDFPageObj_GetType(chosen[0]) == IMAGE)
@@ -519,8 +533,14 @@ mod engine {
                 Unsupported::Clip => {
                     said!("SVG export cannot preserve this clipping path; save as PNG")
                 }
-                Unsupported::Hairline => {
+                Unsupported::Transparency => {
+                    said!("SVG export cannot preserve this transparency or blend mode; save as PNG")
+                }
+                Unsupported::Stroke => {
                     said!("SVG export cannot preserve this stroke; save as PNG")
+                }
+                Unsupported::Pattern => {
+                    said!("SVG export cannot rule out patterned paint; save as PNG")
                 }
                 Unsupported::Gradient => {
                     said!("it holds a gradient, which the SVG cannot draw yet; save it as PNG")
@@ -707,12 +727,80 @@ mod engine {
         [m.a, m.b, m.c, m.d, m.e, m.f].map(f64::from)
     }
 
+    /// Paths have no color-space accessor. Check the page's effective resources
+    /// and, for a form selection, the resources its children can use.
+    fn pattern_free(document: &OpenDocument, page: u32, pages: usize, nested: bool) -> bool {
+        let Ok(doc) = document.graph().parsed() else {
+            return false;
+        };
+        let Ok(ids) = crate::pagetree::pages_of(doc, pages) else {
+            return false;
+        };
+        let Some(&page) = ids.get(page as usize) else {
+            return false;
+        };
+        let resources = match crate::pagetree::resources(doc, page) {
+            Ok(Some(resources)) => resources,
+            Ok(None) => return true,
+            Err(_) => return false,
+        };
+        let mut pending = vec![resources];
+        let mut visited = std::collections::HashSet::new();
+        let mut budget = 4096usize;
+        while let Some(resources) = pending.pop() {
+            if let Ok(patterns) = resources.get(b"Pattern") {
+                if !crate::encoding::resolve_dict(doc, patterns)
+                    .is_ok_and(lopdf::Dictionary::is_empty)
+                {
+                    return false;
+                }
+            }
+            if !nested {
+                continue;
+            }
+            let Ok(objects) = resources.get(b"XObject") else {
+                continue;
+            };
+            let Ok(objects) = crate::encoding::resolve_dict(doc, objects) else {
+                return false;
+            };
+            let Some(left) = budget.checked_sub(objects.len()) else {
+                return false;
+            };
+            budget = left;
+            for (_, value) in objects {
+                let Ok((id, value)) = doc.dereference(value) else {
+                    return false;
+                };
+                if id.is_some_and(|id| !visited.insert(id)) {
+                    continue;
+                }
+                let Ok(stream) = value.as_stream() else {
+                    return false;
+                };
+                let dict = &stream.dict;
+                if dict.get(b"Subtype").and_then(lopdf::Object::as_name).ok() == Some(b"Image") {
+                    continue;
+                }
+                if let Ok(child) = dict.get(b"Resources") {
+                    let Ok(child) = crate::encoding::resolve_dict(doc, child) else {
+                        return false;
+                    };
+                    pending.push(child);
+                }
+            }
+        }
+        true
+    }
+
     /// What the SVG cannot draw.
     enum Unsupported {
         Text,
         Gradient,
+        Pattern,
         Clip,
-        Hairline,
+        Stroke,
+        Transparency,
     }
 
     // PDFium returns clip coordinates in the containing form or page's space.
@@ -765,6 +853,38 @@ mod engine {
         ]))
     }
 
+    /// A single open segment has no join, even for a mitered pen. PDFium
+    /// represents one cubic segment with three consecutive Bezier points.
+    unsafe fn has_join(bindings: Bindings, object: FPDF_PAGEOBJECT) -> bool {
+        let mut segments = 0;
+        let mut controls = 0;
+        for index in 0..bindings.FPDFPath_CountSegments(object) {
+            let step = bindings.FPDFPath_GetPathSegment(object, index);
+            if step.is_null() {
+                return true;
+            }
+            match bindings.FPDFPathSegment_GetType(step) {
+                SEGMENT_MOVE => {
+                    segments = 0;
+                    controls = 0;
+                }
+                SEGMENT_LINE => segments += 1,
+                SEGMENT_BEZIER => {
+                    controls += 1;
+                    if controls == 3 {
+                        segments += 1;
+                        controls = 0;
+                    }
+                }
+                _ => return true,
+            }
+            if segments > 1 || bindings.FPDFPathSegment_GetClose(step) != 0 {
+                return true;
+            }
+        }
+        false
+    }
+
     /// What in `object`, at any depth, the SVG cannot draw.
     unsafe fn cannot_draw(
         bindings: Bindings,
@@ -774,15 +894,23 @@ mod engine {
         if rectangular_clip(bindings, object).is_err() {
             problems.push(Unsupported::Clip);
         }
+        // PDFium flags a non-Normal blend mode as transparency. Its public API
+        // cannot distinguish that mode from other transparent paint states.
+        if bindings.FPDFPageObj_HasTransparency(object) != 0 {
+            problems.push(Unsupported::Transparency);
+        }
         match bindings.FPDFPageObj_GetType(object) {
             PATH => {
                 let (mut mode, mut stroked, mut width) = (0, 0, 0.0);
                 if bindings.FPDFPath_GetDrawMode(object, &mut mode, &mut stroked) == 0
                     || (stroked != 0
                         && (bindings.FPDFPageObj_GetStrokeWidth(object, &mut width) == 0
-                            || width <= 0.0))
+                            || width <= 0.0
+                            // PDFium exposes the join but not the miter limit.
+                            || (!matches!(bindings.FPDFPageObj_GetLineJoin(object), 1 | 2)
+                                && has_join(bindings, object))))
                 {
-                    problems.push(Unsupported::Hairline);
+                    problems.push(Unsupported::Stroke);
                 }
             }
             TEXT => problems.push(Unsupported::Text),

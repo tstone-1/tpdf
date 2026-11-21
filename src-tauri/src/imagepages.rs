@@ -495,6 +495,19 @@ fn number(value: f64) -> Object {
     Object::Real(((value * 100.0).round() / 100.0) as f32)
 }
 
+pub(crate) fn check_count(count: usize) -> Result<(), String> {
+    if count == 0 {
+        return Err(said!("choose at least one picture"));
+    }
+    if count > MAX_IMAGES {
+        return Err(said!(
+            "{chosen} pictures were chosen, and tpdf makes a document from at most {MAX_IMAGES} at once",
+            chosen = count
+        ));
+    }
+    Ok(())
+}
+
 /// The document: one page for each of `images`, in order.
 ///
 /// `images` pairs each file's bytes with the name to call it in a refusal.
@@ -505,15 +518,7 @@ fn number(value: f64) -> Object {
 /// place, named by its label.
 pub fn document(images: &[(&[u8], &str)], options: Options) -> Result<Document, String> {
     let options = options.checked()?;
-    if images.is_empty() {
-        return Err(said!("choose at least one picture"));
-    }
-    if images.len() > MAX_IMAGES {
-        return Err(said!(
-            "{chosen} pictures were chosen, and tpdf makes a document from at most {MAX_IMAGES} at once",
-            chosen = images.len()
-        ));
-    }
+    check_count(images.len())?;
     let mut doc = Document::with_version("1.7");
     let pages_id = doc.new_object_id();
     let mut kids = Vec::with_capacity(images.len());
