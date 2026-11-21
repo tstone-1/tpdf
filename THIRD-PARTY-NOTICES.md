@@ -3123,7 +3123,7 @@ SOFTWARE.
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | byteorder | 1.5.0 | Unlicense OR MIT |
 | byteorder-lite | 0.1.0 | Unlicense OR MIT |
-| bytes | 1.12.1 | MIT |
+| bytes | 1.12.2 | MIT |
 | cairo-rs | 0.18.5 | MIT |
 | cairo-sys-rs | 0.18.2 | MIT |
 | camino | 1.2.6 | MIT OR Apache-2.0 |
@@ -3415,9 +3415,9 @@ SOFTWARE.
 | rc2 | 0.8.1 | MIT OR Apache-2.0 |
 | ref-cast | 1.0.27 | MIT OR Apache-2.0 |
 | ref-cast-impl | 1.0.27 | MIT OR Apache-2.0 |
-| regex | 1.13.1 | MIT OR Apache-2.0 |
-| regex-automata | 0.4.18 | MIT OR Apache-2.0 |
-| regex-syntax | 0.8.11 | MIT OR Apache-2.0 |
+| regex | 1.13.2 | MIT OR Apache-2.0 |
+| regex-automata | 0.4.19 | MIT OR Apache-2.0 |
+| regex-syntax | 0.8.12 | MIT OR Apache-2.0 |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 |
 | rfc6979 | 0.6.0 | Apache-2.0 OR MIT |
 | rfd | 0.17.2 | MIT |
@@ -3472,7 +3472,7 @@ SOFTWARE.
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
 | siphasher | 1.0.4 | MIT OR Apache-2.0 |
 | slab | 0.4.12 | MIT |
-| smallvec | 1.16.5 | MIT OR Apache-2.0 |
+| smallvec | 1.16.6 | MIT OR Apache-2.0 |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 |
 | softbuffer | 0.4.8 | MIT OR Apache-2.0 |
 | soup3 | 0.5.0 | MIT |
@@ -3496,17 +3496,17 @@ SOFTWARE.
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
 | tao | 0.37.2 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
-| tauri | 2.12.6 | Apache-2.0 OR MIT |
-| tauri-codegen | 2.7.5 | Apache-2.0 OR MIT |
-| tauri-macros | 2.7.5 | Apache-2.0 OR MIT |
+| tauri | 2.12.7 | Apache-2.0 OR MIT |
+| tauri-codegen | 2.7.6 | Apache-2.0 OR MIT |
+| tauri-macros | 2.7.6 | Apache-2.0 OR MIT |
 | tauri-plugin-dialog | 2.8.4 | Apache-2.0 OR MIT |
 | tauri-plugin-fs | 2.7.1 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.4.0 | Apache-2.0 OR MIT |
 | tauri-plugin-single-instance | 2.5.5 | Apache-2.0 OR MIT |
 | tauri-plugin-updater | 2.14.1 | Apache-2.0 OR MIT |
-| tauri-runtime | 2.12.3 | Apache-2.0 OR MIT |
-| tauri-runtime-wry | 2.12.4 | Apache-2.0 OR MIT |
-| tauri-utils | 2.10.3 | Apache-2.0 OR MIT |
+| tauri-runtime | 2.12.4 | Apache-2.0 OR MIT |
+| tauri-runtime-wry | 2.12.5 | Apache-2.0 OR MIT |
+| tauri-utils | 2.10.4 | Apache-2.0 OR MIT |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | tendril | 0.5.1 | MIT OR Apache-2.0 |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 |
@@ -3602,12 +3602,12 @@ SOFTWARE.
 | zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
-| zeroize | 1.9.1 | Apache-2.0 OR MIT |
+| zeroize | 1.9.2 | Apache-2.0 OR MIT |
 | zeroize_derive | 1.5.0 | Apache-2.0 OR MIT |
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.9 | Unicode-3.0 |
 | zerovec-derive | 0.11.7 | Unicode-3.0 |
-| zip | 9.6.1 | MIT |
+| zip | 9.7.0 | MIT |
 | zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |

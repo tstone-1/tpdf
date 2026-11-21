@@ -93,10 +93,9 @@ def _on_path(name: str) -> str | None:
     """
     suffixes = ['']
     if os.name == 'nt':
-        listed = os.environ.get('PATHEXT', '.COM;.EXE;.BAT;.CMD').split(os.pathsep)
-        suffixes = [suffix for suffix in listed if suffix]
-        if any(name.lower().endswith(suffix.lower()) for suffix in suffixes):
-            suffixes = ['', *suffixes]
+        # The published CLI is native. A batch launcher can reinterpret
+        # literal document paths even when Popen receives an argument list.
+        suffixes = [''] if name.lower().endswith('.exe') else ['.exe']
     for entry in os.environ.get('PATH', os.defpath).split(os.pathsep):
         folder = entry.strip().strip('"')
         if not folder or not os.path.isabs(folder):
@@ -159,6 +158,8 @@ class Tpdf:
         # A bare name given as executable= is looked up on PATH, never in the
         # current directory; a path with a folder in it, `./tpdf-cli` among
         # them, is the caller's choice.
+        if os.name == 'nt' and Path(found).suffix.lower() in {'.bat', '.cmd'}:
+            raise ValueError('use the native tpdf CLI .exe on Windows')
         if os.path.dirname(found) == '':
             on_path = _on_path(found)
             if on_path is None:
@@ -167,7 +168,10 @@ class Tpdf:
                 )
             found = on_path
         # Resolve a caller-supplied relative executable before changing the child cwd.
-        self.executable = str(Path(found).resolve())
+        resolved = Path(found).resolve()
+        if os.name == 'nt' and resolved.suffix.lower() != '.exe':
+            raise ValueError('use the native tpdf CLI .exe on Windows')
+        self.executable = str(resolved)
         self.timeout = timeout
         self.cwd = os.fspath(cwd) if cwd is not None else None
 

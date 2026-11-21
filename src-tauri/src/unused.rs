@@ -79,6 +79,7 @@ struct Found {
 /// What the pages sharing one dictionary draw, or `None` when it must be kept whole.
 struct Group {
     drawn: Option<HashSet<Vec<u8>>>,
+    partial_import: bool,
     holders: HashSet<ObjectId>,
     /// The indirect `/Resources` objects the dictionary is reached through.
     via: HashSet<ObjectId>,
@@ -93,26 +94,49 @@ struct Group {
 ///
 /// An object nesting deeper than [`sweep::MAX_NESTING`].
 pub fn prune(doc: &mut Document) -> Result<usize, String> {
+    prune_pages(doc, true, &HashSet::new())
+}
+
+/// A partial import prunes its own pages even when the entire base is kept.
+/// Refuse it if the selected pages' picture usage cannot be determined.
+pub(crate) fn prune_pages(
+    doc: &mut Document,
+    prune_base: bool,
+    partial_imports: &HashSet<ObjectId>,
+) -> Result<usize, String> {
     let mut groups: HashMap<(&[u8], Home), Group> = HashMap::new();
     // Each indirect `/Resources` object, and the pages and nodes that name it.
     let mut namers: HashMap<ObjectId, HashSet<ObjectId>> = HashMap::new();
     for page in doc.get_pages().into_values() {
-        let drawn = drawn_by(doc, page);
+        let partial_import = partial_imports.contains(&page);
+        if !prune_base && !partial_import {
+            continue;
+        }
+        let drawn = drawn_by(doc, page, false);
         for key in CATEGORIES {
             let Some(found) = home_of(doc, page, key) else {
                 continue;
             };
             let group = groups.entry((key, found.home)).or_insert_with(|| Group {
                 drawn: Some(HashSet::new()),
+                partial_import: false,
                 holders: HashSet::new(),
                 via: HashSet::new(),
             });
+            group.partial_import |= partial_import;
             group.holders.insert(found.holder);
             if let Some((resources, namer)) = found.via {
                 group.via.insert(resources);
                 namers.entry(resources).or_default().insert(namer);
             }
-            match (&drawn, group.drawn.as_mut()) {
+            let pictures;
+            let used = if partial_import && key == b"XObject" {
+                pictures = drawn_by(doc, page, true);
+                &pictures
+            } else {
+                &drawn
+            };
+            match (used, group.drawn.as_mut()) {
                 (Some(names), Some(all)) => all.extend(names.iter().cloned()),
                 _ => group.drawn = None,
             }
@@ -160,21 +184,18 @@ pub fn prune(doc: &mut Document) -> Result<usize, String> {
 
     let mut removed = 0;
     for ((key, home), group) in groups {
-        let Some(drawn) = group.drawn else {
+        let shared_elsewhere = matches!(home, Home::Own(id) | Home::InResources(id) if strangers.contains(&id))
+            || group.via.iter().any(|id| strangers.contains(id));
+        let Some(drawn) = group.drawn.filter(|_| !shared_elsewhere) else {
+            // Keeping an uncertain dictionary is safe after an ordinary edit.
+            // A partial import must not publish pictures from the omitted pages.
+            if group.partial_import && key == b"XObject" {
+                return Err(said!(
+                    "the images used by the selected pages could not be determined"
+                ));
+            }
             continue;
         };
-        if let Home::Own(id) | Home::InResources(id) = home {
-            if strangers.contains(&id) {
-                continue;
-            }
-        }
-        if group
-            .via
-            .iter()
-            .any(|resources| strangers.contains(resources))
-        {
-            continue;
-        }
         let Some(entries) = dictionary_at(doc, home, key) else {
             continue;
         };
@@ -270,7 +291,7 @@ fn dictionary_at<'a>(doc: &'a mut Document, home: Home, key: &[u8]) -> Option<&'
 /// `Content::decode` reads `/Im2 Do ((` as one complete operation and returns
 /// `Ok`, so a count of parsed `Do`s can fall short without saying so, and
 /// falling short here deletes a picture a page draws.
-fn drawn_by(doc: &Document, page: ObjectId) -> Option<HashSet<Vec<u8>>> {
+fn drawn_by(doc: &Document, page: ObjectId, xobjects_only: bool) -> Option<HashSet<Vec<u8>>> {
     if leans_on_page(doc, page) {
         return None;
     }
@@ -282,6 +303,22 @@ fn drawn_by(doc: &Document, page: ObjectId) -> Option<HashSet<Vec<u8>>> {
         return Some(HashSet::new());
     }
     let data = crate::textedit::page_content(doc, page).ok()?;
+    if xobjects_only {
+        // A name inside a string, comment, or font operand is not an image use.
+        let mut bytes = data;
+        bytes.push(b'\n');
+        let ops = lopdf::content::Content::decode_strict(&bytes)
+            .ok()?
+            .operations;
+        let mut used = HashSet::new();
+        for op in ops.into_iter().filter(|op| op.operator == "Do") {
+            let [Object::Name(name)] = op.operands.as_slice() else {
+                return None;
+            };
+            used.insert(name.clone());
+        }
+        return Some(used);
+    }
     names_in(&data)
 }
 

@@ -129,8 +129,8 @@ ROWS += [
         # alone takes the form's fonts and images away.
         "unused: prune resources a form shares with its page",
         "src/unused.rs",
-        "        if group\n            .via\n",
-        "        if false\n            && group\n            .via\n",
+        "            || group.via.iter().any(|id| strangers.contains(id));",
+        "            || (false && group.via.iter().any(|id| strangers.contains(id)));",
         "a_form_that_shares_the_pages_resources_object_keeps_what_it_draws",
     ),
     Mutation(

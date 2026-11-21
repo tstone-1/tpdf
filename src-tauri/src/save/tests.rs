@@ -9838,6 +9838,31 @@ fn extracting_a_page_leaves_the_other_pages_pictures_out_of_the_file() {
         "the third page's picture came along"
     );
 
+    // Keep every base page and import just the middle scan from the same
+    // shared-resource fixture. Only the selected scan may accompany the base.
+    let base = scratch.join("base.pdf");
+    std::fs::write(&base, document_drawing_an_image(&[1, 2, 3, 4, 5, 6])).unwrap();
+    let mut plan = plan_of(&[0]);
+    plan.sources.push(crate::edits::PlannedSource {
+        id: 1,
+        path: source.clone(),
+        opened_as: Some(Fingerprint::of(&source).unwrap()),
+    });
+    plan.pages.push(PageView {
+        id: 2,
+        source: PageSource::Imported {
+            source: crate::docmodel::SourceId::from_raw(1),
+            page: 1,
+        },
+        turns: 0,
+        crop: None,
+    });
+    let inserted = scratch.join("insert.pdf");
+    copy_here(&base, &plan, &inserted, None).expect("insert selected scan");
+    assert!(holds(&inserted, PIXELS[1]));
+    assert!(!holds(&inserted, PIXELS[0]) && !holds(&inserted, PIXELS[2]));
+    assert_eq!(Document::load(&inserted).unwrap().get_pages().len(), 2);
+
     // The control: a copy that drops no page changes nothing about what it holds.
     let whole = scratch.join("whole.pdf");
     copy_here(&source, &plan_of(&[0, 0, 0]), &whole, None).expect("write");

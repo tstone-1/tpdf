@@ -175,6 +175,14 @@ export function choosePages(choice: PageChoice, count: number): number[] | null 
   return everything ? null : pages;
 }
 
+/** Only a page printed on its own uses the percentage control. */
+export function readScale(perSheet: number, kind: PrintScale["kind"], raw: string): PrintScale | null {
+  if (perSheet > 1) return { kind: "fit" };
+  if (kind !== "percent" && kind !== "poster") return { kind };
+  const percent = Number(raw);
+  return Number.isInteger(percent) && percent >= 1 && percent <= MOST_PERCENT ? { kind, percent } : null;
+}
+
 /** The settings a preview opens with: the default printer, one page to a sheet, nothing scaled up. */
 export function defaultSettings(pages: readonly PageSize[]): PrintSettings {
   return {
@@ -339,7 +347,8 @@ export function placementBox(placed: PrintPlacement, paper: PrintPaper): Percent
 }
 
 /** The line under the heading once the job is laid out on paper: sheets, and pages if they differ. */
-export function sheetSummary(sheets: number, pages: number, copies: number): string {
+export function sheetSummary(sides: number, pages: number, copies: number, twoSided: TwoSided | null = null): string {
+  const sheets = twoSided === "long" || twoSided === "short" ? Math.ceil(sides / 2) : sides;
   return TEXT().sheets(sheets, pages, copies);
 }
 

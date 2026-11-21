@@ -317,6 +317,10 @@ export default {
     "{path} gibt es schon, und das Aufteilen würde es ersetzen - wähle einen anderen Namen",
   "{reason} ({written} of {total} written)":
     "{reason} ({written} von {total} geschrieben)",
+  "pages from a layered PDF cannot be imported with their visibility settings":
+    "Seiten aus einer PDF mit Ebenen können nicht mit ihren Sichtbarkeitseinstellungen importiert werden",
+  "the images used by the selected pages could not be determined":
+    "Die von den ausgewählten Seiten verwendeten Bilder konnten nicht bestimmt werden",
   "choose at least one document to merge in":
     "Wähle mindestens ein Dokument zum Zusammenführen",
   "tpdf cannot write the merge over {name}, which is one of the documents going into it":

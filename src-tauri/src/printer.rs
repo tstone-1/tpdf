@@ -92,7 +92,16 @@ pub fn send(
             std::io::Error::last_os_error()
         ));
     }
-    let output = std::env::var("TPDF_PRINT_OUTPUT").ok();
+    let output = std::env::var("TPDF_PRINT_OUTPUT")
+        .ok()
+        .filter(|name| !name.is_empty());
+    if output.is_none() {
+        if let Err(why) = crate::printers_win::check_unattended_port(&device) {
+            // SAFETY: this call owns the DC, and has not begun a job.
+            let _ = unsafe { DeleteDC(dc) };
+            return Err(why);
+        }
+    }
     // A stuck queue blocks inside GDI and reports nothing; stderr says so
     // rather than leaving a script waiting on silence (`print::STALL`).
     let spooled = crate::print::watched(

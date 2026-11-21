@@ -236,6 +236,8 @@ tab closure releases its handle, and window closure checks all tabs for unsaved 
 Foreground and background opens resolve file identity before allocating a journal.
 Reload checks the journal and live drafts again after acquiring the replacement.
 Quit and update relaunch wait for pending reading positions, tabs and favourites.
+Session saves close the temporary file before replacing the previous record. Windows
+retries a briefly busy destination for up to 126 ms, then reports the error.
 A missing session permits a first save. An existing session that cannot be read or
 decoded is left intact by updates. Each writer creates its own temporary file beside
 the destination before publishing the complete record.
@@ -366,6 +368,12 @@ registered as a resource identifies its holders. Never clean up by image name:
 the installed application may be running alongside the test build.
 
 ## What the worker writes and reads, and the password
+
+Page import refuses an incoming catalog with optional-content settings. Imported local
+links with named destinations are disabled and the base document's last label range ends
+at an append. Partial insertion prunes unused XObjects on imported pages after placement
+and the reachability sweep. If the selected pages' image usage is uncertain, saving is refused.
+
 
 PDFium can report a tile pattern as flat gray. For a path selection the SVG
 exporter checks the page's effective resources. For a form selection it checks

@@ -38,6 +38,7 @@ import {
   previewSummary,
   printableBox,
   readKept,
+  readScale,
   sheetSummary,
   suggestLandscape,
   turnedPicture,
@@ -503,17 +504,9 @@ export class PrintPreviewDialog {
     if (!Number.isInteger(copies) || copies < 1 || copies > MOST_COPIES) {
       return TEXT().copiesRange(MOST_COPIES);
     }
-    const kind = this.scale.value as PrintScale["kind"];
-    let scale: PrintScale;
-    if (kind === "percent" || kind === "poster") {
-      const percent = Number(this.percent.value);
-      if (!Number.isInteger(percent) || percent < 1 || percent > MOST_PERCENT) {
-        return TEXT().percentRange(MOST_PERCENT);
-      }
-      scale = { kind, percent };
-    } else {
-      scale = { kind };
-    }
+    const perSheet = Number(this.perSheet.value);
+    const scale = readScale(perSheet, this.scale.value as PrintScale["kind"], this.percent.value);
+    if (!scale) return TEXT().percentRange(MOST_PERCENT);
     return {
       printer: this.printer.value || base.printer,
       paper: this.paper.value === "" ? null : Number(this.paper.value),
@@ -522,7 +515,7 @@ export class PrintPreviewDialog {
       twoSided: this.twoSidedRow.style.display === "none" ? null : (this.twoSided.value as TwoSided),
       colour: this.colourRow.style.display === "none" ? null : this.colour.value === "colour",
       // A poster is one page to a sheet; the list is set back to show it.
-      perSheet: kind === "poster" ? 1 : Number(this.perSheet.value),
+      perSheet: scale.kind === "poster" ? 1 : perSheet,
       scale,
       rotate: this.rotate.checked,
       marks: this.marksChoice.value === "print",
@@ -643,8 +636,8 @@ export class PrintPreviewDialog {
     this.problem.textContent = "";
     this.broken = false;
     this.list.removeAttribute("aria-busy");
-    const pages = setup.sheets.reduce((sum, sheet) => sum + sheet.length, 0);
-    this.summary.textContent = sheetSummary(setup.sheets.length, pages, this.settings.copies);
+    const pages = base.pages?.length ?? this.pages.length;
+    this.summary.textContent = sheetSummary(setup.sheets.length, pages, copies, device.twoSided);
     this.lay(setup.sheets.map((placements) => ({ paper: setup.paper, placements })));
   }
 

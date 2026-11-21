@@ -416,6 +416,23 @@ impl Printer {
     }
 }
 
+/// Checks the named queue before a CLI job can enter a driver's file picker.
+pub(crate) fn check_unattended_port(name: &HSTRING) -> Result<(), String> {
+    let port = port_of(&Opened::new(name)?)
+        .filter(|port| !port.trim().is_empty())
+        .ok_or_else(|| format!("could not determine the port for printer {name}"))?;
+    if port
+        .split(',')
+        .map(str::trim)
+        .any(|port| port.eq_ignore_ascii_case("FILE:") || port.eq_ignore_ascii_case("PORTPROMPT:"))
+    {
+        return Err(format!(
+            "printer {name} asks for an output file; use the window to choose where to save"
+        ));
+    }
+    Ok(())
+}
+
 /// The port a printer prints to, which `DeviceCapabilities` wants beside its name.
 fn port_of(opened: &Opened) -> Option<String> {
     let mut needed = 0u32;

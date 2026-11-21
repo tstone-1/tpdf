@@ -11,14 +11,15 @@ Free, MIT-licensed, no account, no telemetry; your documents are not uploaded an
 
 ## Download
 
-**If you redacted documents with tpdf 26.11.10 or earlier, redact the originals again with
-26.11.11 or later.** A redacted file from those versions can still hold a copy of what was
-removed, even where tpdf said *verified*. Updating tpdf does not change files it has already
-written: redo the redaction from the original and use the new file. If the older file was
-already sent, assume it can still hold what was redacted.
-What was affected: [up to 26.11.10](SECURITY.md#redactions-made-with-261110-or-earlier),
-[up to 26.11.9](SECURITY.md#redactions-made-with-26119-or-earlier) and
-[up to 26.11.5](SECURITY.md#redactions-made-with-26115-or-earlier).
+**If you used tpdf 26.11.11 or earlier to redact a document, redo the redaction
+from the original with 26.11.12 or later.** An older copy can still contain the
+redacted information even if the check reported *verified*. Updating the app
+only changes future checks. If you already shared an older copy, treat its
+redacted information as potentially disclosed. See the notices for
+[26.11.11](SECURITY.md#redactions-made-with-261111),
+[26.11.10](SECURITY.md#redactions-made-with-261110-or-earlier),
+[26.11.9](SECURITY.md#redactions-made-with-26119-or-earlier) and
+[26.11.5 and earlier](SECURITY.md#redactions-made-with-26115-or-earlier).
 
 Take the file for your computer from the
 [latest release](https://github.com/tstone-1/tpdf/releases/latest):
@@ -1046,8 +1047,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   with deleted pages gone — and the others go in as they are on disk. Each incoming page
   takes its own size, box and rotation with it even where the file states those on the
   group the page sits in rather than on the page, which is where a naive merge silently
-  resizes half a document. Links inside a merged document keep working; its bookmarks and
-  named destinations do not come across, and neither do form fields. Like extract, it
+  resizes half a document. Links to specific incoming page objects keep working.
+  Links to named destinations are disabled. Incoming bookmarks, name tables and form fields
+  are omitted. Layered source PDFs are refused because their visibility settings belong
+  to the source document. Like extract, it
   writes elsewhere and changes nothing about what you have open.
   <!-- built: file.mergeDocuments -->
 - **Save**, over the open file or to a copy. A save is refused outright if the file changed
@@ -1828,7 +1831,7 @@ or partial split directly. Malformed or incompatible reports raise `ProtocolErro
 `password=` passes a password in the child's environment, without changing the
 caller's environment or placing the password in the command line.
 
-Calls use literal argument arrays without a shell and a 120-second default timeout.
+On Windows the Python client requires the native CLI executable (.exe). Calls use literal argument arrays without a shell and a 120-second default timeout.
 `CommandTimeout` means completion is unknown: outputs may already have been published.
 The client attempts to terminate the owned process tree; cleanup is bounded even
 if the operating system refuses it. Each call starts its own CLI process. This
@@ -1894,7 +1897,8 @@ by the operating system's own PDF reader on macOS and Windows, and by the sandbo
 renderer on Linux. macOS and Linux hand the PDF to CUPS; Windows draws each page on the
 printer, as the window's Print does there. A printer name nothing knows is refused (exit
 code 3), naming the printers there are on macOS and Linux; on Windows `Get-Printer` lists
-them. A document with a password to open it is not printed.
+them. On Windows, file-prompt queues such as Microsoft Print to PDF are refused by
+the unattended command. Use the window to choose an output file. A document with a password to open it is not printed.
 
 The JSON report carries `schema`, `command`, `input`, `printer`, `pages` (the pages the
 job holds) and `job`, the print system's number for the job: CUPS gives one, Windows
@@ -2508,8 +2512,9 @@ the worked-out position rather than a paragraph of reassurance: the trust bounda
 sandbox profile in full, and the residual risks in one list, with every claim either
 measured and attributed to the spike that measured it, or marked untested.
 
-A redaction made with 26.11.10 or earlier can still hold what it removed; `SECURITY.md` has
+A redaction made with 26.11.11 or earlier can still hold what it removed. `SECURITY.md` has
 which documents, and what to redo, for
+[26.11.11](SECURITY.md#redactions-made-with-261111), for
 [26.11.10 and earlier](SECURITY.md#redactions-made-with-261110-or-earlier), for
 [26.11.9 and earlier](SECURITY.md#redactions-made-with-26119-or-earlier) and for
 [26.11.5 and earlier](SECURITY.md#redactions-made-with-26115-or-earlier).

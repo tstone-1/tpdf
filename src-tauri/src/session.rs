@@ -461,8 +461,26 @@ impl Session {
         fs::create_dir_all(dir)?;
         let mut temp = tempfile::NamedTempFile::new_in(dir)?;
         io::Write::write_all(temp.as_file_mut(), &serde_json::to_vec_pretty(self)?)?;
-        temp.persist(path)?;
-        Ok(())
+        // Close the writer before publishing its name. On Windows an open
+        // destination can still make MoveFileExW return access denied (5) or
+        // a sharing violation (32) while a concurrent reader finishes.
+        let pending = temp.into_temp_path();
+        #[cfg(windows)]
+        let pending = {
+            let mut pending = pending;
+            for delay_ms in [2, 4, 8, 16, 32, 64] {
+                match pending.persist(path) {
+                    Ok(()) => return Ok(()),
+                    Err(error) if matches!(error.error.raw_os_error(), Some(5 | 32)) => {
+                        pending = error.path;
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    }
+                    Err(error) => return Err(error.error),
+                }
+            }
+            pending
+        };
+        pending.persist(path).map_err(|error| error.error)
     }
 }
 

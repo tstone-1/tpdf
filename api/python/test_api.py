@@ -1183,7 +1183,7 @@ class ExecutableLookupTests(unittest.TestCase):
         self.empty = root / 'empty'
         for folder in (self.received, self.installed, self.empty):
             folder.mkdir()
-        name = 'tpdf-cli.bat' if os.name == 'nt' else 'tpdf-cli'
+        name = 'tpdf-cli.exe' if os.name == 'nt' else 'tpdf-cli'
         for folder in (self.received, self.installed):
             planted = folder / name
             planted.write_text('@echo off\n' if os.name == 'nt' else '#!/bin/sh\n', encoding='ascii')
@@ -1195,6 +1195,19 @@ class ExecutableLookupTests(unittest.TestCase):
     def found(self, path: str) -> str:
         with patch.dict(os.environ, {'PATH': path}):
             return Tpdf().executable
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows native CLI discovery')
+    def test_batch_launchers_are_skipped_and_refused(self):
+        for ext in ('.bat', '.cmd'):
+            shim = self.empty / ('tpdf-cli' + ext)
+            shim.touch()
+            with patch.dict(os.environ, {'PATH': str(self.empty)}):
+                with self.assertRaises(FileNotFoundError):
+                    Tpdf()
+                with self.assertRaisesRegex(ValueError, 'native'):
+                    Tpdf(shim)
+                with self.assertRaisesRegex(ValueError, 'native'):
+                    Tpdf(shim.name)
 
     def test_a_tool_in_the_current_directory_is_not_found(self):
         with patch.dict(os.environ, {'PATH': str(self.empty)}):
@@ -1213,7 +1226,7 @@ class ExecutableLookupTests(unittest.TestCase):
         found = Path(self.found(os.pathsep.join([str(self.empty), str(self.installed)])))
         self.assertEqual(found.parent, self.installed.resolve())
         # An explicit path to the current directory's copy is the caller's choice.
-        name = 'tpdf-cli.bat' if os.name == 'nt' else 'tpdf-cli'
+        name = 'tpdf-cli.exe' if os.name == 'nt' else 'tpdf-cli'
         explicit = Path(Tpdf('.' + os.sep + name).executable)
         self.assertEqual(explicit.parent, self.received.resolve())
 

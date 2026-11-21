@@ -33,6 +33,7 @@ use lopdf::{Dictionary, Document, Object, ObjectId};
 use crate::sweep;
 
 mod labels;
+pub(crate) use labels::remap as remap_labels;
 
 /// How far up a `/Parent` chain anything here will walk.
 ///

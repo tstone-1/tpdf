@@ -4234,7 +4234,8 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // Imported pages go in at the same point and for the same two reasons:
     // `merge::import` adds objects, and it answers ids that `materialise` then
     // places. Before `make_blank_pages`, which reads the ids it answers.
-    let imported = import_pages(&mut doc, &slots, &incoming)?;
+    let mut partial_imports = std::collections::HashSet::new();
+    let imported = import_pages(&mut doc, &slots, &incoming, &mut partial_imports)?;
     let turns: Vec<(lopdf::ObjectId, u8)> = make_blank_pages(&mut doc, &slots, &imported)?;
 
     // What goes and in what order, in the one sequence both writers share ---
@@ -4369,13 +4370,15 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     if !matches!(job, Job::RedactionFill { .. }) && plan.may_leave_orphans() {
         sweep::collect(&mut doc)?;
     }
-    // **After that sweep, and only when a page went.** A document that keeps
+    // After that sweep, when a base page was dropped or an import was partial. A document that keeps
     // every page's pictures in one shared resource dictionary keeps them all
     // reachable from any page that stays, so the sweep above leaves a dropped
     // page's pictures in the file. `unused::prune` unlinks what no remaining
     // page draws; it reads every object for who names the dictionary, which is
     // why the dropped pages have to be gone first. See that module.
-    if !dropped.is_empty() && crate::unused::prune(&mut doc)? > 0 {
+    if (!dropped.is_empty() || !partial_imports.is_empty())
+        && crate::unused::prune_pages(&mut doc, !dropped.is_empty(), &partial_imports)? > 0
+    {
         sweep::collect(&mut doc)?;
     }
 
@@ -5213,6 +5216,7 @@ fn import_pages(
     doc: &mut Document,
     slots: &[(Slot, u8)],
     incoming: &[Document],
+    partial_imports: &mut std::collections::HashSet<lopdf::ObjectId>,
 ) -> Result<Vec<Option<lopdf::ObjectId>>, Refusal> {
     let mut answer: Vec<Option<lopdf::ObjectId>> = vec![None; slots.len()];
     for (from, other) in incoming.iter().enumerate() {
@@ -5233,11 +5237,18 @@ fn import_pages(
                 None => rounds.push(vec![(at, page)]),
             }
         }
+        // The first round contains each distinct selected page once.
+        let partial = rounds
+            .first()
+            .is_some_and(|round| round.len() < ordered_pages(other).len());
         for round in rounds {
             let want: Vec<usize> = round.iter().map(|&(_, page)| page as usize).collect();
             let ids = merge::import(doc, other, &want)
                 .map_err(|why| said!("could not insert the pages from another document: {why}"))?;
             for (&(at, _), id) in round.iter().zip(ids) {
+                if partial {
+                    partial_imports.insert(id);
+                }
                 answer[at] = Some(id);
             }
         }

@@ -1412,10 +1412,18 @@ starts at 0 and increments within the month.
    W=~/.cache/tpdf/mutations
    git worktree add --detach "$W" HEAD            # the first time
    git -C "$W" checkout --detach "$(git rev-parse HEAD)"   # afterwards
-   rsync -a vendor/pdfium/ "$W/vendor/pdfium/" && rsync -a testdata/ "$W/testdata/"
+   rsync -ac --delete vendor/pdfium/ "$W/vendor/pdfium/" && rsync -a testdata/ "$W/testdata/"
    (cd "$W" && npm ci --ignore-scripts)
    (cd "$W" && python3 scripts/mutate_rust.py --near <last tag>)
    ```
+
+   Mirror the generated PDFium directory exactly. Old license files change the notices,
+   and archive members from different builds can share a size and modification time.
+   On macOS, each viewer mutation rebuilds the checks bundle. If that bundle uses
+   Developer ID, sign the working copy of the PDFium dylib in this isolated checkout
+   with the same identity before the first build, as the release workflow does.
+   Restore the pinned library after the run. Signing only the finished checks app
+   leaves the next rebuild with a library macOS refuses to load.
 
    It runs a commit. For work not yet committed, `git stash create` prints a commit of the
    tracked changes without touching the tree; check that out there. The first build is cold,

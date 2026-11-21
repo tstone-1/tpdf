@@ -567,13 +567,24 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
-          **Redacted with 26.11.10 or earlier? Redact the originals again.**
+          **Redacted with 26.11.11 or earlier? Redact the originals again.**
           A redacted file from those versions can still hold a copy of what
           was removed, even where tpdf said verified. Updating tpdf does not
           change files it has already written: redo the redaction from the
-          original with 26.11.11 or later and use the new file. If the older
+          original with 26.11.12 or later and use the new file. If the older
           file was already sent, assume it can still hold what was redacted.
-          Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-261110-or-earlier
+          Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-261111
+
+          **New in 26.11.12.** Saving, reloading and switching between PDFs
+          now preserve form answers and unfinished edits. Page labels and
+          bookmarks follow their pages through merges and deletions. Adding
+          a filled form as an appendix keeps its answers visible. Print
+          preview counts duplex sheets and poster pages correctly on Windows.
+          Compression estimates include unsaved edits and check the size of
+          the finished copy. Redaction review shows the words under each mark
+          on cropped pages, and the command-line tool verifies its output
+          before replacing the destination. This release also fixes text
+          layout, OCR, attachment export and session restore.
 
           **New in 26.11.11.** A redaction is checked more thoroughly. A
           removed word is now found however its text is stored: with

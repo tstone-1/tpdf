@@ -956,15 +956,15 @@ ROWS += [
     Mutation(
         "unused: a rewrite that dropped a page prunes what is left",
         "src/save.rs",
-        "    if !dropped.is_empty() && crate::unused::prune(&mut doc)? > 0 {",
-        "    if false && !dropped.is_empty() && crate::unused::prune(&mut doc)? > 0 {",
+        "    if (!dropped.is_empty() || !partial_imports.is_empty())",
+        "    if !partial_imports.is_empty()",
         "extracting_a_page_leaves_the_other_pages_pictures_out_of_the_file",
     ),
     Mutation(
         "unused: a dictionary something else reaches is kept whole",
         "src/unused.rs",
-        "            if strangers.contains(&id) {",
-        "            if false {",
+        "if strangers.contains(&id))",
+        "if false && strangers.contains(&id))",
         "a_dictionary_something_else_reaches_is_left_whole",
     ),
     Mutation(

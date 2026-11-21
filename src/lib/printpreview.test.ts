@@ -11,6 +11,7 @@ import {
   type PageChoice,
   choosePages,
   readKept,
+  readScale,
   turnedPicture,
   withKept,
   writeKept,
@@ -342,8 +343,19 @@ describe("the boxes a sheet is drawn with", () => {
   });
 });
 
+describe("the effective scale", () => {
+  it("ignores an invalid inactive percentage on a shared sheet", () => {
+    expect(readScale(2, "percent", "401")).toEqual({ kind: "fit" });
+    expect(readScale(1, "percent", "401")).toBeNull();
+    expect(readScale(1, "percent", "80")).toEqual({ kind: "percent", percent: 80 });
+  });
+});
+
 describe("sheetSummary", () => {
   it("counts sheets of paper, and the pages when they differ", () => {
+    expect(sheetSummary(4, 4, 1, "long")).toBe("2 sheets of paper for 4 pages");
+    expect(sheetSummary(3, 3, 1, "short")).toBe("2 sheets of paper for 3 pages");
+    expect(sheetSummary(9, 1, 1, "off")).toBe("9 sheets of paper for 1 page");
     expect(sheetSummary(1, 1, 1)).toBe("1 sheet of paper");
     expect(sheetSummary(3, 3, 1)).toBe("3 sheets of paper");
     expect(sheetSummary(2, 5, 1)).toBe("2 sheets of paper for 5 pages");

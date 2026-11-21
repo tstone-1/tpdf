@@ -17,11 +17,19 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.12] - Unreleased
+## [26.11.12] - 2026-11-21
 
 ### Fixed
 
-- Session updates preserve the previous record after a read failure. A protected
+- Merging preserves the base page labels and accepts indirect page-child arrays.
+  Incoming named links cannot jump into the base document. Layered inputs are
+  refused, and partial insertion removes unused pictures in shared page resources.
+- The Windows print preview counts physical sheets for duplex jobs and source
+  pages for posters. Multi-page layouts ignore an inactive scale percentage.
+  Unattended printing refuses queues that prompt for an output file.
+- On Windows the Python client selects the native CLI executable.
+- Session updates preserve the previous record after a read failure. Concurrent
+  Windows saves retry a briefly busy session file. A protected
   foreground tab no longer delays automatic restore, and favourites follow their
   pages through reordering and deletion.
 - Compression preserves the resolution of images shared with stamps, previews
@@ -93,19 +101,16 @@ have the binary.)
   lost during reopen. Overlapping page insertions keep the newer range question usable.
 - Windows PATH changes recognise expandable entries. Python accepts read-only edit
   mappings, single OCR language tags and command help, and bounds timeout cleanup.
-
 - Redaction review shows the marked words under a crop and keeps keyboard focus on the selected region. OCR verification follows the crop and rotation of the saved page and checks the writing system of its control word.
 - Clipped comment previews can still receive replies and can no longer overwrite the original body. Cleared form choices stay cleared on reopen. Long text answers and indirectly stored widget rectangles remain readable.
 - Windows printing honors Stop during the final render. Page-range hints accept printed labels beginning with a hyphen.
 - Extracting and moving pages handle indirect and positional bookmarks. Blank and imported pages retain their intended crop and rotation, and imported links to missing pages stay unresolved.
 - CLI search highlight plans verify the source revision. Crop and render honor the physical page scale, and fitting a narrow page to one pixel produces a usable image.
 - Text reflow checks underline clips, stroke widths and individual painted subpaths before moving text. Tabs restore the page being read after a reorder and discard measurements when the document is replaced.
-
 - Saving a smaller copy includes unsaved edits in the estimate and checks the final size before replacing a file. Compression respects physical page scale and shared transparency masks. The preview shows a visibly changed picture, and the CLI rejects a preview path that also names the output PDF.
 - OCR excludes comments and editable fields from permanent page text. Its Unicode map covers the characters actually written. Right-to-left words are checked for reading order and position, and a page-only operation refuses to change another slot that shares the same page object.
 - Cut keeps the original selection and clipboard intact when the selection changes or some of its pictures cannot be read. Clipboard refusal messages follow the interface language.
 - The OCR language prompt handles repeated requests and suggests installed languages. Timestamp presets discard invalid custom addresses before storing a choice.
-
 - Attachment extraction resolves indirect filters and refuses incomplete data or files over the decoded size limit.
 - Changing an opening password preserves permission restrictions on documents that open without prompting. Password prompts keep keyboard focus and respect the focused Cancel button.
 - Creating a document from pictures or adding OCR refuses to overwrite an open destination. SVG export directs clipped graphics and device hairlines to PNG.
@@ -120,12 +125,10 @@ have the binary.)
   matching text, and shows shared context and replacement counts consistently.
 - Type 1 text editing respects the encoded byte's spacing and width, measures the start
   of flex curves, and reads fonts whose comments mention private dictionary entries.
-
 - CLI signing and long-term validation preserve a destination created while the command was running unless `--force` was supplied. Signing respects field locks set by earlier approvals and checks that a visible signature has words or an image. Linux certificate import reports why a certificate cannot sign.
 - Print preview and Windows printing use print visibility. Windows keeps software copies on separate sheets and Stop applies to the active job. Linux reports delayed print failures in the window. Unix print staging preserves files left by earlier jobs.
 - Growing text respects the writing direction and fixed annotations of neighbouring runs. Wrapping text on rotated pages keeps labels and drawings aligned with their rows.
 - Documents opened by relative filename are saved with their launch directory for session restore. Bash completion preserves spaces in filenames.
-
 - Redaction verification accounts for the font inherited each time a shared form is
   drawn. The font reader enforces its token limit while reading. The window also gives
   usable advice when retained content has no page or a redaction was saved in place.

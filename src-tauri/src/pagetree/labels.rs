@@ -87,7 +87,7 @@ fn read<'a>(doc: &'a Document, root: &'a Object) -> Result<BTreeMap<u32, Range<'
     Ok(ranges)
 }
 
-pub(super) fn remap(
+pub(crate) fn remap(
     doc: &mut Document,
     sources: impl IntoIterator<Item = Option<u32>>,
 ) -> Result<(), String> {

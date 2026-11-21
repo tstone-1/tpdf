@@ -124,6 +124,15 @@ pub fn append(into: &mut Document, from: &Document) -> Result<usize, String> {
 
     let want: Vec<usize> = (0..pages.len()).collect();
     let kids = import(into, from, &want)?;
+    if into
+        .catalog()
+        .is_ok_and(|catalog| catalog.has(b"PageLabels"))
+    {
+        // Imported pages are still outside the tree. End the base label range
+        // at this boundary, as Insert Pages does for pages without base labels.
+        let base = into.get_pages().into_keys().map(|number| Some(number - 1));
+        pagetree::remap_labels(into, base.chain(std::iter::repeat_n(None, kids.len())))?;
+    }
     graft(into, root, &kids)?;
     Ok(kids.len())
 }
@@ -164,6 +173,14 @@ pub fn import(
         .and_then(Object::as_reference)
         .map_err(|e| said!("no page tree: {e}"))?;
 
+    if from
+        .catalog()
+        .is_ok_and(|catalog| catalog.has(b"OCProperties"))
+    {
+        return Err(said!(
+            "pages from a layered PDF cannot be imported with their visibility settings"
+        ));
+    }
     let pages = pagetree::ordered_pages(from);
     if pages.is_empty() {
         return Err(said!("it has no pages"));
@@ -240,7 +257,7 @@ pub fn import(
     for id in needed {
         let object = match detached.get(&id) {
             Some(dictionary) => {
-                let mut dictionary = shifted_dictionary(dictionary, by, &copied, 0)?;
+                let mut dictionary = shifted_dictionary(from, dictionary, by, &copied, 0)?;
                 // The destination's root, not the shifted source's: the tree
                 // above this page is not coming with it.
                 dictionary.set("Parent", Object::Reference(root));
@@ -248,9 +265,9 @@ pub fn import(
             }
             None => match widgets.get(&id) {
                 Some(dictionary) => {
-                    Object::Dictionary(shifted_dictionary(dictionary, by, &copied, 0)?)
+                    Object::Dictionary(shifted_dictionary(from, dictionary, by, &copied, 0)?)
                 }
-                None => shifted(&from.objects[&id], by, &copied, 0)?,
+                None => shifted(from, &from.objects[&id], by, &copied, 0)?,
             },
         };
         into.objects.insert(shifted_id(id, by)?, object);
@@ -529,6 +546,7 @@ fn shifted_id(id: ObjectId, by: u32) -> Result<ObjectId, String> {
 /// parser stops at 100 levels --- so this guards a change to that constant
 /// rather than any input.
 fn shifted(
+    from: &Document,
     object: &Object,
     by: u32,
     copied: &HashSet<ObjectId>,
@@ -547,11 +565,11 @@ fn shifted(
         Object::Array(items) => Object::Array(
             items
                 .iter()
-                .map(|item| shifted(item, by, copied, depth + 1))
+                .map(|item| shifted(from, item, by, copied, depth + 1))
                 .collect::<Result<_, _>>()?,
         ),
         Object::Dictionary(dictionary) => {
-            Object::Dictionary(shifted_dictionary(dictionary, by, copied, depth + 1)?)
+            Object::Dictionary(shifted_dictionary(from, dictionary, by, copied, depth + 1)?)
         }
         Object::Stream(stream) => {
             // Cloned whole and then rewritten, so that everything a stream
@@ -559,7 +577,7 @@ fn shifted(
             // `allows_compression`, which decides whether a font stream survives
             // a later `compress()`.
             let mut stream = stream.clone();
-            stream.dict = shifted_dictionary(&stream.dict, by, copied, depth + 1)?;
+            stream.dict = shifted_dictionary(from, &stream.dict, by, copied, depth + 1)?;
             // The position it was parsed from, which is a fact about the file it
             // came out of and is about to be false. `lopdf` reads it back when
             // it decodes a stream whose `/Length` is an indirect reference.
@@ -572,6 +590,7 @@ fn shifted(
 
 /// [`shifted`] for a dictionary, which is the only shape with two callers.
 fn shifted_dictionary(
+    from: &Document,
     dictionary: &Dictionary,
     by: u32,
     copied: &HashSet<ObjectId>,
@@ -579,7 +598,26 @@ fn shifted_dictionary(
 ) -> Result<Dictionary, String> {
     let mut out = Dictionary::new();
     for (key, value) in dictionary.iter() {
-        out.set(key.to_vec(), shifted(value, by, copied, depth + 1)?);
+        // A local named destination would bind to the destination document's
+        // name table. Keep explicit page targets and remote actions unchanged.
+        let local_destination = (key == b"Dest"
+            && dictionary
+                .get_deref(b"Subtype", from)
+                .and_then(Object::as_name)
+                .is_ok_and(|n| n == b"Link"))
+            || (key == b"D"
+                && dictionary
+                    .get_deref(b"S", from)
+                    .and_then(Object::as_name)
+                    .is_ok_and(|n| n == b"GoTo"));
+        if local_destination
+            && from
+                .dereference(value)
+                .is_ok_and(|(_, v)| matches!(v, Object::Name(_) | Object::String(_, _)))
+        {
+            continue;
+        }
+        out.set(key.to_vec(), shifted(from, value, by, copied, depth + 1)?);
     }
     Ok(out)
 }
@@ -591,17 +629,19 @@ fn shifted_dictionary(
 /// The root is not a dictionary, or its `/Kids` is missing or not an array ---
 /// which is a document with no pages, and the destination always has some.
 fn graft(into: &mut Document, root: ObjectId, kids: &[ObjectId]) -> Result<(), String> {
-    let tree = into
-        .get_object_mut(root)
-        .and_then(Object::as_dict_mut)
-        .map_err(|e| said!("the page tree root is not a dictionary: {e}"))?;
-    let mut order = tree
-        .get(b"Kids")
+    let mut order = into
+        .get_object(root)
+        .and_then(Object::as_dict)
+        .map_err(|e| said!("the page tree root is not a dictionary: {e}"))?
+        .get_deref(b"Kids", into)
         .and_then(Object::as_array)
         .map_err(|e| said!("the page tree root has no kids: {e}"))?
         .clone();
     order.extend(kids.iter().map(|&id| Object::Reference(id)));
-    tree.set("Kids", order);
+    into.get_object_mut(root)
+        .and_then(Object::as_dict_mut)
+        .map_err(|e| said!("the page tree root is not a dictionary: {e}"))?
+        .set("Kids", order);
     // After the graft, and from the tree rather than from the old value --- see
     // the note on `append`.
     let count = into.get_pages().len() as i64;
@@ -647,6 +687,118 @@ mod tests {
         let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
         doc.trailer.set("Root", catalog);
         doc
+    }
+
+    #[test]
+    fn appended_pages_close_the_base_labels_and_accept_indirect_kids() {
+        let mut doc = flat("base");
+        let root = doc
+            .catalog()
+            .unwrap()
+            .get(b"Pages")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let kids = doc
+            .get_dictionary(root)
+            .unwrap()
+            .get(b"Kids")
+            .unwrap()
+            .clone();
+        let array = doc.add_object(kids);
+        doc.get_dictionary_mut(root).unwrap().set("Kids", array);
+        doc.catalog_mut().unwrap().set("PageLabels", dictionary! {
+            "Nums" => vec![0.into(), dictionary!{"S"=>"D", "P"=>Object::string_literal("Body-"), "St"=>3}.into()]
+        });
+        assert_eq!(append(&mut doc, &flat("appendix")).unwrap(), 1);
+        assert_eq!(doc.get_pages().len(), 2);
+        let ranges = doc
+            .catalog()
+            .unwrap()
+            .get(b"PageLabels")
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Nums")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(ranges.len(), 4);
+        assert_eq!(
+            ranges[1]
+                .as_dict()
+                .unwrap()
+                .get(b"St")
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            3
+        );
+        assert_eq!(ranges[2].as_i64().unwrap(), 1);
+        assert!(ranges[3].as_dict().unwrap().is_empty());
+    }
+
+    #[test]
+    fn imported_local_named_links_cannot_bind_to_the_base() {
+        let mut doc = flat("base");
+        let base = doc.get_pages()[&1];
+        doc.catalog_mut().unwrap().set(
+            "Dests",
+            dictionary! {"Chapter" => vec![base.into(), "Fit".into()]},
+        );
+        let mut other = flat("appendix");
+        let page = other.get_pages()[&1];
+        let name = other.add_object(Object::Name(b"Chapter".to_vec()));
+        let action = other.add_object(dictionary! {"S"=>"GoTo", "D"=>name});
+        other.get_dictionary_mut(page).unwrap().set(
+            "Annots",
+            vec![
+                dictionary! {"Subtype"=>"Link", "Dest"=>name}.into(),
+                dictionary! {"Subtype"=>"Link", "A"=>action}.into(),
+                dictionary! {"Subtype"=>"Link", "A"=>dictionary!{"S"=>"GoToR","D"=>name}}.into(),
+            ],
+        );
+        append(&mut doc, &other).unwrap();
+        let annotations = doc
+            .get_dictionary(doc.get_pages()[&2])
+            .unwrap()
+            .get(b"Annots")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert!(!annotations[0].as_dict().unwrap().has(b"Dest"));
+        let action = |n: usize| {
+            annotations[n]
+                .as_dict()
+                .unwrap()
+                .get_deref(b"A", &doc)
+                .unwrap()
+                .as_dict()
+                .unwrap()
+        };
+        assert!(!action(1).has(b"D"));
+        assert_eq!(
+            action(2).get_deref(b"D", &doc).unwrap().as_name().unwrap(),
+            b"Chapter"
+        );
+    }
+
+    #[test]
+    fn importing_a_layered_source_refuses_before_adding_objects() {
+        let mut doc = flat("base");
+        let mut other = flat("appendix");
+        let layer = other
+            .add_object(dictionary! {"Type"=>"OCG", "Name"=>Object::string_literal("Overlay")});
+        other.catalog_mut().unwrap().set(
+            "OCProperties",
+            dictionary! {
+                "OCGs"=>vec![layer.into()], "D"=>dictionary!{"OFF"=>vec![layer.into()]}
+            },
+        );
+        let objects = doc.objects.len();
+        assert!(append(&mut doc, &other).unwrap_err().contains("visibility"));
+        assert_eq!(doc.objects.len(), objects);
+        assert_eq!(doc.get_pages().len(), 1);
     }
 
     /// A three-page document whose first page links to its **third**.
@@ -936,7 +1088,14 @@ mod tests {
             Object::Reference((1, 0)),
             Object::Dictionary(dictionary! { "K" => Object::Reference((2, 5)) }),
         ]);
-        let moved = shifted(&object, 40, &HashSet::from([(1, 0), (2, 5)]), 0).expect("shift");
+        let moved = shifted(
+            &Document::new(),
+            &object,
+            40,
+            &HashSet::from([(1, 0), (2, 5)]),
+            0,
+        )
+        .expect("shift");
         let items = moved.as_array().expect("array");
         assert_eq!(items[0].as_reference().expect("reference"), (41, 0));
         assert_eq!(
@@ -961,7 +1120,7 @@ mod tests {
     #[test]
     fn the_shift_clears_a_streams_recorded_position() {
         let stream = Object::Stream(Stream::new(dictionary! { "Length" => 4 }, b"data".to_vec()));
-        let moved = shifted(&stream, 10, &HashSet::new(), 0).expect("shift");
+        let moved = shifted(&Document::new(), &stream, 10, &HashSet::new(), 0).expect("shift");
         assert!(
             moved.as_stream().expect("stream").start_position.is_none(),
             "a position in the file it came from is about to be false"
