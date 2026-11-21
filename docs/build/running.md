@@ -2835,8 +2835,8 @@ that signing must not be called. Windows test keys and certificates were removed
 the pre-existing certificate inventory was unchanged.
 
 The release job also runs `scripts/check_packaged_api.py` after bundling and
-notarization. It extracts the DMG and macOS updater archive, or both Windows
-installers, outside the checkout. It builds the Python client wheel with a pinned
+notarization. It extracts the macOS DMG and updater archive, the Windows NSIS
+installer, or the Linux deb and AppImage outside the checkout. It builds the Python client wheel with a pinned
 backend, installs it into a fresh virtual environment, asserts the import comes
 from that environment, and runs the same API tests against each extracted CLI.
 Missing or ambiguous packages, wrong versions, skipped tests and failures stop
@@ -2844,6 +2844,12 @@ the job. A missing-engine control must fail rendering after hiding only the
 extracted PDFium library. Nothing is installed into the user's applications or
 registered as a PDF handler. The JSON workflow artifacts record package, CLI,
 engine and wheel SHA-256 digests and test totals.
+
+On Windows the virtual environment's Python executable stays in use until
+every test process that launched it has exited. A timeout test that deliberately
+lets a child outlive its parent must release that child after checking the
+deadline and wait for its output pipes to close. Otherwise all the API tests
+can pass and the packaging check still fails while removing the environment.
 
 Reproduce the package check with Python 3.13+ and `uv` on PATH:
 

@@ -1916,6 +1916,12 @@ starts at 0 and increments within the month.
    `release.yml`: a plain local build omits `tpdf_shell.dll`. The 26.10.26
    installation check caught that omission while its other 24 checks passed.
 
+   When the Python client or its process tests change, run the packaged API check
+   on the local Windows installer before tagging:
+   `python scripts/check_packaged_api.py --bundle-dir src-tauri/target/release/bundle`.
+   It runs the installed wheel outside the checkout and removes its virtual environment.
+   A test can pass while a child still holds that environment's Python executable open.
+
    **Copy page for PowerPoint, on Windows, with the installed build** (from 26.11.5): open
    the `hidden.pdf` that `cargo test --test cli` leaves in `%TEMP%\tpdf-cli-it-<pid>-pagecopy\`,
    run *Copy page for PowerPoint* with page 1 in view, and then

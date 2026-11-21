@@ -1154,16 +1154,34 @@ class ClientTests(unittest.TestCase):
 
     def test_timeout_after_parent_exits_with_its_output_still_open(self):
         original = subprocess.Popen
+        processes = []
+        release = self.root / 'release-child'
+        child = (
+            'import os,sys,time\n'
+            'deadline = time.monotonic() + 15\n'
+            'while time.monotonic() < deadline and not os.path.exists(sys.argv[1]):\n'
+            '    time.sleep(0.05)\n'
+        )
+
         def launch(argv, **kwargs):
             if argv[0] == str(BINARY.resolve()):
-                child = 'import time; time.sleep(15)'
-                parent = f'import subprocess,sys; subprocess.Popen([sys.executable,"-c",{child!r}])'
-                return original([sys.executable, '-c', parent], **kwargs)
+                parent = 'import subprocess,sys; subprocess.Popen([sys.executable,"-c",sys.argv[1],sys.argv[2]])'
+                process = original([sys.executable, '-c', parent, child, str(release)], **kwargs)
+                processes.append(process)
+                return process
             return original(argv, **kwargs)
-        start = time.monotonic()
-        with patch('tpdf_client.subprocess.Popen', side_effect=launch), self.assertRaises(CommandTimeout):
-            Tpdf(BINARY, timeout=0.5).help()
-        self.assertLess(time.monotonic() - start, 12)
+
+        try:
+            start = time.monotonic()
+            with patch('tpdf_client.subprocess.Popen', side_effect=launch), self.assertRaises(CommandTimeout):
+                Tpdf(BINARY, timeout=0.5).help()
+            self.assertLess(time.monotonic() - start, 12)
+        finally:
+            # Windows cannot enumerate this child through its exited parent.
+            # Release its inherited pipes before the packaged test removes Python.
+            release.touch()
+            for process in processes:
+                process.communicate(timeout=10)
 
 
 class ExecutableLookupTests(unittest.TestCase):

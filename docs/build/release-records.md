@@ -2,6 +2,46 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.12, initial tag and draft checks, 2026-11-21.** The release corrects redaction
+verification for reused page content drawn with different fonts. `SECURITY.md` explains which
+earlier redactions to redo from the original. The PDFium pin matched Chrome stable. Fifteen Rust
+dependency updates went into both lockfiles. An upstream HTTP 503 stopped one Ubuntu build while
+it fetched pinned OCR data. The downloader now retries transient HTTP errors and verifies the
+same digests. All 38 local gates passed, including 3,556 Rust tests and 3,639 frontend tests.
+Cross-platform Clippy passed. On Windows, 3,570 library tests and 691 CLI checks passed, with 12
+and four skips respectively. The concurrent session-save test also passed 50 consecutive runs
+after the fix for sharing violations. The window checks passed 18/18 on each platform tested,
+Windows and macOS. NVDA initially read the first page's position without its printed label. After
+refreshing the announcement when the outline arrives, NVDA and VoiceOver each passed 11/11.
+
+The pre-tag mutation run covered 40 Python checks, 419 frontend cases, 15 viewer cases and 580
+Rust cases across macOS, Windows and Linux. Of the 577 Rust cases runnable on macOS, one named
+the original-text test for a change to replacement spacing, one collision test stopped at the
+output preflight, and the image-size fixture was excluded before preview ranking. The corrected
+spacing test caught the change. The strengthened output test confirmed that publication under a
+fresh name links the completed staging file and caught a replacement of that operation with a
+copy. The ranking test now checks the arithmetic directly, and the lossless-image test checks
+that the image stays out of the preview. The seven session cases were rerun after the Windows
+retry change, and the additional frontend selection after the accessibility fix passed.
+
+All 43 Windows print-to-PDF checks passed. The redaction survey requested 360 regions in three
+public documents and read back 356. None still read as text. The verifier proved 238 unreadable
+and withheld a verdict for 118. PowerPoint imported and ungrouped the exported metafile and
+preserved all three expected texts and seven shapes after saving and reopening. The direct
+clipboard paste was skipped because the workstation clipboard was occupied. The local Windows
+installer passed 26/26. The macOS bundle opened the test document outside the checkout and its
+CLI verified the signed fixture. Removing the bundled PDFium made the CLI render fail as
+expected.
+
+CI run 44933297458 passed all three platforms at `f9c51da7`, and Audit run 44933297419 passed.
+Release run 44937778753 produced a signed Windows installer. Its 53 packaged API tests passed,
+then the job failed while removing the test virtual environment: a child used by the timeout test
+still held its Python executable open. On a separate Windows machine the same signed installer
+reproduced that failure. Releasing the child after the timeout assertion let all 53 tests and
+cleanup finish, including the missing-engine control. The installer's Authenticode signature and
+timestamp were valid, and its install, launch and uninstall checks passed 26/26. The initial
+draft was held from publication.
+
 **26.11.11 verification and publication, 2026-11-20:** prepared on the Windows development machine.
 The release answers the first priority of an external audit of 26.11.10, the paths by which a
 redaction still read *verified*. The check reads a composite font's text through its `/ToUnicode`
