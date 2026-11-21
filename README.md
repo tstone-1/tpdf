@@ -12,7 +12,7 @@ Free, MIT-licensed, no account, no telemetry; your documents are not uploaded an
 ## Download
 
 **If you used tpdf 26.11.11 or earlier to redact a document, redo the redaction
-from the original with 26.11.12 or later.** An older copy can still contain the
+from the original with 26.11.13 or later.** An older copy can still contain the
 redacted information even if the check reported *verified*. Updating the app
 only changes future checks. If you already shared an older copy, treat its
 redacted information as potentially disclosed. See the notices for

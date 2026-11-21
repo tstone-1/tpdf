@@ -571,11 +571,11 @@ jobs:
           A redacted file from those versions can still hold a copy of what
           was removed, even where tpdf said verified. Updating tpdf does not
           change files it has already written: redo the redaction from the
-          original with 26.11.12 or later and use the new file. If the older
+          original with 26.11.13 or later and use the new file. If the older
           file was already sent, assume it can still hold what was redacted.
           Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-261111
 
-          **New in 26.11.12.** Saving, reloading and switching between PDFs
+          **New in 26.11.13.** Saving, reloading and switching between PDFs
           now preserve form answers and unfinished edits. Page labels and
           bookmarks follow their pages through merges and deletions. Adding
           a filled form as an appendix keeps its answers visible. Print

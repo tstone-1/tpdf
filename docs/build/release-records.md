@@ -2,6 +2,12 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.13, release preparation, 2026-11-22.** The 26.11.12 tag and its unpublished draft
+remain at `f9c51da7`. This release carries the application changes verified below. At
+`db4bff3c` the corrected Windows packaging check passed all 53 tests three consecutive times
+against the signed draft installer, including cleanup. The macOS packaging check, all 38
+local gates, three-platform CI (44940538445) and Audit (44940538508) also passed.
+
 **26.11.12, initial tag and draft checks, 2026-11-21.** The release corrects redaction
 verification for reused page content drawn with different fonts. `SECURITY.md` explains which
 earlier redactions to redo from the original. The PDFium pin matched Chrome stable. Fifteen Rust

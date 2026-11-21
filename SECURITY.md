@@ -26,10 +26,10 @@ reporting, and please say which claim you believe is wrong.
 
 In 26.11.11, a redaction could read *verified* even when a repeated page
 element still displayed a redacted word. This affected elements drawn more
-than once with different fonts. Version 26.11.12 checks each use.
+than once with different fonts. Version 26.11.13 checks each use.
 
 If you used 26.11.11 and cannot rule this out, redact the original again with
-26.11.12 or later and use the new file. If you already shared the older copy,
+26.11.13 or later and use the new file. If you already shared the older copy,
 treat the redacted information as potentially disclosed.
 
 ## Redactions made with 26.11.5 or earlier
