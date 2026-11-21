@@ -369,19 +369,22 @@ describe("tabs from last time that a launch could not open", () => {
   });
 
   it("are the refused tabs and a first tab that did not open, from the recorded list only", () => {
-    const plan = launchPlan(session(), []);
+    const saved = session();
     const open = new Set(["/a.pdf"]);
     // `/b.pdf` was to be shown first and is not open; `/c.pdf` was refused.
-    // Mutation: leave `plan.show` out -> red.
-    expect(unopenedAtLaunch(plan, ["/c.pdf"], (path) => open.has(path))).toEqual(["/b.pdf", "/c.pdf"]);
+    // Capture the real foreground refusal when the open completes.
+    expect(unopenedAtLaunch(saved, ["/b.pdf", "/c.pdf"], (path) => open.has(path))).toEqual(["/b.pdf", "/c.pdf"]);
+    // The foreground tab opened successfully, then the reader closed it.
+    expect(unopenedAtLaunch(saved, ["/c.pdf"], (path) => open.has(path))).toEqual(["/c.pdf"]);
     // Control: everything opened.
-    expect(unopenedAtLaunch(plan, [], () => true)).toEqual([]);
+    expect(unopenedAtLaunch(saved, [], () => true)).toEqual([]);
     // A file handed over reports its own failure, and the last document resumed
-    // alone was never a list of tabs. Mutation: drop `plan.order.includes(path)` -> red.
-    const handed = launchPlan(session({ restore_tabs: false }), ["/new.pdf"]);
-    expect(unopenedAtLaunch(handed, [], () => false)).toEqual([]);
-    const alone = launchPlan(session({ restore_tabs: false }), []);
-    expect(unopenedAtLaunch(alone, [], () => false)).toEqual([]);
+    // alone was never a list of tabs.
+    expect(unopenedAtLaunch(saved, ["/new.pdf", "/b.pdf"], () => false)).toEqual(["/b.pdf"]);
+    const handed = session({ restore_tabs: false });
+    expect(unopenedAtLaunch(handed, ["/new.pdf"], () => false)).toEqual([]);
+    const alone = session({ tabs: [] });
+    expect(unopenedAtLaunch(alone, launchPlan(alone, []).show, () => false)).toEqual([]);
   });
 
   it("are said, by name for one and counted for several", () => {

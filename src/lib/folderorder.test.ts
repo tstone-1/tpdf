@@ -15,17 +15,25 @@ describe("folderOrder", () => {
 });
 
 describe("neighbourIn", () => {
-  it("finds the next and the previous PDF", () => {
-    expect(neighbourIn(FOLDER, "/d/Page 2.pdf", 1)).toBe("/d/page 10.pdf");
-    expect(neighbourIn(FOLDER, "/d/Page 2.pdf", -1)).toBe("/d/page 1.pdf");
+  it("finds the next and the previous PDF", async () => {
+    expect(await neighbourIn(FOLDER, "/d/Page 2.pdf", 1, async () => false)).toBe("/d/page 10.pdf");
+    expect(await neighbourIn(FOLDER, "/d/Page 2.pdf", -1, async () => false)).toBe("/d/page 1.pdf");
   });
 
-  it("stops at either end rather than going round", () => {
-    expect(neighbourIn(FOLDER, "/d/page 10.pdf", 1)).toBeNull();
-    expect(neighbourIn(FOLDER, "/d/appendix.pdf", -1)).toBeNull();
+  it("skips aliases in either direction and stops when only aliases remain", async () => {
+    const paths = ["a", "b", "c", "d"];
+    const alias = async (p: string) => p === "b" || p === "c";
+    expect(await neighbourIn(paths, "a", 1, alias)).toBe("d");
+    expect(await neighbourIn(paths, "d", -1, alias)).toBe("a");
+    expect(await neighbourIn(paths.slice(0, 3), "a", 1, alias)).toBeNull();
   });
 
-  it("finds nothing for a document the folder no longer has", () => {
-    expect(neighbourIn(FOLDER, "/d/gone.pdf", 1)).toBeNull();
+  it("stops at either end rather than going round", async () => {
+    expect(await neighbourIn(FOLDER, "/d/page 10.pdf", 1, async () => false)).toBeNull();
+    expect(await neighbourIn(FOLDER, "/d/appendix.pdf", -1, async () => false)).toBeNull();
+  });
+
+  it("finds nothing for a document the folder no longer has", async () => {
+    expect(await neighbourIn(FOLDER, "/d/gone.pdf", 1, async () => false)).toBeNull();
   });
 });

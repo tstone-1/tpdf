@@ -233,6 +233,9 @@ Only the active tab mounts a Viewer and Sidebar; switching commits open note fie
 drains pending edits, and keeps the reading position, search scope and sidebar choice.
 Save/reload replaces the handle in the same tab. File writes block tab transitions;
 tab closure releases its handle, and window closure checks all tabs for unsaved work.
+Foreground and background opens resolve file identity before allocating a journal.
+Reload checks the journal and live drafts again after acquiring the replacement.
+Ordinary quit waits for outstanding place and tab writes before destroying the window.
 The strip's paths and the active tab are written to the session file on every change
 (`TabRecorder` in `src/lib/tabrestore.ts`); with *At launch: reopen all tabs* chosen,
 `launchPlan` shows the tab that was in front and `openBehind` opens the others without
@@ -366,7 +369,11 @@ exporter checks the page's effective resources. For a form selection it checks
 nested form resources too. The exporter offers PNG if these resources could
 supply a pattern, including for solid paths sharing those resources.
 
-The attachment picker lists files from the open document graph. At extraction, the parent
+The attachment picker lists up to 1,000 entries from the open document graph.
+A traversal that stops at its count or depth bound retains the entries read and
+reports an unknown total. An exact total of 1,000 requires reaching the end.
+On Unix the export stage takes at most the destination's read/write bits at creation.
+Its fixed-length basename also accommodates a destination at the filesystem limit. At extraction, the parent
 copies the source into anonymous shared memory and checks the snapshot against the
 document's opening fingerprint. The worker decodes the selected index from that snapshot.
 An external replacement during the save dialog therefore cannot supply a different attachment.

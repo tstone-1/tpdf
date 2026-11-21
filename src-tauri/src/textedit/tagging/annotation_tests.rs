@@ -115,6 +115,15 @@ fn textedit_link_titles_and_alternate_text_are_preserved_on_read_only_owners() {
         textedit::write(&mut doc, &changes)
     }
     .unwrap();
+    let link = doc.get_dictionary(ids[6]).unwrap();
+    assert_eq!(
+        link.get(b"Alt").unwrap().as_str().unwrap(),
+        b"SYNTHETIC LINK"
+    );
+    assert_eq!(
+        link.get(b"T").unwrap().as_str().unwrap(),
+        b"SYNTHETIC TITLE"
+    );
     // A paragraph keeps Word's empty title and stays editable; a title or
     // alternate text that could repeat its wording keeps it read-only.
     for (key, value, offered) in [

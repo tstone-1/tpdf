@@ -94,7 +94,7 @@ use crate::{
 ///
 /// Sibling rather than in the system temp directory, because a rename across
 /// filesystems is not atomic and the temp directory is routinely on another
-/// one. The full name is `<destination>.tpdf-partial-<pid>-<attempt>`: see
+/// one. The full name is `.tpdf-partial-<name hash>-<pid>-<attempt>`: see
 /// [`stage`] for why every part of that is load-bearing.
 const PARTIAL: &str = "tpdf-partial";
 
@@ -5299,9 +5299,15 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
 /// save of the same file already in flight, or a leftover, and `create_new` sends
 /// this to the next index either way.
 fn staging_name(stem: &std::ffi::OsStr, attempt: u32) -> std::ffi::OsString {
-    let mut name = stem.to_os_string();
-    name.push(format!(".{PARTIAL}-{}-{attempt}", std::process::id()));
-    name
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hash = DefaultHasher::new();
+    stem.hash(&mut hash);
+    format!(
+        ".{PARTIAL}-{:016x}-{}-{attempt}",
+        hash.finish(),
+        std::process::id()
+    )
+    .into()
 }
 
 /// The file a pathname actually names, with every symlink resolved.
@@ -5350,10 +5356,8 @@ fn resolved(path: &Path) -> PathBuf {
 /// another save of this destination got there first, which is exactly the case
 /// the index is for.
 ///
-/// The name appends rather than replacing the extension, so `report.pdf` stages
-/// beside itself as `report.pdf.tpdf-partial-<pid>-<n>` and can never collide
-/// with a document somebody named `report.tpdf-partial`. See [`staging_name`]
-/// for why `n` counts attempts rather than saves.
+/// The fixed-width name fits even when the destination uses the filesystem's
+/// entire filename budget. Exclusive creation arbitrates any hash collision.
 ///
 /// **A closure rather than a `&[u8]`, since 2026-08-28**, and the reason is the
 /// whole of `docs/THREAT-MODEL.md` residual risk 18: a rewrite's bytes are
@@ -5377,74 +5381,41 @@ fn stage(
     out: &Path,
     write: impl FnOnce(&mut std::fs::File) -> Result<(), Refusal>,
 ) -> Result<PathBuf, Refusal> {
-    let dir = out.parent().filter(|p| !p.as_os_str().is_empty());
-    let dir = dir.unwrap_or(Path::new("."));
     let stem = out
         .file_name()
         .ok_or_else(|| Refusal::from(said!("{out:?} does not name a file to save to")))?;
-
-    for attempt in 0..STAGING_ATTEMPTS {
-        let partial = dir.join(staging_name(stem, attempt));
-        let mut file = match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&partial)
-        {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(Refusal::from(said!("could not create {partial:?}: {e}"))),
-        };
-        // **Before the bytes, not after them.** A staged file is created with
-        // the process umask, usually `0644`, so a document a reader keeps at
-        // `0600` in a shared directory came back world-readable after any page
-        // edit --- a save is not the place to widen who can read a file. Doing
-        // it before `write_all` also means the contents are never on disk under
-        // the wider mode, which doing it after would not give.
-        //
-        // Best effort: a filesystem that does not carry modes has nothing to
-        // copy, and failing a save over that would be a refusal about the wrong
-        // thing. Unix only, because there is no counterpart to copy on Windows
-        // --- a file there inherits its ACL from the directory it is created in,
-        // which is the directory the original is in, so the replacement lands
-        // with the neighbours' permissions rather than with a default. The
-        // narrower question of an ACL set on the file itself is not answered by
-        // either platform's branch here; `docs/THREAT-MODEL.md` §T6.7 says so.
-        //
-        // The execute bits stay behind: what is written here is a document, and
-        // one that takes them from a file it replaced can be run by double-click.
-        #[cfg(unix)]
-        if let Ok(existing) = std::fs::metadata(out) {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = existing.permissions();
-            permissions.set_mode(permissions.mode() & !0o111);
-            let _ = file.set_permissions(permissions);
-        }
-        // Removed on any failure, and this call created it, so removing it
-        // cannot take anything that was not ours.
-        let written = write(&mut file).and_then(|()| {
-            // So that the rename swaps in a file whose contents are on the
-            // platter. Without it the atomicity is a claim about the directory
-            // entry only: a crash after the rename can leave the new name
-            // pointing at a file of zeros, which is worse than either outcome
-            // the split is meant to guarantee.
-            //
-            // **This process's `sync_data`, whoever did the writing.** A worker
-            // writing through a duplicate of this descriptor puts its bytes in
-            // the kernel and stops there; the file is the same file, so the sync
-            // here is what covers them too.
-            file.sync_data()
-                .map_err(|e| Refusal::from(said!("could not flush {partial:?}: {e}")))
-        });
-        if let Err(why) = written {
-            drop(file);
-            let _ = std::fs::remove_file(&partial);
-            return Err(why);
-        }
-        return Ok(partial);
+    let (partial, mut file) = claim_beside(out, stem)
+        .map_err(|e| Refusal::from(said!("could not stage beside {out:?}: {e}")))?;
+    // An in-place PDF save preserves the existing read/write bits, even when
+    // the current umask is narrower. The file was claimed with at most those bits.
+    #[cfg(unix)]
+    if let Ok(existing) = std::fs::metadata(out) {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::Permissions::from_mode(existing.permissions().mode() & 0o666);
+        let _ = file.set_permissions(permissions);
     }
-    Err(Refusal::from(said!(
-        "could not find an unused temporary name beside {out:?} after {STAGING_ATTEMPTS} tries"
-    )))
+    // Removed on any failure, and this call created it, so removing it
+    // cannot take anything that was not ours.
+    let written = write(&mut file).and_then(|()| {
+        // So that the rename swaps in a file whose contents are on the
+        // platter. Without it the atomicity is a claim about the directory
+        // entry only: a crash after the rename can leave the new name
+        // pointing at a file of zeros, which is worse than either outcome
+        // the split is meant to guarantee.
+        //
+        // **This process's `sync_data`, whoever did the writing.** A worker
+        // writing through a duplicate of this descriptor puts its bytes in
+        // the kernel and stops there; the file is the same file, so the sync
+        // here is what covers them too.
+        file.sync_data()
+            .map_err(|e| Refusal::from(said!("could not flush {partial:?}: {e}")))
+    });
+    if let Err(why) = written {
+        drop(file);
+        let _ = std::fs::remove_file(&partial);
+        return Err(why);
+    }
+    Ok(partial)
 }
 
 /// A new, empty file beside `out`, whose file name is `name`, for a rename to
@@ -5458,14 +5429,9 @@ fn stage(
 /// is truncated. The file handed back is one this call created, the only kind a
 /// caller may remove when it fails.
 ///
-/// **Not [`stage`], which copies the mode of the file it will replace.** That
-/// suits a reader's own document. Here the bytes are the document's author's and
-/// `out` may be a file somebody planted, so an executable `out` would come back
-/// owned by the reader, still executable, holding those bytes. This file keeps
-/// the process umask.
-///
-/// The first name carries no counter, so a file name near the file system's
-/// limit is not refused for a counter no save needed.
+/// On Unix, the stage receives at most the destination's read/write bits and
+/// the process umask at creation. Exported bytes never acquire execute bits.
+/// A new destination uses the ordinary creation mode and umask.
 ///
 /// # Errors
 ///
@@ -5475,15 +5441,20 @@ pub(crate) fn claim_beside(
     out: &Path,
     name: &std::ffi::OsStr,
 ) -> std::io::Result<(PathBuf, std::fs::File)> {
-    let name = name.to_string_lossy();
-    let pid = std::process::id();
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mode = match std::fs::metadata(out) {
+            Ok(existing) => existing.permissions().mode() & 0o666,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0o666,
+            Err(e) => return Err(e),
+        };
+        options.mode(mode);
+    }
     for attempt in 0..STAGING_ATTEMPTS {
-        let staged = out.with_file_name(match attempt {
-            0 => format!(".{name}.tpdf-{pid}"),
-            _ => format!(".{name}.tpdf-{pid}-{attempt}"),
-        });
+        let staged = out.with_file_name(staging_name(name, attempt));
         match options.open(&staged) {
             Ok(file) => return Ok((staged, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}

@@ -95,7 +95,8 @@ describe("the tabs from last time a launch could not open", () => {
     // The rules are `unopenedAtLaunch` and `TabRecorder.keepUnopened`
     // (`tabrestore.test.ts`); these are their calls in the launch.
     expect(missingFrom(app, [
-      "const unopened = unopenedAtLaunch(plan, refused, isOpenTab);",
+      "if (await openPath(path, plan.resuming) === null) refusedFront.push(path);",
+      "const unopened = unopenedAtLaunch(session, [...refusedFront, ...refused], isOpenTab);",
       "tabRecorder.keepUnopened(unopened, plan.order);",
       ".then(async (refused) => { await restoreSides(plan.sides); unopenedTabs(refused); })",
       ".finally(() => { tabRecorder.release(); refreshTabs(); refreshMenu(); });",
@@ -530,6 +531,15 @@ describe("the open's wiring in App.svelte", () => {
   // Read as text with the comments taken out, because `App.svelte` is the join
   // and nothing imports it. That sees that a line is there and not whether it
   // runs (`sourcetext.ts`), so these hold the hand-over and no decision.
+  it("checks the settled original journal before replacing a reload and closes only the unused handle", () => {
+    const open = functionIn(app, "async function openDocument(");
+    expect(open).toMatch(/await openOrAsk\(path\)[\s\S]*await settleDocument\([\s\S]*if \(replacing && !afterWrite && !discard\)[\s\S]*beforeReload\(replacing.edits.state.dirty \|\| hasDraft\)[\s\S]*if \(prompt\)[\s\S]*await call\("close_document", \{ doc: doc.id \}\)[\s\S]*return prompt.message;[\s\S]*unmountDocument\(\)/);
+  });
+
+  it("resolves background restore by identity before opening a new handle", () => {
+    expect(functionIn(app, "function tabHost(")).toMatch(/opens.run\([\s\S]*if \(await matchingTab\(path, tabs.active\)\) return;[\s\S]*await openOrAsk\(path\)/);
+  });
+
   it("invalidates a comparison when temporary recognised text changes or leaves its viewer", () => {
     expect(functionIn(app, "async function recogniseCurrentPage(")).toMatch(
       /await shown\.recognisePage\([\s\S]*?comparisons\.invalidate\(view\)\) refreshComparison\(\)/);

@@ -338,13 +338,11 @@ ROWS += [
         only_on="macos",
     ),
     Mutation(
-        # Let the replacement take the umask's mode. A document kept at 0600 in a
-        # shared directory comes back readable by everyone, with correct bytes and
-        # the right page count.
-        "save: give the replacement the umask's mode rather than the document's",
+        # A document intentionally shared with its group must keep that access.
+        "save: drop the document's group access on replacement",
         "src/save.rs",
-        "        #[cfg(unix)]\n        if let Ok(existing) = std::fs::metadata(out) {\n            use std::os::unix::fs::PermissionsExt;\n            let mut permissions = existing.permissions();\n            permissions.set_mode(permissions.mode() & !0o111);\n            let _ = file.set_permissions(permissions);\n        }\n",
-        "",
+        "let permissions = std::fs::Permissions::from_mode(existing.permissions().mode() & 0o666);",
+        "let permissions = std::fs::Permissions::from_mode(existing.permissions().mode() & 0o600);",
         "a_rewrite_keeps_the_documents_mode",
         only_on="macos",
     ),

@@ -176,18 +176,17 @@ export function afterReopen(refused: readonly string[], name: (path: string) => 
 
 /**
  * The tabs from last time that a launch restoring them did not open: the
- * ones behind that `openBehind` refused, and the one to be shown first when
- * it is not open either. Only tabs of the recorded list, in `plan.order`:
+ * recorded failures of foreground and background opens, restricted to the saved tabs:
  * a file handed over by the launcher reports its own failure, and the last
  * document resumed alone was never a list of tabs.
  */
 export function unopenedAtLaunch(
-  plan: LaunchPlan,
+  session: Session,
   refused: readonly string[],
   isOpen: (path: string) => boolean,
 ): string[] {
-  const tried = [...(plan.resuming ? plan.show : []), ...refused];
-  return [...new Set(tried.filter((path) => plan.order.includes(path) && !isOpen(path)))];
+  const saved = session.restore_tabs ? recorded(session) : [];
+  return [...new Set(refused.filter((path) => saved.includes(path) && !isOpen(path)))];
 }
 
 /** What to tell a reader whose tabs from last time did not all open at launch, or nothing. */

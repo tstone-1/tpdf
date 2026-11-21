@@ -21,6 +21,14 @@ have the binary.)
 
 ### Fixed
 
+- Reload keeps a form answer entered while the replacement opens. Tab restore
+  recognises aliases and respects a tab closed during launch. Folder navigation
+  skips aliases and keeps edited tabs. Quit waits for the last session writes.
+- Replacing an attachment or page image on Unix preserves private access.
+  Exports and PDF rewrites support full-length filenames. Incomplete attachment
+  listings are identified in Properties and return an unknown total in CLI JSON.
+- Search refuses annotation plans for off-page matches and offers highlights
+  for turned text that a directional mark cannot follow.
 - Cut preserves mixed selections that include a saved form field. Copy and Cut
   keep the words currently visible in an annotation editor.
 - Text wrapping preserves double-space indents and checks the painted bounds of

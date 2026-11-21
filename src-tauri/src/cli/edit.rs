@@ -444,7 +444,7 @@ fn apply(
                     } else {
                         let [x, y, w, h] =
                             rect.ok_or("annotation needs rect: [x,y,width,height]")?;
-                        if !within(x, y) || !within(x + w, y + h) || w <= 0. || h <= 0. {
+                        if !super::regions::rect_fits([x, y, w, h], size.width_pt, size.height_pt) {
                             return Err("annotation rectangle must fit the displayed page".into());
                         }
                         vec![x, y, x + w, y + h]

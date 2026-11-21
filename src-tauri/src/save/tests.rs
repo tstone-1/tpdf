@@ -297,16 +297,13 @@ use crate::print_win as os_pdf;
 /// **Written the day the staging name stopped being predictable, because
 /// the four assertions it replaces became unable to fail.** They read
 /// `!out.with_extension(PARTIAL).exists()`, which was the exact name
-/// `stage` used to produce; it now produces `<name>.tpdf-partial-<pid>-<n>`,
+/// `stage` used to produce; it now produces `.tpdf-partial-<name hash>-<pid>-<n>`,
 /// so that path is one no code writes and the assertion is satisfied by a
 /// directory full of leftovers. `docs/TRAPS.md`, *A property that holds by
 /// construction cannot test the thing it resembles*.
 fn partials_beside(out: &Path) -> Vec<PathBuf> {
     let dir = out.parent().unwrap_or(Path::new("."));
-    let Some(name) = out.file_name().and_then(|n| n.to_str()) else {
-        return Vec::new();
-    };
-    let prefix = format!("{name}.{PARTIAL}");
+    let prefix = format!(".{PARTIAL}-");
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -3571,6 +3568,17 @@ fn staging_path(out: &Path, attempt: u32) -> PathBuf {
     out.parent()
         .unwrap_or(Path::new("."))
         .join(staging_name(out.file_name().expect("a file name"), attempt))
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pdf_can_be_replaced_at_the_filename_limit() {
+    let dir = Scratch::new("long-save");
+    let out = dir.join(&format!("{}.pdf", "x".repeat(251)));
+    std::fs::write(&out, b"old").unwrap();
+    let staged = stage_bytes(&out, b"replacement").unwrap();
+    std::fs::rename(staged, &out).unwrap();
+    assert_eq!(std::fs::read(out).unwrap(), b"replacement");
 }
 
 #[test]

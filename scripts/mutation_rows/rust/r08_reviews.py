@@ -85,8 +85,8 @@ ROWS += [
     Mutation(
         "save: keep the execute bit of the file replaced",
         "src/save.rs",
-        "            permissions.set_mode(permissions.mode() & !0o111);\n",
-        "            permissions.set_mode(permissions.mode());\n",
+        "let permissions = std::fs::Permissions::from_mode(existing.permissions().mode() & 0o666);",
+        "let permissions = std::fs::Permissions::from_mode(existing.permissions().mode() & 0o777);",
         "a_save_over_an_executable_file_writes_a_file_that_is_not",
         only_on="macos",
     ),
@@ -2358,8 +2358,8 @@ ROWS += [
     Mutation(
         "attachments: a branching name tree's kids not walked",
         "src/attachments.rs",
-        "        for kid in kids {\n            walk(document, kid, depth + 1, seen, out);\n        }",
-        "        let _ = (kids, &seen);",
+        "            walk(document, kid, depth + 1, seen, out);",
+        "            let _ = kid;",
         "walks_the_kids_of_a_tree_that_branches",
     ),
     Mutation(

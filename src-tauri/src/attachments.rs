@@ -41,13 +41,23 @@ pub struct Embedded {
     pub size: Option<u64>,
 }
 
-/// Every embedded file, in the name tree's order, at most [`MAX_FILES`].
+/// The bounded list of embedded files in name-tree order.
 #[must_use]
 pub fn list(document: &Document) -> Vec<Embedded> {
-    entries(document)
+    list_with_count(document).0
+}
+
+/// The list and its exact count when the name tree was fully traversed.
+#[must_use]
+pub(crate) fn list_with_count(document: &Document) -> (Vec<Embedded>, Option<usize>) {
+    let entries = entries(document);
+    let count = (!entries.incomplete).then_some(entries.files.len());
+    let files = entries
+        .files
         .into_iter()
         .map(|(key, spec)| describe(document, &key, spec))
-        .collect()
+        .collect();
+    (files, count)
 }
 
 /// The bytes of the embedded file at `index` in [`list`]'s order, decoded.
@@ -57,7 +67,7 @@ pub fn list(document: &Document) -> Vec<Embedded> {
 /// No file at that place, a file specification with no bytes, or bytes that
 /// do not decode within [`MAX_DECODE`].
 pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
-    let found = entries(document);
+    let found = entries(document).files;
     let Some((key, spec)) = found.get(index) else {
         return Err(said!(
             "The document has no attachment {number} (it has {count}).",
@@ -318,16 +328,28 @@ pub fn save(
     })
 }
 
-/// The name tree's leaves in order: each key and its value, the value
-/// unresolved.
-fn entries(document: &Document) -> Vec<(Vec<u8>, Option<&Object>)> {
-    let mut out = Vec::new();
-    let root = document
-        .catalog()
-        .ok()
-        .and_then(|catalog| catalog.get(b"Names").ok())
-        .and_then(|names| resolve(document, names).as_dict().ok())
-        .and_then(|names| names.get(b"EmbeddedFiles").ok());
+#[derive(Default)]
+struct Entries<'a> {
+    files: Vec<(Vec<u8>, Option<&'a Object>)>,
+    incomplete: bool,
+}
+
+/// Traverse the same bounded prefix for listing and for extraction by index.
+fn entries(document: &Document) -> Entries<'_> {
+    let mut out = Entries::default();
+    let Ok(catalog) = document.catalog() else {
+        out.incomplete = true;
+        return out;
+    };
+    let root = if let Ok(names) = catalog.get(b"Names") {
+        let Ok(names) = resolve(document, names).as_dict() else {
+            out.incomplete = true;
+            return out;
+        };
+        names.get(b"EmbeddedFiles").ok()
+    } else {
+        None
+    };
     if let Some(root) = root {
         let mut seen = HashSet::new();
         walk(document, root, 0, &mut seen, &mut out);
@@ -343,17 +365,20 @@ fn walk<'a>(
     node: &'a Object,
     depth: usize,
     seen: &mut HashSet<ObjectId>,
-    out: &mut Vec<(Vec<u8>, Option<&'a Object>)>,
+    out: &mut Entries<'a>,
 ) {
-    if depth > MAX_DEPTH || out.len() >= MAX_FILES {
+    if depth > MAX_DEPTH {
+        out.incomplete = true;
         return;
     }
     if let Object::Reference(id) = node {
         if !seen.insert(*id) {
+            out.incomplete = true;
             return;
         }
     }
     let Ok(dict) = resolve(document, node).as_dict() else {
+        out.incomplete = true;
         return;
     };
     if let Some(pairs) = dict
@@ -362,15 +387,18 @@ fn walk<'a>(
         .and_then(|names| resolve(document, names).as_array().ok())
     {
         for pair in pairs.chunks(2) {
-            if out.len() >= MAX_FILES {
+            if out.files.len() >= MAX_FILES {
+                out.incomplete = true;
                 return;
             }
             let key = match pair.first().map(|key| resolve(document, key)) {
                 Some(Object::String(bytes, _)) => bytes.clone(),
                 _ => Vec::new(),
             };
-            out.push((key, pair.get(1)));
+            out.files.push((key, pair.get(1)));
         }
+    } else if dict.has(b"Names") {
+        out.incomplete = true;
     }
     if let Some(kids) = dict
         .get(b"Kids")
@@ -378,8 +406,14 @@ fn walk<'a>(
         .and_then(|kids| resolve(document, kids).as_array().ok())
     {
         for kid in kids {
+            if out.files.len() >= MAX_FILES {
+                out.incomplete = true;
+                break;
+            }
             walk(document, kid, depth + 1, seen, out);
         }
+    } else if dict.has(b"Kids") {
+        out.incomplete = true;
     }
 }
 
@@ -646,6 +680,29 @@ mod tests {
     }
 
     #[test]
+    fn the_attachment_count_is_exact_only_if_the_full_tree_was_read() {
+        for (n, expected) in [(999, Some(999)), (1000, Some(1000)), (1001, None)] {
+            let doc = carrying(&vec![("a", "a.txt", b"a".as_slice(), false); n], true);
+            let (files, count) = list_with_count(&doc);
+            assert_eq!((files.len(), count), (n.min(MAX_FILES), expected));
+        }
+        let mut doc = carrying(&[("a", "a.txt", b"a", false)], false);
+        let names = doc.catalog().unwrap().get(b"Names").unwrap();
+        let mut root = resolve(&doc, names)
+            .as_dict()
+            .unwrap()
+            .get(b"EmbeddedFiles")
+            .unwrap()
+            .clone();
+        for _ in 0..=MAX_DEPTH {
+            root = Object::Reference(doc.add_object(dictionary! { "Kids" => vec![root] }));
+        }
+        let names = doc.add_object(dictionary! { "EmbeddedFiles" => root });
+        doc.catalog_mut().unwrap().set("Names", names);
+        assert_eq!(list_with_count(&doc), (vec![], None));
+    }
+
+    #[test]
     fn a_document_with_no_list_lists_nothing() {
         let mut doc = Document::with_version("1.7");
         let catalog = doc.add_object(dictionary! { "Type" => "Catalog" });
@@ -783,9 +840,7 @@ mod tests {
         assert_eq!(dir.names().len(), 2, "{:?}", dir.names());
     }
 
-    /// The reason this does not stage through `save::stage`, which copies the
-    /// mode of the file it replaces: the bytes are the document author's, and
-    /// the file they replace may be too.
+    /// Replacing a private executable must preserve its privacy and clear its execute bits.
     #[cfg(unix)]
     #[test]
     fn saving_over_a_program_does_not_make_the_attachment_one() {
@@ -795,9 +850,9 @@ mod tests {
         let mut doc = carrying(&[("a", "a.txt", b"first", false)], false);
         let source = written(&dir, &mut doc);
         let expected = crate::fingerprint::Fingerprint::of(&source).expect("fingerprint");
-        let dest = dir.join("tool");
+        let dest = dir.join(&"x".repeat(255));
         std::fs::write(&dest, b"old").expect("seed");
-        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o700)).expect("chmod");
 
         assert_eq!(
             save(&source, &expected, 0, &dest, None, &crate::save::Here),
@@ -806,7 +861,7 @@ mod tests {
 
         assert_eq!(std::fs::read(&dest).expect("read"), b"first");
         let mode = std::fs::metadata(&dest).expect("stat").permissions().mode();
-        assert_eq!(mode & 0o111, 0, "{mode:o}");
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
     }
 
     #[test]

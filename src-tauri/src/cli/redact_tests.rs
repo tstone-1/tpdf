@@ -411,6 +411,33 @@ fn a_match_with_only_some_characters_placed_is_a_reason() {
 }
 
 #[test]
+fn annotation_plans_require_visible_geometry_and_a_representable_direction() {
+    use super::search::{searched_for, Markup};
+    let mut text = page(&["UP TURN"]);
+    text.char_turns = vec![0, 0, 0, 1, 1, 1, 1, 0];
+    let search = |word: &str, text: PageText, kind| {
+        let found = walk(&[query(SearchKind::Text, word)], &[1], &[text]);
+        let file = searched_for("source.pdf", 1, Vec::new(), &found, kind);
+        match file.error {
+            Some(error) => Err(error.message),
+            None => Ok(file.matches),
+        }
+    };
+    for kind in [Markup::Underline, Markup::Strikeout, Markup::Squiggly] {
+        assert!(search("UP", text.clone(), Some(kind)).is_ok());
+        assert!(search("TURN", text.clone(), Some(kind))
+            .unwrap_err()
+            .contains("turned text"));
+    }
+    assert!(search("TURN", text.clone(), Some(Markup::Highlight)).is_ok());
+    text.width_pt = 101.;
+    assert!(search("TURN", text.clone(), Some(Markup::Highlight))
+        .unwrap_err()
+        .contains("outside"));
+    assert_eq!(search("TURN", text, None).unwrap().len(), 1);
+}
+
+#[test]
 fn a_copy_is_verified_and_exits_0_only_when_no_list_has_a_reason() {
     assert_eq!(
         outcome(Vec::new(), Vec::new()),

@@ -1291,7 +1291,9 @@ tpdf search report.pdf --text "North Pier" --annotate highlight --color 1,0.9,0.
 `--color` is red, green and blue from 0 to 1; without it the marks take `edit`'s default.
 The plan holds at most 1,000 marks and includes the SHA-256 of the searched document.
 If the input bytes change before `edit`, it refuses the plan and leaves the output untouched. Nothing is printed when
-nothing matched. If any matched characters lack a usable position on the page, the command refuses the plan.
+nothing matched. Matches must have usable positions entirely within the displayed page.
+Use a highlight for turned text. Underline, strikeout and squiggly require text that is
+upright on the displayed page.
 
 **Reading from a pipe.** `info`, `verify`, `text`, `search`, `compare` and `fields` take `-` for the
 document and read it from standard input: `curl -s https://example.org/a.pdf | tpdf text -`.
@@ -1864,8 +1866,8 @@ because the page is too large to render at a size text can be judged at). The ex
 writes one PNG, using the viewer's contained PDFium renderer, including saved
 annotations, form appearances, crops and rotations. Page numbers start at 1;
 page 1 and 144 DPI are the defaults. `--dpi` accepts integers from 1 to 600.
-Dimensions round to the nearest whole pixel, matching the viewer. Outputs below
-one pixel on either side, above 8192 pixels on either side,
+Positive dimensions round to the nearest whole pixel, with a minimum of one pixel per
+side. Outputs above 8192 pixels on either side,
 or above 16,777,216 pixels total are refused; adjust the DPI explicitly. Existing
 outputs require `--force`; the input is never replaced. Failure before
 publication leaves the destination unchanged. Rendering creates no signature

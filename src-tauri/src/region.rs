@@ -133,6 +133,22 @@ mod tests {
         assert_eq!(std::fs::read(&path).expect("read"), png(b"new"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn exporting_over_a_private_long_name_preserves_access() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new("region-private");
+        let path = dir.join(&format!("{}.png", "a".repeat(251)));
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_png(&path, &png(b"new")).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), png(b"new"));
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
     #[test]
     fn refuses_a_name_that_is_not_a_png_and_writes_nothing() {
         let dir = TempDir::new("region-name");

@@ -476,8 +476,8 @@ export default {
     "Die Seiten {first} und {second} sind in dieser Datei dieselbe Seite und lassen sich daher nicht unterschiedlich zuschneiden. Schneide beide gleich zu oder lass beide, wie sie sind.",
   "{out:?} does not name a file to save to":
     "{out} nennt keine Datei, in die gespeichert werden kann",
-  "could not create {partial:?}: {e}":
-    "{partial} konnte nicht angelegt werden: {e}",
+  "could not stage beside {out:?}: {e}":
+    "Neben {out} konnte keine temporäre Datei angelegt werden: {e}",
   "could not flush {partial:?}: {e}":
     "{partial} konnte nicht vollständig geschrieben werden: {e}",
   "could not find an unused temporary name beside {out:?} after {STAGING_ATTEMPTS} tries":

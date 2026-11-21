@@ -22,9 +22,16 @@ export function folderOrder(paths: readonly string[]): string[] {
  * end: the first and the last do not wrap round, so a reader stepping through
  * a folder is told where it ends.
  */
-export function neighbourIn(paths: readonly string[], current: string, step: 1 | -1): string | null {
+export async function neighbourIn(
+  paths: readonly string[], current: string, step: 1 | -1,
+  sameFile: (path: string) => Promise<boolean>,
+): Promise<string | null> {
   const sorted = folderOrder(paths);
   const at = sorted.indexOf(current);
   if (at < 0) return null;
-  return sorted[at + step] ?? null;
+  for (let i = at + step; i >= 0 && i < sorted.length; i += step) {
+    const candidate = sorted[i]!;
+    if (!await sameFile(candidate)) return candidate;
+  }
+  return null;
 }

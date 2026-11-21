@@ -218,6 +218,7 @@ const TEXT = catalog({
     taggedYes: "yes — the document states its own reading order",
     taggedNo: "no — reading order is inferred from the layout",
     attachments: "Attachments",
+    partialAttachments: (count: number) => `Incomplete list (${count} shown)`,
     attachmentCount: (count: number): string =>
       `${count} embedded file${count === 1 ? "" : "s"}; Save an attachment saves one`,
     file: "File",
@@ -394,6 +395,7 @@ const TEXT = catalog({
     taggedYes: "ja — das Dokument gibt seine eigene Lesereihenfolge an",
     taggedNo: "nein — die Lesereihenfolge wird aus dem Layout abgeleitet",
     attachments: "Anhänge",
+    partialAttachments: (count: number) => `Unvollständige Liste (${count} angezeigt)`,
     attachmentCount: (count: number): string =>
       `${count} ${count === 1 ? "eingebettete Datei" : "eingebettete Dateien"}; ` +
       "„Anhang speichern...“ speichert einen",
@@ -1357,10 +1359,10 @@ export function sections(properties: Properties): Section[] {
       value: properties.tagged ? said.taggedYes : said.taggedNo,
     });
   }
-  if (properties.attachments !== null && properties.attachments > 0) {
+  if (properties.attachments === null ? properties.tagged !== null : properties.attachments > 0) {
     rows.push({
       name: said.attachments,
-      value: said.attachmentCount(properties.attachments),
+      value: properties.attachments === null ? said.partialAttachments(properties.embedded?.length ?? 0) : said.attachmentCount(properties.attachments),
     });
     rows.push(...attachmentRows(properties.embedded ?? []));
   }

@@ -483,28 +483,38 @@ pub fn plain(report: &report::Searched) -> String {
 /// found them: the walk returns them per query within a page.
 #[must_use]
 pub fn searched(path: &str, pages: usize, empty: Vec<u32>, found: &Found) -> report::SearchedFile {
-    let mut hits: Vec<(u32, u32, report::Hit)> = found
-        .matches
-        .iter()
-        .zip(&found.by)
-        .map(|(hit, query)| {
-            let (rects, partial_geometry) = rects_of(hit, found);
-            (
-                hit.page,
-                hit.start,
-                report::Hit {
-                    page: hit.page + 1,
-                    end_page: hit.end_page.map(|page| page + 1),
-                    query: *query,
-                    before: hit.before.clone(),
-                    hit: hit.hit.clone(),
-                    after: hit.after.clone(),
-                    rects,
-                    partial_geometry,
-                },
-            )
-        })
-        .collect();
+    searched_for(path, pages, empty, found, None)
+}
+
+/// Refuse unrepresentable marks while the source geometry is still available.
+pub(super) fn searched_for(
+    path: &str,
+    pages: usize,
+    empty: Vec<u32>,
+    found: &Found,
+    annotate: Option<Markup>,
+) -> report::SearchedFile {
+    let mut hits = Vec::with_capacity(found.matches.len());
+    for (hit, query) in found.matches.iter().zip(&found.by) {
+        let (rects, partial_geometry) = match rects_of(hit, found, annotate) {
+            Ok(geometry) => geometry,
+            Err(why) => return failed_file(path, ErrorKind::Refused, format!("{path}: {why}")),
+        };
+        hits.push((
+            hit.page,
+            hit.start,
+            report::Hit {
+                page: hit.page + 1,
+                end_page: hit.end_page.map(|page| page + 1),
+                query: *query,
+                before: hit.before.clone(),
+                hit: hit.hit.clone(),
+                after: hit.after.clone(),
+                rects,
+                partial_geometry,
+            },
+        ));
+    }
     hits.sort_by_key(|(page, start, hit)| (*page, *start, hit.query));
     report::SearchedFile {
         path: path.to_string(),
@@ -517,7 +527,11 @@ pub fn searched(path: &str, pages: usize, empty: Vec<u32>, found: &Found) -> rep
 
 /// Where one match is: `regions.rs`'s rectangles for each page it touches, as
 /// `[x, y, width, height]`.
-fn rects_of(hit: &crate::search::Match, found: &Found) -> (Vec<report::HitRect>, bool) {
+fn rects_of(
+    hit: &crate::search::Match,
+    found: &Found,
+    annotate: Option<Markup>,
+) -> Result<(Vec<report::HitRect>, bool), String> {
     let mut rects = Vec::new();
     let mut incomplete = false;
     for half in super::regions::halves(std::slice::from_ref(hit)) {
@@ -527,17 +541,39 @@ fn rects_of(hit: &crate::search::Match, found: &Found) -> (Vec<report::HitRect>,
         };
         let areas = super::regions::regions_on(text, half.page, &[half]);
         incomplete |= super::regions::uncovered(text, half, &areas) > 0;
-        rects.extend(
-            areas
-                .into_iter()
-                .map(|[left, top, right, bottom]| report::HitRect {
-                    page: half.page + 1,
-                    rect: [left, top, right - left, bottom - top],
-                }),
-        );
+        if annotate.is_some_and(|kind| kind != Markup::Highlight)
+            && !super::regions::upright_on_display(text, half)
+        {
+            return Err(format!(
+                "page {}: {:?} contains turned text; use highlight for this match",
+                half.page + 1,
+                hit.hit
+            ));
+        }
+        for [left, top, right, bottom] in areas {
+            let rect = [left, top, right - left, bottom - top];
+            if annotate.is_some() && !super::regions::rect_fits(rect, text.width_pt, text.height_pt)
+            {
+                return Err(format!("page {}: {:?} extends outside the displayed page; no annotation plan was printed", half.page + 1, hit.hit));
+            }
+            rects.push(report::HitRect {
+                page: half.page + 1,
+                rect,
+            });
+        }
     }
     let partial = incomplete && !rects.is_empty();
-    (rects, partial)
+    Ok((rects, partial))
+}
+
+fn failed_file(path: &str, kind: ErrorKind, message: String) -> report::SearchedFile {
+    report::SearchedFile {
+        path: path.to_owned(),
+        error: Some(FileError { kind, message }),
+        pages_searched: 0,
+        pages_without_text: Vec::new(),
+        matches: Vec::new(),
+    }
 }
 
 /// One document, searched, or the reason it was not.
@@ -550,13 +586,7 @@ fn search_one(
     opened: Result<(std::fs::File, usize), String>,
 ) -> report::SearchedFile {
     let shown = path.display().to_string();
-    let failed = |kind: ErrorKind, message: String| report::SearchedFile {
-        path: shown.clone(),
-        error: Some(FileError { kind, message }),
-        pages_searched: 0,
-        pages_without_text: Vec::new(),
-        matches: Vec::new(),
-    };
+    let failed = |kind, message| failed_file(&shown, kind, message);
     let declined = |why: Declined| match why {
         Declined::Locked(_) if password.is_some() => failed(
             ErrorKind::Locked,
@@ -622,6 +652,6 @@ fn search_one(
                  fewer pages with --pages"
             ),
         ),
-        Ok(found) => searched(&shown, pages.len(), empty, &found),
+        Ok(found) => searched_for(&shown, pages.len(), empty, &found, command.annotate),
     }
 }

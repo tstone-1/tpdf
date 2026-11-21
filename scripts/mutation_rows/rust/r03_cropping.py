@@ -583,13 +583,11 @@ ROWS += [
         "an_append_leaves_every_byte_of_the_previous_revision_where_it_was",
     ),
     Mutation(
-        # Truncate whatever is at the staging name, which is what
-        # `std::fs::write` did: it destroyed an unrelated file beside the
-        # destination and followed a symlink planted at that path.
-        "save: stage over whatever is already at the temporary name",
+        # A planted name must survive, and the save must still succeed.
+        "save: refuse a staging collision instead of trying a free name",
         "src/save.rs",
-        "            .create_new(true)",
-        "            .create(true)\n            .truncate(true)",
+        "            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}",
+        "            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err(e),",
         "staging_never_writes_over_a_file_that_is_already_there",
     ),
     Mutation(
@@ -598,8 +596,8 @@ ROWS += [
         # and either can rename or delete the other's work.
         "save: give every save of a destination the same staging name",
         "src/save.rs",
-        "    name.push(format!(\".{PARTIAL}-{}-{attempt}\", std::process::id()));",
-        "    name.push(format!(\".{PARTIAL}\"));",
+        "\".{PARTIAL}-{:016x}-{}-{attempt}\",",
+        "\".{PARTIAL}-{:016x}-{}-0\",",
         "two_saves_to_one_destination_do_not_share_a_staging_file",
     ),
     Mutation(
@@ -1378,8 +1376,8 @@ ROWS += [
         # under a name they did not choose.
         "save: leave the staging file behind on a refusal",
         "src/save.rs",
-        "            let _ = std::fs::remove_file(&partial);\n            return Err(why);",
-        "            return Err(why);",
+        "        let _ = std::fs::remove_file(&partial);\n        return Err(why);",
+        "        return Err(why);",
         "a_rewriter_that_refuses_says_so_without_a_disk_error_in_front_of_it",
     ),
     Mutation(

@@ -55,6 +55,7 @@
       regionNotCopied: (why: string) => `The region was not copied: ${why}`,
       saveRegion: "Save a region as a picture",
       pngPicture: "PNG picture",
+      incompleteAttachments: "The attachment list could not be read in full.",
       noAttachments: "This document carries no attachments.",
       saveAttachment: "Save an attachment",
       noPictureToPaste: "The clipboard holds no picture to paste.",
@@ -236,6 +237,7 @@
       regionNotCopied: (why: string) => `Der Bereich wurde nicht kopiert: ${why}`,
       saveRegion: "Bereich als Bild speichern",
       pngPicture: "PNG-Bild",
+      incompleteAttachments: "Die Liste der Anhänge konnte nicht vollständig gelesen werden.",
       noAttachments: "Dieses Dokument hat keine Anhänge.",
       saveAttachment: "Anhang speichern",
       noPictureToPaste: "In der Zwischenablage ist kein Bild zum Einfügen.",
@@ -490,7 +492,7 @@
     afterMerge,
     afterRefusal,
     refusalOf,
-    reloadAsked,
+    beforeReload, reloadAsked,
     beforeRedactingInPlace,
     type Offer,
     plainly,
@@ -1321,21 +1323,23 @@
     const from = openView;
     const tab = from === NO_VIEW ? undefined : tabs.find(from);
     if (!tab) return;
-    let paths: string[];
+    let next: string | null;
     try {
-      paths = await call("folder_pdfs", { path: tab.path });
+      const paths = await call("folder_pdfs", { path: tab.path });
+      next = await neighbourIn(paths, tab.path, step, async (path) =>
+        (await matchingTab(path, from))?.edits === tab.edits);
     } catch (error) {
       say(String(error));
       return;
     }
-    const next = neighbourIn(paths, tab.path, step);
+    if (!stillIn(from, tab.edits) || tabs.find(from) !== tab) return;
     if (next === null) {
       say(step > 0 ? TEXT().lastInFolder : TEXT().firstInFolder);
       return;
     }
-    const keep = tab.edits.state.dirty || twinsOf(tabs.all, tab).length > 0;
-    await openPath(next);
-    if (!keep && tabs.find(from) === tab && (await matchingTab(next)) !== undefined) await closeTab(from);
+    const destination = await openPath(next);
+    if (destination !== null && destination !== from && tabs.find(from) === tab)
+      await closeTab(from, false, destination);
   }
 
   /** Opens again the document closed most recently, where it was left. */
@@ -1351,16 +1355,20 @@
    * Closes one tab. `asked` when the caller has already asked about its
    * unsaved work, as {@link closeTabs} does once for several.
    */
-  function closeTab(id: ViewId, asked = false): Promise<void> {
+  function closeTab(id: ViewId, asked = false, folderDestination?: ViewId): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
       const tab = tabs.find(id);
       if (!tab) return;
+      if (folderDestination !== undefined) {
+        try { await settleDocument(); } catch (e) { say(String(e)); return; }
+        if (openView !== folderDestination || tab.edits.state.dirty || twinsOf(tabs.all, tab).length) return;
+      }
       // The tab in front of the other side is closed as the document the
       // reader is in, which it becomes first.
       if (id !== openView && panes.front(panes.sideOf(id)) === id && !focusSide(panes.sideOf(id))) return;
       opening = true;
       try {
-        await settleDocument();
+        if (folderDestination === undefined) await settleDocument();
         // One of two views of a document closes without a question and without
         // releasing anything: the document, and its unsaved work, stay open in
         // the other.
@@ -2621,13 +2629,16 @@
     const doc = openDoc, source = openPathName;
     if (doc < 0 || !source) return;
     try {
-      const files = (await call("document_properties", { doc })).embedded ?? [];
+      const properties = await call("document_properties", { doc });
+      const files = properties.embedded ?? [];
+      const incomplete = properties.attachments === null;
+      if (incomplete) tell(TEXT().incompleteAttachments);
       if (files.length === 0) {
-        tell(TEXT().noAttachments);
+        if (!incomplete) tell(TEXT().noAttachments);
         return;
       }
       const asked = { doc, source, files };
-      if (files.length === 1) {
+      if (files.length === 1 && !incomplete) {
         await saveAttachmentAt(asked, 0);
         return;
       }
@@ -5832,19 +5843,22 @@
         await documentTasks.idle();
         await opens.run(async () => {
           opening = true;
+          const settled = settleDocument();
+          const release = documentTasks.hold();
           try {
-            await settleDocument();
+            await settled;
             const unsaved = oneEach(tabs.all).filter((tab) => tab.edits.state.dirty);
             if (unsaved.length && !await confirmDialog(
               TEXT().discardChangesOnQuit(unsaved.length),
               { title: TEXT().closeTpdf, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
             )) return;
+            await Promise.all([places.settled(), tabRecorder.settled()]);
             await getCurrentWindow().destroy();
           } catch (e) {
             // As `closeTab`: a draft that cannot be committed is said, and the
             // window stays, since its words are not in the document yet.
             say(String(e));
-          } finally { opening = false; }
+          } finally { opening = false; release(); }
         });
       });
 
@@ -5937,8 +5951,9 @@
       // Held until the last tab is back, so that quitting halfway through does
       // not record the half that had opened as the whole list.
       if (plan.behind.length) tabRecorder.hold();
+      const refusedFront: string[] = [];
       for (const path of plan.show) {
-        await openPath(path, plan.resuming);
+        if (await openPath(path, plan.resuming) === null) refusedFront.push(path);
         const given = handed.find((each) => each.path === path);
         if (given) await placeOpened(given);
       }
@@ -5952,7 +5967,7 @@
       // A tab that would not open is said, and kept in the list written, so the
       // next launch tries it again (`unopenedAtLaunch`, `keepUnopened`).
       const unopenedTabs = (refused: readonly string[]): boolean => {
-        const unopened = unopenedAtLaunch(plan, refused, isOpenTab);
+        const unopened = unopenedAtLaunch(session, [...refusedFront, ...refused], isOpenTab);
         tabRecorder.keepUnopened(unopened, plan.order);
         // After the tabs behind the first have opened, which is later than
         // anything the reader may have pressed meanwhile.
@@ -5982,7 +5997,7 @@
           // Through `openPath`, never `openDocument`: the chain is the thing
           // the `race` phase exists to exercise, and a check that went around
           // it would be testing a second implementation of the open.
-          open: (path) => openPath(path),
+          open: async (path) => { await openPath(path); },
           hasViewer: () => viewer !== null,
           tabs: () => tabRows,
           status: () => status,
@@ -6044,7 +6059,7 @@
         return;
 
       await runSessionCheckIfRequested({
-        open: (path) => openPath(path),
+        open: async (path) => { await openPath(path); },
         viewer: () => viewer,
         root: () => surface,
         path: () => openPathName,
@@ -6199,17 +6214,22 @@
     resume: Place | null = null,
     afterWrite = false,
     discard: Edits | null = null,
-  ): Promise<void> {
+  ): Promise<ViewId | null> {
     // A write's own reopen must not wait for the task that requested it, and
     // it is the only open that may skip the wait: `afterWrite` is set by
     // `reopenAfterWrite` alone. A reload passes a place too, and read off the
     // place it tore the document down under a task still running on it.
+    const reloadView = resume && !afterWrite ? openView : null;
     const ready = afterWrite ? Promise.resolve() : documentTasks.idle();
     return ready.then(() => opens.run(async () => {
-      if (discard && edits !== discard) return;
+      if ((reloadView !== null && openView !== reloadView) || (discard && edits !== discard)) return null;
       const existing = resume ? undefined : await matchingTab(path, tabs.active);
       // A document already open is shown where it is, on its own side.
-      if (existing) { await showTabNow(existing.view); viewer?.focus(); return; }
+      if (existing) {
+        await showTabNow(existing.view);
+        viewer?.focus();
+        return openView === existing.view ? openView : null;
+      }
       const failed = await openDocument(path, resuming, resume, undefined, afterWrite, discard);
       // A second view of a document that was saved or reloaded went with the
       // old handle. It is mounted again on the new one, where it was. So is
@@ -6220,6 +6240,7 @@
         try { await showPanes(failed); }
         finally { opening = false; refreshMenu(); }
       }
+      return failed === null && openPathName === path && openView !== NO_VIEW ? openView : null;
     }));
   }
 
@@ -6302,7 +6323,7 @@
   function tabHost(asking: boolean): TabHost {
     return {
       openBehind: (path) => opens.run(async () => {
-        if (isOpenTab(path)) return;
+        if (await matchingTab(path, tabs.active)) return;
         const doc = asking ? await openOrAsk(path) : await openWithPassword(
           (password) => call("open_document", { path, password }), null);
         if (!doc.pages[0]) {
@@ -7136,6 +7157,18 @@
       // A save or a reload opens the file again in the tab it is shown in.
       // The tab the reader is in when the file is shown in two.
       const replacing = override ? tabs.forPath(path, tabs.active) : undefined;
+      if (replacing && !afterWrite && !discard) {
+        // A slow open leaves the original controls live. Another draft may
+        // also have appeared while the previous edits were settling.
+        const hasDraft = [openView, ...stage.parked].some((id) => asDocument(id, () =>
+          edits === replacing.edits && (formLayer?.hasDraft || textEditor?.hasDraft || viewer?.hasNoteDraft)));
+        const prompt = beforeReload(replacing.edits.state.dirty || hasDraft);
+        if (prompt) {
+          await call("close_document", { doc: doc.id });
+          say(prompt.message, prompt.offers);
+          return prompt.message;
+        }
+      }
       // Its other views are on the handle that is going. They are torn down
       // with it, and whoever asked for this open mounts them again.
       twins = replacing ? twinsOf(tabs.all, replacing) : [];

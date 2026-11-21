@@ -792,7 +792,10 @@ fn scan_judged(
     } else {
         None
     };
-    let embedded = catalog.map_or_else(Vec::new, |_| crate::attachments::list(document));
+    let (embedded, attachments) = catalog.map_or_else(
+        || (Vec::new(), None),
+        |_| crate::attachments::list_with_count(document),
+    );
     let language = catalog
         .and_then(|c| c.get(b"Lang").ok())
         .and_then(|o| resolve(document, o).as_str().ok())
@@ -809,7 +812,7 @@ fn scan_judged(
         signatures,
         tagged: catalog.map(|c| c.has(b"StructTreeRoot")),
         language,
-        attachments: catalog.map(|_| embedded.len()),
+        attachments,
         embedded,
         xmp: catalog.and_then(|c| read_xmp(document, c)),
         limits,

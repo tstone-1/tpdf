@@ -52,6 +52,15 @@ function blank(): Properties {
   };
 }
 
+it("shows the available attachments when their total is unknown", () => {
+  const properties = blank();
+  properties.tagged = false;
+  properties.embedded = [{ name: "example.txt", description: "", size: 5 }];
+  const rows = sections(properties).flatMap((section) => section.rows);
+  expect(rows).toContainEqual({ name: "Attachments", value: "Incomplete list (1 shown)" });
+  expect(JSON.stringify(rows)).toContain("example.txt");
+});
+
 /** A signature that claims everything, so a test can take pieces away. */
 function signed(): Signature {
   return {

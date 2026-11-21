@@ -15642,9 +15642,8 @@ then counts, then asks in the close dialog's own words, and a reader who says no
 changes **no state at all** — the update stays `ready`, the button stays
 offered, the work stays open. The reading position is written by the settle and
 then **awaited** before the process ends: `flush()` issues the write and returns,
-which is right for `pagehide` and for a closing window, and a relaunch is the one
-caller that can wait and must, or restoring after an update lands a position
-behind where an ordinary restart lands.
+which is appropriate for `pagehide`. Ordinary quit and update relaunch both
+await the place and tab writers before ending the webview.
 
 ##### What the dependency cost, and what was checked
 

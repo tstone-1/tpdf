@@ -123,6 +123,33 @@ fn character_turns(text: &PageText, index: usize) -> u32 {
         % 4
 }
 
+/// A rectangular annotation appearance draws its baseline in the displayed
+/// page's frame. Unplaced separators have no bearing on that direction.
+pub(super) fn upright_on_display(text: &PageText, half: Half) -> bool {
+    let end = half
+        .to
+        .map_or(text.codes.len(), |to| text.codes.len().min(to as usize));
+    (half.from as usize..end).all(|i| {
+        !is_placed(char_quad(&text.boxes, i))
+            || (text.char_turns.get(i) != Some(&crate::text::OBLIQUE_TURN)
+                && character_turns(text, i) == 0)
+    })
+}
+
+/// Validate the serialized x/y/width/height rectangle as the edit consumer reads it.
+pub(super) fn rect_fits([x, y, w, h]: [f32; 4], width: f32, height: f32) -> bool {
+    let right = x + w;
+    let bottom = y + h;
+    x >= 0.
+        && y >= 0.
+        && w > 0.
+        && h > 0.
+        && right.is_finite()
+        && bottom.is_finite()
+        && right <= width
+        && bottom <= height
+}
+
 /// `onSameLine`.
 ///
 /// Half of the shorter box is the test for two boxes of comparable height,
