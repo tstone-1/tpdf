@@ -63,7 +63,7 @@ ROWS = [
     Mutation(
         "compress: a picture whose stated size overflows compared by multiplying",
         "src/compress.rs",
-        "let (before, after) = (old.0.saturating_mul(old.1), new.0.saturating_mul(new.1));\n            (before.saturating_sub(after), before)",
+        "let (before, after) = (old.0.saturating_mul(old.1), new.0.saturating_mul(new.1));\n    (before.saturating_sub(after), before)",
         "(old.0 * old.1 - new.0 * new.1, old.0 * old.1)",
         "a_picture_whose_stated_size_overflows_is_compared_without_overflowing",
     ),

@@ -21,6 +21,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -57,9 +59,17 @@ def fetch(name: str) -> None:
     DEST.mkdir(parents=True, exist_ok=True)
     part = DEST / f"{name}.part"
     url = URL.format(release=RELEASE, name=name)
-    with urllib.request.urlopen(url, timeout=120) as response, part.open("wb") as out:  # noqa: S310
-        for block in iter(lambda: response.read(1 << 20), b""):
-            out.write(block)
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response, part.open("wb") as out:  # noqa: S310
+                for block in iter(lambda: response.read(1 << 20), b""):
+                    out.write(block)
+            break
+        except urllib.error.HTTPError as error:
+            if error.code not in (429, 502, 503, 504) or attempt == 2:
+                raise
+            print(f"[WARN] {name}: HTTP {error.code}, retrying", file=sys.stderr)
+            time.sleep(2 ** (attempt + 1))
     found = sha256(part)
     if found != PINS[name]:
         part.unlink()

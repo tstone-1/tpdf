@@ -1267,6 +1267,12 @@ pub struct Estimate {
     pub sample: Option<Sample>,
 }
 
+/// Rank a changed picture by pixels lost, then by original area for a tie.
+fn pixel_loss(old: (i64, i64), new: (i64, i64)) -> (i64, i64) {
+    let (before, after) = (old.0.saturating_mul(old.1), new.0.saturating_mul(new.1));
+    (before.saturating_sub(after), before)
+}
+
 /// The picture `after` lost the most pixels of, and the page that draws it.
 fn focus(before: &Document, after: &Document, shown: &BTreeMap<ObjectId, Shown>) -> Option<Focus> {
     let size = |doc: &Document, id: ObjectId| -> Option<(i64, i64)> {
@@ -1297,13 +1303,7 @@ fn focus(before: &Document, after: &Document, shown: &BTreeMap<ObjectId, Shown>)
             let jpeg = filter.get(b"Filter").and_then(Object::as_name).ok() == Some(b"DCTDecode");
             (old != new || jpeg).then_some((*shown, old, new))
         })
-        // The most pixels lost; among pictures only re-encoded, the largest.
-        // The sizes are the file's own numbers for any stream that was only
-        // deflated, so the arithmetic saturates rather than overflows.
-        .max_by_key(|(_, old, new)| {
-            let (before, after) = (old.0.saturating_mul(old.1), new.0.saturating_mul(new.1));
-            (before.saturating_sub(after), before)
-        })?;
+        .max_by_key(|(_, old, new)| pixel_loss(*old, *new))?;
     let dpi = |pixels: i64| -> u32 {
         if shown.width <= 0.0 || !shown.width.is_finite() {
             return 0;

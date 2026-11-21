@@ -1152,10 +1152,21 @@ fn a_picture_drawn_where_content_could_not_be_followed_is_not_scaled() {
     );
 }
 
-/// The picture that loses most is chosen from the file's own numbers for a
-/// stream this only deflated, which may be any two integers.
 #[test]
 fn a_picture_whose_stated_size_overflows_is_compared_without_overflowing() {
+    assert_eq!(super::pixel_loss((8, 6), (4, 3)), (36, 48));
+    assert_eq!(
+        super::pixel_loss((i64::MAX, 2), (4, 3)),
+        (i64::MAX - 12, i64::MAX)
+    );
+    assert_eq!(
+        super::pixel_loss((i64::MAX, 2), (i64::MAX, 2)),
+        (0, i64::MAX)
+    );
+}
+
+#[test]
+fn a_picture_that_was_only_deflated_is_excluded_from_the_preview() {
     use super::estimate;
     let mut doc = Document::with_version("1.7");
     let picture = doc.add_object(Stream::new(
@@ -1167,13 +1178,13 @@ fn a_picture_whose_stated_size_overflows_is_compared_without_overflowing() {
         "q 72 0 0 72 100 100 cm /Im Do Q",
         &[("Im", picture)],
     );
-    // The fixture: not a picture this can shrink, and a stream it deflates,
-    // so the two sizes are compared.
+    // The stream is smaller, but its pixels did not change.
     let mut copy = doc.clone();
     assert_eq!(apply(&mut copy, SCREEN).pictures_changed, 0);
     assert_eq!(filter(&copy, picture), "FlateDecode", "the fixture");
     let estimated = estimate(&doc, SCREEN).expect("estimates");
     assert_eq!(estimated.estimate.done.pictures_changed, 0);
+    assert!(estimated.focus.is_none());
 }
 
 /// A sample's stated size is held to its pixels before a picture is made from
