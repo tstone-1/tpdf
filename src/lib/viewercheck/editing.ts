@@ -7,8 +7,9 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { CropGeometry } from "../crop";
-import { type DocumentInfo, call } from "../ipc";
+import { type DocumentInfo, type PrintSettings, type PrintSetup, call } from "../ipc";
 import type { EditState } from "../edits";
+import { PrintPreviewDialog, type Chooser } from "../printpreviewdialog";
 import { baselineOf } from "../pages";
 import { check, describeThrown, skip } from "./common";
 import { preview } from "./invert";
@@ -442,6 +443,110 @@ export async function printChecks(path: string, doc: DocumentInfo): Promise<void
   );
 
   await printPreviewChecks(path, doc);
+  await printDialogChecks(check);
+}
+
+/** Exercise the Windows chooser with a removable printer and one drawing slot. */
+export async function printDialogChecks(record: typeof check): Promise<void> {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dialog = new PrintPreviewDialog(host);
+  const previous = localStorage.getItem("tpdf.print-settings");
+  const requests: PrintSettings[] = [], draws: number[] = [];
+  let installed = "Printer A", driverCopies = 3;
+  let holdSetup = false, finishSetup = () => {}, releaseDraw = () => {};
+  const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  const reply = (s: PrintSettings, copies: number): PrintSetup => ({
+    printers: [installed],
+    device: { printer: installed, papers: [{ id: 1, name: "A4" }], paper: 1,
+      landscape: !!s.landscape, copies, mostCopies: 10, twoSided: "off", colour: true },
+    paper: { width: 595, height: 842, left: 10, top: 10, printableWidth: 575, printableHeight: 822 },
+    sheets: (s.pages ?? [0, 1]).map(page => [{ page, x: 0, y: 0, width: 575, height: 822, turned: false }]),
+  });
+  const chooser: Chooser = {
+    setup: async s => {
+      requests.push(s);
+      if (s.printer && s.printer !== installed) throw new Error("printer removed");
+      if (holdSetup) await new Promise<void>(resolve => { finishSetup = resolve; });
+      return reply(s, Math.min(s.copies, 10));
+    },
+    driver: async s => reply(s, driverCopies),
+  };
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6L7H8AAAAASUVORK5CYII=";
+  const job = () => dialog.ask("Sample", Array.from({ length: 2 }, () => ({ width_pt: 595, height_pt: 842 })),
+    async page => {
+      draws.push(page);
+      if (draws.length === 1) await new Promise<void>(resolve => { releaseDraw = resolve; });
+      return png;
+    }, chooser, 1);
+  const control = <T extends HTMLElement>(selector: string) => host.querySelector<T>(selector)!;
+  const enter = () => control('[role="list"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  const change = (input: HTMLInputElement | HTMLSelectElement, value: string) => {
+    input.value = value;
+    input.dispatchEvent(new Event(input instanceof HTMLInputElement ? "input" : "change", { bubbles: true }));
+  };
+  try {
+    localStorage.removeItem("tpdf.print-settings");
+    const answer = job();
+    await turn();
+    const range = control<HTMLOptionElement>('option[value="current"]').parentElement as HTMLSelectElement;
+    const copies = control<HTMLInputElement>('input[type="number"]');
+    const print = Array.from(host.querySelectorAll("button")).at(-1)!;
+    const driver = host.querySelector("button")!;
+    change(range, "custom");
+    const pages = control<HTMLInputElement>('input[type="text"]');
+    change(pages, "99");
+    enter();
+    record("Enter cannot confirm a rejected print range", dialog.isOpen && print.disabled, pages.value);
+    holdSetup = true;
+    change(pages, "2");
+    change(copies, "0");
+    holdSetup = false;
+    finishSetup();
+    await turn();
+    enter();
+    record("an earlier printer reply cannot enable invalid copies", dialog.isOpen && print.disabled && copies.value === "0", copies.value);
+    change(copies, "1");
+    await turn();
+    const before = draws.join();
+    releaseDraw();
+    await turn();
+    const image = host.querySelector("img");
+    record("relayout waits for the active draw and displays the selected page",
+      before === "0" && draws.join() === "0,1" && image?.getAttribute("src") === png && image.style.display === "block", draws.join());
+    driver.click();
+    await turn();
+    const displayed = copies.value;
+    const orientation = control<HTMLOptionElement>('option[value="landscape"]').parentElement as HTMLSelectElement;
+    change(orientation, "landscape");
+    await turn();
+    record("the driver copy count survives the next setup", displayed === "3" && requests.at(-1)?.copies === 3, displayed);
+    change(copies, "12");
+    await turn();
+    driverCopies = 10;
+    driver.click();
+    await turn();
+    record("unchanged hardware copies preserve the requested software count", copies.value === "12", copies.value);
+    enter();
+    if (dialog.isOpen) dialog.close();
+    const sent = await answer;
+    record("confirmation prints only the corrected range", sent.print && sent.settings?.pages?.join() === "1", JSON.stringify(sent));
+    installed = "Printer B";
+    requests.length = 0;
+    void job();
+    await turn();
+    const names = Array.from(control<HTMLSelectElement>("select").options, option => option.value);
+    const retry = requests[1];
+    record("a removed remembered printer recovers to the installed printer", requests[0]?.printer === "Printer A"
+      && requests.length === 2 && retry?.printer === null && retry.paper === null && retry.twoSided === null
+      && retry.colour === null && names.join() === installed && !print.disabled, names.join());
+  } finally {
+    releaseDraw();
+    dialog.close();
+    host.remove();
+    if (previous === null) localStorage.removeItem("tpdf.print-settings");
+    else localStorage.setItem("tpdf.print-settings", previous);
+  }
 }
 
 /**

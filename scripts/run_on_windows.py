@@ -501,7 +501,7 @@ def run_desktop(host: str, clone: str, sha: str, bundle: bytes | None, job: str,
         files = []
         for name, text in scripts.items():
             files.append(Path(scratch) / name)
-            files[-1].write_text(text, encoding="ascii", newline="\r\n")
+            files[-1].write_text(text, encoding="utf-8-sig", newline="\r\n")
         if bundle is not None:
             files.append(Path(scratch) / "tree.bundle")
             files[-1].write_bytes(bundle)
@@ -545,7 +545,7 @@ def bash(clone: str, sha: str, suite: str, bundle: bytes | None) -> str:
         ]
     lines += [
         "cat > run.ps1 <<'TPDF_SCRIPT'",
-        powershell(clone, sha, suite).rstrip("\n"),
+        "\ufeff" + powershell(clone, sha, suite).rstrip("\n"),
         "TPDF_SCRIPT",
         # Its standard input is redirected, or it reads the rest of this script.
         f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File '{windows_run}\\run.ps1' "
@@ -622,7 +622,7 @@ def run_under_powershell(host: str, clone: str, sha: str, suite: str, bundle: by
         return made
     with tempfile.TemporaryDirectory() as scratch:
         files = [Path(scratch) / "run.ps1"]
-        files[0].write_text(powershell(clone, sha, suite), encoding="ascii", newline="\r\n")
+        files[0].write_text(powershell(clone, sha, suite), encoding="utf-8-sig", newline="\r\n")
         if bundle is not None:
             files.append(Path(scratch) / "tree.bundle")
             files[1].write_bytes(bundle)

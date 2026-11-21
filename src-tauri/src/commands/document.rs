@@ -28,20 +28,39 @@ pub async fn reveal_file(path: String) -> Result<(), String> {
 
 /// Returns the existing tab path that names this file, including filesystem aliases.
 #[tauri::command]
-pub async fn matching_open_path(path: String, candidates: Vec<String>) -> Option<String> {
-    matching_file(Path::new(&path), candidates)
+pub async fn matching_open_path(
+    path: String,
+    candidates: Vec<String>,
+    for_output: Option<bool>,
+) -> Result<Option<String>, String> {
+    matching_file(Path::new(&path), candidates, for_output.unwrap_or(false))
+        .map_err(|error| error.to_string())
 }
 
-fn matching_file(path: &Path, candidates: Vec<String>) -> Option<String> {
-    let identity = |path: &Path| {
-        path.is_file()
-            .then(|| crate::fingerprint::FileId::at(path))
-            .flatten()
+fn matching_file(
+    path: &Path,
+    candidates: Vec<String>,
+    for_output: bool,
+) -> std::io::Result<Option<String>> {
+    use std::io::{Error, ErrorKind};
+
+    let identity = |path: &Path| match path.metadata() {
+        Ok(meta) if meta.is_file() => match crate::fingerprint::FileId::at(path) {
+            None if for_output => Err(Error::other("file identity unavailable")),
+            id => Ok(id),
+        },
+        Err(error) if for_output && error.kind() != ErrorKind::NotFound => Err(error),
+        _ => Ok(None),
     };
-    let requested = identity(path)?;
-    candidates
-        .into_iter()
-        .find(|candidate| identity(Path::new(candidate)) == Some(requested))
+    let Some(requested) = identity(path)? else {
+        return Ok(None);
+    };
+    for candidate in candidates {
+        if identity(Path::new(&candidate))? == Some(requested) {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -57,9 +76,18 @@ mod file_match_tests {
             file.display().to_string(),
         ];
         assert_eq!(
-            matching_file(&root.join("src/../Cargo.toml"), candidates),
+            matching_file(&root.join("src/../Cargo.toml"), candidates, true).unwrap(),
             Some(file.display().to_string())
         );
+    }
+
+    #[test]
+    fn an_uncheckable_candidate_refuses_an_overwrite_but_allows_opening() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        // An embedded NUL cannot name a file on any supported system.
+        let invalid = vec!["bad\0path".into()];
+        assert!(matching_file(&file, invalid.clone(), true).is_err());
+        assert!(matching_file(&file, invalid, false).unwrap().is_none());
     }
 }
 

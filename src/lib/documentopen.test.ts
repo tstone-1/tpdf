@@ -516,7 +516,7 @@ describe("what the reader is told once the window has gone back to another tab",
       "return failed;",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "function openPath("), [
-      "const failed = await openDocument(path, resuming, resume, undefined, afterWrite);",
+      "const failed = await openDocument(path, resuming, resume, undefined, afterWrite, discard);",
       "try { await showPanes(failed); }",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "async function showPanes("), [

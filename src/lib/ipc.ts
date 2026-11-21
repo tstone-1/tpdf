@@ -590,7 +590,7 @@ export interface Commands {
   };
   close_document: { args: { doc: DocHandle }; reply: void };
   reveal_file: { args: { path: string }; reply: void };
-  matching_open_path: { args: { path: string; candidates: string[] }; reply: string | null };
+  matching_open_path: { args: { path: string; candidates: string[]; forOutput?: boolean }; reply: string | null };
   folder_pdfs: { args: { path: string }; reply: string[] };
   /** The reply counts the documents released. */
   release_documents: { args: NoArgs; reply: number };

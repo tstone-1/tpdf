@@ -279,6 +279,8 @@ export function ringFrom<T>(group: readonly T[], at: number, step: 1 | -1): T[] 
   return [here, ...ahead];
 }
 
+let nextLayerId = 0;
+
 /** Native page controls. Editing commits once on blur; pending text survives repaint. */
 export class FormLayer {
   private readonly node = document.createElement("div");
@@ -289,6 +291,9 @@ export class FormLayer {
   private fields: readonly FieldEdited[] = [];
   private disposed = false;
   private readonly pending = new Set<Promise<void>>();
+  private readonly drafts = new Set<Mounted>();
+
+  get hasDraft(): boolean { return this.drafts.size > 0 || this.pending.size > 0; }
 
   constructor(host: HTMLElement, form: Form,
     private readonly anchor: (widget: FormWidget) => (Anchor & { clip?: string; scale?: number }) | null,
@@ -301,6 +306,8 @@ export class FormLayer {
     this.node.className = "form-fields";
     this.node.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:3";
     host.append(this.node);
+    // A split view can mount the same PDF object numbers twice in this document.
+    const prefix = `form-${++nextLayerId}`;
     for (const widget of form.widgets) {
       // A place for a signature is pressed, not typed into.
       if (this.sign && isEmptySignature(widget)) {
@@ -322,7 +329,7 @@ export class FormLayer {
       const input = kind.kind === "choice" && !kind.editable ? document.createElement("select") : widget.multiline ? document.createElement("textarea") : document.createElement("input");
       if (input instanceof HTMLInputElement) {
         input.type = kind.kind === "radio" ? "radio" : kind.kind === "checkbox" ? "checkbox" : "text";
-        if (kind.kind === "radio") input.name = `form-${fieldKey(widget.object)}${kind.unison ? `-${kind.index}` : ""}`;
+        if (kind.kind === "radio") input.name = `${prefix}-${fieldKey(widget.object)}${kind.unison ? `-${kind.index}` : ""}`;
       }
       let list: HTMLElement | null = null;
       if (kind.kind === "choice") {
@@ -330,7 +337,7 @@ export class FormLayer {
           input.multiple = kind.multiple && !kind.combo;
           list = input;
         } else {
-          list = document.createElement("datalist"); list.id = `form-options-${fieldKey(widget.widget)}`;
+          list = document.createElement("datalist"); list.id = `${prefix}-options-${fieldKey(widget.widget)}`;
           input.setAttribute("list", list.id); this.node.append(list);
         }
       }
@@ -373,6 +380,10 @@ export class FormLayer {
           else if (stop.moved) { this.reveal(widget); this.layout(); }
         }
         if (event.key === "Escape") { input.blur(); event.preventDefault(); }
+      });
+      input.addEventListener("input", () => {
+        if (sameAnswer(this.read(control), control.accepted)) this.drafts.delete(control);
+        else this.drafts.add(control);
       });
       input.addEventListener("blur", () => { if (!this.disposed) this.commitOne(control, false); });
       input.addEventListener("change", () => { if (kind.kind !== "text") this.commitOne(control, false); });
@@ -425,7 +436,11 @@ export class FormLayer {
       if (Array.isArray(control.accepted) && kind.unison && control.accepted.some((i) => sameAnswer(kind.states[i]!, kind.states[kind.index]!))) return control.accepted;
       return [kind.index];
     }
-    if (control.input instanceof HTMLSelectElement) return [...control.input.selectedOptions].filter((o) => o.value !== "").map((o) => Number(o.value));
+    if (control.input instanceof HTMLSelectElement) {
+      // The list may be reordered in field properties. The journal uses original indices.
+      return [...control.input.selectedOptions].filter((o) => o.value !== "")
+        .map((o) => Number(o.value)).sort((a, b) => a - b);
+    }
     if (kind.kind === "choice" && kind.editable) {
       if (control.input.value === "") return [];
       if (typeof control.accepted === "string" && control.input.value === control.accepted) return control.accepted;
@@ -450,9 +465,11 @@ export class FormLayer {
 
   private commitOne(control: Mounted, throwing: boolean): void {
     const value = this.read(control);
+    this.drafts.delete(control);
     if (sameAnswer(value, control.accepted)) { control.input.setCustomValidity(""); return; }
     const error = answerError(control.widget, value);
     if (error) {
+      this.drafts.add(control);
       control.input.setCustomValidity(error);
       this.error(error);
       if (throwing) throw new Error(error);
@@ -467,9 +484,10 @@ export class FormLayer {
       if (this.disposed) return;
       if (!control.pending && !sameAnswer(fieldValue(control.widget, this.changes), value)) {
         control.accepted = previous;
+        this.drafts.add(control);
         control.input.setCustomValidity(TEXT().answerRefused);
       }
-      this.update({ forms: [...this.changes], fields: [...this.fields] } as EditState);
+      this.update({ forms: [...this.changes], fields: [...this.fields] });
     }).finally(() => { this.pending.delete(task); });
     this.pending.add(task);
   }
@@ -494,7 +512,7 @@ export class FormLayer {
   }
 
   /** Backend state is authoritative after undo, redo and each completed edit. */
-  update(state: EditState): void {
+  update(state: Pick<EditState, "forms" | "fields">): void {
     this.changes = state.forms ?? [];
     this.fields = state.fields ?? [];
     const widgets = this.controls.map((control) => control.widget);

@@ -31,15 +31,39 @@ describe("what the panel shows and reads", () => {
     expect(shown(BOX)).toEqual({
       tooltip: "", required: false, readOnly: true, maxLength: "", align: "left", options: "", textSize: "", defaultValue: "",
     });
-    expect(shown(CHOICE).options).toBe("Red; Green");
+    expect(shown(CHOICE).options).toBe("Red\nGreen");
   });
 
   it("reads back what it showed as the same properties", () => {
     for (const now of [TEXT, BOX, CHOICE, { ...TEXT, maxLength: 0 }]) expect(read(now, shown(now))).toEqual(now);
   });
 
+  it("edits other choices without splitting a literal semicolon and preserves untouched producer labels", () => {
+    const now = { ...CHOICE, options: ["North; East", "South"] };
+    expect(read(now, { ...shown(now), options: "North; East\nWest; South" })).toMatchObject({
+      options: ["North; East", "West; South"],
+    });
+    const imported = { ...CHOICE, options: [" North  ", "Duplicate", "Duplicate", "Two\rLines"] };
+    expect(read(imported, { ...shown(imported), required: true })).toEqual({ ...imported, required: true });
+    const multiline = { ...CHOICE, options: ["North\nEast", "South"] };
+    expect(read(multiline, { ...shown(multiline), options: JSON.stringify(["North\nEast", "West"]) })).toMatchObject({ problem: expect.stringContaining("control character") });
+    expect(read(multiline, { ...shown(multiline), options: JSON.stringify(["North; East", "West"]) })).toMatchObject({ options: ["North; East", "West"] });
+    expect(read({ ...CHOICE, options: [" East", "South"] }, { ...shown(CHOICE), options: " East\nWest" })).toMatchObject({ problem: expect.stringContaining("spaces") });
+    expect(read(now, { ...shown(now), options: "North\n\nSouth" })).toHaveProperty("problem");
+  });
+
+  it("changes only Required on an imported multiline field", () => {
+    const now = { ...TEXT, multiline: true, required: false, textSize: 9.125,
+      tooltip: " Field\r\nhelp ", defaultValue: "North\rEast" };
+    const typed = { ...shown(now), required: true, tooltip: " Field\nhelp ", defaultValue: "North\nEast" };
+    expect(read(now, typed)).toEqual({ ...now, required: true });
+    expect(read(now, { ...typed, defaultValue: "South\nWest" })).toEqual({
+      ...now, required: true, defaultValue: "South\nWest",
+    });
+  });
+
   it("reads what a reader typed, for the parts the field's kind has", () => {
-    const typed: Typed = { tooltip: "  Tip  ", required: false, readOnly: true, maxLength: " 12 ", align: "right", options: "A; B;", textSize: "", defaultValue: "" };
+    const typed: Typed = { tooltip: "  Tip  ", required: false, readOnly: true, maxLength: " 12 ", align: "right", options: "A\nB", textSize: "", defaultValue: "" };
     expect(read(TEXT, typed)).toEqual({
       name: "Name", tooltip: "Tip", required: false, readOnly: true, maxLength: 12, align: "right", options: null,
       textSize: 0, defaultValue: "",
@@ -67,8 +91,8 @@ describe("what the panel shows and reads", () => {
     expect(read(TEXT, typed({ maxLength: String(MAX_LENGTH) }))).toMatchObject({ maxLength: MAX_LENGTH });
     expect(read(TEXT, typed({ maxLength: "1", defaultValue: "" }))).toMatchObject({ maxLength: 1 });
     expect(problem(TEXT, { align: "justify" })).toContain("left, center or right");
-    expect(problem(CHOICE, { options: "" })).toContain("semicolon");
-    expect(problem(CHOICE, { options: "A; A" })).toContain("twice");
+    expect(problem(CHOICE, { options: "" })).toContain("each line");
+    expect(problem(CHOICE, { options: "A\nA" })).toContain("twice");
     for (const bad of ["3.9", "144.5", "-9", "abc", "1e2", "9.555", "1234"]) {
       expect(problem(TEXT, { textSize: bad }), bad).toContain("4 to 144 points");
     }
@@ -84,7 +108,7 @@ describe("what the panel shows and reads", () => {
     expect(problem(TEXT, { maxLength: "", defaultValue: "x".repeat(MAX_LENGTH) })).toBeNull();
     expect(problem(TEXT, { maxLength: "", defaultValue: "x".repeat(MAX_LENGTH + 1) })).toContain("more than the 16384");
     // A part the kind does not have is not judged.
-    expect(problem(BOX, { maxLength: "abc", align: "justify", options: "A; A", textSize: "abc", defaultValue: "a\tb" })).toBeNull();
+    expect(problem(BOX, { maxLength: "abc", align: "justify", options: "A\nA", textSize: "abc", defaultValue: "a\tb" })).toBeNull();
     expect(read(BOX, { ...shown(BOX), textSize: "9", defaultValue: "x" })).toEqual(BOX);
   });
 });
@@ -189,6 +213,21 @@ describe("changing the picked field's properties", () => {
       { object: [11, 0], page: 5, patch: { props: { tooltip: "Full name", required: true } } },
     ]);
     expect(run.said).toEqual([]);
+  });
+
+  it("sends only a tooltip when a selected option has a literal semicolon and distinct export", async () => {
+    const form: Form = { widgets: [widget(11, "Region", {
+      value: [1], control: { kind: "choice", combo: true, editable: false, multiple: false, options: [
+        { label: "South", export: "S" }, { label: "North; East", export: "NE" },
+      ] },
+    })] };
+    const run = deps({ form, answer: (now) => {
+      const to = read(now, { ...shown(now), tooltip: "Choose region" });
+      if ("problem" in to) throw new Error(to.problem);
+      return to;
+    } });
+    await expect(changeProperties(run.deps)).resolves.toBe(true);
+    expect(run.made).toEqual([{ object: [11, 0], page: 5, patch: { props: { tooltip: "Choose region" } } }]);
   });
 
   it("makes nothing and says nothing when the panel is dismissed", async () => {
@@ -395,17 +434,18 @@ describe("a placed radio button's properties", () => {
     expect(read(NOW, shown(NOW))).toEqual(NOW);
   });
 
-  it("take one value, which is not Off and has no semicolon", () => {
+  it("take one literal value, which is not Off", () => {
     const problem = (options: string) => {
       const got = read(NOW, { ...shown(NOW), options });
       return "problem" in got ? got.problem : null;
     };
     expect(problem("Cash")).toBeNull();
     expect(problem("")).toBe("The value this button gives its group");
-    expect(problem("Card; Cash")).toContain("one value");
+    expect(problem("Card; Cash")).toBeNull();
+    expect(problem("Card\nCash")).toContain("one value");
     expect(problem("Off")).toContain("nothing is chosen");
-    // A dropdown takes all three.
-    expect(read(CHOICE, { ...shown(CHOICE), options: "Off; On" })).toMatchObject({ options: ["Off", "On"] });
+    // Off is an ordinary label in a dropdown.
+    expect(read(CHOICE, { ...shown(CHOICE), options: "Off\nOn" })).toMatchObject({ options: ["Off", "On"] });
   });
 
   it("send the new value as the button's one choice", async () => {
@@ -449,6 +489,24 @@ describe("FieldPropertiesDialog", () => {
     expect(dialog.isOpen).toBe(false);
   });
 
+  it("leaves Enter to the focused button or the multiline choices", async () => {
+    const { dialog, backdrop, cancel, apply, panel } = open();
+    const choices = panel.children.filter((c) => c.tagName === "label").at(-1)?.querySelector("textarea");
+    expect(choices).not.toBeNull();
+    for (const button of [cancel, apply]) {
+      const answer = dialog.ask(CHOICE);
+      dialog.put({ ...shown(CHOICE), tooltip: "Changed" });
+      for (const target of [choices, button]) {
+        let prevented = false;
+        backdrop.dispatch("keydown", { key: "Enter", target, preventDefault: () => { prevented = true; } });
+        expect(prevented).toBe(false);
+        expect(dialog.isOpen).toBe(true);
+      }
+      button.dispatch("click", {});
+      await expect(answer).resolves.toEqual(button === cancel ? null : { ...CHOICE, tooltip: "Changed" });
+    }
+  });
+
   it("applies what it showed, unchanged, on Enter", async () => {
     const { dialog, backdrop } = open();
     const answer = dialog.ask(CHOICE);
@@ -482,7 +540,10 @@ describe("FieldPropertiesDialog", () => {
     void dialog.ask({ ...CHOICE, name: "Pay", align: null, options: ["Card"], single: true });
     expect(caption()).toBe("Value this button gives its group");
     void dialog.ask(CHOICE);
-    expect(caption()).toBe("Choices, with a semicolon between them");
+    expect(caption()).toBe("Choices, one per line");
+    void dialog.ask({ ...CHOICE, options: ["North\nEast"] });
+    expect(caption()).toContain("quoted choices");
+    expect(panel.children.filter((c) => c.tagName === "label").at(-1)?.querySelector("textarea")?.value).toBe(JSON.stringify(["North\nEast"], null, 2));
   });
 
   it("stays open and says why when a value cannot be the field's, then takes the correction", async () => {

@@ -1521,7 +1521,8 @@ the page as it is displayed:
   `fill` takes), its kind, its current value in the form `fill` takes an answer, the options of
   a radio group or a choice, and whether it can be filled and, when not, why: read-only, a
   password, file-select, comb or rich-text field (one holding formatted text), hidden, or a kind tpdf does not fill, such as
-  a signature field. A document with an XFA form is refused: tpdf neither reads nor fills one.
+  a signature field. Two distinct fields with the same full name are listed as uneditable
+  because `fill` addresses them by name. A document with an XFA form is refused: tpdf neither reads nor fills one.
 - **`fill <in.pdf> -o <out.pdf> --values <answers.json>`** fills the form and writes the result
   as a new file; `--values -` reads the answers from standard input. An answer is a string for
   a text field, `true` or `false` for a checkbox, an option's **export value** for a radio group
@@ -2230,8 +2231,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `custom_text` (a dropdown that also takes text of its own), `multiline`, `max_length`
   (characters, or `null`), `pages` (counted from 1), `widgets` (how many places it is shown),
   `editable`, `not_editable` — `null`, or `read_only`, `password`, `file_select`, `comb`,
-  `rich_text`, `hidden`, `unsupported` or `other` — and `why`, the application's sentence for
-  it (`null` when editable).
+  `rich_text`, `hidden`, `unsupported` or `other` — and `why`, the reason in words
+  (`null` when editable). Fields sharing a full name use `other` and say how many share it.
 - `fill`: `input`, `output`, `written` (whether the filled copy was written and kept),
   `problems` — empty when written, otherwise every answer refused or not read back, each with
   `field` (the name as the answers give it), `problem` (`unknown`, `ambiguous`,

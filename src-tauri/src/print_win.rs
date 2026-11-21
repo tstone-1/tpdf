@@ -58,7 +58,7 @@ use windows::Win32::Graphics::Gdi::{
     LOGPIXELSY, PHYSICALHEIGHT, PHYSICALOFFSETX, PHYSICALOFFSETY, PHYSICALWIDTH, SRCCOPY, VERTRES,
 };
 
-use crate::print_layout::{Paper, Placement};
+use crate::print_layout::{Paper, Placement, SoftwareCopies};
 use crate::render::PageSize;
 use windows::Win32::UI::Controls::Dialogs::{
     CommDlgExtendedError, PrintDlgW, PD_ALLPAGES, PD_ENABLEPRINTHOOK, PD_NOSELECTION, PD_PAGENUMS,
@@ -1048,7 +1048,7 @@ pub fn spool(
         true,
         beat,
         library_dir,
-        1,
+        SoftwareCopies::ONE,
         |sizes, paper| {
             // `print::sheets` has already validated these against a count --- but
             // a *different* count, from the OS parser's read of the same bytes a
@@ -1091,13 +1091,9 @@ pub fn spool_laid_out(
         marks,
         beat,
         library_dir,
-        1,
+        SoftwareCopies::ONE,
         |sizes, paper| crate::print_layout::lay_out(sizes, pages, paper, layout),
     )
-}
-
-fn collated(sheets: &[Vec<Placement>], copies: u16) -> impl Iterator<Item = &Vec<Placement>> {
-    (0..copies).flat_map(move |_| sheets)
 }
 
 // One desktop progress indicator and Stop command belong to one job until its final event.
@@ -1163,7 +1159,7 @@ fn spool_planned(
     marks: bool,
     beat: Option<&crate::print::Beat<'_>>,
     library_dir: &std::path::Path,
-    copies: u16,
+    copies: SoftwareCopies,
     plan: impl FnOnce(&[PageSize], &Paper) -> Result<Vec<Vec<Placement>>, String>,
 ) -> Result<u32, String> {
     use windows::Win32::Storage::Xps::{EndPage, StartDocW, StartPage, DOCINFOW};
@@ -1220,7 +1216,9 @@ fn spool_planned(
     let density = PRINT_DPI.min(dpi_x.min(dpi_y).max(1) as f32);
     let area = (paper.printable_width, paper.printable_height);
 
-    for (number, sheet) in collated(&sheets, copies).enumerate() {
+    let sides = copies.sides(&sheets);
+    let count = sides.len();
+    for (number, sheet) in sides.enumerate() {
         let number = number + 1;
         stopped()?;
         // SAFETY: a live DC inside an open document.
@@ -1255,7 +1253,7 @@ fn spool_planned(
     // What was spooled, not what the job holds: a reader who asked for two sheets
     // of forty should see two here, and the caller compares this against the
     // request rather than against the document.
-    Ok(u32::try_from(sheets.len() * usize::from(copies)).unwrap_or(u32::MAX))
+    Ok(u32::try_from(count).unwrap_or(u32::MAX))
 }
 
 /// Runs tpdf's own part of a spool with the watchdog's clock stopped, when
@@ -1374,7 +1372,7 @@ unsafe extern "system" fn classic_dialog(_: HWND, _: u32, _: WPARAM, _: LPARAM) 
 ///
 /// No page to print, or the job failing to spool.
 #[allow(clippy::too_many_arguments)]
-pub fn print_on(
+pub(crate) fn print_on(
     dc: HDC,
     bytes: &[u8],
     title: &str,
@@ -1382,13 +1380,13 @@ pub fn print_on(
     progress: &dyn Fn(u32, u32),
     library_dir: &std::path::Path,
     sheets: Vec<Vec<Placement>>,
-    copies: u16,
+    copies: SoftwareCopies,
     marks: bool,
 ) -> Result<bool, String> {
     let result = if sheets.is_empty() {
         Err(said!("this print job has no pages in it"))
     } else {
-        let of = u32::try_from(sheets.len() * usize::from(copies)).unwrap_or(u32::MAX);
+        let of = u32::try_from(copies.sides(&sheets).len()).unwrap_or(u32::MAX);
         let shown = owner.map(|h| h.0 as isize);
         progress(0, of);
         crate::print::watched(
@@ -1890,23 +1888,6 @@ mod tests {
         drop(first);
         let _next = super::PrintJob::begin().unwrap();
         super::stopped().unwrap();
-    }
-
-    #[test]
-    fn software_copies_repeat_complete_sheets() {
-        let page = |page| super::Placement {
-            page,
-            x: 0.,
-            y: 0.,
-            width: 1.,
-            height: 1.,
-            turned: false,
-        };
-        let sheets = vec![vec![page(0), page(1)], vec![page(2)]];
-        let actual: Vec<Vec<_>> = super::collated(&sheets, 2)
-            .map(|s| s.iter().map(|p| p.page).collect())
-            .collect();
-        assert_eq!(actual, [vec![0, 1], vec![2], vec![0, 1], vec![2]]);
     }
 
     #[test]

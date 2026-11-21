@@ -15,6 +15,10 @@ import type { Favourite } from "./session";
 /** The palette entries' ids: one per favourite, rebuilt with the list. */
 export const FAVOURITE_PREFIX = "nav.favourite.";
 
+// Session storage applies the same limits when it loads a list (session.rs).
+const MAX_FAVOURITES = 500;
+const MAX_NAME_LENGTH = 200;
+
 export class Favourites {
   private list: Favourite[];
 
@@ -39,6 +43,8 @@ export class Favourites {
   add(path: string, page: number, name: string): Favourite {
     const added = { path, page, name: name.trim() || TEXT().page(page + 1) };
     const at = this.list.findIndex((one) => one.path === path && one.page === page);
+    if (at < 0 && this.list.length >= MAX_FAVOURITES) throw new RangeError(TEXT().full(MAX_FAVOURITES));
+    if ([...added.name].length > MAX_NAME_LENGTH) throw new RangeError(TEXT().nameTooLong(MAX_NAME_LENGTH));
     if (at >= 0) this.list[at] = added;
     else this.list.push(added);
     return added;
@@ -77,13 +83,18 @@ export function favouriteCommands(
 
 const TEXT = catalog({
   "en-US": {
+    full: (limit: number) => `All ${limit} favorites are in use. Remove a favorite before adding another.`,
+    nameTooLong: (limit: number) => `Use a name with at most ${limit} characters.`,
     page: (page: number) => `Page ${page}`,
     goTo: (name: string, file: string, page: number) => `Go to favorite: ${name} (${file}, page ${page})`,
   },
   "en-GB": {
+    full: (limit: number) => `All ${limit} favourites are in use. Remove a favourite before adding another.`,
     goTo: (name: string, file: string, page: number) => `Go to favourite: ${name} (${file}, page ${page})`,
   },
   "de-DE": {
+    full: (limit: number) => `Alle ${limit} Favoriten sind belegt. Vor dem Hinzufügen muss ein Favorit entfernt werden.`,
+    nameTooLong: (limit: number) => `Der Name darf höchstens ${limit} Zeichen enthalten.`,
     page: (page: number) => `Seite ${page}`,
     goTo: (name: string, file: string, page: number) => `Gehe zu Favorit: ${name} (${file}, Seite ${page})`,
   },

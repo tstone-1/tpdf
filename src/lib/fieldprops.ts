@@ -12,7 +12,7 @@
  * or a control's `value`.
  */
 
-import { parseChoices } from "./fieldnames";
+import { validateChoices } from "./fieldnames";
 import type { EditState } from "./edits";
 import type { Form, FormAlign } from "./forms";
 import {
@@ -28,7 +28,7 @@ const TEXT = catalog({
     maxLengthRange: (most: number) => `The most characters is a number from 1 to ${most}, or empty for no limit`,
     alignmentChoice: "The alignment is left, center or right",
     buttonValue: "The value this button gives its group",
-    radioOneValue: "A radio button has one value, with no semicolon in it",
+    radioOneValue: "A radio button has one value",
     offReserved: "Off is what a group holds when nothing is chosen",
     textSizeRange: (min: number, max: number) =>
       `The text size is ${min} to ${max} points, or empty for one that follows the field's height`,
@@ -44,11 +44,14 @@ const TEXT = catalog({
     center: "Center",
     right: "Right",
     choices: "Choices",
-    choicesExample: "Yes; No; Maybe",
+    choicesExample: "Yes\nNo\nMaybe",
     textSize: "Text size",
     followsHeight: "Follows the field's height",
     defaultValue: "Default value",
-    choicesCaption: "Choices, with a semicolon between them",
+    choicesCaption: "Choices, one per line",
+    quotedChoices: "The file contains a line break inside a choice. Edit the quoted choices as a JSON list.",
+    paddedChoice: "Remove spaces from the beginning or end of each choice.",
+    blankChoice: "Enter a choice on each line or remove the empty line.",
     textSizeCaption: "Text size, in points",
     cancel: "Cancel",
     apply: "Apply",
@@ -67,7 +70,7 @@ const TEXT = catalog({
     maxLengthRange: (most: number) => `Die Höchstzahl an Zeichen ist eine Zahl von 1 bis ${most}, oder leer für keine Grenze`,
     alignmentChoice: "Die Ausrichtung ist links, zentriert oder rechts",
     buttonValue: "Der Wert, den diese Schaltfläche ihrer Gruppe gibt",
-    radioOneValue: "Ein Optionsfeld hat einen einzigen Wert, ohne Semikolon",
+    radioOneValue: "Ein Optionsfeld hat einen einzigen Wert",
     offReserved: "„Off“ ist der Wert einer Gruppe, in der nichts gewählt ist",
     textSizeRange: (min: number, max: number) =>
       `Die Schriftgröße ist ${min} bis ${max} Punkt, oder leer für eine, die sich nach der Höhe des Felds richtet`,
@@ -83,11 +86,14 @@ const TEXT = catalog({
     center: "Zentriert",
     right: "Rechts",
     choices: "Auswahlmöglichkeiten",
-    choicesExample: "Ja; Nein; Vielleicht",
+    choicesExample: "Ja\nNein\nVielleicht",
     textSize: "Schriftgröße",
     followsHeight: "Richtet sich nach der Höhe des Felds",
     defaultValue: "Standardwert",
-    choicesCaption: "Auswahlmöglichkeiten, durch Semikolon getrennt",
+    choicesCaption: "Auswahlmöglichkeiten, eine pro Zeile",
+    quotedChoices: "Die Datei enthält einen Zeilenumbruch in einer Auswahlmöglichkeit. Die Werte in Anführungszeichen als JSON-Liste bearbeiten.",
+    paddedChoice: "Leerzeichen am Anfang oder Ende einer Auswahlmöglichkeit entfernen.",
+    blankChoice: "Pro Zeile eine Auswahlmöglichkeit eingeben oder die leere Zeile entfernen.",
     textSizeCaption: "Schriftgröße in Punkt",
     cancel: "Abbrechen",
     apply: "Übernehmen",
@@ -114,7 +120,7 @@ export interface Typed {
   /** Empty for no limit. */
   maxLength: string;
   align: string;
-  /** With semicolons between them, as `Form field: dropdown` takes them. */
+  /** One choice per line, or the value of a single radio button. */
   options: string;
   /** In points; empty for a size that follows the field's height. */
   textSize: string;
@@ -125,6 +131,30 @@ export interface Typed {
 export const MIN_TEXT_SIZE = 4;
 export const MAX_TEXT_SIZE = 144;
 
+/** A producer's label can itself span lines. JSON keeps those lines within one option. */
+function hasMultilineLabel(now: FieldProperties): boolean {
+  return now.options?.some((option) => /[\r\n]/.test(option)) ?? false;
+}
+
+function choiceText(now: FieldProperties): string {
+  return hasMultilineLabel(now) ? JSON.stringify(now.options, null, 2) : (now.options ?? []).join("\n");
+}
+
+function readChoices(now: FieldProperties, raw: string): { options: string[] } | { problem: string } {
+  let options: string[];
+  if (hasMultilineLabel(now)) {
+    let value: unknown;
+    try { value = JSON.parse(raw); } catch { return { problem: TEXT().quotedChoices }; }
+    if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) return { problem: TEXT().quotedChoices };
+    options = value;
+  } else {
+    options = raw.split(/\r?\n/);
+  }
+  if (options.length === 0 || options.includes("")) return { problem: now.single ? TEXT().buttonValue : TEXT().blankChoice };
+  if (options.some((option) => option !== option.trim())) return { problem: TEXT().paddedChoice };
+  return validateChoices(options);
+}
+
 /** What the controls show for a field's properties. */
 export function shown(now: FieldProperties): Typed {
   return {
@@ -133,7 +163,7 @@ export function shown(now: FieldProperties): Typed {
     readOnly: now.readOnly,
     maxLength: now.maxLength ? String(now.maxLength) : "",
     align: now.align ?? "left",
-    options: (now.options ?? []).join("; "),
+    options: choiceText(now),
     textSize: now.textSize ? String(now.textSize) : "",
     defaultValue: now.defaultValue ?? "",
   };
@@ -146,9 +176,17 @@ export function shown(now: FieldProperties): Typed {
  * `null` whatever the control holds.
  */
 export function read(now: FieldProperties, typed: Typed): FieldProperties | { problem: string } {
-  const tooltip = typed.tooltip.trim();
-  if ([...tooltip].length > MAX_TOOLTIP) return { problem: TEXT().tooltipTooLong(MAX_TOOLTIP) };
-  if (/\p{Cc}/u.test(tooltip)) return { problem: TEXT().tooltipControl };
+  // A textarea exposes CR and CRLF as LF. Preserve the source spelling of
+  // unchanged PDF strings, including producer values the writer would refuse.
+  const originalText = (value: string, original: string) =>
+    value === original.replace(/\r\n?/g, "\n") ? original : value;
+  const tooltipText = originalText(typed.tooltip, now.tooltip);
+  let tooltip = now.tooltip;
+  if (tooltipText !== now.tooltip) {
+    tooltip = tooltipText.trim();
+    if ([...tooltip].length > MAX_TOOLTIP) return { problem: TEXT().tooltipTooLong(MAX_TOOLTIP) };
+    if (/\p{Cc}/u.test(tooltip.replaceAll("\n", ""))) return { problem: TEXT().tooltipControl };
+  }
   let maxLength: number | null = null;
   if (now.maxLength !== null) {
     const text = typed.maxLength.trim();
@@ -169,8 +207,10 @@ export function read(now: FieldProperties, typed: Typed): FieldProperties | { pr
   }
   let options: string[] | null = null;
   if (now.options !== null) {
-    const parsed = parseChoices(typed.options);
-    if ("problem" in parsed) return now.single ? { problem: TEXT().buttonValue } : parsed;
+    const parsed = typed.options === choiceText(now)
+      ? { options: now.options }
+      : readChoices(now, typed.options);
+    if ("problem" in parsed) return parsed;
     if (now.single && parsed.options.length !== 1) return { problem: TEXT().radioOneValue };
     if (now.single && parsed.options[0] === "Off") return { problem: TEXT().offReserved };
     options = parsed.options;
@@ -183,21 +223,23 @@ export function read(now: FieldProperties, typed: Typed): FieldProperties | { pr
   if (now.textSize != null) {
     const text = typed.textSize.trim().replace(",", ".");
     const size = text === "" ? 0 : Number(text);
-    if (text !== "" && (!/^[0-9]{1,3}(\.[0-9]{1,2})?$/.test(text) || size < MIN_TEXT_SIZE || size > MAX_TEXT_SIZE)) {
+    if (text !== "" && typed.textSize !== String(now.textSize) && (!/^[0-9]{1,3}(\.[0-9]{1,2})?$/.test(text) || size < MIN_TEXT_SIZE || size > MAX_TEXT_SIZE)) {
       return { problem: TEXT().textSizeRange(MIN_TEXT_SIZE, MAX_TEXT_SIZE) };
     }
     sized.textSize = size;
   }
   if (now.defaultValue != null) {
-    const value = typed.defaultValue;
-    if (/\p{Cc}/u.test(value)) return { problem: TEXT().defaultControl };
+    const value = originalText(typed.defaultValue, now.defaultValue);
+    const singleLine = now.multiline ? value.replaceAll("\n", "") : value;
+    if (value !== now.defaultValue && /\p{Cc}/u.test(singleLine)) return { problem: TEXT().defaultControl };
     const most = maxLength || MAX_LENGTH;
-    if ([...value].length > most) return { problem: TEXT().defaultTooLong(most) };
+    if ((value !== now.defaultValue || maxLength !== now.maxLength) && [...value].length > most) return { problem: TEXT().defaultTooLong(most) };
     sized.defaultValue = value;
   }
   return {
     name: now.name, tooltip, required: typed.required, readOnly: typed.readOnly, maxLength, align, options,
     ...(now.single ? { single: true } : {}),
+    ...(now.multiline ? { multiline: true } : {}),
     ...sized,
   };
 }
@@ -309,14 +351,14 @@ export class FieldPropertiesDialog {
   private readonly backdrop: HTMLElement;
   private readonly heading: HTMLElement;
   private readonly problem: HTMLElement;
-  private readonly tooltip: HTMLInputElement;
+  private readonly tooltip: HTMLTextAreaElement;
   private readonly required: HTMLInputElement;
   private readonly readOnly: HTMLInputElement;
   private readonly maxLength: HTMLInputElement;
   private readonly align: HTMLSelectElement;
-  private readonly options: HTMLInputElement;
+  private readonly options: HTMLTextAreaElement;
   private readonly textSize: HTMLInputElement;
-  private readonly defaultValue: HTMLInputElement;
+  private readonly defaultValue: HTMLTextAreaElement;
   /** The rows a field's kind may not have, hidden for it. */
   private readonly rows: {
     maxLength: HTMLElement; align: HTMLElement; options: HTMLElement; textSize: HTMLElement; defaultValue: HTMLElement;
@@ -340,7 +382,7 @@ export class FieldPropertiesDialog {
     panel.setAttribute("aria-modal", "true");
     panel.setAttribute("aria-label", TEXT().fieldProperties);
     panel.style.cssText =
-      "margin-top:14vh;width:min(420px,92vw);" +
+      "margin-top:14vh;width:min(420px,92vw);box-sizing:border-box;max-height:82vh;overflow-y:auto;" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
       "box-shadow:0 12px 48px rgba(0,0,0,0.35);" +
       "font:13px/1.55 system-ui,-apple-system,sans-serif;padding:1rem;";
@@ -349,7 +391,7 @@ export class FieldPropertiesDialog {
     this.heading.style.cssText = "margin:0 0 0.6rem;font-size:15px;font-weight:600;overflow-wrap:anywhere;";
 
     const text = TEXT();
-    this.tooltip = this.input(text.tooltip);
+    this.tooltip = this.textarea(text.tooltip);
     this.required = this.tick();
     this.readOnly = this.tick();
     this.maxLength = this.input(text.mostCharacters);
@@ -364,12 +406,12 @@ export class FieldPropertiesDialog {
       option.textContent = label;
       this.align.append(option);
     }
-    this.options = this.input(text.choices);
+    this.options = this.textarea(text.choices);
     this.options.placeholder = text.choicesExample;
     this.textSize = this.input(text.textSize);
     this.textSize.inputMode = "decimal";
     this.textSize.placeholder = text.followsHeight;
-    this.defaultValue = this.input(text.defaultValue);
+    this.defaultValue = this.textarea(text.defaultValue);
 
     this.rows = {
       maxLength: this.row(text.mostCharacters, this.maxLength),
@@ -416,7 +458,9 @@ export class FieldPropertiesDialog {
         event.preventDefault();
         event.stopPropagation();
         this.settle(null);
-      } else if (event.key === "Enter") {
+      } else if (event.key === "Enter" && event.target !== cancel && event.target !== apply && event.target !== this.tooltip
+        && (event.target !== this.options || this.now?.single)
+        && (event.target !== this.defaultValue || !this.now?.multiline)) {
         event.preventDefault();
         event.stopPropagation();
         this.submit();
@@ -439,14 +483,16 @@ export class FieldPropertiesDialog {
     this.heading.textContent = TEXT().propertiesOf(now.name);
     this.problem.textContent = "";
     this.put(shown(now));
+    this.defaultValue.rows = now.multiline ? 3 : 1;
     this.rows.maxLength.style.display = now.maxLength === null ? "none" : "block";
     this.rows.align.style.display = now.align === null ? "none" : "block";
     this.rows.options.style.display = now.options === null ? "none" : "block";
     this.rows.textSize.style.display = now.textSize == null ? "none" : "block";
     this.rows.defaultValue.style.display = now.defaultValue == null ? "none" : "block";
-    this.optionsCaption.textContent = now.single
+    this.optionsCaption.textContent = hasMultilineLabel(now) ? TEXT().quotedChoices : now.single
       ? TEXT().buttonValueCaption
       : TEXT().choicesCaption;
+    this.options.rows = now.single ? 1 : 3;
     this.options.placeholder = now.single ? "" : TEXT().choicesExample;
     const active = document.activeElement as { focus?: () => void } | null;
     this.returnFocus = typeof active?.focus === "function" ? (active as HTMLElement) : null;
@@ -507,6 +553,15 @@ export class FieldPropertiesDialog {
       this.returnFocus = null;
     }
     pending?.(to);
+  }
+
+  private textarea(label: string): HTMLTextAreaElement {
+    const field = document.createElement("textarea");
+    field.setAttribute("aria-label", label);
+    field.rows = 1;
+    field.spellcheck = false;
+    field.style.cssText = FIELD_STYLE + "resize:vertical;max-height:30vh;";
+    return field;
   }
 
   private input(label: string): HTMLInputElement {

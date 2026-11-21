@@ -509,20 +509,29 @@ describe("MarkPopup", () => {
   });
 
   it("reports the note again when the box is filled again on the mark it is on", () => {
-    // Showing an open mark again puts the model's note back in the field, so
-    // what was typed is gone and the page has to stop drawing it.
+    const note = popup();
+    note.show(mark({ id: 7, note: "Name" }), anchor(), true);
+    const renamed = mark({ id: 7, note: "Renamed" });
+    note.show(renamed, anchor(), true);
+    expect(note.text).toBe("Renamed");
+    expect(drafts).toEqual(["7:Renamed"]);
+    note.show(renamed, anchor(), true);
+    note.show(mark({ id: 8, note: "Other" }), anchor(), true);
+    expect(drafts).toEqual(["7:Renamed"]);
+  });
+
+  it("keeps typed words when the same mark is selected again", () => {
     const note = popup();
     const subject = mark({ id: 7, kind: "field", note: "Name" });
     note.show(subject, anchor(), true);
     type(note, "Surname");
     note.show(subject, anchor(), true);
-    expect(drafts).toEqual(["7:Surname", "7:Name"]);
-    // Nothing typed, nothing to take back.
-    note.show(subject, anchor(), true);
-    expect(drafts).toEqual(["7:Surname", "7:Name"]);
-    // And another mark taking the box over is an open, not a keystroke.
+    expect(note.text).toBe("Surname");
+    expect(drafts).toEqual(["7:Surname"]);
     note.show(mark({ id: 8, note: "other" }), anchor(), true);
-    expect(drafts).toEqual(["7:Surname", "7:Name"]);
+    expect(note.text).toBe("other");
+    expect(sent).toContain("note:7:Surname");
+    expect(drafts).toEqual(["7:Surname"]);
   });
 
   it("asks to be closed rather than closing itself", () => {

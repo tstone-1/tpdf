@@ -1032,8 +1032,8 @@ pub struct Field {
     pub editable: bool,
     /// Why not, when it cannot; `null` when it can.
     pub not_editable: Option<NotEditable>,
-    /// The sentence for `not_editable`, as the application shows it; `null`
-    /// when it is editable.
+    /// The reason the CLI cannot fill the field, or `null` when editable.
+    /// A name shared by distinct fields is reported as `other`.
     pub why: Option<String>,
 }
 

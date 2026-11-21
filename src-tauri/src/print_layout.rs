@@ -183,6 +183,32 @@ pub struct Placement {
     pub turned: bool,
 }
 
+/// Copy boundaries for the sides rendered by the application. A driver making
+/// hardware copies receives one sequence and handles its own duplex boundaries.
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy)]
+pub(crate) struct SoftwareCopies {
+    pub count: u16,
+    pub duplex: bool,
+}
+
+#[cfg(any(windows, test))]
+impl SoftwareCopies {
+    pub const ONE: Self = Self {
+        count: 1,
+        duplex: false,
+    };
+
+    /// An empty slice prints the blank reverse between odd-sided duplex copies.
+    pub fn sides<T>(self, sheets: &[Vec<T>]) -> impl ExactSizeIterator<Item = &[T]> {
+        let copies = usize::from(self.count);
+        let pad = usize::from(self.duplex && sheets.len() % 2 == 1);
+        let stride = sheets.len() + pad;
+        let total = sheets.len() * copies + pad * copies.saturating_sub(1);
+        (0..total).map(move |side| sheets.get(side % stride).map_or(&[][..], Vec::as_slice))
+    }
+}
+
 /// Columns and rows for `per_sheet` pages on an area `wide` or not.
 ///
 /// # Errors
@@ -405,6 +431,36 @@ mod tests {
         grid, lay_out, Layout, Paper, Scale, CELL_GAP, MOST_POSTER_SHEETS, POSTER_OVERLAP,
     };
     use crate::render::PageSize;
+
+    #[test]
+    fn duplex_software_copies_start_on_a_new_front() {
+        let sheets = [vec![1, 2], vec![3], vec![4]];
+        let odd = super::SoftwareCopies {
+            count: 2,
+            duplex: true,
+        };
+        let sequence = |sides, copies: super::SoftwareCopies| {
+            copies.sides(&sheets[..sides]).collect::<Vec<_>>()
+        };
+        let a = &sheets[0][..];
+        let b = &sheets[1][..];
+        let c = &sheets[2][..];
+        assert_eq!(sequence(1, odd), [a, &[], a]);
+        assert_eq!(sequence(3, odd), [a, b, c, &[], a, b, c]);
+        assert_eq!(sequence(2, odd), [a, b, a, b]);
+        assert_eq!(
+            sequence(
+                1,
+                super::SoftwareCopies {
+                    duplex: false,
+                    ..odd
+                }
+            ),
+            [a, a]
+        );
+        assert_eq!(sequence(3, super::SoftwareCopies::ONE), [a, b, c]);
+        assert!(sequence(0, odd).is_empty());
+    }
 
     const A4: PageSize = PageSize {
         width_pt: 595.0,

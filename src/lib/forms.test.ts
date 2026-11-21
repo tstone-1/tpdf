@@ -246,6 +246,52 @@ describe("Tab in the form's controls", () => {
     return { layer, inputs, revealed, tab };
   }
 
+  it("scopes each radio group and editable combo list to its mounted form", () => {
+    const mount = (label: string) => {
+      const radios: FormWidget[] = [0, 1].map((index) => ({
+        ...text, widget: [20 + index, 0], value: [0],
+        control: { kind: "radio", index, states: [[65], [66]], unison: false, no_toggle_off: true },
+      }));
+      const combo: FormWidget = { ...text, object: [30, 0], widget: [31, 0], value: [0],
+        control: { kind: "choice", combo: true, editable: true, multiple: false, options: [{ export: label, label }] } };
+      const host = document.createElement("div");
+      new FormLayer(host, { widgets: [...radios, combo] }, () => null, async () => {}, () => {}, () => {});
+      const children = (host as unknown as FakeElement).children[0]!.children;
+      const [first, second, list, input] = children as unknown as [HTMLInputElement, HTMLInputElement, HTMLDataListElement, HTMLInputElement];
+      expect(second.name).toBe(first.name);
+      expect(input.getAttribute("list")).toBe(list.id);
+      expect(children[2]!.children[0]!.value).toBe(label);
+      return { name: first.name, id: list.id };
+    };
+    const left = mount("Left"); const right = mount("Right");
+    expect(left.name).not.toBe(right.name);
+    expect(left.id).not.toBe(right.id);
+  });
+
+  it("accepts an unchanged multi-selection after its choices are reordered", async () => {
+    // Native selectedOptions enumerates in display order, including after option replacement.
+    class Select extends FakeElement {
+      get options() { return this.children as unknown as HTMLOptionElement[]; }
+      get selectedOptions() { return this.options.filter((option) => option.selected); }
+    }
+    const create = document.createElement.bind(document);
+    globals.HTMLSelectElement = Select;
+    document.createElement = (tag: string) => tag === "select"
+      ? new Select(tag) as unknown as HTMLSelectElement : create(tag);
+    const list: FormWidget = { ...text, value: [0, 1], control: { kind: "choice", combo: false,
+      editable: false, multiple: true, options: [{ label: "A", export: "a" }, { label: "B", export: "b" }] } };
+    const writes: unknown[] = [];
+    const layer = new FormLayer(dom.root as unknown as HTMLElement, { widgets: [list] },
+      () => null, async (_, value) => { writes.push(value); }, () => {}, () => {});
+    const fields = [{ object: list.widget, page: 0, removed: false, props: { options: ["B", "A"] } }];
+    layer.update({ forms: [], fields });
+    const control = dom.root.children[0]!.children[0]! as Select;
+    expect(control.selectedOptions.map((option) => option.value)).toEqual(["1", "0"]);
+    layer.commit();
+    await expect(layer.settle()).resolves.toBeUndefined();
+    expect(writes).toEqual([]);
+  });
+
   it("settles an untouched empty required field and reports a refused draft", async () => {
     const widget = { ...text, value: "", required: true };
     let writes = 0;
@@ -256,10 +302,16 @@ describe("Tab in the form's controls", () => {
     layer.commit();
     await expect(layer.settle()).resolves.toBeUndefined();
     expect(writes).toBe(0);
+    expect(layer.hasDraft).toBe(false);
     input.value = "a".repeat(21);
+    input.dispatch("input", {});
+    expect(layer.hasDraft).toBe(true);
     expect(() => layer.commit()).toThrow();
     await expect(layer.settle()).rejects.toThrow();
+    expect(layer.hasDraft).toBe(true);
     input.value = "";
+    input.dispatch("input", {});
+    expect(layer.hasDraft).toBe(false);
     layer.commit();
     await expect(layer.settle()).resolves.toBeUndefined();
     layer.destroy();

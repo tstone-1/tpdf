@@ -9,7 +9,7 @@
  *
  * `expected` is `scan|long|directory`: a one-page scan whose picture shows
  * `WORD`, the same page several times over, and an empty directory for the
- * copies. `scripts/tabs_check.py --phase recognise` makes all three and checks
+ * copies, followed by two paths to a separate PDF. The harness checks
  * afterwards which files the directory holds.
  */
 
@@ -27,8 +27,8 @@ const DIALOG_MS = 5000;
 const READ_MS = 120_000;
 
 export async function recogniseCheck(host: OpenCheckHost, expected: string, report: Report): Promise<void> {
-  const [scan, long, directory] = expected.split("|");
-  if (!scan || !long || !directory) throw new Error("a scan, a longer scan and a directory are required");
+  const [scan, long, directory, alias, target] = expected.split("|");
+  if (!scan || !long || !directory || !alias || !target) throw new Error("scans, output directory and aliased PDF required");
   const at = (name: string) => `${directory}/${name}`;
   const shown = () => document.querySelector('[data-testid="problem"]')?.textContent ?? "";
   const task = () => document.querySelector('[data-testid="blocking-task"]')?.textContent ?? "";
@@ -98,13 +98,23 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
   report.check("the copy is the open document", host.path() === copy, host.path());
   report.check("a search of the copy finds the word", (await found(WORD)) > 0, WORD);
 
+  // The PDF in another tab must survive OCR even when the save panel spells its path differently.
+  await host.open(alias);
+  await host.open(scan); await host.idle(); await quiet();
+  host.answerSave(target);
+  await run(); await host.idle();
+  report.check("OCR refuses an aliased output open in another tab",
+    await settle(() => shown().includes("Close the open destination"), DIALOG_MS)
+      && host.path() === scan && host.tabs().some((tab) => tab.path === alias), shown());
+
   // ---- 4. Unsaved changes: told to save, and no panel is asked for.
   await host.open(scan); await host.idle(); await quiet();
+  const previousPanels = host.saveSuggestions().length;
   host.answerSave(copy);
-  await run();
+  await run(); await host.idle();
   const openDestination = await settle(() => shown().includes("Close the open destination"), DIALOG_MS);
   report.check("OCR refuses an already open output and leaves the scan active",
-    openDestination && host.path() === scan && host.tabs().some((tab) => tab.path === copy), shown());
+    openDestination && host.saveSuggestions().length === previousPanels + 1 && host.path() === scan && host.tabs().some((tab) => tab.path === copy), shown());
   const asked = host.saveSuggestions().length;
   await host.apply((edits) => edits.rotate(0, 1));
   // Asserted before the command runs: with no edit in the model the command

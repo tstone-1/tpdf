@@ -1453,6 +1453,27 @@ ROWS += [
         "a_written_form_reads_back_as_asked_and_a_difference_is_named",
     ),
     Mutation(
+        "cli: fill accepts a different choice with the same export",
+        "src/cli/fill.rs",
+        "was.control != widget.control || was.value != widget.value",
+        "was.control != widget.control",
+        "a_fill_that_does_not_read_back_leaves_an_existing_output_as_it_was",
+    ),
+    Mutation(
+        "cli: fill accepts a different label for the same selection",
+        "src/cli/fill.rs",
+        "was.control != widget.control || was.value != widget.value",
+        "was.value != widget.value",
+        "a_fill_that_does_not_read_back_leaves_an_existing_output_as_it_was",
+    ),
+    Mutation(
+        "cli: fields says a shared name can be filled",
+        "src/cli/fields.rs",
+        "            if count > 1 {",
+        "            if false {",
+        "each_problem_is_refused_on_its_own_and_all_of_them_are_listed_together",
+    ),
+    Mutation(
         "cli: fill ignores a field it was not asked to change",
         "src/cli/fill.rs",
         "        if asked.iter().any(|a| a.name == group.name) || !unique(&then, group.name) {",

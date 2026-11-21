@@ -1,5 +1,6 @@
 import type { EditState } from "./edits";
 import { defaultTextLayout, TextLayoutControls } from "./textlayout";
+import { matches } from "./keys";
 import { catalog } from "./i18n";
 import { spokenError } from "./said";
 
@@ -185,6 +186,7 @@ export class TextEditor {
     this.previewImage.addEventListener("load", () => { if (!this.disposed) this.layout(); });
     this.popup.append(label, this.controls.root, help, this.previewImage, this.message, this.button(TEXT().cancel, () => this.cancel()), this.apply);
     this.popup.addEventListener("keydown", (event) => {
+      if (matches("file.save", event)) return;
       event.stopPropagation();
       // Buttons own their native Enter activation; intercepting Cancel here
       // would apply the very draft the reader is trying to discard.
@@ -330,6 +332,7 @@ export class TextEditor {
     }).finally(() => { this.saving = false; if (!this.disposed) this.setBusy(this.busy); });
   }
   async settle(): Promise<void> { await this.pending; if (this.failure) throw this.failure; }
+  get hasDraft(): boolean { return this.active !== null && this.dirtyDraft(); }
   private dirtyDraft(): boolean { return this.input.value !== this.accepted || JSON.stringify(this.controls.read()) !== this.acceptedLayout; }
   private draft(run: TextRun): TextChange {
     return { page: this.source.page, revision: this.source.revision, operator: run.operator, original: run.text, replacement: this.input.value,

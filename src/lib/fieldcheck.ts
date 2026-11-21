@@ -261,26 +261,26 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     host.run("edit.fieldProperties");
     const opened = await settle(() => sheet()?.style.display === "flex", SETTLE_MS);
     const most = sheet()?.querySelector<HTMLInputElement>('[aria-label="Most characters"]') ?? null;
-    const tip = sheet()?.querySelector<HTMLInputElement>('[aria-label="Tooltip"]') ?? null;
+    const tip = sheet()?.querySelector<HTMLTextAreaElement>('[aria-label="Tooltip"]') ?? null;
     check(
       "the properties command opens the panel for a field placed and not yet saved",
       opened && sheet()?.querySelector("h2")?.textContent === `Properties of ${placed?.note}`,
       `${sheet()?.querySelector("h2")?.textContent}`,
     );
     if (most) most.value = "40";
-    if (tip) tip.value = "Notes";
+    if (tip) tip.value = "Delivery\nnotes";
     const size = sheet()?.querySelector<HTMLInputElement>('[aria-label="Text size"]') ?? null;
-    const start = sheet()?.querySelector<HTMLInputElement>('[aria-label="Default value"]') ?? null;
+    const start = sheet()?.querySelector<HTMLTextAreaElement>('[aria-label="Default value"]') ?? null;
     if (size) size.value = "10";
-    if (start) start.value = "first";
+    if (start) start.value = "North\nEast";
     [...(sheet()?.querySelectorAll("button") ?? [])].at(-1)?.click();
     const now = () => fields().find((mark) => mark.id === placed?.id)?.field;
     await settle(() => now()?.max_length === 40, SETTLE_MS);
     await host.idle();
     check(
       "applying it changes the placed field",
-      now()?.max_length === 40 && now()?.tooltip === "Notes" && now()?.kind === "multiline"
-        && now()?.text_size === 10 && now()?.default_value === "first",
+      now()?.max_length === 40 && now()?.tooltip === "Delivery\nnotes" && now()?.kind === "multiline"
+        && now()?.text_size === 10 && now()?.default_value === "North\nEast",
       JSON.stringify(now()),
     );
     host.run("edit.undo");
@@ -307,7 +307,7 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     const from = fields().find((mark) => mark.id === placed?.id)?.quads ?? [];
     check(
       "Cmd-D makes a copy of the picked field with its properties, under a name of its own, a step away",
-      copy()?.field?.kind === "multiline" && copy()?.field?.max_length === 40 && copy()?.field?.tooltip === "Notes"
+      copy()?.field?.kind === "multiline" && copy()?.field?.max_length === 40 && copy()?.field?.tooltip === "Delivery\nnotes"
         && copy()?.note !== placed?.note && !names().split(", ").slice(0, 3).includes(copy()?.note ?? "")
         && Math.abs((copy()?.quads[0] ?? 0) - (from[0] ?? 0) - 12) < 0.01
         && Math.abs((copy()?.quads[1] ?? 0) - (from[1] ?? 0) - 12) < 0.01,
@@ -352,8 +352,8 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
   const lined = form.widgets.find((widget) => widget.name === "Text 2");
   check(
     "and the field placed with properties is saved with them",
-    lined?.max_length === 40 && lined.tooltip === "Notes"
-      && lined.text_size === 10 && lined.default_value === "first" && lined.value === "first",
+    lined?.max_length === 40 && lined.tooltip === "Delivery\nnotes"
+      && lined.text_size === 10 && lined.default_value === "North\nEast" && lined.value === "North\nEast",
     `${lined?.max_length}; ${lined?.tooltip}; ${lined?.text_size}; ${lined?.default_value}; ${JSON.stringify(lined?.value)}`,
   );
   const controls = await settle(
@@ -536,14 +536,14 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     const heading = panel()?.querySelector("h2")?.textContent ?? "";
     check("with the field picked it opens the panel, under the field's name", opened && heading === "Properties of Name", heading);
     const control = <T extends HTMLElement>(label: string) => panel()?.querySelector<T>(`[aria-label="${label}"]`) ?? null;
-    const tooltip = control<HTMLInputElement>("Tooltip");
+    const tooltip = control<HTMLTextAreaElement>("Tooltip");
     const align = control<HTMLSelectElement>("Alignment");
     const required = panel()?.querySelector<HTMLInputElement>('input[type="checkbox"]') ?? null;
     if (tooltip) tooltip.value = "Your full name";
     if (align) align.value = "right";
     if (required) required.checked = true;
     const textSize = control<HTMLInputElement>("Text size");
-    const defaultValue = control<HTMLInputElement>("Default value");
+    const defaultValue = control<HTMLTextAreaElement>("Default value");
     if (textSize) textSize.value = "9";
     if (defaultValue) defaultValue.value = "n/a";
     [...(panel()?.querySelectorAll("button") ?? [])].at(-1)?.click();
@@ -558,6 +558,13 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
         }),
       JSON.stringify(set),
     );
+    viewer.pick([SAVED_BASE + form.widgets.findIndex((widget) => widget.name === "Text 2")]);
+    host.run("edit.fieldProperties");
+    if (!await settle(() => panel()?.style.display === "flex", SETTLE_MS)) throw new Error("missing multiline properties");
+    const need = panel()!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    need.checked = true;
+    [...panel()!.querySelectorAll("button")].at(-1)!.click();
+    await host.idle();
     host.run("edit.formEditOff");
     await pause(200);
     check("finishing brings the controls back", filling() > 0, `${filling()} shown`);
@@ -602,6 +609,10 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
         && buttons[0]?.object.join() === buttons[1]?.object.join(),
       JSON.stringify(buttons.map((widget) => [widget.object, widget.control.kind, widget.reason])),
     );
+    const multiline = after.widgets.find((widget) => widget.name === "Text 2");
+    check("changing Required preserves the saved multiline tooltip and default",
+      multiline?.required === true && multiline.tooltip === "Delivery\nnotes" && multiline.default_value === "North\nEast",
+      JSON.stringify([multiline?.required, multiline?.tooltip, multiline?.default_value]));
     const named = after.widgets.find((widget) => widget.name === "Name");
     check(
       "the save writes the field's properties",
@@ -652,8 +663,8 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
         await pause(200);
       };
       await set("Dropdown 1", (control) => {
-        const choices = control<HTMLInputElement>("Choices");
-        if (choices) choices.value = "No, by post; Maybe";
+        const choices = control<HTMLTextAreaElement>("Choices");
+        if (choices) choices.value = "No, by post\nMaybe";
       });
       check(
         "new choices are offered before the save, the one the file lacks shown and not yet to be chosen",
@@ -695,7 +706,7 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       const value = sheet()?.querySelector<HTMLInputElement>('[aria-label="Choices"]') ?? null;
       check("the panel shows a saved radio button's value", value?.value === "Choice 2", String(value?.value));
       if (value) value.value = "By post";
-      const tip = sheet()?.querySelector<HTMLInputElement>('[aria-label="Tooltip"]') ?? null;
+      const tip = sheet()?.querySelector<HTMLTextAreaElement>('[aria-label="Tooltip"]') ?? null;
       if (tip) tip.value = "How to pay";
       [...(sheet()?.querySelectorAll("button") ?? [])].at(-1)?.click();
       const journalled = () => host.edits()?.state.fields ?? [];

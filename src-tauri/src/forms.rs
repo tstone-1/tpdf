@@ -18,14 +18,14 @@ pub enum Value {
 }
 
 /// Display labels and export values are different parts of a choice option.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Choice {
     pub export: String,
     pub label: String,
 }
 
 /// Control semantics travel with each widget; answers still belong to the field.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Control {
     Text,

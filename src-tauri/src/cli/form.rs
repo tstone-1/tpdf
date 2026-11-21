@@ -26,7 +26,7 @@ use crate::forms::Form;
 pub const COMMAND: Registered = Registered {
     name: "form",
     usage: "form <in.pdf> -o <out.pdf> --fields <fields.json | ->\n        [--password-env VAR] [--invalidate-signatures] [--force] [--json]",
-    summary: "Adds form fields from a JSON array (read from stdin for -). Each is\n            an object with a name, a kind (text, multiline, checkbox, dropdown or radio),\n            a page counted from 1 and a rect [left, top, width, height] in points\n            from the page's top-left corner; a dropdown also has options, the\n            list of its choices, and a radio button one option, its value, and\n            the name of its group; tooltip, required, max_length, text_size (in points) and default_value (what\n            a text field starts with) are optional. Every field is checked first, and one problem means\n            nothing is written; the copy is read back before success is reported.",
+    summary: "Adds form fields from a JSON array (read from stdin for -). Each object\n            has a name, a kind (text, multiline, checkbox, dropdown, radio or\n            signature), a page counted from 1 and a rect [left, top, width, height]\n            in points from the displayed page's top-left corner. A dropdown has\n            options, the list of its choices. A radio button uses its group's name\n            and has one value in options. Optional properties are tooltip, required,\n            max_length, border, text_size (points) and default_value (initial text).\n            One invalid field prevents the whole list from being added. The copy\n            is read back before success is reported.",
     parse: |args| parse(args).map(|c| Box::new(c) as Box<dyn Subcommand>),
 };
 
@@ -340,8 +340,8 @@ impl Subcommand for AddFields {
         out: &mut dyn Write,
         _err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
-        let inputs = std::slice::from_ref(&self.input);
-        check_target(inputs, &self.output, self.force)?;
+        let inputs = self.fields.inputs_with(&self.input);
+        check_target(&inputs, &self.output, self.force)?;
         let shown = self.input.display().to_string();
         let asked = fields(&read_values(&self.fields, "fields")?)
             .map_err(|why| Failure::new(Exit::Refused, why))?;
@@ -367,7 +367,7 @@ impl Subcommand for AddFields {
             )
         };
         let (form, added) = publish_copy(
-            inputs,
+            &inputs,
             &[(self.input.as_path(), input.opened_as())],
             &self.output,
             self.force,

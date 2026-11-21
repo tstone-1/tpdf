@@ -9,12 +9,14 @@
 //! the scan answers widget by widget, and a script addresses fields.
 //!
 //! **An answer is printed in the form `fill` takes one**, so the `value` of
-//! every field in `fields --json` is itself a valid answer for it. A radio
+//! a field in `fields --json` uses the same representation. When several options
+//! share an export value, `options[].selected` identifies the current selection
+//! and `fill` refuses that ambiguous export as a new answer. A radio
 //! group's and a choice's answer is an **export value**, never an index: the
 //! index is the application's journal's vocabulary, stable across a session,
 //! and a script's answers file outlives any session.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -338,14 +340,37 @@ pub fn field(group: &Grouped<'_>) -> report::Field {
     }
 }
 
+/// Why a name shared by different terminal fields cannot be answered.
+pub(super) fn ambiguous_name(count: usize) -> String {
+    format!("{count} fields have this name, so it cannot say which is meant")
+}
+
 /// `fields --json` for a document whose form is `form`.
 #[must_use]
 pub fn report(path: &str, form: &Form) -> report::Fields {
+    let groups = grouped(form);
+    let mut names = BTreeMap::new();
+    for group in &groups {
+        *names.entry(group.name).or_insert(0) += 1;
+    }
+    let fields = groups
+        .iter()
+        .map(|group| {
+            let mut entry = field(group);
+            let count = names[group.name];
+            if count > 1 {
+                entry.editable = false;
+                entry.not_editable = Some(NotEditable::Other);
+                entry.why = Some(ambiguous_name(count));
+            }
+            entry
+        })
+        .collect();
     report::Fields {
         schema: SCHEMA,
         command: "fields".into(),
         path: path.to_string(),
-        fields: grouped(form).iter().map(field).collect(),
+        fields,
     }
 }
 

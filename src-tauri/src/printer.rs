@@ -337,8 +337,9 @@ mod cups {
         /// CUPS refusing the job, with its own reason.
         pub fn print_file(&self, printer: &str, path: &Path, title: &str) -> Result<u32, String> {
             let text = |value: &str| CString::new(value.replace('\0', "")).unwrap_or_default();
-            let (printer_c, path_c, title_c) =
-                (text(printer), text(&path.to_string_lossy()), text(title));
+            let (printer_c, title_c) = (text(printer), text(title));
+            let path_c =
+                CString::new(path.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
             // SAFETY: three NUL-terminated strings that outlive the call, and
             // no options.
             let job = unsafe {
@@ -366,6 +367,47 @@ mod cups {
                 "CUPS did not take the job for \"{printer}\": {reason}"
             ))
         }
+    }
+    #[cfg(test)]
+    #[test]
+    fn cups_receives_exact_staging_path() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        unsafe extern "C" fn read_job(
+            _: *const c_char,
+            path: *const c_char,
+            _: *const c_char,
+            _: c_int,
+            _: *mut Opt,
+        ) -> c_int {
+            // SAFETY: print_file supplies a live NUL-terminated pathname.
+            let bytes = unsafe { CStr::from_ptr(path) }.to_bytes();
+            let received = Path::new(OsStr::from_bytes(bytes));
+            if !received.ends_with(OsStr::from_bytes(b"print-\xff/job.pdf")) {
+                return 0;
+            }
+            #[cfg(target_os = "linux")]
+            {
+                i32::from(std::fs::read(received).is_ok_and(|job| job == b"test job"))
+            }
+            // APFS refuses to create the non-UTF-8 directory. The callback
+            // still checks the bytes that would have gone to the library.
+            #[cfg(target_os = "macos")]
+            1
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join(OsStr::from_bytes(b"print-\xff"));
+        let path = directory.join("job.pdf");
+        #[cfg(target_os = "linux")]
+        {
+            std::fs::create_dir(&directory).unwrap();
+            std::fs::write(&path, b"test job").unwrap();
+        }
+        let mut cups = Cups::load().expect("CUPS");
+        cups.print_file = read_job;
+        assert_eq!(cups.print_file("test", &path, "test"), Ok(1));
     }
 }
 

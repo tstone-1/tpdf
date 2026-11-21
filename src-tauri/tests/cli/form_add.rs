@@ -90,6 +90,29 @@ pub(super) fn adds_fields_that_can_be_filled(report: &mut Report) {
             && result["added"][2]["kind"] == "checkbox",
         &format!("exit {code}; {stderr}; {json}"),
     );
+    report.check(
+        "a distinct output leaves the field definitions unchanged",
+        code == 0 && std::fs::read(&list).unwrap() == LIST.as_bytes(),
+        &stderr,
+    );
+    let alias = Command::new(env!("CARGO_BIN_EXE_tpdf-cli"))
+        .current_dir(&dir)
+        .args([
+            "form",
+            &plain,
+            "--fields",
+            "fields.json",
+            "-o",
+            &list,
+            "--force",
+        ])
+        .output()
+        .expect("form runs");
+    report.check(
+        "a relative definitions file and its absolute output name cannot overwrite the list",
+        alias.status.code() == Some(2) && std::fs::read(&list).unwrap() == LIST.as_bytes(),
+        &String::from_utf8_lossy(&alias.stderr),
+    );
     let fields = listed(&made, None);
     report.check(
         "fields lists them, empty and answerable, with the limit asked for",

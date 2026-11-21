@@ -525,12 +525,14 @@ class Tpdf:
     ) -> reports.FormReport:
         """Write a copy with form fields added, which `fill` can then answer.
 
-        Each field is a mapping with `name`, `kind` (`text`, `multiline`,
-        `checkbox` or `dropdown`), `page` counted from 1 and `rect` as `[left,
-        top, width, height]` in points from the page's top-left corner; a
-        dropdown also has `options`, the list of its choices; `tooltip`,
-        `required` and `max_length` are optional. One field that cannot be
-        added means none is, and the error names every problem.
+        Each field has a `name`, a `kind` (`text`, `multiline`, `checkbox`,
+        `dropdown`, `radio` or `signature`), a `page` counted from 1 and a
+        `rect` of [left, top, width, height] in points from the displayed
+        page's top-left corner. A dropdown's `options` lists its choices.
+        A radio button uses its group's name and has one value in `options`.
+        A signature field starts unsigned. Optional properties are `tooltip`,
+        `required`, `max_length`, `border`, `text_size` and `default_value`.
+        A field that cannot be added prevents the whole list from being added.
         """
         args = ['-o', os.fspath(output), '--fields', '-']
         if force:

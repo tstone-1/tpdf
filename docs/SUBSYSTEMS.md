@@ -190,11 +190,12 @@ read-only, password, file-select, comb and rich-text controls are not editable; 
 rich-text control is one with a `/RV` value, since Acrobat sets the rich-text flag on
 fields that hold only plain text.
 Fields are made by `formfields.rs`: `Plan.new_fields` carries them to the same
-rewrite, which adds them before it writes answers. A new field is one object that is
-both field and widget, with its own appearance, appended to the page's annotations and
-the form's field list together; the form dictionary and its `Helv` font are made when
-the document has none. Text fields and checkboxes only, on pages the document does not
-turn. `tpdf form` is one caller. The other is the window: a field a reader drags is a
+rewrite, which adds them before it writes answers. Text (single or multiline), checkbox, dropdown and empty
+signature fields each use a single object for the field and its widget. Radio buttons
+are child widgets of one named group. Widgets are appended to the page's annotations
+and new fields to the form's field list. The writer creates the form dictionary and
+its `Helv` font as needed. Placement uses the displayed page's top-left corner,
+including on rotated pages. `tpdf form` is one caller. The other is the window: a field a reader drags is a
 mark of kind `Field` in the edit journal, with its name as the mark's note and its kind
 in `Mark::field`, so that it is moved, renamed, removed and undone as every mark is.
 `save/marks.rs` hands such a mark to `formfields::place`, after the pages are in their

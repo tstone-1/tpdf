@@ -38,7 +38,7 @@ use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::docinfo::Properties;
 use crate::docmodel::PageSource;
 use crate::edits::{PageView, Plan};
-use crate::forms::{self, Change, Control, Form, Invalid, Value};
+use crate::forms::{self, Change, Control, Form, Invalid, Value, Widget};
 use crate::save_outside::Session;
 use crate::worker_proto::{Reply, Request};
 
@@ -62,6 +62,17 @@ pub enum Values {
     File(PathBuf),
     /// `-`: standard input.
     Stdin,
+}
+
+impl Values {
+    /// Files a form command must protect both before staging and when publishing.
+    pub(super) fn inputs_with(&self, pdf: &Path) -> Vec<PathBuf> {
+        let mut inputs = vec![pdf.to_owned()];
+        if let Self::File(path) = self {
+            inputs.push(path.clone());
+        }
+        inputs
+    }
 }
 
 /// `tpdf fill`.
@@ -439,10 +450,7 @@ pub fn resolve(form: &Form, answers: &Answers) -> Result<Vec<Resolved>, Vec<Prob
                 problems.push(problem(
                     name,
                     ProblemKind::Ambiguous,
-                    format!(
-                        "{} fields have this name, so it cannot say which is meant",
-                        several.len()
-                    ),
+                    super::fields::ambiguous_name(several.len()),
                 ));
                 continue;
             }
@@ -587,7 +595,7 @@ pub fn mismatches(asked: &[Resolved], before: &Form, after: &Form) -> Vec<Proble
     let mut problems = Vec::new();
     let unique =
         |groups: &[Grouped<'_>], name: &str| groups.iter().filter(|g| g.name == name).count() == 1;
-    let mut check = |name: &str, want: &serde_json::Value| {
+    let mut check = |name: &str, want: &serde_json::Value, choice: Option<&Widget>| {
         let found: Vec<&Grouped<'_>> = now.iter().filter(|g| g.name == name).collect();
         let [group] = found.as_slice() else {
             problems.push(problem(
@@ -610,17 +618,32 @@ pub fn mismatches(asked: &[Resolved], before: &Form, after: &Form) -> Vec<Proble
                 ));
                 return;
             }
+            // Different selected labels can have the same exported JSON value.
+            if choice.is_some_and(|was| was.control != widget.control || was.value != widget.value)
+            {
+                problems.push(problem(
+                    name,
+                    ProblemKind::ReadBack,
+                    "its options or selection changed",
+                ));
+                return;
+            }
         }
     };
     for answer in asked {
-        check(&answer.name, &answer.expected);
+        check(&answer.name, &answer.expected, None);
     }
     for group in &then {
         if asked.iter().any(|a| a.name == group.name) || !unique(&then, group.name) {
             continue;
         }
         let first = group.first();
-        check(group.name, &value_json(&first.control, &first.value));
+        let choice = matches!(first.control, Control::Choice { .. }).then_some(first);
+        check(
+            group.name,
+            &value_json(&first.control, &first.value),
+            choice,
+        );
     }
     problems
 }
@@ -781,7 +804,7 @@ pub(super) fn publish_filled(
 ) -> Result<Form, Failure> {
     let written = fill.output.display().to_string();
     publish_copy(
-        std::slice::from_ref(&fill.input),
+        &fill.values.inputs_with(&fill.input),
         &[(fill.input.as_path(), opened_as)],
         &fill.output,
         fill.force,
@@ -845,7 +868,11 @@ fn run_fill(
         ));
     }
     // What --force does not replace: a link, a directory.
-    check_target(std::slice::from_ref(&fill.input), &fill.output, fill.force)?;
+    check_target(
+        &fill.values.inputs_with(&fill.input),
+        &fill.output,
+        fill.force,
+    )?;
     let password = password(fill.password_env.as_deref())?;
     let answers = answers(&read_values(&fill.values, "answers")?)
         .map_err(|why| Failure::new(Exit::Refused, why))?;

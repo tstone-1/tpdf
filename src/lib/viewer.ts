@@ -1958,7 +1958,7 @@ export class Viewer {
     // reader --- which is the one reader who cannot see the mark it is anchored
     // to either.
     this.popup = new CommentPopup(root, {
-      onClose: () => this.closeComment(),
+      onClose: (restoreFocus) => this.closeComment(restoreFocus),
       onRewrite: (comment, body) => this.opts.onCommentEdit?.(comment, body),
       onReply: (comment, body) => this.opts.onCommentReply?.(comment, body),
       onDiscard: (comment) => this.opts.onCommentDelete?.(comment),
@@ -1979,7 +1979,7 @@ export class Viewer {
       onRecolor: (mark, color) => this.opts.onMarkRecolor?.(mark, color),
       onSignatureSize: (mark, width) => this.opts.onSignatureResize?.(mark, width),
       onRemove: () => this.removeOpenMark(),
-      onClose: () => this.closeMark(),
+      onClose: (restoreFocus) => this.closeMark(restoreFocus),
       onOpen: (mark) => {
         this.drafts.opened(mark);
         this.opts.onMark?.(mark);
@@ -4626,14 +4626,14 @@ export class Viewer {
   }
 
   /** Closes the note, if one is open. */
-  closeComment(): void {
+  closeComment(restoreFocus = true): void {
     if (this.popup.openId === null) return;
     this.popup.hide();
     this.opts.onComment?.(null);
     // The keyboard goes back to the page rather than nowhere: a `display:none`
     // element keeps focus in Chromium until something else takes it, and the
     // arrow keys would then scroll nothing.
-    this.root.focus();
+    if (restoreFocus) this.root.focus();
   }
 
   /** The replies to one comment, in document order. */
@@ -6545,19 +6545,21 @@ export class Viewer {
   private settlingNotes: Promise<void> | null = null;
 
   /** A save or a tab change waits until both popup editors have committed. */
-  settleNotes(): Promise<void> {
-    return this.settlingNotes ??= Promise.all([this.markNote.settleDraft(), this.popup.settleDraft()])
+  settleNotes(restoreFocus = true): Promise<void> {
+    return this.settlingNotes ??= Promise.all([this.markNote.settleDraft(restoreFocus), this.popup.settleDraft(restoreFocus)])
       .then(() => {}).finally(() => { this.settlingNotes = null; });
   }
 
+  get hasNoteDraft(): boolean { return this.markNote.hasDraft || this.popup.hasDraft; }
+
   /** Closes the note editor, committing what was typed in it. */
-  closeMark(): void {
+  closeMark(restoreFocus = true): void {
     if (this.markNote.openId === null) return;
     this.markNote.hide();
     // The keyboard goes back to the page rather than nowhere, for the reason
     // `closeComment` gives: focus left in a `display:none` element stops the
     // arrow keys scrolling anything.
-    this.root.focus();
+    if (restoreFocus) this.root.focus();
   }
 
   /**

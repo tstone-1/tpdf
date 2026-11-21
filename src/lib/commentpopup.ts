@@ -51,6 +51,7 @@
 
 import { bylineOf, labelFor, noCommentLabel, type Comment } from "./comments";
 import { catalog } from "./i18n";
+import { matches } from "./keys";
 import { place, POPUP_WIDTH, submitPopup, type Anchor } from "./popup";
 
 const TEXT = catalog({
@@ -84,7 +85,7 @@ export { POPUP_WIDTH, type Anchor };
 /** What the popup does on the reader's behalf. The viewer supplies both. */
 export interface CommentPopupOptions {
   /** Close this popup. */
-  onClose: () => void;
+  onClose: (restoreFocus?: boolean) => void;
   /**
    * The body was changed and the editor is closing. Only ever with new text.
    *
@@ -229,6 +230,11 @@ export class CommentPopup {
     return this.shown !== null && this.subject?.object != null && !this.subject.body_clipped;
   }
 
+  get hasDraft(): boolean {
+    const text = this.editor?.value;
+    return text !== undefined && text !== this.was && (this.mode === "body" || text.trim() !== "");
+  }
+
   /** Whether the editor is open, so a second arming is not a reset. */
   get editing(): boolean {
     return this.editor !== null;
@@ -332,7 +338,7 @@ export class CommentPopup {
     // commits. What must not happen is the *page* seeing these keys: a reader
     // typing "n" in a comment would otherwise page forward.
     box.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape") event.stopPropagation();
+      if (event.key !== "Escape" && !matches("file.save", event)) event.stopPropagation();
     });
     this.editor = box;
     // **Repainted rather than swapped in place.** The obvious implementation
@@ -358,7 +364,7 @@ export class CommentPopup {
   }
 
   /** Keeps a refused rewrite or reply in its own editor for correction. */
-  async settleDraft(): Promise<void> {
+  async settleDraft(restoreFocus = true): Promise<void> {
     const comment = this.subject;
     if (!comment) return;
     const field = this.editor;
@@ -372,7 +378,7 @@ export class CommentPopup {
         if (this.editor === field) this.was = before;
       });
     }
-    if (this.subject === comment && this.editor === field) this.opts.onClose();
+    if (this.subject === comment && this.editor === field) this.opts.onClose(restoreFocus);
   }
 
   /** Sends what the editor holds, to whichever destination armed it. */

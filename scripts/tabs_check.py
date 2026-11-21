@@ -259,6 +259,19 @@ def main() -> int:
                     return 1
                 pictures.append(room / name)
             copies = [*pictures, copied]
+        if args.phase in ("pictures", "recognise"):
+            # Open first.pdf through a different directory spelling. A symlink
+            # on Unix covers a real save-panel alias. Windows needs no link privilege.
+            alias = room / "alias"
+            if os.name == "nt":
+                alias.mkdir()
+                alias = alias / ".."
+            else:
+                alias.symlink_to(room, target_is_directory=True)
+            copies.extend([alias / first.name, first])
+        if args.phase == "closing":
+            favourites = [{"path": str(second), "page": page, "name": f"Saved {page}"} for page in range(499)]
+            (room / "session.json").write_text(json.dumps({"favourites": favourites}), encoding="utf-8")
         if args.phase == "sign":
             # The fixture, a directory of its own for the signed copies, and the
             # identity; the copy itself is signed and never written.
@@ -306,6 +319,10 @@ def main() -> int:
                 code = 1
         passed = report(log.read_text(encoding="utf-8", errors="replace"), code, phase=args.phase)
         passed = check_worker_exit(process, args.binary) and passed
+        if args.phase in ("pictures", "recognise"):
+            unchanged = first.read_bytes() == args.pdf.read_bytes()
+            print(f"[{'OK' if unchanged else 'FAIL'}]   the aliased open PDF kept its original bytes")
+            passed = unchanged and passed
         if args.phase == "sign":
             passed = signed_files(room / "signed") and passed
         if args.phase == "recognise":

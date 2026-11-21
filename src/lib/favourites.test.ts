@@ -20,6 +20,25 @@ describe("Favourites", () => {
     expect(list.all).toEqual([{ path: "/a.pdf", page: 4, name: "Second" }]);
   });
 
+  it("keeps the last available page and permits renaming it when the list is full", () => {
+    const list = new Favourites();
+    for (let page = 0; page < 500; page++) list.add("/a.pdf", page, "");
+    expect(() => list.add("/b.pdf", 0, "Extra")).toThrow("All 500 favorites are in use");
+    expect(list.all).toHaveLength(500);
+    expect(list.has("/b.pdf", 0)).toBe(false);
+    expect(list.add("/a.pdf", 499, "Last").name).toBe("Last");
+    list.remove("/a.pdf", 499);
+    expect(list.add("/b.pdf", 0, "New").name).toBe("New");
+  });
+
+  it("measures names in Unicode code points, as the stored session does", () => {
+    const list = new Favourites();
+    const name = "\u{1f600}".repeat(200);
+    expect(list.add("/a.pdf", 1, name).name).toBe(name);
+    expect(() => list.add("/a.pdf", 1, name + "x")).toThrow("at most 200 characters");
+    expect(list.all[0]?.name).toBe(name);
+  });
+
   it("removes a page, and says whether it was marked", () => {
     const list = new Favourites();
     list.add("/a.pdf", 4, "");

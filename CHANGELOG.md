@@ -21,6 +21,25 @@ have the binary.)
 
 ### Fixed
 
+- Print preview keeps Print disabled until the current settings are valid. It
+  recovers when a remembered printer disappears and finishes drawing the new
+  page range. Windows keeps the driver's copy count and starts each software
+  copy on a fresh sheet when printing double-sided.
+- Saving in split view lets another document keep its unfinished edit. Changing
+  field properties preserves multiline defaults, tooltips and imported font sizes.
+- CLI printing on Unix accepts staging directories with non-UTF-8 names.
+- Save writes the first form answer while the cursor is still in the field.
+  Reselecting a mark keeps its draft, and a refused edit stays available when
+  switching panes. Confirmed Reload discards work only in the replaced document.
+- Exporting a file protects PDFs open in other tabs, including paths through a
+  directory alias. Favourites report the list and name limits before adding an entry.
+- Form properties preserve selected labels and export values when editing a
+  tooltip. Radio groups and dropdown suggestions stay independent in split
+  view. Reordered lists retain their selections, and Enter on Cancel dismisses
+  the properties dialog.
+- CLI form creation protects its definitions file. Field discovery identifies
+  ambiguous names, and fill checks the selected option when labels share an
+  export value.
 - Saving keeps a refused text or comment draft open for correction. An untouched
   required form field can be left blank when closing the document.
 - Reload checks for new edits when the disk-change notice is clicked. The file

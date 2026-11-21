@@ -4,6 +4,29 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Print preview, split-view Save and form properties (2026-11-21)
+
+In Chromium and WebKit the print dialog refused Enter for an invalid range and
+kept Print disabled after a delayed setup reply. The corrected range submitted
+page 2 alone. Both engines finished drawing that page after the first draw
+returned, kept the copy count from the driver, preserved a software count above
+the driver limit, and recovered when the remembered printer was removed.
+
+On macOS the native tabs check passed 33/33, including a save and reopen with
+a refused draft still editable in a different PDF. The two-view check passed
+38/38, including a refused draft blocking Save from the other view of the same
+PDF and a corrected draft allowing it. The field check passed 77/77
+with one case inapplicable. It changed Required and read the multiline tooltip
+and default back from the saved PDF. Both browser engines also preserved CRLF
+in imported properties and an unchanged 9.125-point size.
+
+Odd-sided software copies were checked against the side sequence sent to the
+Windows spooler, including the intervening blank back. On Ubuntu 24.04 the
+CUPS callback opened the staged file in a directory containing byte 0xff. On
+macOS the callback checked the pathname bytes because APFS refuses that directory.
+The Windows suite and desktop test scripts also round-tripped a clone path
+containing an umlaut when decoded according to their PowerShell byte-order mark.
+
 ### Pending edits, saves and disk changes (2026-11-21)
 
 On macOS, the native tabs check passed 26/26. A Helvetica text box containing
@@ -7175,3 +7198,36 @@ is exceeded. The compression tests change a source after opening it and check
 that the estimate is refused. A staged preview preserves an input named as
 its destination. The text parser, page-read failure and imported-widget
 mutation checks each failed their designated test when the guard was removed.
+
+### Pending drafts, form choices and open export destinations (2026-11-21)
+
+In the macOS window, typing the first answer into a clean form enabled Save
+while the cursor was still in the field. The keyboard shortcut saved the answer
+and the reopened PDF contained it. Pressing Save before typing kept the same
+document handle. Reselecting the current mark kept its edited text. In split
+view a refused textbox draft survived a switch to the other pane and back.
+Correcting the text saved it. Confirmed Reload replaced the intended document
+and the unrelated pane retained its own refused draft.
+
+WebKit and Chromium each opened the form properties dialog, changed only the
+tooltip and submitted the change. After a native rewrite and reopen, the
+selected option still had index 1, displayed as `North; East` and exported
+`NE`. Both engines kept the two mounted radio groups and their datalists
+independent, accepted the reordered multi-selection and dismissed the dialog
+when Enter activated Cancel.
+
+Save a Copy, New Document from Pictures and OCR each refused to replace a
+background document opened through a directory symlink. An independent byte
+comparison checked the original after each window phase. With 499 existing
+favourites, the window accepted one more and explained why the next could
+not be added. Loading the session returned all 500, including the last one.
+
+The CLI refused to write a PDF over its own definitions file through another
+path spelling, even with `--force`. A distinct destination succeeded and the
+definitions stayed byte-identical in both cases. A fill whose destination
+became a hard link to its answers during read-back also refused publication
+and kept both names pointing to the answers. For an untouched choice,
+changing either its selected index or its display label without changing the
+export value caused verification to refuse publication. Two widgets of one
+terminal field remained editable by name. Two distinct fields sharing a name
+were reported as ambiguous before a fill was attempted.

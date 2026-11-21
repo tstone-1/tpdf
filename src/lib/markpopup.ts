@@ -96,7 +96,7 @@ export interface MarkPopupOptions {
    */
   onRecolor: (mark: number, color: MarkColor) => void;
   /** The popup asked to be closed --- Escape, or the close button. */
-  onClose: () => void;
+  onClose: (restoreFocus?: boolean) => void;
   /**
    * The box opened on a mark, or closed. Fires only when that changed.
    *
@@ -401,6 +401,10 @@ export class MarkPopup {
     return this.shown;
   }
 
+  get hasDraft(): boolean {
+    return this.shown !== null && this.input.value !== this.was;
+  }
+
   /** The popup element. For the check harness. */
   get node(): HTMLElement {
     return this.element;
@@ -455,12 +459,14 @@ export class MarkPopup {
     this.input.setAttribute("aria-label", label);
     this.input.placeholder = label;
     this.input.rows = mark.kind === "field" || mark.kind === "link" ? 1 : 3;
-    this.was = mark.note;
-    // A box shown again on the mark it is already on is filled again, so what
-    // was typed in it is gone and the page must stop drawing it.
-    const refilled = was === mark.id && this.input.value !== mark.note;
-    this.input.value = mark.note;
-    if (refilled) this.opts.onDraft(mark.id, mark.note);
+    // Picking the already selected sidebar row only refocuses its editor.
+    // A pristine editor can still follow undo or a change in the other view.
+    if (was !== mark.id || (!this.hasDraft && !this.input.readOnly)) {
+      const refilled = was === mark.id && this.input.value !== mark.note;
+      this.was = mark.note;
+      this.input.value = mark.note;
+      if (refilled) this.opts.onDraft(mark.id, mark.note);
+    }
     this.showColor(mark.color);
     // A signature and a picture are sized by width and drawn in their own pixels.
     const raster = mark.kind === "signature" || mark.kind === "picture";
@@ -527,7 +533,7 @@ export class MarkPopup {
   }
 
   /** File operations close this box only after its words are in the journal. */
-  async settleDraft(): Promise<void> {
+  async settleDraft(restoreFocus = true): Promise<void> {
     const mark = this.shown;
     if (mark === null) return;
     const words = this.input.value;
@@ -536,10 +542,13 @@ export class MarkPopup {
       // A click-away during the write must not submit the same edit twice.
       this.was = words;
       await submitPopup(this.input, () => this.opts.onNote(mark, words), () => {
-        if (this.shown === mark) this.was = before;
+        if (this.shown === mark) {
+          this.was = before;
+          this.opts.onDraft(mark, this.input.value);
+        }
       });
     }
-    if (this.shown === mark) this.opts.onClose();
+    if (this.shown === mark) this.opts.onClose(restoreFocus);
   }
 
   /** Moves the popup to a new anchor, without rebuilding it. See `popup.ts`. */

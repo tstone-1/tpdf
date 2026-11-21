@@ -246,6 +246,8 @@ export class PrintPreviewDialog {
   /** The settings waiting for the backend while an earlier request is out. */
   private queued: { settings: PrintSettings; driver: boolean } | null = null;
   private asking = false;
+  private driverCopies = 1;
+  private rememberedPrinter: string | null = null;
   private broken = false;
   private shown = false;
   /** Counts openings, so an answer for an earlier one is dropped. */
@@ -384,11 +386,11 @@ export class PrintPreviewDialog {
       this.marksChoice,
       this.twoSided,
       this.colour,
-      this.pagesField,
-      this.copies,
-      this.percent,
     ]) {
       control.addEventListener("change", () => this.change(false, control));
+    }
+    for (const control of [this.pagesField, this.copies, this.percent]) {
+      control.addEventListener("input", () => this.change(false, control));
     }
     this.backdrop.addEventListener("click", (event) => {
       if (event.target === this.backdrop) this.settle(false);
@@ -465,6 +467,7 @@ export class PrintPreviewDialog {
       // Nothing to show until a printer has given its paper.
       this.lay([]);
       this.list.setAttribute("aria-busy", "true");
+      this.rememberedPrinter = this.settings.printer;
       this.request(this.settings, false);
     } else {
       this.settings = null;
@@ -532,6 +535,7 @@ export class PrintPreviewDialog {
     if (!this.shown || !this.chooser) return;
     const read = this.read();
     if (typeof read === "string") {
+      this.queued = null;
       this.problem.textContent = read;
       this.broken = true;
       this.update();
@@ -571,15 +575,25 @@ export class PrintPreviewDialog {
     this.update();
     const run = this.run;
     const asked = driver ? chooser.driver(settings) : chooser.setup(settings);
+    const current = () => run === this.run && this.shown && this.settings === settings && !this.broken;
     void asked
       .then((setup) => {
-        if (run !== this.run || !this.shown) return;
-        // A newer change is waiting: this answer is already out of date.
-        if (this.queued) return;
-        this.apply(setup);
+        if (current()) {
+          this.rememberedPrinter = null;
+          this.apply(setup, settings, driver);
+        }
       })
       .catch((error: unknown) => {
-        if (run !== this.run || !this.shown) return;
+        if (!current()) return;
+        if (this.rememberedPrinter !== null && settings.printer === this.rememberedPrinter) {
+          // Before the first preview, recover from an unavailable saved device.
+          // The next setup must populate the picker before Print can be used.
+          this.settings = { ...settings, printer: null, paper: null, twoSided: null, colour: null };
+          this.rememberedPrinter = null;
+          this.options(this.printer, []);
+          this.queued = { settings: this.settings, driver: false };
+          return;
+        }
         this.problem.textContent = String(error);
         this.broken = true;
       })
@@ -594,11 +608,17 @@ export class PrintPreviewDialog {
   }
 
   /** Shows what the printer answered: its choices in the controls, its paper in the sheets. */
-  private apply(setup: PrintSetup): void {
+  private apply(setup: PrintSetup, base: PrintSettings, driver: boolean): void {
     const device = setup.device;
-    const base = this.settings ?? defaultSettings(this.pages);
+    // A software count can exceed the value the device reports. Keep it when
+    // the driver dialog returns the same hardware count (including Cancel).
+    const copies = driver && (base.copies <= device.mostCopies || device.copies !== this.driverCopies)
+      ? device.copies : base.copies;
+    this.driverCopies = device.copies;
+    this.copies.value = String(copies);
     this.settings = {
       ...base,
+      copies,
       printer: device.printer,
       paper: device.paper,
       landscape: device.landscape,
@@ -679,7 +699,6 @@ export class PrintPreviewDialog {
     this.sheets = sheets;
     this.boxes = [];
     this.heights = [];
-    this.drawing = null;
     const maxWidth = Math.max(120, this.list.clientWidth - 48);
     // Tall enough that a portrait sheet reads, short enough that the next one shows.
     const maxHeight = Math.max(160, Math.round(this.list.clientHeight * 0.92));
@@ -798,6 +817,7 @@ export class PrintPreviewDialog {
 
   /** Resolves once and hides the dialog. */
   private settle(print: boolean): void {
+    if (print && this.print.disabled) return;
     const pending = this.pending;
     this.pending = null;
     const settings = this.settings;

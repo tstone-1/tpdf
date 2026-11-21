@@ -8,6 +8,7 @@
  */
 
 import type { OpenCheckHost } from "./opencheck";
+import { call } from "./ipc";
 import { settle, type Report } from "./checkreport";
 
 const SETTLE_MS = 20_000;
@@ -96,6 +97,14 @@ export async function closingCheck(host: OpenCheckHost, expected: string, report
   host.run("nav.addFavourite", "Results");
   viewer.goToPage(0);
   await settled();
+  host.run("nav.addFavourite", "Overflow");
+  const refused = await settle(() =>
+    document.querySelector('[data-testid="problem"]')?.textContent?.includes("All 500 favorites are in use") === true,
+    SETTLE_MS);
+  const stored = (await call("session_load")).favourites ?? [];
+  report.check("the full list refuses another page and the 500th favourite survives loading the session",
+    refused && stored.length === 500 && stored.some((one) => one.name === "Results" && one.path === first)
+      && !stored.some((one) => one.name === "Overflow"), String(stored.length));
   host.run("nav.nextFavourite");
   await settled();
   // Not page 1, or going back to page 1 below could not tell the two apart.

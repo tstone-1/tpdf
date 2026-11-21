@@ -7,7 +7,8 @@
  * a refusal leaving the window as it was. Both panels are answered here, since
  * no phase can drive a native one.
  *
- * `expected` is `first|second|directory`: two pictures and an empty directory.
+ * `expected` is `first|second|directory`: two pictures and an empty directory,
+ * followed by two paths to the same existing PDF.
  * `scripts/tabs_check.py --phase pictures` makes them and reads the directory
  * afterwards.
  */
@@ -20,8 +21,8 @@ const SETTLE_MS = 20_000;
 const WRITE_MS = 30_000;
 
 export async function picturesCheck(host: OpenCheckHost, expected: string, report: Report): Promise<void> {
-  const [first, second, directory] = expected.split("|");
-  if (!first || !second || !directory) throw new Error("two pictures and a directory are required");
+  const [first, second, directory, alias, target] = expected.split("|");
+  if (!first || !second || !directory || !alias || !target) throw new Error("pictures, output directory and aliased PDF required");
   const at = (name: string) => `${directory}/${name}`;
   const shown = () => document.querySelector('[data-testid="problem"]')?.textContent ?? "";
   const quiet = async () => {
@@ -44,6 +45,23 @@ export async function picturesCheck(host: OpenCheckHost, expected: string, repor
   report.check("the new document is the open one", host.path() === at("album.pdf"), host.path());
   const pages = host.edits()?.state.pages.length ?? 0;
   report.check("and it has a page for each picture", pages === 2, String(pages));
+
+  await host.open(alias);
+  await host.open(at("album.pdf"));
+  const askedBeforeCopy = host.saveSuggestions().length;
+  host.answerSave(target);
+  host.run("file.saveCopy");
+  await host.idle();
+  report.check("Save a copy refuses the same aliased background document",
+    host.saveSuggestions().length === askedBeforeCopy + 1 && shown().includes("Close the open destination"), shown());
+
+  host.answerPictures([first]);
+  host.answerSave(target);
+  host.run("file.fromPictures");
+  await host.idle();
+  report.check("an open PDF reached through a directory alias is protected in the background",
+    await settle(() => shown().includes("Close the open destination"), WRITE_MS)
+      && host.path() === at("album.pdf") && host.tabs().some((tab) => tab.path === alias), shown());
 
   // Try to replace this two-page album with a one-page file. The disk check
   // below the window also reads the original two pages back after both attempts.

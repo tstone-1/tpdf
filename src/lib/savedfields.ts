@@ -251,6 +251,8 @@ export interface FieldProperties {
   options: string[] | null;
   /** Whether `options` is one value and not a list: a radio button. */
   single?: boolean;
+  /** A multiline text field accepts line breaks in its default. */
+  multiline?: boolean;
   /**
    * The size a text or choice field's text is drawn at where it fits, in
    * points; nought for a size that follows the field's height. Absent or
@@ -301,6 +303,7 @@ export function properties(
       ? changed("options") ?? widget.control.options.map((option) => option.label)
       : widget.control.kind === "radio" ? [buttonValue(widget, state)] : null,
     ...(kind === "radio" ? { single: true } : {}),
+    ...(widget.multiline && kind === "text" ? { multiline: true } : {}),
     textSize: kind === "text" || kind === "choice" ? changed("text_size") ?? widget.text_size ?? 0 : null,
     defaultValue: kind === "text" ? changed("default_value") ?? widget.default_value ?? "" : null,
   };
@@ -345,6 +348,7 @@ export function placedProperties(mark: MarkView | undefined): FieldProperties | 
     align: field.kind === "checkbox" || field.kind === "radio" ? null : field.align ?? "left",
     options: field.kind === "dropdown" || field.kind === "radio" ? [...(field.options ?? [])] : null,
     ...(field.kind === "radio" ? { single: true } : {}),
+    ...(field.kind === "multiline" ? { multiline: true } : {}),
     textSize: text || field.kind === "dropdown" ? field.text_size ?? 0 : null,
     defaultValue: text ? field.default_value ?? "" : null,
   };

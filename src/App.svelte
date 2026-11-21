@@ -101,6 +101,8 @@
       mergedName: (stem: string) => `${stem} merged.pdf`,
       choosePictures: "Choose pictures, one for each page",
       saveNewDocument: "Save the new document",
+      favouritesNotSaved: "The change to favorites could not be saved.",
+      destinationUnknown: "The destination could not be checked against the open documents. Choose a new file name.",
       destinationOpen: "Close the open destination document before saving a copy there.",
       makingDocument: "Making the document...",
       saveSigned: "Save the signed document",
@@ -195,6 +197,9 @@
       openPdfEllipsis: "Open a PDF…",
       recentlyOpened: "Recently opened",
     },
+    "en-GB": {
+      favouritesNotSaved: "The change to favourites could not be saved.",
+    },
     "de-DE": {
       discardChangesTo: (name: string) => `Nicht gespeicherte Änderungen an ${name} verwerfen?`,
       discardChangesIn: (count: number) => `Nicht gespeicherte Änderungen in ${count} Dokumenten verwerfen?`,
@@ -275,6 +280,8 @@
       mergedName: (stem: string) => `${stem} zusammengeführt.pdf`,
       choosePictures: "Bilder auswählen, eines pro Seite",
       saveNewDocument: "Neues Dokument speichern",
+      favouritesNotSaved: "Die Änderung an den Favoriten konnte nicht gespeichert werden.",
+      destinationUnknown: "Die Zieldatei konnte nicht mit den geöffneten Dokumenten verglichen werden. Bitte einen neuen Dateinamen wählen.",
       destinationOpen: "Schließen Sie das geöffnete Zieldokument, bevor Sie dort eine Kopie speichern.",
       makingDocument: "Dokument wird erstellt...",
       saveSigned: "Signiertes Dokument speichern",
@@ -409,7 +416,8 @@
   import {
     confirm as confirmDialog,
     open as openDialog,
-    save as saveDialog,
+    save as nativeSaveDialog,
+    type SaveDialogOptions,
   } from "@tauri-apps/plugin-dialog";
   import { runAutobenchIfRequested } from "./lib/harness";
   import { runScrollBenchIfRequested } from "./lib/harness";
@@ -833,12 +841,12 @@
   let textEditor = $state<TextEditor | null>(null);
   let textEditorGeneration = 0;
 
-  function commitPopups(waitForNotes = false): Promise<void> | void {
+  function commitPopups(waitForNotes = false, restoreFocus = true): Promise<void> | void {
     committingPopup = true;
     try {
       formLayer?.commit();
       textEditor?.commit();
-      if (waitForNotes) return viewer?.settleNotes();
+      if (waitForNotes) return viewer?.settleNotes(restoreFocus);
       viewer?.closeMark();
       viewer?.closeComment();
     } finally { committingPopup = false; }
@@ -892,19 +900,22 @@
    *
    * Rejects when a draft cannot be committed, with the sentence to show.
    */
-  async function settleDrafts(): Promise<void> {
-    // Start every commit before yielding the permission to edit during a save.
-    // Capture each view's outstanding work while its controls are in scope.
-    const settleView = async () => {
-      const notes = commitPopups(true);
-      const work = [notes, pendingEdit, formLayer?.settle(), textEditor?.settle()];
-      await Promise.all(work);
+  async function settleDrafts(only?: Edits): Promise<void> {
+    const settle = (restoreFocus: boolean) => {
+      if (!only || only === edits) return settleView(restoreFocus);
     };
-    await Promise.all([settleView(), ...stage.parked.map((id) => asDocument(id, settleView))]);
+    await Promise.all([settle(true), ...stage.parked.map((id) => asDocument(id, () => settle(false)))]);
   }
 
-  async function settleDocument(): Promise<void> {
-    await settleDrafts();
+  async function settleView(restoreFocus: boolean): Promise<void> {
+    // Start every commit before yielding the permission to edit during a save.
+    const notes = commitPopups(true, restoreFocus);
+    const work = [notes, pendingEdit, formLayer?.settle(), textEditor?.settle()];
+    await Promise.all(work);
+  }
+
+  async function settleDocument(only?: Edits): Promise<void> {
+    await settleDrafts(only);
     notePlace();
     places.flush();
   }
@@ -985,7 +996,10 @@
     const id = panes.front(side);
     if (id === openView) return true;
     if (busyNow || !stage.parked.includes(id)) return false;
-    commitPopups();
+    // The pane stays mounted. A failed draft stays editable there and a late
+    // success must never take the keyboard back from the newly focused pane.
+    const leaving = openView;
+    void settleView(false).catch((error) => asDocument(leaving, () => say(spokenError(error))));
     // A search still waiting out its pause is this document's. Run now, it
     // reaches the viewer it was typed for.
     if (findTimer) {
@@ -1266,6 +1280,7 @@
 
   /** The reader's favourites; see `favourites.ts`. Loaded with the session. */
   let favourites = new Favourites();
+  const favouriteWrites = new Serial();
 
   /** The page being read, zero-based: the one filling the screen. */
   function readingPage(): number {
@@ -1275,9 +1290,9 @@
   /** Offers each favourite in the palette, and writes the list down. */
   function saveFavourites(): void {
     offerFavourites();
-    void call("session_set_favourites", { favourites: [...favourites.all] }).catch(() => {
-      // As a failed place write: the list in this window still holds.
-    });
+    const list = [...favourites.all];
+    void favouriteWrites.run(() => call("session_set_favourites", { favourites: list }))
+      .catch(() => say(TEXT().favouritesNotSaved));
   }
 
   function offerFavourites(): void {
@@ -1910,8 +1925,12 @@
     isFavourite: () => openPathName !== "" && favourites.has(openPathName, readingPage()),
     addFavourite: (name: string) => {
       if (!openPathName) return;
-      favourites.add(openPathName, readingPage(), name);
-      saveFavourites();
+      try {
+        favourites.add(openPathName, readingPage(), name);
+        saveFavourites();
+      } catch (error) {
+        say(error instanceof Error ? error.message : String(error));
+      }
     },
     removeFavourite: () => {
       if (openPathName && favourites.remove(openPathName, readingPage())) saveFavourites();
@@ -2106,7 +2125,7 @@
     setNib: (id) => chooseNib(id),
     markColor: () => markColor.id,
     saveDocument: () => void saveDocument(),
-    isDirty: () => dirty,
+    isDirty: () => dirty || !!(formLayer?.hasDraft || textEditor?.hasDraft || viewer?.hasNoteDraft),
     saveCopy: () => void saveCopy(),
     redactCopy: () => void redactCopy(),
     redactRasterCopy: () => void redactRasterCopy(),
@@ -2530,12 +2549,11 @@
       const found = await call("graphic_find", { doc, request });
       const choices = graphicChoices(found);
       const suggested = graphicName(basename(name), pageNumber, choices[0]!);
-      const panel = () => saveDialog({
+      const chosen = await saveDialog({
         title: saveGraphicTitle(),
         defaultPath: suggested,
         filters: choices.map((choice) => ({ name: choice.name, extensions: choice.extensions })),
       });
-      const chosen = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(suggested, panel) : await panel();
       if (!chosen) return;
       const format = formatFor(chosen, choices);
       if (!format) {
@@ -2579,13 +2597,12 @@
     const request = regionRequest(region.source, region.quad, region.screenScale);
     if (__TPDF_CHECKS__) lastRegion = request;
     const suggested = regionName(basename(name), region.pageNumber);
-    const panel = () => saveDialog({
-      title: TEXT().saveRegion,
-      defaultPath: suggested,
-      filters: [{ name: TEXT().pngPicture, extensions: ["png"] }],
-    });
     try {
-      const chosen = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(suggested, panel) : await panel();
+      const chosen = await saveDialog({
+        title: TEXT().saveRegion,
+        defaultPath: suggested,
+        filters: [{ name: TEXT().pngPicture, extensions: ["png"] }],
+      });
       if (!chosen) return;
       await call("region_save", { tile: tileSpec(request), path: chosen });
       tell(regionSaid(request, basename(chosen)));
@@ -2637,9 +2654,8 @@
   async function saveAttachmentAt(asked: { doc: number; source: string; files: Embedded[] }, index: number): Promise<void> {
     const file = asked.files[index];
     if (!file) return;
-    const panel = () => saveDialog({ title: TEXT().saveAttachment, defaultPath: file.name });
     try {
-      const chosen = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(file.name, panel) : await panel();
+      const chosen = await saveDialog({ title: TEXT().saveAttachment, defaultPath: file.name });
       if (!chosen) return;
       const bytes = await call("attachment_save", { doc: asked.doc, source: asked.source, index, path: chosen });
       tell(attachmentSaved(file, bytes, basename(chosen)));
@@ -3586,8 +3602,9 @@
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || !viewer) return;
-      try { await settleDrafts(); }
+      try { await settleDrafts(edits); }
       catch (error) { say(spokenError(error)); return; }
+      if (!edits.dirty) return;
       const path = openPathName;
       const place = currentPlace(false);
       try {
@@ -3798,16 +3815,11 @@
         ) ?? null;
         if (!chosen || !edits) return;
         const suggested = smallerName(source);
-        const panel = () =>
-          saveDialog({
-            title: TEXT().saveSmaller,
-            defaultPath: suggested,
-            filters: [{ name: "PDF", extensions: ["pdf"] }],
-          });
-        // The checks build answers the panel; see `saveanswer.ts`.
-        const path = __TPDF_CHECKS__ && signSaves
-          ? await signSaves.ask(suggested, panel)
-          : await panel();
+        const path = await saveDialog({
+          title: TEXT().saveSmaller,
+          defaultPath: suggested,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
         if (!path || !edits) return;
         blockingTask = TEXT().savingSmaller;
         await tick();
@@ -3851,16 +3863,11 @@
           : null;
         if (set && password === null) return;
         const suggested = protectedName(source, set);
-        const panel = () =>
-          saveDialog({
-            title: set ? TEXT().saveWithPassword : TEXT().saveWithoutPassword,
-            defaultPath: suggested,
-            filters: [{ name: "PDF", extensions: ["pdf"] }],
-          });
-        // The checks build answers the panel; see `saveanswer.ts`.
-        const chosen = __TPDF_CHECKS__ && signSaves
-          ? await signSaves.ask(suggested, panel)
-          : await panel();
+        const chosen = await saveDialog({
+          title: set ? TEXT().saveWithPassword : TEXT().saveWithoutPassword,
+          defaultPath: suggested,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
         if (!chosen || !edits) return;
         blockingTask = TEXT().savingCopy;
         await tick();
@@ -3897,16 +3904,11 @@
         const added = await addTextDialog?.ask(kind, viewer?.slotCount ?? openPageCount) ?? null;
         if (added === null) return;
         const suggested = addedTextName(source, kind);
-        const panel = () =>
-          saveDialog({
-            title: kind === "numbers" ? TEXT().saveWithNumbers : TEXT().saveWithWatermark,
-            defaultPath: suggested,
-            filters: [{ name: "PDF", extensions: ["pdf"] }],
-          });
-        // The checks build answers the panel; see `saveanswer.ts`.
-        const chosen = __TPDF_CHECKS__ && signSaves
-          ? await signSaves.ask(suggested, panel)
-          : await panel();
+        const chosen = await saveDialog({
+          title: kind === "numbers" ? TEXT().saveWithNumbers : TEXT().saveWithWatermark,
+          defaultPath: suggested,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
         if (!chosen || !edits) return;
         blockingTask = TEXT().savingCopy;
         await tick();
@@ -3978,19 +3980,12 @@
         }
         const source = openPathName;
         const suggested = suggestedName(source);
-        const panel = () =>
-          saveDialog({
-            title: message("recogniseText").replace(/\.+$/, ""),
-            defaultPath: suggested,
-            filters: [{ name: "PDF", extensions: ["pdf"] }],
-          });
-        // The checks build answers the panel, as it does for a signing: no
-        // phase can drive a native one. See `saveanswer.ts`.
-        const chosen = __TPDF_CHECKS__ && signSaves
-          ? await signSaves.ask(suggested, panel)
-          : await panel();
+        const chosen = await saveDialog({
+          title: message("recogniseText").replace(/\.+$/, ""),
+          defaultPath: suggested,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
         if (!chosen) return;
-        requireClosedDestination(chosen);
         // Numbered before Stop is shown, so a press at any moment names this run.
         recognitionRun += 1;
         blockingTask = STARTING;
@@ -4387,7 +4382,7 @@
       const suggested = basename(openPathName).replace(/\.pdf$/i, "");
       try {
         await settleDrafts();
-        const chosen = await saveDialog({
+        const chosen = await nativeSaveDialog({
           title: TEXT().splitDocument,
           defaultPath: `${suggested}.pdf`,
           filters: [{ name: "PDF", extensions: ["pdf"] }],
@@ -4500,17 +4495,12 @@
         const first = images[0];
         if (first === undefined) return;
         const suggested = pictureName(first);
-        const panel = () =>
-          saveDialog({
-            title: TEXT().saveNewDocument,
-            defaultPath: suggested,
-            filters: [{ name: "PDF", extensions: ["pdf"] }],
-          });
-        const chosen = __TPDF_CHECKS__ && signSaves
-          ? await signSaves.ask(suggested, panel)
-          : await panel();
+        const chosen = await saveDialog({
+          title: TEXT().saveNewDocument,
+          defaultPath: suggested,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
         if (!chosen) return;
-        requireClosedDestination(chosen);
         blockingTask = TEXT().makingDocument;
         await tick();
         done.said = afterPictures(await call("images_to_pdf", { images, path: chosen }), chosen);
@@ -4572,17 +4562,11 @@
             if (error === spoken(signing.PLACE)) say(null);
             return placed;
           },
-          saveAs: async (suggested) => {
-            const panel = () =>
-              saveDialog({
-                title: TEXT().saveSigned,
-                defaultPath: suggested,
-                filters: [{ name: "PDF", extensions: ["pdf"] }],
-              });
-            return __TPDF_CHECKS__ && signSaves
-              ? await signSaves.ask(suggested, panel)
-              : await panel();
-          },
+          saveAs: (suggested) => saveDialog({
+            title: TEXT().saveSigned,
+            defaultPath: suggested,
+            filters: [{ name: "PDF", extensions: ["pdf"] }],
+          }),
           sign: (identity, path, placement, timestamp, longTerm, into, lock) =>
             call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm, field: into, lock }),
           // A timestamp or long-term data that did not come: the question, then
@@ -5251,7 +5235,7 @@
     // when there was. The second press is what confirms: `reloadAnyway` is the
     // offer this prompt carries.
     const prompt = await reloadAsked({
-      settle: settleDrafts,
+      settle: () => settleDrafts(model ?? undefined),
       dirty: () => asDocument(view, () => dirty) ?? false,
     });
     // The wait let another document in: the answer is about one that has gone,
@@ -5324,13 +5308,13 @@
    * question again is a loop, and this is the one place where "the reader has
    * already been told" is true.
    */
-  function reloadAnyway() {
+  function reloadAnyway(discard = false) {
     const path = openPathName;
     // Refused on what greys the menu's Reload: the offer on a message can be
     // pressed while a task the menu waits for is still running on the file.
     if (!path || busyNow) return;
     say(null);
-    void openPath(path, false, currentPlace());
+    void openPath(path, false, currentPlace(), false, discard ? edits : null);
   }
 
   /** Opens the sidebar if it is closed, on the tab asked for. */
@@ -6174,8 +6158,8 @@
     refreshMenu();
   }
 
-  function matchingTab(path: string, prefer?: ViewId) {
-    return tabs.matchingPath(path, (name, candidates) => call("matching_open_path", { path: name, candidates }), prefer);
+  function matchingTab(path: string, prefer?: ViewId, forOutput = false) {
+    return tabs.matchingPath(path, (name, candidates) => call("matching_open_path", { path: name, candidates, forOutput }), prefer);
   }
 
   /**
@@ -6204,6 +6188,7 @@
     resuming = false,
     resume: Place | null = null,
     afterWrite = false,
+    discard: Edits | null = null,
   ): Promise<void> {
     // A write's own reopen must not wait for the task that requested it, and
     // it is the only open that may skip the wait: `afterWrite` is set by
@@ -6211,10 +6196,11 @@
     // place it tore the document down under a task still running on it.
     const ready = afterWrite ? Promise.resolve() : documentTasks.idle();
     return ready.then(() => opens.run(async () => {
+      if (discard && edits !== discard) return;
       const existing = resume ? undefined : await matchingTab(path, tabs.active);
       // A document already open is shown where it is, on its own side.
       if (existing) { await showTabNow(existing.view); viewer?.focus(); return; }
-      const failed = await openDocument(path, resuming, resume, undefined, afterWrite);
+      const failed = await openDocument(path, resuming, resume, undefined, afterWrite, discard);
       // A second view of a document that was saved or reloaded went with the
       // old handle. It is mounted again on the new one, where it was. So is
       // the tab of a reload that failed, on the handle it had, and the reader
@@ -6275,15 +6261,22 @@
 
   /** The edit model of a document, whether or not it is the one on screen. */
   function editsFor(doc: DocumentInfo): Edits {
-    return new Edits(doc.id, doc.page_count, async (merging = false) => {
-      await settleDrafts();
+    const model: Edits = new Edits(doc.id, doc.page_count, async (merging = false) => {
+      await settleDrafts(model);
       await confirmSignatureSave(() => call("document_properties", { doc: doc.id }),
         askSignatureSave, merging);
     });
+    return model;
   }
 
-  function requireClosedDestination(path: string): void {
-    if (isOpenTab(path)) throw TEXT().destinationOpen;
+  /** Select a single-file output. Opening and overwriting must agree on file identity. */
+  async function saveDialog(options: SaveDialogOptions & { defaultPath: string }): Promise<string | null> {
+    const panel = () => nativeSaveDialog(options);
+    const path = __TPDF_CHECKS__ && signSaves ? await signSaves.ask(options.defaultPath, panel) : await panel();
+    if (!path) return null;
+    const open = await matchingTab(path, undefined, true).catch(() => { throw TEXT().destinationUnknown; });
+    if (open) throw TEXT().destinationOpen;
+    return path;
   }
 
   const isOpenTab = (path: string) => tabs.forPath(path) !== undefined;
@@ -7111,6 +7104,7 @@
     override: Place | null = null,
     retained?: DocumentTab,
     afterWrite = false,
+    discard: Edits | null = null,
   ): Promise<string | null> {
     let failed: string | null = null;
     opening = true;
@@ -7124,7 +7118,10 @@
     try {
       const doc = retained?.doc ?? await openOrAsk(path);
       acquired = retained ? -1 : doc.id;
-      await settleDocument();
+      // The replacement file is open. Confirmed Reload drops its document's
+      // drafts on teardown, leaving editors in unrelated panes alone.
+      if (discard) await editing.run(async () => {});
+      else await settleDocument(afterWrite ? written?.edits : undefined);
       keepActiveTab();
       // A save or a reload opens the file again in the tab it is shown in.
       // The tab the reader is in when the file is shown in two.
@@ -7141,7 +7138,7 @@
       // Whatever the outgoing document was owed, before its path is replaced.
       places.flush();
       for (const twin of twins) {
-        asDocument(twin.view, () => { commitPopups(); keepActiveTab(); unmountDocument(); });
+        asDocument(twin.view, () => { if (!discard) commitPopups(); keepActiveTab(); unmountDocument(); });
       }
       replaced = true;
       // Everything about the outgoing document goes here, the answers about
@@ -7449,7 +7446,7 @@
               >
             {:else if offer === "reload"}
               <button data-testid="offer-reload" disabled={busyNow}
-                onclick={() => reloadAnyway()}
+                onclick={() => reloadAnyway(true)}
                 >{TEXT().offerReload}</button
               >
             {:else if offer === "rasterCopy"}
@@ -7525,6 +7522,7 @@
             style:order={paneLayout.order[slot]}
             style:flex-grow={paneLayout.split ? (paneLayout.order[slot] === 0 ? paneShare : 1 - paneShare) : 1}
             role="presentation"
+            oninput={refreshMenu} onchange={refreshMenu}
             onwheelcapture={(event) => { if (event.altKey) syncFollow.aloneFor(); }}
             onpointerdowncapture={() => { focusSide(panes.sideIn(slot as Slot)); }}
             onfocusin={() => { focusSide(panes.sideIn(slot as Slot)); }}>

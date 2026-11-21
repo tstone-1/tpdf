@@ -85,6 +85,11 @@ export function parseChoices(raw: string): { options: string[] } | { problem: st
   if (typed === "") return { problem: TEXT().choicesNeeded };
   const options = typed.split(";").map((part) => part.trim());
   if (options.some((option) => option === "")) return { problem: TEXT().emptyChoice };
+  return validateChoices(options);
+}
+
+/** Checks non-empty, trimmed labels against the limits also used by the writer. */
+export function validateChoices(options: string[]): { options: string[] } | { problem: string } {
   if (options.length > MAX_OPTIONS) return { problem: TEXT().tooManyChoices(MAX_OPTIONS) };
   const long = options.find((option) => [...option].length > MAX_OPTION);
   if (long !== undefined) return { problem: TEXT().choiceTooLong(MAX_OPTION) };

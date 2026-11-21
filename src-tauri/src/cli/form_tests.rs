@@ -395,6 +395,32 @@ fn each_problem_is_refused_on_its_own_and_all_of_them_are_listed_together() {
         .set("T", Object::string_literal("ACME.answer"));
     let twice = scanned(&doc);
 
+    // Two widgets of one terminal field are addressable by its name. Two
+    // distinct terminal fields sharing that name are not.
+    let ordinary = fields::report("form.pdf", &plain);
+    let repeated = ordinary
+        .fields
+        .iter()
+        .find(|field| field.name == "ACME.answer")
+        .unwrap();
+    assert!(repeated.editable && repeated.widgets == 2);
+    assert!(resolve(&plain, &given(r#"{"ACME.answer": "new"}"#)).is_ok());
+    let duplicate = fields::report("form.pdf", &twice);
+    let named: Vec<_> = duplicate
+        .fields
+        .iter()
+        .filter(|field| field.name == "ACME.answer")
+        .collect();
+    let refused = resolve(&twice, &given(r#"{"ACME.answer": "new"}"#)).unwrap_err();
+    assert_eq!(named.len(), 2);
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0].problem, ProblemKind::Ambiguous);
+    for field in named {
+        assert!(!field.editable);
+        assert_eq!(field.not_editable, Some(NotEditable::Other));
+        assert_eq!(field.why.as_deref(), Some(refused[0].why.as_str()));
+    }
+
     let long = "W".repeat(300);
     let cases: Vec<(&Form, String, ProblemKind)> = vec![
         (&plain, r#"{"nobody": "x"}"#.into(), ProblemKind::Unknown),
@@ -645,10 +671,11 @@ fn a_fill_that_does_not_read_back_leaves_an_existing_output_as_it_was() {
     std::fs::write(&input, b"the form as it was read").expect("input");
     let output = dir.join("out.pdf");
     std::fs::write(&output, b"yesterday's filled copy").expect("output");
+    let recipe = dir.join("answers.json");
     let command = fill::Fill {
         input: input.clone(),
         output: output.clone(),
-        values: Values::Stdin,
+        values: Values::File(recipe.clone()),
         password_env: None,
         json: true,
         force: true,
@@ -656,6 +683,7 @@ fn a_fill_that_does_not_read_back_leaves_an_existing_output_as_it_was() {
     let opened_as = crate::fingerprint::Fingerprint::of(&input).expect("fingerprint");
 
     let asking = r#"{"consent": true, "delivery": "Second"}"#;
+    std::fs::write(&recipe, asking).expect("recipe");
     let (doc, form) = mixed();
     let (asked, good) = written(doc, &form, asking);
     let (doc, _) = mixed();
@@ -716,6 +744,32 @@ fn a_fill_that_does_not_read_back_leaves_an_existing_output_as_it_was() {
     let reported: report::Filled = serde_json::from_str(&out).expect("one JSON document");
     assert!(!reported.written && reported.problems.len() == 2);
 
+    // The untouched dropdown's two labels both export SAME. Changing either
+    // the selected index or its label must stop publication.
+    for change_index in [true, false] {
+        let mut altered = good.clone();
+        let choice = altered
+            .widgets
+            .iter_mut()
+            .find(|w| w.name == "delivery_choice")
+            .unwrap();
+        if change_index {
+            choice.value = Value::Selection(vec![1]);
+        } else if let forms::Control::Choice { options, .. } = &mut choice.control {
+            options[0].label = "Changed label".to_string();
+        } else {
+            panic!("the fixture needs a dropdown");
+        }
+        let (result, out, _) = run(&|| Ok(altered.clone()));
+        assert_eq!(result.unwrap_err().exit, Exit::Internal);
+        let report: report::Filled = serde_json::from_str(&out).unwrap();
+        assert!(!report.written);
+        assert_eq!(report.problems.len(), 1);
+        assert_eq!(report.problems[0].field, "delivery_choice");
+        assert_eq!(report.problems[0].problem, ProblemKind::ReadBack);
+        assert!(kept(), "the existing output was replaced or removed");
+    }
+
     // The copy cannot be read at all.
     let (result, out, _) = run(&|| Err(Failure::new(Exit::Refused, "it does not open")));
     let failure = result.expect_err("refused");
@@ -730,6 +784,21 @@ fn a_fill_that_does_not_read_back_leaves_an_existing_output_as_it_was() {
     );
     assert!(kept(), "the existing output was replaced or removed");
     assert!(out.is_empty(), "{out}");
+
+    // The output becomes an alias of the answers file after the initial checks.
+    let (result, _, _) = run(&|| {
+        std::fs::remove_file(&output).unwrap();
+        std::fs::hard_link(&recipe, &output).unwrap();
+        Ok(good.clone())
+    });
+    assert_eq!(
+        result.expect_err("the output now names the recipe").exit,
+        Exit::Usage
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), asking.as_bytes());
+    assert!(crate::save::same_file(&recipe, &output));
+    std::fs::remove_file(&output).unwrap();
+    std::fs::write(&output, b"yesterday's filled copy").unwrap();
 
     // The control: a copy that reads back as asked takes the output's name.
     let (result, out, err) = run(&|| Ok(good.clone()));

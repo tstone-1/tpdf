@@ -794,9 +794,13 @@ fn print_chosen(
     let layout = settings.layout();
     let software_copies = if copies > printer.describe().most_copies {
         printer.choose(None, None, 1, None, None)?;
-        copies
+        let sides = printer.describe().two_sided;
+        crate::print_layout::SoftwareCopies {
+            count: copies,
+            duplex: sides.is_some_and(|mode| mode != crate::print_layout::TwoSided::Off),
+        }
     } else {
-        1
+        crate::print_layout::SoftwareCopies::ONE
     };
     let sheets = crate::print_layout::lay_out(sizes, &pages, &printer.paper()?, layout)?;
     let job = print_win::PrintJob::begin()?;

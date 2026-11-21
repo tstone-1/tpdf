@@ -337,6 +337,66 @@ function sidebars(): number {
   return document.querySelectorAll(`.${SIDEBAR_CLASS}`).length;
 }
 
+/** Refused notes stay with their panes through focus changes and an explicit reload. */
+async function checkSplitDrafts(host: OpenCheckHost, path: string): Promise<void> {
+  await host.open(path);
+  host.run("view.moveToOtherSide");
+  const { mountedAreas, settled, focusedSide, check } = sideProbe(host);
+  await settled("two mounted panes", () => mountedAreas() === 2 && focusedSide() === "right");
+  const editNote = async (words: string) => {
+    await host.apply((edits) => edits.mark("textbox", edits.state.pages[0]!.id,
+      [50, 100, 220, 140], [], "Original"));
+    const mark = host.edits()!.state.marks.at(-1)!;
+    const viewer = host.viewer()!;
+    viewer.showMark(mark.id);
+    const field = viewer.markNoteField;
+    field.value = words;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return field;
+  };
+  const otherSide = async (side: string) => {
+    host.run("view.focusOtherSide");
+    await settled("focus on " + side, () => focusedSide() === side);
+  };
+  const right = await editNote("Right α");
+  await otherSide("left");
+  await otherSide("right");
+  check("the refused right-hand draft is still editable on return",
+    host.viewer()?.markNoteField === right && right.isConnected && right.value === "Right α" && !right.readOnly);
+  right.value = "Corrected right";
+  right.dispatchEvent(new Event("input", { bubbles: true }));
+  host.run("file.save");
+  await host.idle();
+  let saved = host.edits()!.doc;
+  const comments = await call("document_comments", { doc: saved });
+  check("the corrected pane draft reaches the reopened file", comments.items.some((item) => item.body === "Corrected right")
+    && !host.edits()?.dirty);
+  await editNote("Second right note");
+  await otherSide("left");
+  const left = await editNote("Keep β");
+  await otherSide("right");
+  host.run("file.save");
+  await host.idle();
+  const reopened = host.edits()!.doc;
+  const written = await call("document_comments", { doc: reopened });
+  check("saving the right PDF reopens its new bytes while the left has a refused draft",
+    reopened !== saved && !host.edits()!.dirty && written.items.some((item) => item.body === "Second right note"));
+  saved = reopened;
+  await editNote("Discard α");
+  host.run("file.reload");
+  const confirm = () => document.querySelector<HTMLButtonElement>('[data-testid="offer-reload"]');
+  await settled("the reload confirmation for a refused draft", () => !!confirm());
+  check("asking to reload keeps the existing file and draft",
+    host.edits()?.doc === saved && host.viewer()?.markNoteField.value === "Discard α");
+  confirm()!.click();
+  await settled("the confirmed reload", () => host.edits()?.doc !== saved && !!host.viewer());
+  check("confirmed reload reads the file again and discards only that document's edits",
+    host.edits()?.dirty === false && host.edits()?.state.marks.length === 0 && host.viewer()?.markOpen === -1);
+  await otherSide("left");
+  check("the unrelated pane kept its own refused draft",
+    host.viewer()?.markOpen !== -1 && host.viewer()?.markNoteField === left && left.value === "Keep β" && !left.readOnly);
+}
+
 async function run(host: OpenCheckHost, phase: string, expected: string): Promise<void> {
   switch (phase) {
     case "tabs-rotation": {
@@ -1345,6 +1405,28 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       field()!.value = "Grüße";
       await host.activate(b.id);
       check("correcting a draft permits switching again", host.edits()?.doc === b.id);
+      if (!await settle(() => !!field(), SETTLE_MS)) throw new Error("the clean form did not mount");
+      const saveKey = () => field()!.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "s", metaKey: isMac(), ctrlKey: !isMac(), bubbles: true, cancelable: true,
+      }));
+      field()!.focus();
+      const saveButton = () => document.querySelector<HTMLButtonElement>('header button[aria-label="Save"]');
+      check("the untouched form has Save disabled", saveButton()?.disabled === true);
+      saveKey();
+      await host.idle();
+      check("Save on an untouched form keeps its handle", host.edits()?.doc === b.id);
+      field()!.value = "First answer";
+      field()!.dispatchEvent(new Event("input", { bubbles: true }));
+      check("typing the first answer enables the Save toolbar button",
+        await settle(() => saveButton()?.disabled === false, SETTLE_MS));
+      check("the first answer is still focused and has not reached the journal",
+        document.activeElement === field() && host.edits()?.dirty === false);
+      saveKey();
+      await host.idle();
+      const reopened = host.edits()!;
+      const written = await call("document_form", { doc: reopened.doc });
+      check("Save from the first field writes its answer and reopens a clean file",
+        reopened.doc !== b.id && !reopened.dirty && written.widgets.some((w) => w.value === "First answer"));
       break;
     }
     case "tabs": {
@@ -1447,6 +1529,11 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const corrected = "Corrected tab note";
       field.value = corrected;
       field.dispatchEvent(new Event("input", { bubbles: true }));
+      host.run("view.showMarks");
+      const row = document.querySelector<HTMLElement>(`[role="listbox"][aria-label="Marks"] [data-id="${mark.id}"]`);
+      if (!row) throw new Error("the textbox row is missing");
+      row.dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, cancelable: true }));
+      check("reselecting the same mark keeps its correction", field.value === corrected);
       host.run("file.save");
       await host.idle();
       check("saving replaces only the active handle", host.tabs().length === 2 && host.tabs()[0]?.path === first && host.tabs()[1]?.id === b.id && host.edits()?.doc !== a.id);
@@ -1470,6 +1557,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       await host.open(second);
       check("opening after the last close still works", host.tabs().length === 1 && host.hasViewer());
       check("only one sidebar is mounted", sidebars() === 1);
+      await checkSplitDrafts(host, first);
       break;
     }
     case "compare": {
@@ -1945,6 +2033,27 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const line = measures.add(measuredPage, { x: 0, y: 0 }, { x: 10, y: 0 });
       check("the other view has a calibrated line before saving",
         measures.setScale(line, { value: 2, unit: "mm", decimals: 1 }) && measures.scaled(measuredPage));
+      host.run("view.focusOtherSide");
+      await settled("left view before typing", () => focusedSide() === "left");
+      await host.apply((edits) => edits.mark("textbox", measuredPage, [50, 100, 220, 140], [], "Original"));
+      const mark = host.edits()!.state.marks.at(-1)!;
+      host.viewer()!.showMark(mark.id);
+      const draft = host.viewer()!.markNoteField;
+      draft.value = "Twin α";
+      draft.dispatchEvent(new Event("input", { bubbles: true }));
+      host.run("view.focusOtherSide");
+      await settled("right view before saving", () => focusedSide() === "right");
+      host.run("file.save");
+      await host.idle();
+      check("Save considers a refused draft in the other view of the same PDF",
+        host.edits()?.doc === a.id && host.edits()?.dirty === true && draft.isConnected && draft.value === "Twin α"
+        && document.querySelector('[data-testid="problem"]')?.textContent?.includes("Helvetica") === true);
+      host.run("view.focusOtherSide");
+      await settled("left view for correction", () => focusedSide() === "left");
+      draft.value = "Corrected twin";
+      draft.dispatchEvent(new Event("input", { bubbles: true }));
+      host.run("view.focusOtherSide");
+      await settled("right view for save", () => focusedSide() === "right");
       host.run("file.save");
       await host.idle();
       await settled("the save", () => host.edits()?.state.dirty === false && mountedAreas() === 2 &&
