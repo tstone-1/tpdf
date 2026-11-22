@@ -550,6 +550,47 @@ fn remove(doc: &mut Document, widget: &Widget) -> Result<(), String> {
         let left = take(doc, &kids, widget.widget)
             .ok_or_else(|| said!("the field's widgets could not be changed"))?;
         if left > 0 {
+            if let Control::Radio { index, states, .. } = &widget.control {
+                let removed_state = states.get(*index).map(Vec::as_slice);
+                let remaining: Vec<_> = forms::inherited(doc, widget.object, b"Kids")
+                    .and_then(|v| v.as_array().ok())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| v.as_reference().ok())
+                    .collect();
+                let on = remaining.iter().find_map(|&id| {
+                    doc.get_dictionary(id)
+                        .ok()?
+                        .get(b"AS")
+                        .ok()?
+                        .as_name()
+                        .ok()
+                        .filter(|s| *s != b"Off")
+                });
+                let selected =
+                    matches!(&widget.value, Value::Selection(indices) if indices.contains(index));
+                let removed_was_on = doc
+                    .get_dictionary(widget.widget)
+                    .ok()
+                    .and_then(|w| w.get(b"AS").ok()?.as_name().ok())
+                    .is_some_and(|state| state != b"Off");
+                let clear_value = (selected || removed_was_on) && on.is_none();
+                let clear_default = removed_state.is_some()
+                    && forms::inherited(doc, widget.object, b"DV").and_then(|v| v.as_name().ok())
+                        == removed_state
+                    && !remaining
+                        .iter()
+                        .any(|&id| forms::button_state(doc, id).ok().as_deref() == removed_state);
+                let group = doc
+                    .get_dictionary_mut(widget.object)
+                    .map_err(|e| e.to_string())?;
+                if clear_value {
+                    group.set("V", Object::Name(b"Off".to_vec()));
+                }
+                if clear_default {
+                    group.set("DV", Object::Name(b"Off".to_vec()));
+                }
+            }
             return Ok(());
         }
         gone = widget.object;
@@ -612,6 +653,12 @@ fn propertied<'a>(widget: &'a Widget, props: &'a Props) -> Result<Propertied<'a>
     }
     if props.options.is_some() && !matches!(widget.control, Control::Choice { .. }) {
         return Err(said!("`{name}`: only a field of choices has choices"));
+    }
+    if let (Some(_), Control::Choice { options, .. }) = (&props.options, &widget.control) {
+        let mut labels = BTreeSet::new();
+        if options.iter().any(|option| !labels.insert(&option.label)) {
+            return Err(said!("The existing choices have repeated labels, so their export values cannot be matched safely"));
+        }
     }
     if props.text_size.is_some() && !drawn_by_tpdf {
         return Err(said!(
@@ -741,6 +788,13 @@ fn set_options(doc: &mut Document, widget: &Widget, to: &[String]) -> Result<Val
             field.remove(b"V");
         }
         Value::Selection(chosen) => {
+            field.set(
+                "I",
+                chosen
+                    .iter()
+                    .map(|&i| Object::Integer(i as i64))
+                    .collect::<Vec<_>>(),
+            );
             let values: Vec<Object> = chosen
                 .iter()
                 .map(|at| forms::pdf_string(&exported(&to[*at])))
@@ -818,6 +872,19 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         // Before a removal is set aside: a field shown in several places
         // keeps its properties when the widget they were set under goes.
         if !edit.props.is_empty() {
+            // PDF has no portable child MaxLen value meaning unlimited.
+            let parent = doc
+                .get_dictionary(widget.object)
+                .ok()
+                .and_then(|d| d.get(b"Parent").ok())
+                .and_then(|v| v.as_reference().ok());
+            if edit.props.max_length == Some(0)
+                && parent.is_some_and(|id| forms::integer(doc, id, b"MaxLen") > 0)
+            {
+                return Err(said!(
+                    "The character limit is inherited and cannot be cleared on this field"
+                ));
+            }
             let to = propertied(widget, &edit.props)?;
             if properties
                 .get(&widget.object)
@@ -961,7 +1028,10 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         } = to;
         // Before the answer is drawn again, which reads the size back.
         let appearance = props.text_size.map(|size| {
-            forms::sized_appearance(forms::default_appearance(doc, *field).as_deref(), size)
+            forms::sized_appearance(
+                forms::default_appearance(doc, *field).as_deref(),
+                size / widget.unit as f32,
+            )
         });
         let was = forms::integer(doc, *field, b"Ff");
         let mut flags = was;
@@ -980,6 +1050,12 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             };
             redraw.insert(*field, value);
         }
+        let inherited_default = doc
+            .get_dictionary(*field)
+            .ok()
+            .and_then(|dict| dict.get(b"Parent").ok())
+            .and_then(|parent| parent.as_reference().ok())
+            .is_some_and(|parent| forms::inherited(doc, parent, b"DV").is_some());
         let dict = doc.get_dictionary_mut(*field).map_err(|e| e.to_string())?;
         if let Some(tip) = &props.tooltip {
             if tip.is_empty() {
@@ -1005,6 +1081,7 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             );
         }
         match props.default_value.as_deref() {
+            Some("") if inherited_default => dict.set("DV", forms::pdf_string("")),
             Some("") => {
                 dict.remove(b"DV");
             }

@@ -427,8 +427,8 @@ ROWS += [
         # and it is the pin on where the mint happens that goes.
         "viewer: report the gesture the sweep before this one had",
         "src/lib/viewer.ts",
-        "          const sweep = ++this.sweeps;",
-        "          const sweep = this.sweeps;",
+        "          const sweep = this.gesture();",
+        "          const sweep = Viewer.sweeps;",
         "spends no number on a sweep the reader cancelled",
     ),
     Mutation(
@@ -438,7 +438,7 @@ ROWS += [
         # back along with their first.
         "viewer: give every sweep one gesture",
         "src/lib/viewer.ts",
-        "          const sweep = ++this.sweeps;",
+        "          const sweep = this.gesture();",
         "          const sweep = 1;",
         "gives two sweeps two numbers",
     ),

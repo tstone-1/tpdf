@@ -381,12 +381,13 @@ fn an_output_that_names_the_input_is_refused() {
     for line in [
         "sign a.pdf -o a.pdf --identity A",
         "sign a.pdf -o ./a.pdf --identity A",
-        "sign dir/a.pdf -o dir/../dir/a.pdf --identity A",
     ] {
         assert!(refused(line).contains("output names the input"), "{line}");
     }
     // The control: a different name in the same directory is a signing.
     signed("sign a.pdf -o a-signed.pdf --identity A");
+    // Only the filesystem knows where dir/.. resolves.
+    signed("sign dir/a.pdf -o dir/../dir/a.pdf --identity A");
 }
 
 #[test]
@@ -3439,6 +3440,7 @@ fn a_locked_document_is_reported_by_info_and_exits_0() {
 fn a_form_is_counted_by_field_and_an_xfa_refusal_is_named() {
     use super::info::form_report;
     let widget = |object: u32, widget: u32| crate::forms::Widget {
+        unit: 1.0,
         object: (object, 0),
         widget: (widget, 0),
         page: 0,

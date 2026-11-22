@@ -389,6 +389,7 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
     put("Form", &{
         let text = crate::forms::Widget {
+            unit: 1.0,
             object: (12, 0),
             widget: (13, 0),
             page: 0,

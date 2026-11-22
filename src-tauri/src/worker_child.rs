@@ -664,19 +664,7 @@ fn handle(
             Err(e) => Response::err(e),
         },
         Request::PageUnits { pages } => {
-            let units = document.graph().parsed().and_then(|doc| {
-                let ordered = crate::pagetree::pages_of(doc, document.page_count() as usize)?;
-                pages
-                    .iter()
-                    .map(|&slot| {
-                        ordered
-                            .get(slot as usize)
-                            .and_then(|&id| crate::pagetree::user_unit(doc, id))
-                            .map(|unit| unit as f32)
-                            .ok_or_else(|| said!("the page has an invalid user unit"))
-                    })
-                    .collect()
-            });
+            let units = document.page_units(pages);
             match units {
                 Ok(units) => Response::reply(Reply::PageUnits(units)),
                 Err(e) => Response::err(e),

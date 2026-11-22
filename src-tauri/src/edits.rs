@@ -1556,6 +1556,17 @@ impl Edits {
         made: String,
         sweep: u64,
     ) -> Result<EditState, String> {
+        self.annotate_at_scale(doc, want, made, sweep, 1.0)
+    }
+
+    pub(crate) fn annotate_at_scale(
+        &self,
+        doc: u32,
+        want: NewMark,
+        made: String,
+        sweep: u64,
+        unit: f64,
+    ) -> Result<EditState, String> {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         if want.quads.len() % 4 != 0 {
@@ -1629,7 +1640,7 @@ impl Edits {
         // rectangle the ink occupies is wider than the points it runs through ---
         // and tight bounds would additionally refuse a straight vertical line as
         // covering no area. See `Stroke::bounds`.
-        let width = nib(want.width);
+        let width = nib(want.width) / unit;
         if want.kind.has_strokes() {
             quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width))
                 .into_iter()
@@ -1724,22 +1735,20 @@ impl Edits {
     /// not finite; or the model refuses --- the page not existing, having been
     /// deleted, or the region covering no area.
     pub fn redact(&self, doc: u32, page: u64, area: [f32; 4]) -> Result<EditState, String> {
-        // The reader is here: start the fingerprint if nothing has. See `wake`.
+        self.redact_many(doc, &[(page, area)])
+    }
+
+    /// Validate the whole batch before appending anything to the journal.
+    pub fn redact_many(&self, doc: u32, regions: &[(u64, [f32; 4])]) -> Result<EditState, String> {
         self.wake(doc);
-        // [`annotate`](Edits::annotate)'s third door, and the same reasoning
-        // applies with one difference in where it bites: a mark's infinite
-        // corner is written into a content stream as `inf`, and a redaction's
-        // would be compared against every object on the page, where it makes
-        // one region cover the document. Refused rather than clamped, so a
-        // reader is never told a redaction covers what they did not drag.
-        if let Some(bad) = area.iter().find(|v| !v.is_finite()) {
-            return Err(said!("a redaction cannot have a corner at {bad}"));
-        }
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
-        let model = &mut open.model;
-        model
-            .redact(Redaction {
+        let mut checked = Vec::with_capacity(regions.len());
+        for &(page, area) in regions {
+            if let Some(bad) = area.iter().find(|v| !v.is_finite()) {
+                return Err(said!("a redaction cannot have a corner at {bad}"));
+            }
+            let region = Redaction {
                 page: PageId::from_raw(page),
                 area: Quad {
                     left: area[0],
@@ -1747,8 +1756,13 @@ impl Edits {
                     right: area[2],
                     bottom: area[3],
                 },
-            })
-            .map_err(describe)?;
+            };
+            open.model.check_redaction(&region).map_err(describe)?;
+            checked.push(region);
+        }
+        for region in checked {
+            open.model.redact_checked(region).map_err(describe)?;
+        }
         Ok(reply(open))
     }
 
@@ -2054,6 +2068,20 @@ impl Edits {
         mark: u64,
         props: crate::formedit::Props,
     ) -> Result<EditState, String> {
+        self.refit_at_scale(doc, mark, props, 1.0)
+    }
+
+    /// Changes a placed field, validating its default against its physical dimensions.
+    pub fn refit_at_scale(
+        &self,
+        doc: u32,
+        mark: u64,
+        props: crate::formedit::Props,
+        unit: f64,
+    ) -> Result<EditState, String> {
+        if !unit.is_finite() || unit <= 0.0 {
+            return Err(said!("the page has an invalid user unit"));
+        }
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
@@ -2094,7 +2122,7 @@ impl Edits {
                 f64::from(quad.right - quad.left),
                 f64::from(quad.bottom - quad.top),
             );
-            if let Some(why) = placed.default_problem("this field", width, height) {
+            if let Some(why) = placed.default_problem("this field", width * unit, height * unit) {
                 return Err(why);
             }
         }
@@ -7387,6 +7415,18 @@ mod tests {
 
     /// A region to mark for removal, in the shape the wire sends.
     const REGION: [f32; 4] = [72.0, 100.0, 300.0, 118.0];
+
+    #[test]
+    fn search_redaction_batches_are_all_or_nothing() {
+        let edits = opened();
+        let page = edits.state(7).unwrap().pages[0].id;
+        let mut batch = vec![(page, REGION); 4];
+        batch[3].0 = u64::MAX;
+        assert!(edits.redact_many(7, &batch).is_err());
+        assert!(edits.state(7).unwrap().redactions.is_empty());
+        batch[3].0 = page;
+        assert_eq!(edits.redact_many(7, &batch).unwrap().redactions.len(), 4);
+    }
 
     #[test]
     fn a_pending_redaction_reaches_the_reply_and_no_plan() {

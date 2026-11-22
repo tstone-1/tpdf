@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Marking all search results for redaction applies the entire set together. Duplicate,
+  Arrange, Undo and comparison navigation keep their original document and page across views.
+- CLI edit coordinates, matching blank pages and form font sizes honor the PDF's page scale.
+  Editing form choices and deleting radio buttons preserve the surviving answers and defaults.
+
 ### Added
 
 - **Reverse page order** puts every page of a document in reverse order in one step, for

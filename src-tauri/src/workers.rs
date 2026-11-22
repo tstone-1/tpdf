@@ -2068,6 +2068,18 @@ impl Engine for Workers {
         })
     }
 
+    fn page_units(&self, doc: u32, pages: Vec<u32>) -> Result<Vec<f32>, String> {
+        let count = pages.len();
+        match self.ask(doc, &Request::PageUnits { pages })? {
+            Reply::PageUnits(units)
+                if units.len() == count && units.iter().all(|u| u.is_finite() && *u > 0.0) =>
+            {
+                Ok(units)
+            }
+            other => Err(mismatched("page units", &other)),
+        }
+    }
+
     fn geometry(
         &self,
         doc: u32,

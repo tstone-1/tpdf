@@ -295,6 +295,7 @@ hop through the index.
 - lopdf reads `/DecodeParms` only when it is direct, and hands back a failed inflate's partial output as success
 
 ## Tauri, the webview and startup
+- Scoped viewer options copy plain objects, including a shared gesture counter
 - A viewer lasts as long as a tab is on screen, not as long as its document
 - `AppHandle::exit` does not set the process's exit code
 - `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
@@ -27768,3 +27769,11 @@ judging the test. And a rule that exists twice gets its rows aimed at one of the
 accident of indentation; here the rule became one function (`redact::holds_taken`), which
 left one place for the anchor to be. Ending an anchor on the line after it (`...\n}`) pins
 it better than its leading spaces do.
+
+### Scoped viewer options copy plain objects, including a shared gesture counter
+
+Two views of one document write into the same undo journal. A counter on each viewer
+can assign the same gesture number to adjacent nudges, causing Undo to reverse both.
+Passing a plain counter object in the viewer options also gives each view a copy: `scoped`
+recursively copies option objects. The document now issues IDs through a callback, and
+the two-view regression passes that callback through `scoped` before issuing either nudge.

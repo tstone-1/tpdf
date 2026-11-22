@@ -802,6 +802,18 @@ pub async fn page_content_box(
     await_reply("page_content_box", rx).await
 }
 
+/// Physical points per native coordinate unit on each named page.
+#[tauri::command]
+pub async fn page_units(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    pages: Vec<u32>,
+) -> Result<Vec<f32>, String> {
+    let (reply, rx) = reply_channel();
+    service.page_units(doc, pages, reply);
+    await_reply("page_units", rx).await
+}
+
 /// One page's displayed size under a crop box, or under the file's own.
 ///
 /// The frontend lays out from this and cannot compute it: a crop is in the

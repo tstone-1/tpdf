@@ -665,6 +665,32 @@ describe("Edits", () => {
     expect(after.marks).toHaveLength(1);
   });
 
+  it.each([1, 2])("inserts a matching blank in physical points at user unit %i", async (unit) => {
+    const edits = new Edits(9, 1);
+    core.invoke.mockImplementation(async (command: string) => {
+      if (command === "page_geometry") return { width_pt: 400 / unit, height_pt: 600 / unit };
+      if (command === "page_units") return [unit];
+      return state(2);
+    });
+    await edits.insertMatchingPage(0);
+    expect(core.invoke).toHaveBeenLastCalledWith("page_insert", { doc: 9, after: 1, size: [400, 600] });
+  });
+
+  it.each([true, false])("a save waits for every search mark and sees batch success %s", async (success) => {
+    const edits = new Edits(9, 1);
+    let answer!: (result: EditState | null) => void;
+    const queued = new Promise<EditState | null>(resolve => { answer = resolve; });
+    const marking = edits.trackSearchMarks(queued);
+    let saved = false;
+    const saving = edits.searchMarksReady().then(ok => { saved = ok; return ok; });
+    await Promise.resolve();
+    expect(saved).toBe(false);
+    answer(success ? state(1) : null);
+    expect(await saving).toBe(success);
+    await marking;
+    expect(await edits.searchMarksReady()).toBe(true);
+  });
+
   it("sends the region and the page's own id when one is redacted", async () => {
     core.invoke.mockResolvedValueOnce(state(3));
     const edits = new Edits(9);

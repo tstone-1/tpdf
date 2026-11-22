@@ -1061,6 +1061,7 @@ mod tests {
             ("PageCopy", "page_copy"),
             ("Graphic", "graphic"),
             ("Geometry", "geometry"),
+            ("PageUnits", "page_units"),
             ("CropBox", "crop_box"),
             ("RedactPlans", "redaction_plans"),
             ("Outline", "outline"),
@@ -1084,10 +1085,6 @@ mod tests {
             (
                 "TextRuns",
                 "CLI commands and probes request a final layout from a private worker",
-            ),
-            (
-                "PageUnits",
-                "the CLI requests physical units from its private worker",
             ),
             (
                 "TextView",

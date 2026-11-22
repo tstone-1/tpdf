@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pageId, type MarkKind, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
 import { Viewer } from "./viewer";
+import { Edits } from "./edits";
+import { scoped } from "./livedocument";
 import { INK_WIDTH } from "./markband";
 import { BAR_HEIGHT, barSpot } from "./arrangebar";
 import type { FakeElement } from "./testdom";
@@ -71,9 +73,10 @@ const MARKS: MarkView[] = [
   one(4, "highlight", [300, 600, 400, 612]),
 ];
 
-function build(turns = 0): Viewer {
+function build(turns = 0, model = new Edits(1, 1)): Viewer {
   const viewer = new Viewer(dom.root as unknown as HTMLElement, {
     doc: 1,
+    ...scoped({ nextGesture: () => model.nextGesture() }, run => run()),
     pageCount: 1,
     pages: [{ width_pt: 600, height_pt: 800 }],
     onMarksArranged: (moves, sweep) => arranged.push({ moves, sweep }),
@@ -301,6 +304,19 @@ describe("arranging the picked marks", () => {
     expect(arranged[0]?.sweep).toBeGreaterThan(0);
     // A second arrangement is a second gesture.
     expect(viewer.arrangePicked("top")).toBe(true);
+    expect(arranged[1]?.sweep).not.toBe(arranged[0]?.sweep);
+  });
+
+  it("keeps independent nudges in separate undo groups across views", async () => {
+    const model = new Edits(1, 1);
+    for (let view = 0; view < 2; view++) {
+      const viewer = build(0, model);
+      await settle();
+      viewer.pick([1]);
+      expect(viewer.nudgePicked(1, 0)).toBe(true);
+      viewer.destroy();
+    }
+    expect(arranged).toHaveLength(2);
     expect(arranged[1]?.sweep).not.toBe(arranged[0]?.sweep);
   });
 

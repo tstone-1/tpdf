@@ -633,8 +633,12 @@ pub fn mismatches(asked: &[Resolved], before: &Form, after: &Form) -> Vec<Proble
                 return;
             }
             // Different selected labels can have the same exported JSON value.
-            if choice.is_some_and(|was| was.control != widget.control || was.value != widget.value)
-            {
+            if choice.is_some_and(|was| match (&was.control, &widget.control) {
+                (Control::Radio { .. }, Control::Radio { .. }) => {
+                    options(&was.control, &was.value) != options(&widget.control, &widget.value)
+                }
+                _ => was.control != widget.control || was.value != widget.value,
+            }) {
                 problems.push(problem(
                     name,
                     ProblemKind::ReadBack,
@@ -652,7 +656,11 @@ pub fn mismatches(asked: &[Resolved], before: &Form, after: &Form) -> Vec<Proble
             continue;
         }
         let first = group.first();
-        let choice = matches!(first.control, Control::Choice { .. }).then_some(first);
+        let choice = matches!(
+            first.control,
+            Control::Choice { .. } | Control::Radio { .. }
+        )
+        .then_some(first);
         check(
             group.name,
             &value_json(&first.control, &first.value),

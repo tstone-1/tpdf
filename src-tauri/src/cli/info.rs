@@ -190,18 +190,7 @@ fn ask_all(session: &mut Session) -> Result<Answers, Declined> {
         } if pages.len() == page_count => pages,
         other => return Err(unexpected("an open", &other)),
     };
-    let count = u32::try_from(sizes.len())
-        .map_err(|_| Declined::Failed("the worker returned too many pages".into()))?;
-    let units = super::pages::units_for_slots(session, (0..count).collect())?;
-    for (size, unit) in sizes.iter_mut().zip(units) {
-        size.width_pt *= unit;
-        size.height_pt *= unit;
-        if !size.width_pt.is_finite() || !size.height_pt.is_finite() {
-            return Err(Declined::Refused(
-                "the physical page size is too large".into(),
-            ));
-        }
-    }
+    super::pages::physical_sizes(session, &mut sizes)?;
     // A form the worker refuses --- XFA, or past a bound --- is a fact about
     // the form and not about the document, so it is kept rather than raised.
     let form = match session.ask(Request::Form) {

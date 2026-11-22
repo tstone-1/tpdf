@@ -570,6 +570,21 @@ describe("edits requested in a mounted view", () => {
     expect(functionIn(app, "function movePageTo(")).toMatch(/const order = edits\?\.state\.pages;[\s\S]*applyEdit\(\(model\) => model.move\(from, to, order\)/);
   });
 
+  it("wires queued Duplicate and Arrange to the document that owns the selection", () => {
+    const duplicate = functionIn(app, "function duplicatePicked(");
+    expect(missingFrom(duplicate, [
+      "const source = viewer, model = edits, form = scannedForm, view = openView;",
+      "copies: () => source.copiesOfPicked()",
+      "state: () => model.state",
+      "form: () => form",
+      "(run) => applyEdit(run, view, model)",
+      "edits === model && viewer === source) source.pick(ids)",
+    ])).toEqual([]);
+    const viewer = functionIn(app, "function buildViewer(");
+    expect(viewer).toMatch(/onMarksArranged: [^{]+\{\s*const form = scannedForm;\s*void applyEdit\(\(e\) => arrangeBoth\(form, e.state, e, moves, sweep\)\)/);
+    expect(viewer).toContain("nextGesture: () => model.nextGesture()");
+  });
+
   it("sends both window routes through the gesture's commit, with the palette requesting a rearm", () => {
     expect(functionIn(app, "function buildViewer(")).toContain("onRedactSelection: () => void redactSelection()");
     expect(withoutComments(app)).toContain("redactSelection: () => void redactSelection(true)");

@@ -21,6 +21,7 @@ import {
   type MarkKind,
   type MarkView,
   type PageId,
+  type FilePage,
   type Discarded,
   type NoteEdited,
   type PageView,
@@ -222,7 +223,26 @@ export class Edits {
    * method here. See `crop.ts`.
    */
   readonly doc: number;
+  private lastGesture = 0;
+
+  /** Undo groups belong to the document, including gestures made in another view. */
+  nextGesture(): number {
+    return ++this.lastGesture;
+  }
   private current: EditState;
+  private readonly searchMarks = new Set<Promise<EditState | null>>();
+
+  /** Include search geometry collection and the worker reply in the document's pending edits. */
+  async trackSearchMarks(batch: Promise<EditState | null>): Promise<void> {
+    this.searchMarks.add(batch);
+    try { await batch; }
+    finally { this.searchMarks.delete(batch); }
+  }
+
+  /** A writer already waiting on a refused batch must stop before opening its save dialog. */
+  async searchMarksReady(): Promise<boolean> {
+    return (await Promise.all(this.searchMarks)).every(state => state !== null);
+  }
   /** The translation the last answer implies, rebuilt with it. */
   private pageMap: PageMap;
 
@@ -337,19 +357,33 @@ export class Edits {
     );
   }
 
-  /**
-   * Puts a new blank page after the page in slot `after`, or at the front when
-   * `after` is `null`.
-   *
-   * Takes a slot and sends the id, as {@link rotate} does and for the same
-   * reason. `size` is `[width, height]` in **points**, and it is the caller's:
-   * a blank page should be the size of the page the reader is looking at, and
-   * that number is in the scroller rather than here or in the model.
-   *
-   * The reply's new slot is `after + 1`, or 0 --- but nothing here computes that
-   * and nothing should: the state that comes back names every page, and reading
-   * the answer beats predicting it.
-   */
+  private async physicalUnit(doc: number, page: FilePage): Promise<number> {
+    const [unit] = await call("page_units", { doc, pages: [page] });
+    if (unit === undefined || !Number.isFinite(unit) || unit <= 0) throw new Error("the page has an invalid user unit");
+    return unit;
+  }
+
+  /** A matching blank has the source page's physical size, including its current crop. */
+  async insertMatchingPage(slot: number): Promise<EditState> {
+    const page = this.pageMap.at(slot);
+    if (!page) return this.current;
+    let size: [number, number];
+    if ("blank" in page.source) {
+      size = [page.source.blank.width, page.source.blank.height];
+    } else {
+      const source = this.pageMap.addressOf(slot, this.doc);
+      if (!source) throw new Error("The page is no longer available");
+      const [geometry, unit] = await Promise.all([
+        call("page_geometry", { ...source, crop: page.crop ?? null }),
+        this.physicalUnit(source.doc, source.page),
+      ]);
+      size = [geometry.width_pt * unit, geometry.height_pt * unit];
+    }
+    const at = this.pageMap.slotOfId(page.id);
+    return at === undefined ? this.current : this.insertPage(at, size);
+  }
+
+  /** Insert a blank of the specified physical size after the selected slot. */
   async insertPage(
     after: number | null,
     size: readonly [number, number],
@@ -615,7 +649,12 @@ export class Edits {
 
   /** Changes the properties of a form field placed in this session. */
   async refit(mark: number, props: import("./savedfields").FieldProps): Promise<EditState> {
-    return this.adopt(await call("annot_field_props", { doc: this.doc, mark, props }));
+    const field = this.current.marks.find(one => one.id === mark);
+    const slot = field && this.pageMap.slotOfId(field.page);
+    const source = slot === undefined ? null : this.pageMap.addressOf(slot, this.doc);
+    const hasDefault = props.default_value ?? field?.field?.default_value;
+    const unit = hasDefault && source ? await this.physicalUnit(source.doc, source.page) : 1;
+    return this.adopt(await call("annot_field_props", { doc: this.doc, mark, props, unit }));
   }
 
   /**
@@ -831,6 +870,10 @@ export class Edits {
     return this.adopt(
       await call("redact_mark", { doc: this.doc, page, area }),
     );
+  }
+
+  async redactMany(regions: readonly (readonly [PageId, [number, number, number, number]])[]): Promise<EditState> {
+    return this.adopt(await call("redact_marks", { doc: this.doc, regions }));
   }
 
   /**

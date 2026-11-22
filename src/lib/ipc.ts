@@ -310,6 +310,7 @@ export interface Commands {
     args: { doc: DocHandle; page: FilePage; crop: Rect | null };
     reply: CropGeometry;
   };
+  page_units: { args: { doc: DocHandle; pages: FilePage[] }; reply: number[] };
   page_crop_box: {
     args: { doc: DocHandle; page: number; rect: Rect };
     reply: [number, number, number, number];
@@ -346,6 +347,7 @@ export interface Commands {
     args: { doc: DocHandle; page: PageId; area: Rect };
     reply: EditState;
   };
+  redact_marks: { args: { doc: DocHandle; regions: readonly (readonly [PageId, Rect])[] }; reply: EditState };
   redact_remove: {
     args: { doc: DocHandle; redaction: number };
     reply: EditState;
@@ -430,7 +432,7 @@ export interface Commands {
     reply: EditState;
   };
   annot_field_props: {
-    args: { doc: DocHandle; mark: number; props: import("./savedfields").FieldProps };
+    args: { doc: DocHandle; mark: number; props: import("./savedfields").FieldProps; unit: number };
     reply: EditState;
   };
   form_tab_order: { args: { doc: DocHandle }; reply: EditState };

@@ -48,6 +48,7 @@
       fieldBorderOn: "Text fields placed from now on are drawn with a line round them.",
       fieldBorderOff: "Text fields placed from now on draw nothing until they are filled.",
       choiceNotKept: " The choice could not be saved and lasts until tpdf closes.",
+      matchBatchFailed: "The search results could not all be marked for redaction. Review the marked regions before saving.",
       matchPagesUnread: "Some of the pages with matches on them could not be read, so nothing was marked. Nothing has been changed.",
       choosePicture: "Choose a picture to put on the page",
       pictures: "Pictures",
@@ -230,6 +231,7 @@
       fieldBorderOn: "Ab jetzt platzierte Textfelder erhalten einen Rahmen.",
       fieldBorderOff: "Ab jetzt platzierte Textfelder zeigen nichts an, bis sie ausgefüllt sind.",
       choiceNotKept: " Die Auswahl konnte nicht gespeichert werden und gilt nur, bis du tpdf schließt.",
+      matchBatchFailed: "Es konnten nicht alle Suchtreffer zum Schwärzen markiert werden. Bitte die markierten Bereiche vor dem Speichern prüfen.",
       matchPagesUnread: "Einige Seiten mit Treffern konnten nicht gelesen werden, deshalb wurde nichts markiert. Es wurde nichts geändert.",
       choosePicture: "Bild für die Seite auswählen",
       pictures: "Bilder",
@@ -812,24 +814,30 @@
     form: () => (formEditing ? scannedForm : null),
     state: () => edits?.state ?? null,
     ask: (now) => fieldPropertiesDialog?.ask(now) ?? Promise.resolve(null),
-    refield: (targets) => void applyEdit((e) => e.refield(targets, targets.length > 1 ? viewer?.gesture() ?? 0 : 0)),
+    refield: (targets) => void applyEdit((e) => e.refield(targets, targets.length > 1 ? e.nextGesture() : 0)),
     refit: (mark, props) => void applyEdit((e) => e.refit(mark, props)),
     say: (message) => say(message),
   };
   /** What duplicating the picked rectangles is given; the join is `duplicate.ts`. */
-  const duplicateDeps: DuplicateDeps = {
-    copies: () => viewer?.copiesOfPicked() ?? null,
-    state: () => edits?.state ?? null,
-    form: () => scannedForm,
-    formNames: () => formNames,
-    border: () => fieldBorder,
-    make: (copy, sweep) =>
-      applyEdit((e) =>
-        e.mark(copy.kind, copy.page, copy.quads, [], copy.note, copy.color, null, null, copy.width, undefined, copy.field, sweep),
-      ),
-    pick: (ids) => viewer?.pick(ids),
-    say: (message) => say(message),
-  };
+  function duplicatePicked(): void {
+    const source = viewer, model = edits, form = scannedForm, view = openView;
+    if (!source || !model) return;
+    const names = formNames, border = fieldBorder;
+    const deps: DuplicateDeps = {
+      copies: () => source.copiesOfPicked(),
+      state: () => model.state,
+      form: () => form,
+      formNames: () => names,
+      border: () => border,
+      make: async (copy, sweep) => (await markMade(
+        (run) => applyEdit(run, view, model),
+        (e) => e.mark(copy.kind, copy.page, copy.quads, [], copy.note, copy.color, null, null, copy.width, undefined, copy.field, sweep),
+      ))?.id,
+      pick: (ids) => asDocument(view, () => { if (edits === model && viewer === source) source.pick(ids); }),
+      say: (message) => asDocument(view, () => say(message)),
+    };
+    void duplicate(deps);
+  }
   /** Which kind of form field the armed tool places. */
   let armedField: FieldKind = "text";
   /** The group the radio buttons placed next belong to. */
@@ -912,8 +920,10 @@
   async function settleView(restoreFocus: boolean): Promise<void> {
     // Start every commit before yielding the permission to edit during a save.
     const notes = commitPopups(true, restoreFocus);
-    const work = [notes, pendingEdit, formLayer?.settle(), textEditor?.settle()];
-    await Promise.all(work);
+    const marking = edits?.searchMarksReady();
+    const work = Promise.all([marking, notes, pendingEdit, formLayer?.settle(), textEditor?.settle()]);
+    const [marked] = await work;
+    if (marked === false) throw new Error(TEXT().matchBatchFailed);
   }
 
   async function settleDocument(only?: Edits): Promise<void> {
@@ -2103,7 +2113,7 @@
       });
     },
     pickedMarks: () => viewer?.pickedCount ?? 0,
-    duplicatePicked: () => void duplicate(duplicateDeps),
+    duplicatePicked,
     arrange: (how) => {
       // `false` is too few picked or nothing to move; the command is only
       // offered with enough picked, so what is left to say is the second.
@@ -2313,8 +2323,8 @@
    * reader is then told is clean, which is the one thing §6 forbids.
    */
   async function redactMatches(): Promise<void> {
-    const view = openView, searched = viewer;
-    if (!searched) return;
+    const view = openView, searched = viewer, model = edits;
+    if (!searched || !model) return;
     const refusal = completeForMarking({
       running: searched.searching,
       unread: searched.searchUnread,
@@ -2324,16 +2334,12 @@
       say(refusal);
       return;
     }
-    const found = await searched.matchQuadsByPage();
-    if (found === null) {
-      asDocument(view, () => say(TEXT().matchPagesUnread));
-      return;
-    }
-    for (const { page, quads } of found) {
-      for (const area of areasFrom(quads)) {
-        await applyEdit((e) => e.redact(page, area), view);
-      }
-    }
+    await model.trackSearchMarks(applyEdit(async (owner) => {
+      const found = await searched.matchQuadsByPage();
+      if (found === null) throw new Error(TEXT().matchPagesUnread);
+      const regions = found.flatMap(({ page, quads }) => areasFrom(quads).map((area) => [page, area] as const));
+      return owner.redactMany(regions);
+    }, view, model));
   }
 
   /**
@@ -2952,17 +2958,11 @@
    * size, and a reader who has turned the view has not asked for a page in
    * landscape.
    *
-   * An estimated size is used rather than refused. `knowsPageSize` is false only
-   * before a page has ever rendered, and a blank page the size of the running
-   * mean of a document's pages is a better answer than a refusal a reader would
-   * read as the command being broken --- the estimate is exact for the great
-   * majority of documents, where every page is the same size.
+   * Read the source geometry in physical points before creating the new sheet.
    */
   async function insertBlankPage(): Promise<void> {
     const at = viewer?.position.page;
-    const size = at === undefined ? undefined : viewer?.pageSize(at);
-    if (at === undefined || !size) return;
-    await applyToPage(at, (model, slot) => model.insertPage(slot, [size.width_pt, size.height_pt]));
+    if (at !== undefined) await applyToPage(at, (model, slot) => model.insertMatchingPage(slot));
   }
 
   /**
@@ -4158,6 +4158,8 @@
       blockingTask = COMPARE_STARTING;
       refreshMenu();
       try {
+        await settleDrafts();
+        const pages = { left: left.pageOrder.map(p => p.id), right: right.pageOrder.map(p => p.id) };
         const a = await gather(names.left, left.slotCount, (slot) => left.loadText(slot));
         const b = await gather(names.right, right.slotCount, (slot) => right.loadText(slot));
         blockingTask = COMPARING;
@@ -4172,7 +4174,7 @@
         // A comparison already on screen is replaced; the documents it was
         // about and this one is not are cleared of it.
         const before = comparisons.views;
-        comparisons.start(older, newer, { result, names });
+        comparisons.start(older, newer, { result, names }, pages);
         for (const view of before ? [before.left, before.right] : []) {
           if (view !== older && view !== newer) asDocument(view, () => showComparisonHere());
         }
@@ -4241,7 +4243,9 @@
         viewer?.setCurrentDifference(current);
         sidebar?.changes.setCurrent(current);
         const at = placeOf(change, side);
-        if (viewer) moves.push(viewer.showText(at.page, at.index));
+        const id = comparisons.pageAt(side, at.page);
+        const slot = id === undefined ? undefined : edits?.map.slotOfId(id);
+        if (viewer && slot !== undefined) moves.push(viewer.showText(slot, at.index));
       });
     }
     await Promise.all(moves);
@@ -6654,6 +6658,7 @@
     view: ViewId,
     doc: DocumentInfo,
     pages: [PageSize, ...PageSize[]],
+    model: Edits,
   ): Viewer {
     return new Viewer(area, scoped<ViewerOptions>({
       doc: doc.id,
@@ -6662,6 +6667,7 @@
       // Run as this document by `scoped`, so each side names its own pages.
       printedOf: (slot) => printedOf(slot),
       focusClock,
+      nextGesture: () => model.nextGesture(),
       // The panel's selection follows the page, so a note opened by clicking
       // a mark highlights its row --- and the two can never disagree about
       // which comment is being read, which is the whole reason this is a
@@ -6763,8 +6769,10 @@
         isSaved(id)
           ? changeField(scannedForm && edits ? fieldPlaced(scannedForm, edits.state, id, rect) : null)
           : void applyEdit((e) => e.resize(id, rect)),
-      onMarksArranged: (moves, sweep) =>
-        void applyEdit((e) => arrangeBoth(scannedForm, e.state, e, moves, sweep)),
+      onMarksArranged: (moves, sweep) => {
+        const form = scannedForm;
+        void applyEdit((e) => arrangeBoth(form, e.state, e, moves, sweep));
+      },
       // The Arrange commands are offered by how many are picked, and a menu
       // item's enablement is pushed, so every change is pushed too.
       onPicked: (count, more) => {
@@ -7245,7 +7253,7 @@
       sidebar.setVisible(sidebarShown);
 
       const model = adoptModel(view, doc, path, { retained, replacing, replaceId, twins, resume, kept });
-      viewer = buildViewer(area, view, doc, pages);
+      viewer = buildViewer(area, view, doc, pages, model);
       panes.mounted(view, slot);
       showModel(viewer, sidebar, model, resume, retained ? kept : null);
       readAfterFirstPaint(view, doc.id, viewer);

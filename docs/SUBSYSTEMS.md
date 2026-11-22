@@ -214,9 +214,7 @@ PDFKit reads `/V` through the parent chain but did not render our fixture's text
 when `/FT` existed only on its grandparent. The unit test pins this compatibility
 requirement. See `BUILD.md` for the fixture-generation and check commands.
 
-The CLI supplies physical points for field rectangles and
-explicit type sizes. The writer converts them with the target page's `/UserUnit`. The
-read-back uses the staged page's unit when comparing with the request. Existing choice
+The CLI supplies physical points for field rectangles. Both the properties dialog and the CLI use physical points for font sizes. The appearance writer converts to the target page's native units, and the form scanner converts declared sizes back to points. Existing choice
 fields retain their option labels, export values and selections. A radio group's `/Opt`
 strings correspond to widgets in `/Kids` order. The CLI lists and accepts those strings
 while the PDF stores the selected appearance name. Removing individual buttons or

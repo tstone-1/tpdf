@@ -5322,6 +5322,7 @@ mod tests {
         value: crate::forms::Value,
     ) -> crate::forms::Widget {
         crate::forms::Widget {
+            unit: 1.0,
             object: (object, 0),
             widget: (object, 0),
             page,

@@ -149,6 +149,16 @@ pub async fn redact_mark(
     edits.redact(doc, page, area)
 }
 
+/// Adds all regions of a completed search as a single request.
+#[tauri::command]
+pub async fn redact_marks(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    regions: Vec<(u64, [f32; 4])>,
+) -> Result<edits::EditState, String> {
+    edits.redact_many(doc, &regions)
+}
+
 /// Takes one pending redaction back off its page.
 #[tauri::command]
 pub async fn redact_remove(
@@ -338,15 +348,16 @@ pub async fn form_tab_order(
 
 /// Changes the properties of a form field placed in this session.
 ///
-/// See [`edits::Edits::refit`].
+/// See [`edits::Edits::refit_at_scale`].
 #[tauri::command]
 pub async fn annot_field_props(
     edits: tauri::State<'_, edits::Edits>,
     doc: u32,
     mark: u64,
     props: crate::formedit::Props,
+    unit: f64,
 ) -> Result<edits::EditState, String> {
-    edits.refit(doc, mark, props)
+    edits.refit_at_scale(doc, mark, props, unit)
 }
 
 /// Gives several placed rectangles new rectangles as one undoable edit.

@@ -176,6 +176,8 @@ export default {
     "`{name}` enthält {holds} Zeichen, mehr als die {most}, die es aufnehmen würde",
   "`{name}`: only a text field or a field of choices has text to align":
     "`{name}`: Nur ein Textfeld oder ein Auswahlfeld hat Text, der sich ausrichten lässt",
+  "The character limit is inherited and cannot be cleared on this field": "Die geerbte Zeichenbegrenzung lässt sich für dieses Feld nicht aufheben",
+  "The existing choices have repeated labels, so their export values cannot be matched safely": "Mehrere Einträge haben dieselbe Bezeichnung. Ihre Exportwerte lassen sich nicht eindeutig zuordnen",
   "`{name}`: only a field of choices has choices": "`{name}`: Nur ein Auswahlfeld hat Einträge",
   "`{name}`: only a text field or a field of choices has a text size":
     "`{name}`: Nur ein Textfeld oder ein Auswahlfeld hat eine Schriftgröße",

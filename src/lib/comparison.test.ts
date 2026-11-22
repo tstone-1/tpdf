@@ -8,6 +8,7 @@
  * pages go in slot order with empty pages kept, and where each change is.
  */
 
+import { pageId } from "./pages";
 import { describe, expect, it } from "vitest";
 import { dropAbandoned } from "./documentopen";
 import { DocumentTabs } from "./documenttabs";
@@ -252,9 +253,20 @@ describe("gather", () => {
 });
 
 describe("ComparisonState", () => {
+  it("keeps compared page identities until their own side is reloaded", () => {
+    const state = new ComparisonState<string>();
+    state.start("a", "b", compared(), { left: [10, 20].map(pageId), right: [30, 40].map(pageId) });
+    state.invalidate("a");
+    expect([5, 10, 20].indexOf(state.pageAt("left", 1)!)).toBe(2);
+    expect(state.pageAt("right", 1)).toBe(40);
+    state.reopened([["a", "replacement"]]);
+    expect(state.pageAt("left", 1)).toBeUndefined();
+    expect(state.pageAt("right", 1)).toBe(40);
+  });
+
   const two = (): ComparisonState<number> => {
     const state = new ComparisonState<number>();
-    state.start(7, 9, compared({ changes: [change(), change()], total_changes: 2 }));
+    state.start(7, 9, compared({ changes: [change(), change()], total_changes: 2 }), { left: [pageId(1)], right: [pageId(1)] });
     return state;
   };
 
@@ -292,7 +304,7 @@ describe("ComparisonState", () => {
   it("counts and picks only the rows it draws", () => {
     const state = new ComparisonState<number>();
     const many = Array.from({ length: MAX_ROWS + 1 }, () => change());
-    state.start(7, 9, compared({ changes: many, total_changes: MAX_ROWS + 1 }));
+    state.start(7, 9, compared({ changes: many, total_changes: MAX_ROWS + 1 }), { left: [pageId(1)], right: [pageId(1)] });
     expect(state.count).toBe(MAX_ROWS);
     expect(state.pick(MAX_ROWS)).toBe(false);
     expect(state.step(-1)).toBe(MAX_ROWS - 1);

@@ -466,6 +466,8 @@ export interface ViewerOptions {
   printedOf?: (slot: number) => string | null | undefined;
   /** The window, for when the page announcement is heard (`livetext.ts`). */
   focusClock?: FocusClock;
+  /** Views of one document share its undo gesture counter. */
+  nextGesture?: () => number;
   /**
    * Geometry of the pages the open reported, index-aligned from page 1.
    *
@@ -1656,14 +1658,8 @@ export class Viewer {
     last: Point;
   } | null = null;
 
-  /**
-   * How many sweeps of the eraser have been committed.
-   *
-   * Counts up and is never read back, so it is a source of distinct numbers
-   * rather than a name for anything. Non-zero from the first sweep, because the
-   * wire spells *no gesture* as zero and this is pre-incremented.
-   */
-  private sweeps = 0;
+  /** Local counter for a standalone viewer without a document gesture allocator. */
+  private lastGesture = 0;
 
   /**
    * The rectangle being dragged, in the slot's laid-out space.
@@ -2329,7 +2325,7 @@ export class Viewer {
           // backend only asks whether two adjacent journal entries carry the
           // same one --- so all it has to be is different from the gesture
           // before and the gesture after.
-          const sweep = ++this.sweeps;
+          const sweep = this.gesture();
           for (const [mark, strokes] of swept.marks) {
             if (strokes.size === 0) continue;
             // Sorted so that the list a reader's gesture produces does not
@@ -3574,6 +3570,10 @@ export class Viewer {
 
     this.opts.pageCount = after.length;
     this.scroller.setPages([...views]);
+    for (const [slot, view] of views.entries()) {
+      const at = this.textAt(slot);
+      at?.cache.setPageTurns(at.page, view.turns);
+    }
     void this.adoptCrops(after);
     this.a11y.setPages(after.length);
     this.searcher.setPages(after.length);
@@ -4951,7 +4951,7 @@ export class Viewer {
         right: one.quad.right + by.dx, bottom: one.quad.bottom + by.dy,
       }),
     }));
-    this.opts.onMarksArranged?.(moves, ++this.sweeps);
+    this.opts.onMarksArranged?.(moves, this.gesture());
     return true;
   }
 
@@ -4966,7 +4966,7 @@ export class Viewer {
 
   /** A name for one gesture that changes several things, so that one undo takes all of it back. */
   gesture(): number {
-    return ++this.sweeps;
+    return this.opts.nextGesture?.() ?? ++this.lastGesture;
   }
 
   /**
@@ -4980,7 +4980,7 @@ export class Viewer {
     if (!found) return null;
     const by = together(found.placed.map((one) => one.quad), { dx: COPY_STEP, dy: COPY_STEP }, this.laidSize(found.slot));
     return {
-      sweep: ++this.sweeps,
+      sweep: this.gesture(),
       rects: found.placed.map((one) => ({
         mark: one.id,
         rect: this.fileRectOn(found.slot, {
@@ -5030,7 +5030,7 @@ export class Viewer {
         return points;
       }),
     }));
-    return { page, sweep: shapes.length > 1 ? ++this.sweeps : 0, placed };
+    return { page, sweep: shapes.length > 1 ? this.gesture() : 0, placed };
   }
 
   /**
@@ -5052,7 +5052,7 @@ export class Viewer {
       return to && differs(one.quad, to) ? [{ mark: one.id, rect: this.fileRectOn(slot, to) }] : [];
     });
     if (moves.length === 0) return false;
-    this.opts.onMarksArranged?.(moves, ++this.sweeps);
+    this.opts.onMarksArranged?.(moves, this.gesture());
     return true;
   }
 
@@ -6512,7 +6512,7 @@ export class Viewer {
     }
     const picked = [...this.arranging.list()];
     if (picked.length === 0) return false;
-    const sweep = picked.length > 1 ? ++this.sweeps : 0;
+    const sweep = picked.length > 1 ? this.gesture() : 0;
     this.arranging.clear();
     this.pickedChanged();
     for (const id of picked) this.opts.onMarkRemove?.(id, sweep);

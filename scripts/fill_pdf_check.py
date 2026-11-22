@@ -25,18 +25,21 @@ import sys
 from pypdf import PdfReader
 
 
-def expected(value, found):
+def expected(value, found, field_type):
     """Whether pypdf's `/V` says what the answer asked for."""
-    if isinstance(value, bool):
+    if field_type == "/Btn" and isinstance(value, bool):
         state = str(found) if found is not None else "/Off"
         return (state != "/Off") == value
+    if field_type == "/Btn":
+        if value is None:
+            return found in (None, "/Off")
+        return isinstance(value, str) and str(found) == "/" + value
     if isinstance(value, list):
         got = found if isinstance(found, list) else ([] if found is None else [found])
         return [str(v) for v in got] == value
     if found is None:
         return value is None
-    text = str(found)
-    return text == value or text == "/" + value
+    return str(found) == value
 
 
 def verify(pdf: str, answers_path: str) -> list:
@@ -52,7 +55,7 @@ def verify(pdf: str, answers_path: str) -> list:
             continue
         found = field.get("/V")
         raw = field.indirect_reference.get_object()
-        if field.field_type == "/Btn" and raw.get_inherited("/Opt") is not None:
+        if field.field_type == "/Btn" and int(raw.get_inherited("/Ff") or 0) & (1 << 15) and raw.get_inherited("/Opt") is not None:
             # /Opt is ordered like /Kids. /V and the chosen widget's /AS
             # still hold the appearance name, which can differ from the export.
             options = raw.get_inherited("/Opt").get_object()
@@ -67,7 +70,7 @@ def verify(pdf: str, answers_path: str) -> list:
             elif value is not None or found not in (None, "/Off"):
                 wrong.append(f"{name}: asked {value!r}, no button is on and the field holds {found!r}")
             continue
-        if not expected(value, found):
+        if not expected(value, found, field.field_type):
             wrong.append(f"{name}: asked {value!r}, pypdf reads {found!r}")
     # Every widget of an answered field has a normal appearance.
     for page in reader.pages:

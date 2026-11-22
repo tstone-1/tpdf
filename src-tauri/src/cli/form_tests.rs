@@ -210,6 +210,12 @@ fn equally_named_radio_exports_are_ambiguous_if_their_buttons_are_separately_sel
     for flags in [1 << 15, (1 << 15) | (1 << 25)] {
         doc.get_dictionary_mut(radio).unwrap().set("Ff", flags);
         let form = scanned(&doc);
+        let mut moved = form.clone();
+        for widget in moved.widgets.iter_mut().filter(|w| w.name == "delivery") {
+            widget.value = crate::forms::Value::Selection(vec![1]);
+        }
+        assert!(fill::mismatches(&[], &form, &form).is_empty());
+        assert!(!fill::mismatches(&[], &form, &moved).is_empty());
         let listed = fields::report("radio.pdf", &form);
         let radio = listed.fields.iter().find(|f| f.name == "delivery").unwrap();
         assert_eq!(radio.value, serde_json::json!("Mail"));

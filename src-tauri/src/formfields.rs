@@ -141,12 +141,7 @@ fn text_problem(
 
 /// Why a field's default value would not be drawn in a field of this
 /// rectangle, as the answer it is.
-fn default_problem(
-    field: &NewField,
-    rect: [f64; 4],
-    turns: u8,
-    text_size: Option<f32>,
-) -> Option<String> {
+fn default_problem(field: &NewField, rect: [f64; 4], turns: u8, unit: f64) -> Option<String> {
     let default = field.default_value.as_deref().filter(|d| !d.is_empty())?;
     let would_be = forms::Widget {
         object: (0, 0),
@@ -164,7 +159,8 @@ fn default_problem(
         required: false,
         read_only: false,
         align: forms::Align::Left,
-        text_size,
+        text_size: field.text_size,
+        unit,
         default_value: String::new(),
         turns,
     };
@@ -194,7 +190,7 @@ impl Placed {
             text_size: self.text_size,
             default_value: Some(self.default_value.clone()),
         };
-        default_problem(&field, [0.0, 0.0, width, height], 0, field.text_size)
+        default_problem(&field, [0.0, 0.0, width, height], 0, 1.0)
     }
 }
 
@@ -620,12 +616,7 @@ pub fn check(
             // only handed back when no field has any.
             Ok(rect) => {
                 let turns = crate::pagetree::displayed_page(doc, *page).turns;
-                if let Some(why) = default_problem(
-                    field,
-                    rect,
-                    turns,
-                    field.text_size.map(|size| size / unit as f32),
-                ) {
+                if let Some(why) = default_problem(field, rect, turns, unit) {
                     problems.push(why);
                 }
                 placed_at.push((*page, rect));
@@ -1197,10 +1188,20 @@ pub fn place(
         text_size: placed.text_size,
         default_value: (!placed.default_value.is_empty()).then(|| placed.default_value.clone()),
     };
-    if let Some(why) = default_problem(&field, rect, turns, field.text_size) {
+    let unit = crate::pagetree::user_unit(doc, page)
+        .ok_or_else(|| said!("the page has an invalid user unit"))?;
+    if let Some(why) = default_problem(&field, rect, turns, unit) {
         return Err(why);
     }
-    let id = widget(doc, font, page, rect, &field, turns, field.text_size);
+    let id = widget(
+        doc,
+        font,
+        page,
+        rect,
+        &field,
+        turns,
+        field.text_size.map(|pt| pt / unit as f32),
+    );
     // The two a field made by `tpdf form` does not have. The empty appearance
     // holds no text, so an alignment changes nothing that is drawn yet.
     let made = doc.get_dictionary_mut(id).map_err(|e| e.to_string())?;

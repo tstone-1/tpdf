@@ -170,6 +170,23 @@ impl OpenDocument {
         &self.graph
     }
 
+    /// Physical points per native coordinate on each requested page.
+    pub(crate) fn page_units(&self, slots: &[u32]) -> Result<Vec<f32>, String> {
+        let doc = self.graph().parsed()?;
+        let ordered = crate::pagetree::pages_of(doc, self.page_count() as usize)?;
+        slots
+            .iter()
+            .map(|&slot| {
+                ordered
+                    .get(slot as usize)
+                    .and_then(|&id| crate::pagetree::user_unit(doc, id))
+                    .map(|unit| unit as f32)
+                    .filter(|unit| unit.is_finite() && *unit > 0.0)
+                    .ok_or_else(|| said!("the page has an invalid user unit"))
+            })
+            .collect()
+    }
+
     /// How many pages, straight from PDFium.
     ///
     /// Forwarded rather than left to `pdfium().page_count()` because four of the

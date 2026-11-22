@@ -739,8 +739,8 @@ ROWS += [
         # cannot see this.
         "edits: pad a drawing's rectangle by the default nib",
         "src/edits.rs",
-        "        let width = nib(want.width);",
-        "        let width = INK_WIDTH;",
+        '        let width = nib(want.width) / unit;',
+        '        let width = INK_WIDTH / unit;',
         "the_rectangle_is_padded_by_half_the_nib_the_reader_chose",
     ),
     Mutation(

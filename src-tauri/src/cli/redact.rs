@@ -975,8 +975,16 @@ fn run_redact(
 
     // The window's model, marked the way the window marks it.
     let mut marked: std::collections::BTreeMap<u32, Vec<[f32; 4]>> = match_regions(&found);
-    for (page, area) in &rects {
-        marked.entry(page - 1).or_default().push(*area);
+    if !rects.is_empty() {
+        let slots = rects.iter().map(|(page, _)| page - 1).collect();
+        let units = wait(|reply| service.page_units(doc, slots, reply))
+            .map_err(|why| Failure::new(Exit::Refused, why))?;
+        for ((page, area), unit) in rects.iter().zip(units) {
+            marked
+                .entry(page - 1)
+                .or_default()
+                .push(area.map(|v| v / unit));
+        }
     }
     let edits = crate::edits::Edits::default();
     edits.open(

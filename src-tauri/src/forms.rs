@@ -87,6 +87,9 @@ pub struct Widget {
     pub object: ObjectId,
     pub widget: ObjectId,
     pub page: u32,
+    /// Physical points per coordinate unit on this widget's page.
+    #[serde(default = "default_unit", skip_serializing_if = "standard_unit")]
+    pub unit: f64,
     pub rect: [f64; 4],
     pub display_rect: [f32; 4],
     pub name: String,
@@ -109,7 +112,7 @@ pub struct Widget {
     /// `/Q`, the field's or the form's.
     #[serde(default)]
     pub align: Align,
-    /// The text size the field's `/DA` declares, its own or the form's.
+    /// Physical point size of the field's or form's default appearance.
     /// `None` when it declares none or nought, which is a size that follows
     /// the field's height, and for a field that has no text.
     #[serde(default)]
@@ -124,6 +127,13 @@ pub struct Widget {
     /// that its text reads upright as the page is displayed.
     #[serde(default)]
     pub turns: u8,
+}
+
+fn default_unit() -> f64 {
+    1.0
+}
+fn standard_unit(unit: &f64) -> bool {
+    *unit == 1.0
 }
 
 impl Widget {
@@ -183,7 +193,7 @@ pub(crate) fn declared_size(appearance: &[u8], unit: f32) -> Option<f32> {
         .ok()?;
     (MIN_TEXT_SIZE..=MAX_TEXT_SIZE)
         .contains(&(size * unit))
-        .then_some(size)
+        .then_some(size * unit)
 }
 
 /// A default appearance with its text size set to `size`, nought for a size
@@ -505,7 +515,7 @@ fn one_drawing(doc: &Document, widget: ObjectId) -> bool {
         .is_some_and(|(_, o)| o.as_stream().is_ok())
 }
 
-fn button_state(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
+pub(crate) fn button_state(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
     let normal = doc
         .get_dictionary(id)
         .ok()
@@ -777,10 +787,12 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 Some(2) => Align::Right,
                 _ => Align::Left,
             };
+            let unit = crate::pagetree::user_unit(doc, id)
+                .ok_or_else(|| said!("the page has an invalid user unit"))?;
             let text_size = (text || choice)
                 .then(|| default_appearance(doc, object))
                 .flatten()
-                .and_then(|da| declared_size(&da, crate::pagetree::user_unit(doc, id)? as f32));
+                .and_then(|da| declared_size(&da, unit as f32));
             let default_value = text
                 .then(|| inherited(doc, object, b"DV"))
                 .flatten()
@@ -801,6 +813,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 ],
             );
             result.widgets.push(Widget {
+                unit,
                 display_rect,
                 object,
                 widget,
@@ -1108,7 +1121,8 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
     // A list remains a list on paper, with selected rows shaded. TI names the
     // first visible row so another editor starts at the same place.
     let top = indices.first().copied().unwrap_or(0);
-    let (width, height) = widget.drawn_size();
+    let (w, h) = widget.drawn_size();
+    let (width, height) = (w * widget.unit, h * widget.unit);
     let size = widget
         .text_size
         .map_or(AUTO_TEXT_SIZE, f64::from)
@@ -1139,12 +1153,13 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
             "This list uses characters that cannot be saved visibly"
         ));
     }
-    Ok((size, lines))
+    Ok((size / widget.unit, lines))
 }
 
 /// Layout is validated before journalling as well as immediately before writing.
 fn text_layout(widget: &Widget, text: &str) -> Result<(f64, Vec<String>), String> {
-    let (width, height) = widget.drawn_size();
+    let (w, h) = widget.drawn_size();
+    let (width, height) = (w * widget.unit, h * widget.unit);
     // The size the field declares, or twelve points for one that declares
     // none, or less where the field is too low for it: two points of
     // inset either side, and a line needs 1.2 of its size inside the field's
@@ -1173,7 +1188,7 @@ fn text_layout(widget: &Widget, text: &str) -> Result<(f64, Vec<String>), String
     if size < 4.0 || lines.len() as f64 * size * 1.2 > height - 2.0 + 1e-9 {
         return Err(said!("The answer does not fit visibly in this field"));
     }
-    Ok((size, lines))
+    Ok((size / widget.unit, lines))
 }
 
 pub(crate) fn pdf_string(text: &str) -> Object {
@@ -1240,8 +1255,9 @@ fn write_text_appearance(
     body.push_str(&format!("0 0 {width} {height} re W n\n"));
     let list = matches!(widget.control, Control::Choice { combo: false, .. });
     let top = selected.first().copied().unwrap_or(0);
+    let inset = 2.0 / widget.unit;
     for (i, line) in lines.iter().enumerate() {
-        let y = height - 2.0 - size - i as f64 * size * 1.2;
+        let y = height - inset - size - i as f64 * size * 1.2;
         if list && selected.contains(&(top + i)) {
             body.push_str(&format!(
                 "0.8 0.87 1 rg 0 {} {width} {} re f\n",
@@ -1254,9 +1270,9 @@ fn write_text_appearance(
         // allowed for; a centred line has the same room either side.
         let advance = crate::textbox::advance(line, size);
         let x = match widget.align {
-            Align::Left => 2.0,
-            Align::Center => ((width - advance) / 2.0).max(2.0),
-            Align::Right => (width - 2.0 - advance).max(2.0),
+            Align::Left => inset,
+            Align::Center => ((width - advance) / 2.0).max(inset),
+            Align::Right => (width - inset - advance).max(inset),
         };
         body.push_str(&format!(
             "0 0 0 rg BT /F0 {size} Tf 1 0 0 1 {x} {y} Tm <{hex}> Tj ET\n"
@@ -1691,6 +1707,7 @@ pub(crate) mod tests {
             label: label.into(),
         };
         let list = |text_size: Option<f32>| Widget {
+            unit: 1.0,
             object: (5, 0),
             widget: (5, 0),
             page: 0,

@@ -279,6 +279,21 @@ describe("a rectangle on a page an edit turned", () => {
   });
 });
 
+it("restores text geometry when a second view adopts moved and turned pages", async () => {
+  const viewer = build(installFakeDom(), 2);
+  try {
+    viewer.setPages([
+      { id: pageId(2), source: { baseline: 1 }, turns: 1 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+    ]);
+    expect(viewer.pageExtraTurns(0)).toBe(1);
+    expect((await viewer.loadText(0))?.width_pt).toBe(800);
+    expect((await viewer.loadText(1))?.width_pt).toBe(600);
+  } finally {
+    viewer.destroy();
+  }
+});
+
 describe("what a turned page does to a place in it", () => {
   it("does not serve a link's old rectangle out of the cache after a turn", async () => {
     // One press per turn, and never off page 0. The grid scans above cannot see

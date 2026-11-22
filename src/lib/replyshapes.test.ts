@@ -506,6 +506,7 @@ const UNNAMED_LEAVES = new Set([
   "usize",
   // A count: how many texts *Copy page for PowerPoint* left out.
   "u32",
+  "f32",
   "f64",
   "[f32; 4]",
   "[f64; 4]",

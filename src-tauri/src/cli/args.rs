@@ -242,24 +242,10 @@ pub(crate) fn rgb(raw: &str) -> Option<[f32; 3]> {
     <[f32; 3]>::try_from(parts).ok()
 }
 
-/// Whether two paths are the same path as written, `.` and `..` resolved.
-///
-/// Lexical only: `cli.rs` asks the filesystem afterwards (`save::same_file`),
-/// which is what catches a link or a second name. This is the half a unit test
-/// can hold, and the half a typo produces.
+/// Compare only components whose equivalence does not depend on the filesystem.
 pub(crate) fn lexically_same(a: &Path, b: &Path) -> bool {
-    fn normal(path: &Path) -> Vec<Component<'_>> {
-        let mut out: Vec<Component<'_>> = Vec::new();
-        for part in path.components() {
-            match part {
-                Component::CurDir => {}
-                Component::ParentDir if matches!(out.last(), Some(Component::Normal(_))) => {
-                    out.pop();
-                }
-                other => out.push(other),
-            }
-        }
-        out
-    }
-    normal(a) == normal(b)
+    let parts = |part: &Component<'_>| *part != Component::CurDir;
+    a.components()
+        .filter(parts)
+        .eq(b.components().filter(parts))
 }

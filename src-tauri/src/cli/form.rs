@@ -263,7 +263,7 @@ pub fn read_back(
         } else if widget.max_length != field.max_length.map(|most| most as usize) {
             problems.push(format!("`{name}` reads back with another most characters"));
         } else if match (widget.text_size, field.text_size) {
-            (Some(raw), Some(points)) => (raw * unit - points).abs() > 0.001,
+            (Some(actual), Some(points)) => (actual - points).abs() > 0.001,
             (got, want) => got != want,
         } {
             problems.push(format!("`{name}` reads back with another text size"));
@@ -550,6 +550,7 @@ mod tests {
 
     fn widget(name: &str, control: Control, value: Value, page: u32, rect: [f32; 4]) -> Widget {
         Widget {
+            unit: 1.0,
             object: (u32::from(name.as_bytes()[0]), 0),
             widget: (u32::from(name.as_bytes()[0]), 0),
             page,
@@ -691,6 +692,7 @@ mod tests {
         })
         .contains("has 0 fields of this name"));
         assert!(broken(&|f| f.widgets.push(Widget {
+            unit: 1.0,
             object: (999, 0),
             ..name.clone()
         }))

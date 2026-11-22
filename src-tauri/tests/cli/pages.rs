@@ -196,6 +196,60 @@ pub(super) fn operations(report: &mut Report) {
         &format!("{stderr}; box={crop:?}"),
     );
 
+    let (code, _, stderr) = tool(&["split", &input, "-o", &input], &[]);
+    let numbered = dir.join("source-1.pdf");
+    report.check(
+        "split may use its input basename as the output template",
+        code == 0
+            && numbered.exists()
+            && names(&numbered) == ["Alpha"]
+            && std::fs::read(&source).unwrap() == original,
+        &stderr,
+    );
+    let (code, _, stderr) = tool(&["split", &s(&numbered), "-o", &input, "--force"], &[]);
+    report.check(
+        "split refuses a numbered target that is the input even with force",
+        code == 2 && names(&numbered) == ["Alpha"],
+        &stderr,
+    );
+    #[cfg(unix)]
+    {
+        let other = dir.join("other");
+        let nested = other.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::os::unix::fs::symlink(&nested, dir.join("incoming")).unwrap();
+        let traversed = dir.join("incoming/../source.pdf");
+        fixture(&other.join("source.pdf"), &["Different"]);
+        let destination = dir.join("traversal-copy.pdf");
+        std::fs::copy(&source, &destination).unwrap();
+        let alias = dir.join("incoming/../traversal-copy.pdf");
+        fixture(&other.join("traversal-copy.pdf"), &["Separate"]);
+        let (code, _, stderr) = tool(
+            &["reverse", &s(&alias), "-o", &s(&destination), "--force"],
+            &[],
+        );
+        report.check(
+            "a symlink before parent traversal preserves distinct file identity",
+            code == 0 && names(&destination) == ["Separate"],
+            &stderr,
+        );
+        let (code, _, stderr) = tool(
+            &[
+                "reverse",
+                &s(&traversed),
+                "-o",
+                &s(&other.join("source.pdf")),
+                "--force",
+            ],
+            &[],
+        );
+        report.check(
+            "the resolved input still cannot be its own output",
+            code == 2 && names(&traversed) == ["Different"],
+            &stderr,
+        );
+    }
+
     let prefix = dir.join("part.pdf");
     let (code, stdout, stderr) = tool(
         &["split", &input, "--every", "2", "-o", &s(&prefix), "--json"],

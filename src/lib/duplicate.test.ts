@@ -160,7 +160,7 @@ function deps(picked: number[], update: { refuse?: boolean; none?: boolean } = {
       made.push([one, sweep]);
       if (update.refuse) return;
       world.marks = [...world.marks, { ...mark(world.next, one.kind, one.note, one.field), quads: one.quads }];
-      world.next += 1;
+      return world.next++;
     },
     pick: (ids) => pickedAfter.push(ids),
     say: (message) => said.push(message),

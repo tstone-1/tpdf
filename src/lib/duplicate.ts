@@ -143,7 +143,7 @@ export interface DuplicateDeps {
   formNames(): readonly string[];
   border(): boolean;
   /** Makes one mark as part of the gesture. */
-  make(copy: Copy, sweep: number): Promise<unknown>;
+  make(copy: Copy, sweep: number): Promise<number | undefined>;
   /** Picks the copies, in place of what was picked. */
   pick(ids: number[]): void;
   say(message: string): void;
@@ -168,10 +168,8 @@ export async function duplicate(deps: DuplicateDeps): Promise<number> {
       deps.say(copy);
       continue;
     }
-    const before = new Set(state.marks.map((one) => one.id));
-    await deps.make(copy, asked.sweep);
-    const now = deps.state()?.marks.find((one) => !before.has(one.id));
-    if (now) made.push(now.id);
+    const id = await deps.make(copy, asked.sweep);
+    if (id !== undefined) made.push(id);
   }
   if (made.length > 0) deps.pick(made);
   return made.length;

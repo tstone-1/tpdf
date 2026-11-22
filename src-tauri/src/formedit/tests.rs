@@ -1651,3 +1651,138 @@ fn an_empty_signature_field_is_moved_resized_renamed_and_removed_like_any_field(
         assert!(why.contains("signed signature field"), "{why}");
     }
 }
+
+#[test]
+fn clearing_inherited_properties_preserves_the_parent() {
+    let mut f = with_group(Some("Group"));
+    let child = one(&f.doc, "Group.Inner");
+    let parent = f
+        .doc
+        .get_dictionary(child.object)
+        .unwrap()
+        .get(b"Parent")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let group = f.doc.get_dictionary_mut(parent).unwrap();
+    group.set("MaxLen", 12);
+    group.set("DV", crate::forms::pdf_string("reset"));
+    let child = one(&f.doc, "Group.Inner");
+    assert_eq!(child.default_value, "reset");
+    let props = Props {
+        max_length: Some(0),
+        default_value: Some(String::new()),
+        ..Props::default()
+    };
+    let before = bytes(&f.doc);
+    assert!(apply(&mut f.doc, &[with(&child, props)])
+        .unwrap_err()
+        .contains("inherited"));
+    assert_eq!(bytes(&f.doc), before);
+    let props = Props {
+        default_value: Some(String::new()),
+        ..Props::default()
+    };
+    apply(&mut f.doc, &[with(&child, props)]).unwrap();
+    assert!(one(&f.doc, "Group.Inner").default_value.is_empty());
+    assert_eq!(
+        f.doc.get_dictionary(parent).unwrap().get(b"DV").unwrap(),
+        &crate::forms::pdf_string("reset")
+    );
+}
+
+#[test]
+fn deleting_a_radio_reconciles_the_group_and_remaining_appearances() {
+    for (remove_index, expected) in [(0, "Cash"), (1, "Off")] {
+        let (mut doc, buttons) = with_buttons();
+        let group = buttons[0].object;
+        doc.get_dictionary_mut(group).unwrap().set("DV", "Cash");
+        apply(&mut doc, &[gone(&buttons[remove_index])]).unwrap();
+        assert_eq!(name_at(&doc, group, b"V"), expected);
+        assert_eq!(name_at(&doc, group, b"DV"), expected);
+        for button in widgets(&doc, "Pay") {
+            let appearance = if button.widget == buttons[1].widget {
+                "Cash"
+            } else {
+                "Off"
+            };
+            assert_eq!(name_at(&doc, button.widget, b"AS"), appearance);
+        }
+    }
+}
+
+#[test]
+fn changing_a_choice_list_preserves_the_selected_export_and_index() {
+    let pair = |export: &str, label: &str| {
+        Object::Array(vec![
+            crate::forms::pdf_string(export),
+            crate::forms::pdf_string(label),
+        ])
+    };
+    for (first, second, ambiguous) in [("Standard", "Express", false), ("Same", "Same", true)] {
+        let mut f = fixture();
+        let colour = with_colours(&mut f);
+        let field = f.doc.get_dictionary_mut(colour.object).unwrap();
+        field.set(
+            "Opt",
+            vec![
+                pair(if ambiguous { "X" } else { "SHIP" }, first),
+                pair("SHIP", second),
+            ],
+        );
+        field.set("V", crate::forms::pdf_string("SHIP"));
+        field.set("I", vec![Object::Integer(1)]);
+        let saved = one(&f.doc, "Colour");
+        assert_eq!(saved.value, Value::Selection(vec![1]));
+        let mut labels = vec![first.to_string()];
+        if !ambiguous {
+            labels.push(second.to_string());
+        }
+        labels.push("Pickup".to_string());
+        let props = Props {
+            options: Some(labels),
+            ..Props::default()
+        };
+        let before = bytes(&f.doc);
+        let result = apply(&mut f.doc, &[with(&saved, props)]);
+        if ambiguous {
+            assert!(result.unwrap_err().contains("repeated labels"));
+            assert_eq!(bytes(&f.doc), before);
+        } else {
+            result.unwrap();
+            assert_eq!(one(&f.doc, "Colour").value, Value::Selection(vec![1]));
+            assert_eq!(
+                f.doc
+                    .get_dictionary(colour.object)
+                    .unwrap()
+                    .get(b"V")
+                    .unwrap(),
+                &crate::forms::pdf_string("SHIP")
+            );
+        }
+    }
+}
+
+#[test]
+fn changing_text_size_on_a_scaled_page_writes_a_physical_size() {
+    let mut f = fixture();
+    f.doc
+        .get_dictionary_mut(f.pages[0])
+        .unwrap()
+        .set("UserUnit", 2);
+    let name = one(&f.doc, "Name");
+    apply(
+        &mut f.doc,
+        &[with(
+            &name,
+            Props {
+                text_size: Some(12.0),
+                ..Props::default()
+            },
+        )],
+    )
+    .unwrap();
+    assert_eq!(one(&f.doc, "Name").text_size, Some(12.0));
+    assert_eq!(declared(&f.doc, name.object), "/Helv 6 Tf 0 g");
+    assert!(drawn(&f.doc, name.widget).contains("/F0 6 Tf"));
+}

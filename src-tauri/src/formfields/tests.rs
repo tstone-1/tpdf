@@ -2103,9 +2103,11 @@ fn physical_field_dimensions_and_type_size_survive_page_scaling() {
     doc.get_dictionary_mut(page).unwrap().set("UserUnit", 2);
     let mut asked = field("Scaled", Kind::Text, 0, [72., 100., 40., 8.]);
     asked.text_size = Some(4.);
+    asked.default_value = Some("A".into());
     add(&mut doc, &[asked]).unwrap();
     let form = forms::scan(&reloaded(&mut doc)).unwrap();
     let widget = &form.widgets[0];
     assert_eq!(widget.rect, [36., 146., 56., 150.]);
-    assert_eq!(widget.text_size, Some(2.));
+    assert_eq!(widget.text_size, Some(4.));
+    assert_eq!(widget.value, forms::Value::Text("A".into()));
 }

@@ -2229,8 +2229,8 @@ ROWS += [
         # half a test written against a delegating method cannot see.
         "hash: do not start the fingerprint on an annotation",
         "src/edits.rs",
-        "        sweep: u64,\n    ) -> Result<EditState, String> {\n        // The reader is here: start the fingerprint if nothing has. See `wake`.\n        self.wake(doc);\n        if want.quads.len() % 4 != 0 {",
-        "        sweep: u64,\n    ) -> Result<EditState, String> {\n        if want.quads.len() % 4 != 0 {",
+        '        unit: f64,\n    ) -> Result<EditState, String> {\n        // The reader is here: start the fingerprint if nothing has. See `wake`.\n        self.wake(doc);\n        if want.quads.len() % 4 != 0 {',
+        '        unit: f64,\n    ) -> Result<EditState, String> {\n        if want.quads.len() % 4 != 0 {',
         "every_edit_starts_the_hash",
     ),
     Mutation(

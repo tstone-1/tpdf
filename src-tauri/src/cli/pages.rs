@@ -177,10 +177,11 @@ fn parse(kind: Kind, args: &[String]) -> Result<Pages, String> {
         return Err("merge needs at least two input documents".into());
     }
     parsed.output = output.ok_or("-o <out.pdf> is required; inputs are never overwritten")?;
-    if parsed
-        .inputs
-        .iter()
-        .any(|p| lexically_same(p, &parsed.output))
+    if kind != Kind::Split
+        && parsed
+            .inputs
+            .iter()
+            .any(|p| lexically_same(p, &parsed.output))
     {
         return Err("the output names an input; choose a different name".into());
     }
@@ -248,6 +249,26 @@ pub(super) fn page_units(
 ) -> Result<Vec<f32>, Failure> {
     units_for_slots(session, pages.iter().map(|page| page - 1).collect())
         .map_err(|why| declined(&path.display().to_string(), why, has_password))
+}
+
+/// Convert all page dimensions to physical points and retain the coordinate scales.
+pub(super) fn physical_sizes(
+    session: &mut Session,
+    sizes: &mut [PageSize],
+) -> Result<Vec<f32>, Declined> {
+    let count = u32::try_from(sizes.len())
+        .map_err(|_| Declined::Failed("the worker returned too many pages".into()))?;
+    let units = units_for_slots(session, (0..count).collect())?;
+    for (size, unit) in sizes.iter_mut().zip(&units) {
+        size.width_pt *= unit;
+        size.height_pt *= unit;
+        if !size.width_pt.is_finite() || !size.height_pt.is_finite() {
+            return Err(Declined::Refused(
+                "the physical page size is too large".into(),
+            ));
+        }
+    }
+    Ok(units)
 }
 
 /// Physical points per native unit, in the order of the zero-based slots.

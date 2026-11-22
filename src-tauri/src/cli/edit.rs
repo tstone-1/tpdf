@@ -325,6 +325,7 @@ impl OperationError {
 fn apply(
     request: &EditRequest,
     baseline: &super::pages::Input,
+    units: &[f32],
     now: u64,
     mut ask: impl FnMut(Request) -> Result<Reply, crate::save_outside::Declined>,
 ) -> Result<(Plan, Vec<report::FontUsed>), Failure> {
@@ -452,7 +453,15 @@ fn apply(
                     // The GUI journals geometry before its extra page turns.
                     // Undo those turns here as viewer.unturnQuad does; the writer
                     // applies the journal rotation after writing the marks.
-                    let turns = state.pages[(*n - 1) as usize].turns;
+                    let page = &state.pages[(*n - 1) as usize];
+                    let unit = match page.source {
+                        PageSource::Baseline(file) => units[file as usize],
+                        PageSource::Blank(_) => 1.0,
+                        PageSource::Imported { .. } => {
+                            unreachable!("edit requests cannot import pages")
+                        }
+                    };
+                    let turns = page.turns;
                     if !quads.is_empty() {
                         let a = unturn(quads[0], quads[1], turns, size);
                         let b = unturn(quads[2], quads[3], turns, size);
@@ -468,11 +477,14 @@ fn apply(
                         .map(|stroke| {
                             stroke
                                 .chunks_exact(2)
-                                .flat_map(|p| unturn(p[0], p[1], turns, size))
+                                .flat_map(|p| unturn(p[0], p[1], turns, size).map(|v| v / unit))
                                 .collect()
                         })
                         .collect();
-                    model.annotate(
+                    for coordinate in &mut quads {
+                        *coordinate /= unit;
+                    }
+                    model.annotate_at_scale(
                         1,
                         NewMark {
                             kind: *kind,
@@ -489,6 +501,8 @@ fn apply(
                             note: text.clone(),
                         },
                         made.clone(),
+                        0,
+                        f64::from(unit),
                     )?;
                 }
                 Operation::ReplaceText {
@@ -653,7 +667,7 @@ impl Subcommand for Edit {
             Some(read_request(&self.request)?)
         };
         let key = password(self.password_env.as_deref())?;
-        let (before, mut session) = read_input(env, &self.input, key.as_deref())?;
+        let (mut before, mut session) = read_input(env, &self.input, key.as_deref())?;
         if self.mode == Mode::TextRuns {
             if self.page as usize > before.sizes.len() {
                 return Err(Failure::new(Exit::Refused, "page is outside the document"));
@@ -740,7 +754,13 @@ impl Subcommand for Edit {
                 ));
             }
         }
-        let (plan, fonts) = apply(&request, &before, env.now, |request| session.ask(request))?;
+        let units =
+            super::pages::physical_sizes(&mut session, &mut before.sizes).map_err(|why| {
+                super::text::declined(&self.input.display().to_string(), why, key.is_some())
+            })?;
+        let (plan, fonts) = apply(&request, &before, &units, env.now, |request| {
+            session.ask(request)
+        })?;
         drop(session);
         let sizes = dimensions(&plan, &before.sizes);
         let inputs = [self.input.clone()];
@@ -755,13 +775,19 @@ impl Subcommand for Edit {
                 self.force,
                 copy_of(env, &self.input, &plan, key.as_deref()),
                 |staged, ()| {
-                    let (after, session) =
-                        read_input(env, staged, key.as_deref()).map_err(|e| {
+                    let (mut after, mut session) = read_input(env, staged, key.as_deref())
+                        .map_err(|e| {
                             Failure::new(
                                 Exit::Internal,
                                 format!("staged output could not be read: {}", e.message),
                             )
                         })?;
+                    super::pages::physical_sizes(&mut session, &mut after.sizes).map_err(|e| {
+                        Failure::new(
+                            Exit::Internal,
+                            format!("staged page units could not be read: {e:?}"),
+                        )
+                    })?;
                     drop(session);
                     if before.encrypted != after.encrypted || !same_sizes(&after.sizes, &sizes) {
                         return Err(Failure::new(
@@ -910,7 +936,8 @@ mod tests {
             ),
         ] {
             let mut response = Some(response);
-            let failure = apply(&request, &baseline, 0, |_| response.take().unwrap()).unwrap_err();
+            let failure =
+                apply(&request, &baseline, &[1.0], 0, |_| response.take().unwrap()).unwrap_err();
             assert_eq!(failure.exit, expected);
             assert!(
                 failure.message.starts_with("operation 2:"),
@@ -963,7 +990,7 @@ mod tests {
         };
         // No font: one question, and the run keeps its own place and font.
         let mut asked = Vec::new();
-        let (made, fonts) = apply(&plan("", 3).unwrap(), &baseline, 0, |request| {
+        let (made, fonts) = apply(&plan("", 3).unwrap(), &baseline, &[1.0], 0, |request| {
             asked.push(request);
             Ok(Reply::TextRuns(runs()))
         })
@@ -997,6 +1024,7 @@ mod tests {
         let (made, fonts) = apply(
             &plan("noto_sans_bold", 3).unwrap(),
             &baseline,
+            &[1.0],
             0,
             |request| {
                 let reply = laid_out(&request, "Noto Sans Bold");
@@ -1013,7 +1041,7 @@ mod tests {
             }]
         );
         // A reply that does not name the font is a failure, not a silent gap.
-        let failure = apply(&plan("auto", 3).unwrap(), &baseline, 0, |_| {
+        let failure = apply(&plan("auto", 3).unwrap(), &baseline, &[1.0], 0, |_| {
             Ok(Reply::TextRuns(runs()))
         })
         .unwrap_err();
@@ -1088,7 +1116,7 @@ mod tests {
             if font.is_empty() {
                 replies.pop();
             }
-            let failure = apply(&plan(font, 3).unwrap(), &baseline, 0, |_| {
+            let failure = apply(&plan(font, 3).unwrap(), &baseline, &[1.0], 0, |_| {
                 replies.pop().unwrap()
             })
             .unwrap_err();
@@ -1100,7 +1128,7 @@ mod tests {
         }
 
         // The operator must be one the page has, and the font one tpdf knows.
-        let failure = apply(&plan("auto", 4).unwrap(), &baseline, 0, |_| {
+        let failure = apply(&plan("auto", 4).unwrap(), &baseline, &[1.0], 0, |_| {
             Ok(Reply::TextRuns(runs()))
         })
         .unwrap_err();

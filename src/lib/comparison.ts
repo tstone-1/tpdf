@@ -19,6 +19,7 @@
  */
 
 import { catalog } from "./i18n";
+import type { PageId } from "./pages";
 import type { PageText } from "./text";
 
 /** One page's characters, as `compare_texts` takes them. `PageCodes` in `compare.rs`. */
@@ -374,11 +375,23 @@ export function reopenedViews<V>(before: V, after: V, others: readonly { view: V
  * characters an edit can have moved) and keeps the rows.
  */
 export class ComparisonState<V> {
-  private held: { left: V; right: V; compared: Compared; current: number; stale: boolean } | null = null;
+  private held: {
+    left: V;
+    right: V;
+    compared: Compared;
+    current: number;
+    stale: boolean;
+    pages: Record<Side, readonly PageId[]>;
+  } | null = null;
 
   /** Holds a new comparison, `left` being the older document's view. */
-  start(left: V, right: V, compared: Compared): void {
-    this.held = { left, right, compared, current: -1, stale: false };
+  start(left: V, right: V, compared: Compared, pages: Record<Side, readonly PageId[]>): void {
+    this.held = { left, right, compared, current: -1, stale: false, pages: { ...pages } };
+  }
+
+  /** The stable page identity at a compared position, invalid after reloading that side. */
+  pageAt(side: Side, slot: number): PageId | undefined {
+    return this.held?.pages[side][slot];
   }
 
   /** The comparison, or `null` with none. */
@@ -457,6 +470,8 @@ export class ComparisonState<V> {
     if (!onLeft && !onRight) return false;
     if (onLeft) held.left = to.get(held.left) as V;
     if (onRight) held.right = to.get(held.right) as V;
+    if (onLeft) held.pages.left = [];
+    if (onRight) held.pages.right = [];
     held.stale = true;
     return true;
   }

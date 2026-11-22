@@ -85,8 +85,8 @@ ROWS = [
         "does not show an answer asked for before the selection ended"),
     # --- comparison.ts and its call in the open ---------------------------------------
     Mutation("comparison: a document read again leaves it current", "src/lib/comparison.ts",
-        "    if (onRight) held.right = to.get(held.right) as V;\n    held.stale = true;",
-        "    if (onRight) held.right = to.get(held.right) as V;",
+        '    held.stale = true;\n    return true;',
+        '    return true;',
         "follows a document read again to its new view, and goes out of date"),
     Mutation("comparison: the left side not moved to its new view", "src/lib/comparison.ts",
         "    if (onLeft) held.left = to.get(held.left) as V;\n",

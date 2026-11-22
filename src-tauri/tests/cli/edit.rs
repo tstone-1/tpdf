@@ -66,6 +66,39 @@ pub(super) fn operations(report: &mut Report) {
     fixture(&source, &["Alpha", "Bravo", "Charlie"]);
     let original = std::fs::read(&source).unwrap();
     let output = dir.join("edited.pdf");
+    // Identical physical sheets with different native coordinates.
+    let scaled = dir.join("scaled.pdf");
+    fixture(&scaled, &["One", "Two"]);
+    let mut doc = Document::load(&scaled).unwrap();
+    for (page, id) in doc.get_pages() {
+        let unit = i64::from(page);
+        let dict = doc.get_dictionary_mut(id).unwrap();
+        let bounds = vec![0.into(), 0.into(), (400 / unit).into(), (600 / unit).into()];
+        dict.set("MediaBox", lopdf::Object::Array(bounds.clone()));
+        dict.set("CropBox", lopdf::Object::Array(bounds));
+        dict.set("Rotate", 0);
+        dict.set("UserUnit", unit);
+    }
+    doc.save(&scaled).unwrap();
+    let marked = dir.join("scaled-edited.pdf");
+    let ops = json!([
+        {"op":"annotate","page":1,"kind":"square","rect":[350,40,20,20]},
+        {"op":"annotate","page":2,"kind":"square","rect":[350,40,20,20]}
+    ]);
+    let (code, read, stderr) = edit(&scaled, &marked, ops, &[]);
+    let rects: Vec<_> = if marked.exists() {
+        annotations(&marked).into_iter().map(|a| a.3).collect()
+    } else {
+        Vec::new()
+    };
+    report.check(
+        "edit reports physical pages and writes the same physical rectangle on each",
+        code == 0
+            && read["pages"][0] == read["pages"][1]
+            && read["pages"][1]["width_pt"] == 400.0
+            && rects == [vec![350., 540., 370., 560.], vec![175., 270., 185., 280.]],
+        &format!("{read} {rects:?} {stderr}"),
+    );
     let operations = json!([
         {"op":"move_page","page":1,"to":3},
         {"op":"delete_page","page":2},

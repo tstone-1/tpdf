@@ -3319,6 +3319,29 @@ impl Doc {
     /// deleted. **The id is issued after those checks**, so a refused redaction
     /// spends nothing.
     pub fn redact(&mut self, redaction: Redaction) -> Result<RedactionId, Refusal> {
+        self.check_redaction(&redaction)?;
+        self.redact_checked(redaction)
+    }
+
+    /// Append a checked region while holding exclusive access to this journal.
+    pub(crate) fn redact_checked(&mut self, redaction: Redaction) -> Result<RedactionId, Refusal> {
+        let id = RedactionId(self.next_redaction);
+        let page = redaction.page;
+        self.redactions.insert(id, redaction);
+        self.next_redaction += 1;
+        // A refusal cannot reach here --- the page was checked live a line ago
+        // against the same working document and the id is fresh --- and it is
+        // routed through `apply` anyway, so that the journal, the cursor, the
+        // snapshot rule and the redo-tail discard are the ones every other
+        // command gets. `Doc::annotate` says the same and for the same reason.
+        self.apply(Command::Redact {
+            redaction: id,
+            page,
+        })?;
+        Ok(id)
+    }
+
+    pub(crate) fn check_redaction(&self, redaction: &Redaction) -> Result<(), Refusal> {
         if !self.text_changes().is_empty() {
             return Err(Refusal::TextEdit(
                 "save or undo text edits before redacting",
@@ -3355,20 +3378,7 @@ impl Doc {
             }
         }
 
-        let id = RedactionId(self.next_redaction);
-        let page = redaction.page;
-        self.redactions.insert(id, redaction);
-        self.next_redaction += 1;
-        // A refusal cannot reach here --- the page was checked live a line ago
-        // against the same working document and the id is fresh --- and it is
-        // routed through `apply` anyway, so that the journal, the cursor, the
-        // snapshot rule and the redo-tail discard are the ones every other
-        // command gets. `Doc::annotate` says the same and for the same reason.
-        self.apply(Command::Redact {
-            redaction: id,
-            page,
-        })?;
-        Ok(id)
+        Ok(())
     }
 
     /// Takes a pending redaction back off its page.

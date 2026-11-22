@@ -1755,6 +1755,7 @@ describe("the eraser on marks that have no strokes", () => {
     // the numbers being consecutive --- only on neighbours differing --- so this
     // is here to pin where the mint happens rather than to defend a sequence.
     const viewer = build();
+    const previous = viewer.gesture();
     viewer.setMarks(marks());
     await settle();
     viewer.armErase();
@@ -1768,7 +1769,7 @@ describe("the eraser on marks that have no strokes", () => {
     viewer.armErase();
     drag(centre(viewer, ICON), centre(viewer, ICON));
     await settle();
-    expect(sweeps, "the cancelled sweep spent a number").toEqual([1]);
+    expect(sweeps, "the cancelled sweep spent a number").toEqual([previous + 1]);
   });
 
   it("counts marks and strokes apart while the sweep is live", async () => {

@@ -461,6 +461,11 @@ pub(crate) enum Job {
         request: crate::graphic::GraphicRequest,
         reply: Reply<Graphic>,
     },
+    PageUnits {
+        doc: u32,
+        pages: Vec<u32>,
+        reply: Reply<Vec<f32>>,
+    },
     Geometry {
         doc: u32,
         page: u32,
@@ -996,6 +1001,11 @@ impl RenderService {
         }
     }
 
+    /// Reads physical units for the named source pages in one worker request.
+    pub fn page_units(&self, doc: u32, pages: Vec<u32>, reply: Reply<Vec<f32>>) {
+        let _ = self.tx.send(Job::PageUnits { doc, pages, reply });
+    }
+
     /// Reports a page's displayed size under a crop, on a service thread.
     pub fn geometry(
         &self,
@@ -1381,6 +1391,7 @@ pub(crate) trait Engine {
         doc: u32,
         request: &crate::graphic::GraphicRequest,
     ) -> Result<Graphic, String>;
+    fn page_units(&self, doc: u32, pages: Vec<u32>) -> Result<Vec<f32>, String>;
     fn geometry(&self, doc: u32, page: u32, crop: Option<[f32; 4]>)
         -> Result<CropGeometry, String>;
     fn crop_box(&self, doc: u32, page: u32, rect: [f32; 4]) -> Result<[f32; 4], String>;
@@ -1483,6 +1494,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             request,
             reply,
         } => reply(engine.graphic(doc, &request)),
+        Job::PageUnits { doc, pages, reply } => reply(engine.page_units(doc, pages)),
         Job::Geometry {
             doc,
             page,
@@ -1585,6 +1597,7 @@ impl Job {
             PageCopy,
             Graphic,
             Geometry,
+            PageUnits,
             CropBox,
             RedactPlans,
             Outline,
@@ -1789,6 +1802,10 @@ impl Engine for InProcess {
         open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.view(doc), |view| {
             crate::graphic::export(view, request)
         })
+    }
+
+    fn page_units(&self, doc: u32, pages: Vec<u32>) -> Result<Vec<f32>, String> {
+        open_slot(&self.docs.borrow(), doc)?.page_units(&pages)
     }
 
     fn geometry(
