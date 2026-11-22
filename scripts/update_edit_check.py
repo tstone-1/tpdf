@@ -110,6 +110,12 @@ foreach ($e in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
     $fits = -not $Expandable -or $e.TryGetCurrentPattern(
         [System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)
     if ($Press -and $name -eq $Press -and $fits -and $type -in @("ControlType.Button", "ControlType.MenuItem")) {
+        # A refused Rotate leaves Pages open. Reuse that menu on the next attempt.
+        if ($Expandable -and $e.Current.IsEnabled -and
+            $pattern.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Expanded) {
+            "OPEN|$name|expanded"
+            break
+        }
         $pattern = $null
         if (-not $e.Current.IsEnabled) {
             "REFUSED|$name|disabled"
@@ -283,7 +289,7 @@ def turn(script: Path, window: int) -> str:
     click to give the page the keyboard took the foreground elsewhere.
     """
     opened = elements(script, window, press="Pages", expandable=True)
-    if not any(line.startswith("PRESSED|") for line in opened):
+    if not any(line.startswith(("PRESSED|", "OPEN|")) for line in opened):
         found = next((line for line in opened if line.startswith("REFUSED|")), None)
         return found or f"Pages not found among {[l for l in opened if 'Pages' in l][:6]}"
     time.sleep(0.5)

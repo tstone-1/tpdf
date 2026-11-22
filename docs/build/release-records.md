@@ -2,11 +2,37 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
-**26.11.13, release preparation, 2026-11-22.** The 26.11.12 tag and its unpublished draft
+**26.11.13 verification and publication, 2026-11-22.** The 26.11.12 tag and its unpublished draft
 remain at `f9c51da7`. This release carries the application changes verified below. At
 `db4bff3c` the corrected Windows packaging check passed all 53 tests three consecutive times
 against the signed draft installer, including cleanup. The macOS packaging check, all 38
 local gates, three-platform CI (44940538445) and Audit (44940538508) also passed.
+
+The release tag is `7dcb42fa`. All 38 local gates passed. CI run 44962860488 passed on
+all three platforms, Audit run 44962860405 passed, and all three jobs in release run
+44965908520 that install and test the packaged CLI and Python API passed. The eight draft
+files matched their SHA-256 digests and all four updater entries matched their signature
+files. The stapled macOS disk image opened a document in its notarized app. The Windows
+installer had a valid timestamped signature and passed 26/26 install, launch and uninstall
+checks. After publication, all eight download URLs answered HTTP 200 without credentials
+and the public updater manifest matched the verified draft byte for byte.
+
+On their first launch, installed copies of 26.11.11 offered 26.11.13 on both macOS (12/12)
+and Windows (18/18). The Windows interrupted-download test initially passed 32/33. The
+first refused rotation left Pages open. Trying to expand the same open menu again threw
+before the driver reached Rotate. Reusing the open menu reached the disabled command
+twice. All 33 checks then passed, including recovery after a deliberately interrupted
+download and the saved page's rotation before and after the update. The negative control
+applied both rotations after the interruption and failed exactly the two saved-rotation checks.
+
+Homebrew cask commit `a231811d` passed the online audit and livecheck. The validated WinGet
+1.28.0 manifests are in microsoft/winget-pkgs PR 445804 at `88a44f13`. The post-release
+mutation runs against the previous published tag, v26.11.11, selected 2,113 Rust cases,
+1,325 frontend cases and 56 viewer cases. On the release tag, 1,323 frontend cases
+failed their expected tests. The other two exposed gaps in the tests. The Escape test now presses Enter before rearming the pen, when leftover strokes
+can still be committed. The reading-order test checks the forward axis against the
+displayed positions of two glyphs. Both mutations and the adjacent cross-axis mutation
+failed their named tests on the corrected suite.
 
 **26.11.12, initial tag and draft checks, 2026-11-21.** The release corrects redaction
 verification for reused page content drawn with different fonts. `SECURITY.md` explains which

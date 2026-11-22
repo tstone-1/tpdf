@@ -32,7 +32,7 @@ import {
   textOfRanges,
   usableRuns,
 } from "./reading";
-import { caretAt, linesOf, runsFor, touchedIndices, turnedView, type PageText, type TaggedRun } from "./text";
+import { caretAt, charQuad, linesOf, runsFor, touchedIndices, turnedView, type PageText, type TaggedRun } from "./text";
 
 /** Builds a page from `(character, [left, top, right, bottom])` pairs. */
 function page(
@@ -239,7 +239,13 @@ describe("axesFor", () => {
     const upright = columns("interleaved");
     const wanted = readsAs(upright);
     for (const turns of [1, 2, 3]) {
-      expect(readsAs(turnedView(upright, turns))).toBe(wanted);
+      const turned = turnedView(upright, turns);
+      expect(readsAs(turned)).toBe(wanted);
+      // The first two glyphs are "ab". Their displayed positions give the
+      // forward direction even when extraction order alone keeps the word intact.
+      const { sideways, alongSign } = axesFor(turns);
+      const axis = sideways ? "top" : "left";
+      expect(Math.sign(charQuad(turned, 1)[axis] - charQuad(turned, 0)[axis])).toBe(alongSign);
     }
   });
 
