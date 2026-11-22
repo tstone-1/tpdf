@@ -483,6 +483,35 @@ fn a_pattern_and_its_thumbnail_share_original_pixels_while_another_thumbnail_shr
 }
 
 #[test]
+fn a_type3_glyph_keeps_shared_pixels_at_their_original_resolution() {
+    let mut doc = Document::with_version("1.7");
+    let raw = Stream::new(image(256, 256, "DeviceGray".into()), noise(256 * 256));
+    let logo = doc.add_object(raw.clone());
+    let other = doc.add_object(raw);
+    let page = page_with(
+        &mut doc,
+        "q 12 0 0 12 0 0 cm /Logo Do /Other Do Q BT /Glyph 256 Tf (A) Tj ET",
+        &[("Logo", logo), ("Other", other)],
+    );
+    let charproc = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"1000 0 d0 q 1000 0 0 1000 0 0 cm /Im Do Q".to_vec(),
+    ));
+    let font = dictionary! {"Type"=>"Font","Subtype"=>"Type3","CharProcs"=>dictionary!{"A"=>charproc},
+    "Resources"=>dictionary!{"XObject"=>dictionary!{"Im"=>logo}}};
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .get_mut(b"Resources")
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Font", dictionary! {"Glyph"=>font});
+    assert_eq!(apply(&mut doc, SCREEN).pictures_changed, 1);
+    assert_eq!(whole(&doc, logo, b"Width"), 256);
+    assert!(whole(&doc, other, b"Width") < 256);
+}
+
+#[test]
 fn preview_accepts_indirect_image_dimensions() {
     let (mut doc, image) = one_picture(image(400, 400, "DeviceGray".into()), noise(400 * 400));
     let width = doc.add_object(Object::Integer(400));

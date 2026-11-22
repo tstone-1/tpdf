@@ -127,7 +127,12 @@ export function positionsFor(
   if (slotsOf.size === 0) return null;
   let usedLabel = false;
   const one = (text: string): string | null => {
-    if (/^[0-9]+$/.test(text)) return text;
+    if (/^[0-9]+$/.test(text)) {
+      const slot = Number(text) - 1;
+      if (slot < 0 || slot >= pageCount) return null;
+      const printed = labelOf(slot);
+      return printed === null || printed === text ? text : null;
+    }
     const slots = slotsOf.get(text);
     if (slots?.length !== 1) return null;
     usedLabel = true;

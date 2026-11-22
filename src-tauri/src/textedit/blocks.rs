@@ -388,20 +388,32 @@ fn segment<'a>(
     }
 }
 
-/// Whether the show at `operator` is a `TJ` holding a displacement of an em or
-/// more anywhere but first: a first one says where the run starts.
+/// A column gap separates painted fragments. A leading or trailing cursor
+/// adjustment, including the empty show emitted by layout, draws no column.
 fn gapped(page: &Inspection, operator: u32) -> bool {
-    match page.content.operations.get(operator as usize) {
-        Some(operation) if operation.operator == "TJ" => match operation.operands.first() {
-            Some(Object::Array(items)) => items
-                .iter()
-                .skip(1)
-                .filter_map(|item| number(item).ok())
-                .any(|value| value <= -1000.),
-            _ => false,
-        },
-        _ => false,
+    for show in layout::shows_of(page, operator) {
+        let op = &page.content.operations[show as usize];
+        if op.operator != "TJ" {
+            continue;
+        }
+        let Some(Object::Array(items)) = op.operands.first() else {
+            continue;
+        };
+        let mut painted = false;
+        let mut displacement = 0.0;
+        for item in items {
+            if item.as_str().is_ok_and(|s| !s.is_empty()) {
+                if painted && displacement <= -1000.0 {
+                    return true;
+                }
+                painted = true;
+                displacement = 0.0;
+            } else if let Ok(value) = number(item) {
+                displacement += value;
+            }
+        }
     }
+    false
 }
 
 /// Whether the text of a line, run by run in reading order, opens with a list

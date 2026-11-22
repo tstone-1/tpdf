@@ -80,8 +80,8 @@ async function build(): Promise<Viewer> {
     pageCount: 1,
     pages: [PAGE],
     onRedacted: (page) => regions.push(page),
-    onRedactSelection: () => {
-      marked.push(viewer.selectionQuadsByPage().map((one) => one.text).join("|"));
+    onRedactSelection: async () => {
+      marked.push(((await viewer.selectionQuadsByPage()) ?? []).map((one) => one.text).join("|"));
       viewer.clearSelection();
     },
   });
@@ -139,7 +139,7 @@ describe("a selection drag the browser cancels", () => {
     dom.root.dispatch("pointerdown", { button: 0, pointerId: 1, clientX: from.x, clientY: from.y, target: dom.root });
     dom.root.dispatch("pointermove", { pointerId: 1, clientX: to.x, clientY: to.y });
     dom.root.dispatch("pointercancel", { pointerId: 1, clientX: to.x, clientY: to.y });
-    const kept = viewer.selectionQuadsByPage().map((one) => one.text).join("|");
+    const kept = ((await viewer.selectionQuadsByPage()) ?? []).map((one) => one.text).join("|");
     // The control: the press did select, so "nothing was marked" is about
     // the cancel and not about a press that found no words.
     expect(kept).not.toBe("");
@@ -150,8 +150,9 @@ describe("a selection drag the browser cancels", () => {
     const further = at(490, 200);
     dom.root.dispatch("pointermove", { pointerId: 1, clientX: further.x, clientY: further.y });
     dom.root.dispatch("pointerup", { pointerId: 1, clientX: further.x, clientY: further.y });
+    await settle();
     expect(marked).toEqual([]);
-    expect(viewer.selectionQuadsByPage().map((one) => one.text).join("|")).toBe(kept);
+    expect(((await viewer.selectionQuadsByPage()) ?? []).map((one) => one.text).join("|")).toBe(kept);
     viewer.destroy();
   });
 });
@@ -162,6 +163,7 @@ describe("the redaction tool pressed on text", () => {
     viewer.armRedact();
     drag(at(60, 200), at(240, 200));
 
+    await settle();
     expect(marked).toEqual(["ab"]);
     expect(regions).toEqual([]);
     expect(viewer.redactArmed).toBe(true);
@@ -176,6 +178,7 @@ describe("the redaction tool pressed on text", () => {
     viewer.armRedact();
     drag(at(60, 500), at(240, 700));
 
+    await settle();
     expect(marked).toEqual([]);
     expect(regions).toHaveLength(1);
     viewer.destroy();
@@ -186,6 +189,7 @@ describe("the redaction tool pressed on text", () => {
     viewer.armRedact();
     drag(at(100, 200), at(100, 200));
 
+    await settle();
     expect(marked).toEqual([]);
     expect(regions).toEqual([]);
     viewer.destroy();
@@ -197,6 +201,7 @@ describe("the redaction tool pressed on text", () => {
     const viewer = await build();
     drag(at(60, 200), at(240, 200));
 
+    await settle();
     expect(marked).toEqual([]);
     expect(viewer.hasSelection).toBe(true);
     viewer.destroy();

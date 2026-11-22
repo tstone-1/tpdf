@@ -359,3 +359,14 @@ fn geometry_answers_only_where_the_tags_do_not() {
     );
     assert!(geometric.values().all(|block| block.0 == 0));
 }
+
+#[test]
+fn a_grouped_table_column_gap_keeps_rows_apart() {
+    let rows = |gap| {
+        page(&format!(
+            "20 200 Td (A) Tj 8 0 Td [(B) {gap} (C)] TJ -8 -14 Td (A) Tj 8 0 Td [(B) {gap} (C)] TJ"
+        ))
+    };
+    assert_eq!(grouped(&rows(-1200)).len(), 2);
+    assert_eq!(grouped(&rows(-500)).len(), 1);
+}

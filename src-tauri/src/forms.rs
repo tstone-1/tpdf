@@ -168,7 +168,7 @@ const AUTO_TEXT_SIZE: f64 = 12.0;
 /// the field, for a string with no `Tf`, and for a size outside
 /// [`MIN_TEXT_SIZE`] to [`MAX_TEXT_SIZE`]: a field that declares half a point
 /// is still answered, at the size tpdf would choose.
-pub(crate) fn declared_size(appearance: &[u8]) -> Option<f32> {
+pub(crate) fn declared_size(appearance: &[u8], unit: f32) -> Option<f32> {
     let tokens: Vec<&[u8]> = appearance
         .split(|byte| byte.is_ascii_whitespace() || *byte == 0)
         .filter(|token| !token.is_empty())
@@ -179,7 +179,7 @@ pub(crate) fn declared_size(appearance: &[u8]) -> Option<f32> {
         .parse()
         .ok()?;
     (MIN_TEXT_SIZE..=MAX_TEXT_SIZE)
-        .contains(&size)
+        .contains(&(size * unit))
         .then_some(size)
 }
 
@@ -715,7 +715,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             let text_size = (text || choice)
                 .then(|| default_appearance(doc, object))
                 .flatten()
-                .and_then(|da| declared_size(&da));
+                .and_then(|da| declared_size(&da, crate::pagetree::user_unit(doc, id)? as f32));
             let default_value = text
                 .then(|| inherited(doc, object, b"DV"))
                 .flatten()
@@ -1593,6 +1593,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_default_appearance_says_its_text_size_before_tf() {
+        let declared_size = |bytes: &[u8]| super::declared_size(bytes, 1.0);
         assert_eq!(declared_size(b"/Helv 9 Tf 0 g"), Some(9.0));
         assert_eq!(declared_size(b"0 0 1 rg /TiRo 10.5 Tf"), Some(10.5));
         assert_eq!(declared_size(b"/Helv\t11\r\nTf"), Some(11.0));

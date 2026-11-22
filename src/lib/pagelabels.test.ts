@@ -79,7 +79,8 @@ describe("positionsFor", () => {
     expect(positionsFor("A-B-C", 4, (slot) => labels[slot]!, (range) => range === "2-4"))
       .toBe("Printed as A-B-C: type 2-4");
     expect(of("App-A-App-B")).toBe("Printed as App-A-App-B: type 7-8");
-    expect(of("ii-4, 8")).toBe("Printed as ii-4, 8: type 2-4,8");
+    expect(of("ii-4, 8")).toBeNull();
+    expect(of("ii-3", ["i", "ii", "3"])).toBe("Printed as ii-3: type 2-3");
   });
 
   it("names nothing for a value with no label in it, or with a word that is none", () => {

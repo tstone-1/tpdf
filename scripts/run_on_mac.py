@@ -155,7 +155,6 @@ fi
 # Rebuild the window suite's fixtures from the generators in this checkout.
 uv run --no-project --with-requirements scripts/fixture-tools.txt python scripts/ci_fixtures.py --signed --hostile >"$run/fixtures.log" 2>&1 &&
   uv run --no-project --with fonttools testdata/make_text_pdf.py testdata >>"$run/fixtures.log" 2>&1 &&
-  python3 testdata/make_outline_pdf.py testdata >>"$run/fixtures.log" 2>&1 &&
   python3 testdata/make_form_pdf.py >>"$run/fixtures.log" 2>&1 &&
   python3 testdata/make_redact_pages_pdf.py >>"$run/fixtures.log" 2>&1 &&
   python3 testdata/make_textedit_push.py >>"$run/fixtures.log" 2>&1 &&

@@ -184,6 +184,7 @@ fn alternate_actual_text_preserves_span_and_refuses_forged_edits_and_overlap() {
 fn actual_text_rejects_invalid_encodings_nesting_metadata_and_unclosed_spans() {
     for body in [
         "/Span << /ActualText <FEFFD800> >> BDC (FIRST) Tj EMC",
+        "/Span << /ActualText <4649ad525354> >> BDC (FIRST) Tj EMC",
         "/Span << /ActualText <FEFF00> >> BDC (FIRST) Tj EMC",
         "/Span << /ActualText <EFBBBFFF> >> BDC (FIRST) Tj EMC",
         "/Span << /ActualText (FIRST) /Alt (SYNTHETIC) >> BDC (FIRST) Tj EMC",
@@ -271,4 +272,13 @@ fn a_spans_actual_text_differs_from_its_words_only_at_the_ends() {
             "{spoken:?} {painted:?} {replacement:?}"
         );
     }
+}
+
+#[test]
+fn an_undefined_pdfdocencoding_byte_cannot_silently_disappear() {
+    assert!(super::logical(&Object::string_literal(b"A\xadB".as_slice())).is_err());
+    assert_eq!(
+        super::logical(&Object::string_literal(b"Gr\xfcne".as_slice())).unwrap(),
+        "Grüne"
+    );
 }

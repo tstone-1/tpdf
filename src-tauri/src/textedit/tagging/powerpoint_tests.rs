@@ -485,6 +485,11 @@ fn textedit_a_spans_actual_text_is_rewritten_with_its_words() {
     };
     replace(&mut doc, "FIRST", "IN", Some(layout.clone())).unwrap();
     assert_eq!(spoken_text(&doc, ids[6]), "IN");
+    assert_eq!(texts(&doc), ["IN", "SECOND"]);
+    replace(&mut doc, "IN", "", Some(layout.clone())).unwrap();
+    assert_eq!(texts(&doc), ["", "SECOND"]);
+    replace(&mut doc, "", "IN", Some(layout.clone())).unwrap();
+    assert_eq!(texts(&doc), ["IN", "SECOND"]);
     // One line only: a replacement that wraps would need its ActualText to
     // say where the line broke.
     let (mut doc, _) = spoken("FIRST", "SECOND", None);

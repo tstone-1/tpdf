@@ -141,7 +141,12 @@ fn text_problem(
 
 /// Why a field's default value would not be drawn in a field of this
 /// rectangle, as the answer it is.
-fn default_problem(field: &NewField, rect: [f64; 4], turns: u8) -> Option<String> {
+fn default_problem(
+    field: &NewField,
+    rect: [f64; 4],
+    turns: u8,
+    text_size: Option<f32>,
+) -> Option<String> {
     let default = field.default_value.as_deref().filter(|d| !d.is_empty())?;
     let would_be = forms::Widget {
         object: (0, 0),
@@ -159,7 +164,7 @@ fn default_problem(field: &NewField, rect: [f64; 4], turns: u8) -> Option<String
         required: false,
         read_only: false,
         align: forms::Align::Left,
-        text_size: field.text_size,
+        text_size,
         default_value: String::new(),
         turns,
     };
@@ -189,7 +194,7 @@ impl Placed {
             text_size: self.text_size,
             default_value: Some(self.default_value.clone()),
         };
-        default_problem(&field, [0.0, 0.0, width, height], 0)
+        default_problem(&field, [0.0, 0.0, width, height], 0, field.text_size)
     }
 }
 
@@ -444,7 +449,7 @@ fn taken(doc: &Document) -> Result<HashSet<String>, String> {
 }
 
 /// A field's rectangle in the page's own space, or why it cannot be placed.
-fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], String> {
+fn placed(doc: &Document, page: ObjectId, field: &NewField, unit: f64) -> Result<[f64; 4], String> {
     let name = &field.name;
     let [left, top, width, height] = field.rect;
     if !field.rect.iter().all(|v| v.is_finite()) {
@@ -465,7 +470,10 @@ fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], 
         ));
     }
     let geometry = crate::pagetree::displayed_page(doc, page);
-    let (page_width, page_height) = (f64::from(geometry.width), f64::from(geometry.height));
+    let (page_width, page_height) = (
+        f64::from(geometry.width) * unit,
+        f64::from(geometry.height) * unit,
+    );
     // A hundredth of a point of slack, so a rectangle computed to the page's
     // edge is not refused over the last digit.
     if left < -0.01
@@ -482,7 +490,7 @@ fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], 
     }
     Ok(crate::pagetree::from_displayed(
         &geometry,
-        [left, top, left + width, top + height],
+        [left, top, left + width, top + height].map(|value| value / unit),
     ))
 }
 
@@ -600,12 +608,21 @@ pub fn check(
             ));
             continue;
         };
-        match placed(doc, *page, field) {
+        let Some(unit) = crate::pagetree::user_unit(doc, *page) else {
+            problems.push(said!("the page has an invalid user unit"));
+            continue;
+        };
+        match placed(doc, *page, field, unit) {
             // Kept whether or not this field has another problem: the list is
             // only handed back when no field has any.
             Ok(rect) => {
                 let turns = crate::pagetree::displayed_page(doc, *page).turns;
-                if let Some(why) = default_problem(field, rect, turns) {
+                if let Some(why) = default_problem(
+                    field,
+                    rect,
+                    turns,
+                    field.text_size.map(|size| size / unit as f32),
+                ) {
                     problems.push(why);
                 }
                 placed_at.push((*page, rect));
@@ -745,6 +762,7 @@ fn widget(
     rect: [f64; 4],
     field: &NewField,
     turns: u8,
+    text_size: Option<f32>,
 ) -> ObjectId {
     let (width, height) = (rect[2] - rect[0], rect[3] - rect[1]);
     // The size the text is read in: the rectangle's, as the page is displayed.
@@ -764,7 +782,7 @@ fn widget(
         "P" => page,
         // Print, which is what makes a filled field appear on paper.
         "F" => 4,
-        "DA" => match field.text_size {
+        "DA" => match text_size {
             Some(size) => Object::String(
                 forms::sized_appearance(None, size),
                 lopdf::StringFormat::Literal,
@@ -1065,7 +1083,17 @@ pub fn add(doc: &mut Document, fields: &[NewField]) -> Result<(), String> {
             continue;
         }
         let turns = crate::pagetree::displayed_page(doc, page).turns;
-        let id = widget(doc, font, page, rect, field, turns);
+        let unit = crate::pagetree::user_unit(doc, page)
+            .ok_or_else(|| said!("the page has an invalid user unit"))?;
+        let id = widget(
+            doc,
+            font,
+            page,
+            rect,
+            field,
+            turns,
+            field.text_size.map(|size| size / unit as f32),
+        );
         append(doc, page, b"Annots", id)?;
         append(doc, form, b"Fields", id)?;
         answer_default(doc, id, field)?;
@@ -1153,10 +1181,10 @@ pub fn place(
         text_size: placed.text_size,
         default_value: (!placed.default_value.is_empty()).then(|| placed.default_value.clone()),
     };
-    if let Some(why) = default_problem(&field, rect, turns) {
+    if let Some(why) = default_problem(&field, rect, turns, field.text_size) {
         return Err(why);
     }
-    let id = widget(doc, font, page, rect, &field, turns);
+    let id = widget(doc, font, page, rect, &field, turns, field.text_size);
     // The two a field made by `tpdf form` does not have. The empty appearance
     // holds no text, so an alignment changes nothing that is drawn yet.
     let made = doc.get_dictionary_mut(id).map_err(|e| e.to_string())?;

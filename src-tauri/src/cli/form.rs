@@ -168,11 +168,15 @@ pub fn read_back(
     asked: &[NewField],
     before: &Form,
     after: &Form,
+    units: &[f32],
 ) -> Result<Vec<AddedField>, Vec<String>> {
+    if units.len() != asked.len() {
+        return Err(vec!["could not read every requested page unit".into()]);
+    }
     let now = grouped(after);
     let mut problems = Vec::new();
     let mut added = Vec::new();
-    for field in asked {
+    for (field, &unit) in asked.iter().zip(units) {
         let name = &field.name;
         let found: Vec<_> = now.iter().filter(|g| g.name == name).collect();
         let [group] = found.as_slice() else {
@@ -220,7 +224,7 @@ pub fn read_back(
         );
         let got = kind(&widget.control);
         let [left, top, right, bottom] = widget.display_rect;
-        let rect = [left, top, right - left, bottom - top];
+        let rect = [left, top, right - left, bottom - top].map(|coord| coord * unit);
         let moved = rect
             .iter()
             .zip(field.rect)
@@ -258,7 +262,10 @@ pub fn read_back(
             ));
         } else if widget.max_length != field.max_length.map(|most| most as usize) {
             problems.push(format!("`{name}` reads back with another most characters"));
-        } else if widget.text_size != field.text_size {
+        } else if match (widget.text_size, field.text_size) {
+            (Some(raw), Some(points)) => (raw * unit - points).abs() > 0.001,
+            (got, want) => got != want,
+        } {
             problems.push(format!("`{name}` reads back with another text size"));
         } else if widget.default_value != field.default_value.clone().unwrap_or_default() {
             problems.push(format!("`{name}` reads back with another default value"));
@@ -283,10 +290,33 @@ pub fn read_back(
         ));
     }
     for was in &before.widgets {
-        let kept = after
-            .widgets
-            .iter()
-            .any(|w| w.name == was.name && w.page == was.page && w.value == was.value);
+        let kept = after.widgets.iter().any(|w| {
+            w.name == was.name
+                && w.page == was.page
+                && w.value == was.value
+                && match (&was.control, &w.control) {
+                    (
+                        crate::forms::Control::Radio {
+                            index,
+                            states,
+                            unison,
+                            no_toggle_off,
+                        },
+                        crate::forms::Control::Radio {
+                            index: after_index,
+                            states: after_states,
+                            unison: after_unison,
+                            no_toggle_off: after_toggle,
+                        },
+                    ) => {
+                        index == after_index
+                            && after_states.starts_with(states)
+                            && unison == after_unison
+                            && no_toggle_off == after_toggle
+                    }
+                    (before, after) => before == after,
+                }
+        });
         if !kept {
             problems.push(format!(
                 "`{}`, which the source had, does not read back as it was",
@@ -381,13 +411,16 @@ impl Subcommand for AddFields {
                     ask_form(&mut session, "the staged file", key.is_some()).map_err(|why| {
                         unpublished(format!("has a form that cannot be read: {}", why.message))
                     })?;
+                let pages: Vec<_> = asked.iter().map(|field| field.page + 1).collect();
+                let units = super::pages::page_units(&mut session, &pages, staged, key.is_some())
+                    .map_err(|why| unpublished(why.message))?;
                 drop(session);
                 if after.encrypted != input.encrypted || !same_sizes(&after.sizes, &input.sizes) {
                     return Err(unpublished(
                         "does not have the source's pages or encryption".into(),
                     ));
                 }
-                let added = read_back(&asked, &before, &form).map_err(|problems| {
+                let added = read_back(&asked, &before, &form, &units).map_err(|problems| {
                     unpublished(format!(
                         "is not what was asked for: {}",
                         problems.join("; ")
@@ -425,6 +458,14 @@ impl Subcommand for AddFields {
 mod tests {
     use super::*;
     use crate::forms::{Control, Value, Widget};
+
+    fn read_back(
+        asked: &[NewField],
+        before: &Form,
+        after: &Form,
+    ) -> Result<Vec<AddedField>, Vec<String>> {
+        super::read_back(asked, before, after, &vec![1.0; asked.len()])
+    }
 
     fn args(line: &str) -> Vec<String> {
         line.split_whitespace().map(str::to_owned).collect()
@@ -672,6 +713,42 @@ mod tests {
         let mut near = good.clone();
         near.widgets[1].display_rect[0] += 0.005;
         assert!(read_back(&asked, &before, &near).is_ok());
+    }
+
+    #[test]
+    fn form_publication_rejects_a_changed_dropdown_option_at_the_same_index() {
+        let control = Control::Choice {
+            options: vec![crate::forms::Choice {
+                label: "Display".into(),
+                export: "stored".into(),
+            }],
+            combo: true,
+            editable: false,
+            multiple: false,
+        };
+        let original = widget(
+            "Dropdown",
+            control,
+            Value::Selection(vec![0]),
+            0,
+            [0., 0., 100., 20.],
+        );
+        let before = Form {
+            widgets: vec![original],
+        };
+        assert!(read_back(&[], &before, &before).is_ok());
+        for change_export in [false, true] {
+            let mut after = before.clone();
+            let Control::Choice { options, .. } = &mut after.widgets[0].control else {
+                unreachable!()
+            };
+            if change_export {
+                options[0].export.push('2');
+            } else {
+                options[0].label.push('2');
+            }
+            assert!(read_back(&[], &before, &after).is_err());
+        }
     }
 
     #[test]

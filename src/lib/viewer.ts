@@ -199,6 +199,7 @@ const TEXT = catalog({
     nothingToRecognise: "This page has no saved content to recognize.",
     pageChanged: "The page changed during recognition. Try again.",
     noWordsRecognised: "No words could be recognized on this page.",
+    notMarked: "The entire selection could not be read. No marks were added.",
     notCopied: "Some of the selected pages' text could not be read, so nothing was copied.",
     comparisonReadFailed: (page: number) => `Could not read the text on page ${page}. The comparison stopped.`,
   },
@@ -216,6 +217,7 @@ const TEXT = catalog({
     nothingToRecognise: "Diese Seite hat keinen gespeicherten Inhalt, der erkannt werden kann.",
     pageChanged: "Die Seite hat sich während der Texterkennung geändert. Versuche es erneut.",
     noWordsRecognised: "Auf dieser Seite konnten keine Wörter erkannt werden.",
+    notMarked: "Die Auswahl konnte nicht vollständig gelesen werden. Es wurden keine Markierungen hinzugefügt.",
     notCopied: "Der Text einiger ausgewählter Seiten konnte nicht gelesen werden, daher wurde nichts kopiert.",
     comparisonReadFailed: (page: number) => `Der Text auf Seite ${page} konnte nicht gelesen werden. Der Vergleich wurde abgebrochen.`,
   },
@@ -900,7 +902,7 @@ const ZOOM_SETTLE_MS = 100;
  *
  * Small enough that a tile the reader is waiting for never queues behind more
  * than a handful of extractions, large enough that a copy of a long selection
- * is not one round trip per page. See `Viewer.selectionText`.
+ * is not one round trip per page. See `Viewer.readSelection`.
  */
 const COPY_CHUNK = 16;
 
@@ -1368,6 +1370,7 @@ export class Viewer {
   private currentMatch = -1;
 
   private selection: Selection | null = null;
+  private selectionIntent = 0;
   /** Where the search may look, or null for the whole document. */
   private searchScope: SearchScope | null = null;
   /**
@@ -6673,17 +6676,6 @@ export class Viewer {
   }
 
   /**
-   * A page's text as the *document* displays it, without asking for it.
-   *
-   * {@link textOn}'s unturned counterpart --- see {@link unturnedText} for what
-   * unturned buys and why a mark's quads have to come from here.
-   */
-  private unturnedOn(slot: number): PageText | null {
-    const at = this.textAt(slot);
-    return at ? at.cache.peekUnturned(at.page) : null;
-  }
-
-  /**
    * A page's text as the view shows it, fetching it if it is not here.
    *
    * `null` without a round trip for a page tpdf made, which no worker can
@@ -6968,6 +6960,7 @@ export class Viewer {
    * a line.
    */
   private beginSelection(event: PointerEvent): void {
+    this.selectionIntent++;
     // Document coordinates, not viewport ones: a scroll, zoom or page jump
     // between two clicks moves the text out from under a still pointer, and
     // keying the run on where the *document* was clicked ends it automatically.
@@ -7146,6 +7139,7 @@ export class Viewer {
 
   /** Clears the selection. */
   clearSelection(): void {
+    this.selectionIntent++;
     if (!this.selection) return;
     this.selection = null;
     this.wake();
@@ -7164,16 +7158,18 @@ export class Viewer {
    */
   selectPage(): void {
     const page = this.currentPage();
-    const text = this.textOn(page);
-    if (!text) {
-      void this.loadOn(page).then((arrived) => {
-        if (arrived && !this.life.ended) this.selectPage();
-      });
-      return;
-    }
-    this.selection = new Selection({ page, index: 0 });
-    this.selection.focus = { page, index: text.codes.length };
-    this.wake();
+    const intent = ++this.selectionIntent;
+    const pages = this.pages;
+    const select = (text: PageText | null) => {
+      if (!text || this.life.ended || this.selectionIntent !== intent ||
+          this.pages !== pages || this.currentPage() !== page) return;
+      this.selection = new Selection({ page, index: 0 });
+      this.selection.focus = { page, index: text.codes.length };
+      this.wake();
+    };
+    const cached = this.textOn(page);
+    if (cached) select(cached);
+    else void this.loadOn(page).then(select);
   }
 
   /**
@@ -7195,13 +7191,15 @@ export class Viewer {
    * skips a page it cannot read, by design and as its own docstring says. So
    * the text is taken from each reply as it lands, and a reply that carries
    * nothing is an error rather than a page quietly left out. See
-   * {@link selectionText}.
+   * {@link readSelection}.
    */
   async copySelection(): Promise<string | null> {
     const selection = this.selection;
     if (!selection) return null;
 
-    const text = await this.selectionText(selection);
+    const parts = await this.readSelection(selection, (slot) => this.loadOn(slot),
+      (slot, text) => selection.textFrom(slot, text));
+    const text = parts?.join("\n") ?? null;
     if (text === null) {
       this.opts.onError?.(TEXT().notCopied);
       return null;
@@ -7244,39 +7242,31 @@ export class Viewer {
    * past the bound, and blamed the document for it. The cache is an
    * optimisation; correctness here may not rest on it holding anything.
    */
-  private async selectionText(selection: Selection): Promise<string | null> {
-    const pages = selection.pages();
-    const parts: string[] = [];
-    for (let at = 0; at < pages.length; at += COPY_CHUNK) {
-      const chunk = await Promise.all(
-        pages.slice(at, at + COPY_CHUNK).map(async (page) => ({
-          page,
-          // Asked before the load rather than derived from its `null`, because
-          // the two produce the same `null` and mean opposite things --- see
-          // the branch below, where the difference decides whether the reader
-          // gets their text or an error about pages that were perfectly
-          // readable.
-          made: this.pages.addressOf(page, this.opts.doc) === undefined,
-          text: await this.loadOn(page),
-        })),
-      );
-      for (const { page, made, text } of chunk) {
+  private async readSelection<T>(
+    selection: Selection,
+    load: (slot: number) => Promise<PageText | null>,
+    collect: (slot: number, text: PageText) => T | null,
+  ): Promise<T[] | null> {
+    const map = this.pages;
+    const focus = selection.focus;
+    const slots = selection.pages();
+    const parts: T[] = [];
+    for (let at = 0; at < slots.length; at += COPY_CHUNK) {
+      const chunk = await Promise.all(slots.slice(at, at + COPY_CHUNK).map(
+        async (slot) => ({ slot, text: await load(slot) }),
+      ));
+      if (this.life.ended || this.pages !== map || this.selection !== selection ||
+          selection.focus !== focus) return null;
+      for (const { slot, text } of chunk) {
         if (!text) {
-          // A page tpdf made has nothing to read, which is not the same as a
-          // page that could not be read: it contributes nothing and the copy
-          // goes ahead. Dragging from page 1 to page 3 across a blank page 2
-          // used to show `"ab\ncd"` in the status line and then refuse to copy
-          // it, naming pages that had been read without difficulty.
-          if (made) continue;
-          // The page could not be read at all. Reported rather than skipped ---
-          // see {@link copySelection}.
+          if (map.addressOf(slot, this.opts.doc) === undefined) continue;
           return null;
         }
-        const part = selection.textFrom(page, text);
+        const part = collect(slot, text);
         if (part !== null) parts.push(part);
       }
     }
-    return parts.join("\n");
+    return parts;
   }
 
   /**
@@ -7288,14 +7278,8 @@ export class Viewer {
    * `Edits.redact` produce a region in one space rather than two that agree
    * today.
    *
-   * **It loads rather than peeks, and that is the whole difference.** A
-   * selection is on pages the reader is looking at; a search runs over the
-   * document, and `TextCache` is bounded at roughly 150 pages. Peeking would
-   * silently contribute nothing for every match on an evicted page --- and a
-   * review list missing the matches the reader can see in the results panel is
-   * worse than no command at all. Chunked at {@link COPY_CHUNK} for
-   * `selectionText`'s reason: a document-wide sweep must not be one round trip
-   * per page, and must not be all of them at once either.
+   * Matches and selections both load in bounded batches. A cached subset
+   * cannot establish that all the requested regions are present.
    *
    * **`null` when any page could not be read**, rather than a shorter list.
    * Same rule as `copySelection`, and here it is the one that matters: a
@@ -7616,19 +7600,14 @@ export class Viewer {
    * would differ on exactly the documents where the difference matters ---
    * columns.
    */
-  selectionQuadsByPage(): { page: PageId; quads: number[]; text: string }[] {
-    if (!this.selection) return [];
-    const out: { page: PageId; quads: number[]; text: string }[] = [];
-    for (const page of this.selection.pages()) {
-      // `page` is a slot here, and what leaves is an id, for `commentAt`'s
-      // reason: the model names pages by id and a slot is not a name.
+  async selectionQuadsByPage(): Promise<{ page: PageId; quads: number[]; text: string }[] | null> {
+    const selection = this.selection;
+    if (!selection) return [];
+    const result = await this.readSelection(selection, (slot) => this.loadUnturnedOn(slot), (page, text) => {
       const id = this.pages.idOf(page);
-      if (id === undefined) continue;
-      const text = this.unturnedOn(page);
-      if (!text) continue;
-      const range = this.selection.rangeOn(page);
-      if (!range) continue;
-      const said = this.selection.textFrom(page, text) ?? "";
+      const range = selection.rangeOn(page);
+      if (id === undefined || !range) return null;
+      const said = selection.textFrom(page, text) ?? "";
       const quads = runsFor(text, range.from, range.to).flatMap((quad) => [
         quad.left,
         quad.top,
@@ -7639,11 +7618,10 @@ export class Viewer {
       // it is the file's. A mark made on a cropped page and stored in the
       // cropped space would be written where the crop was rather than where the
       // words are, the moment the reader changed the crop or took it off.
-      if (quads.length > 0) {
-        out.push({ page: id, quads: outOfCrop(quads, this.cropAt(page)), text: said });
-      }
-    }
-    return out;
+      return quads.length ? { page: id, quads: outOfCrop(quads, this.cropAt(page)), text: said } : null;
+    });
+    if (result === null) this.opts.onError?.(TEXT().notMarked);
+    return result;
   }
 
   /** Original file-space word boxes for a stored comment or redaction in this slot. */

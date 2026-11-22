@@ -2083,3 +2083,17 @@ fn a_name_a_field_under_a_group_with_no_name_has_is_taken() {
     let at = page(&doc);
     place(&mut doc, at, rect, "taken", &Kind::Text.into()).expect("free");
 }
+
+#[test]
+fn physical_field_dimensions_and_type_size_survive_page_scaling() {
+    let mut doc = document(Held::Absent, false);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    doc.get_dictionary_mut(page).unwrap().set("UserUnit", 2);
+    let mut asked = field("Scaled", Kind::Text, 0, [72., 100., 40., 8.]);
+    asked.text_size = Some(4.);
+    add(&mut doc, &[asked]).unwrap();
+    let form = forms::scan(&reloaded(&mut doc)).unwrap();
+    let widget = &form.widgets[0];
+    assert_eq!(widget.rect, [36., 146., 56., 150.]);
+    assert_eq!(widget.text_size, Some(2.));
+}

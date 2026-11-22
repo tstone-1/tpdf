@@ -1199,7 +1199,30 @@ pub(super) fn settle_spans(
     // A Span's ActualText is rewritten with its run only where it is that
     // run's text: every show of the Span plain text in one run, and nothing
     // else in the run, with the texts equal but for spaces at either end.
-    for (span, (shows, plain)) in span_shows {
+    for (span, (mut shows, plain)) in span_shows {
+        // A layout may end with a cursor restore after the visible show (or
+        // after the editable empty show left by deletion). It owns no text.
+        let restores: BTreeSet<_> = shows
+            .iter()
+            .skip(1)
+            .copied()
+            .filter(|&show| {
+                let op = &inspection.content.operations[show as usize];
+                op.operator == "TJ"
+                    && matches!(op.operands.as_slice(), [Object::Array(items)]
+                if matches!(items.as_slice(), [empty, shift]
+                    if empty.as_str().is_ok_and(|bytes| bytes.is_empty()) && number(shift).is_ok()))
+            })
+            .collect();
+        shows.retain(|show| !restores.contains(show));
+        inspection.runs.runs.retain(|run| {
+            if restores.contains(&run.operator) {
+                inspection.preserved.push(run.clone());
+                false
+            } else {
+                true
+            }
+        });
         let owner = |run: &Run| {
             std::iter::once(run.operator)
                 .chain(

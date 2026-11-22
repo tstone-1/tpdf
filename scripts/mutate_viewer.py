@@ -1323,8 +1323,8 @@ MUTATIONS = [
         # is what this whole increment was to stop.
         "viewer: take the selection's rectangles without its words",
         "src/lib/viewer.ts",
-        '      const said = this.selection.textFrom(page, text) ?? "";',
-        '      const said = "";',
+        "      const said = selection.textFrom(page, text) ?? \"\";",
+        "      const said = \"\";",
         "and the words they cover are the words that are selected",
         runner="viewer",
     ),

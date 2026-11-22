@@ -404,7 +404,7 @@ describe("Reading a page's text, and asking for it again", () => {
     const viewer = build();
     deleteFirstPage(viewer);
     await dragAcross(viewer, 0);
-    const byPage = viewer.selectionQuadsByPage();
+    const byPage = ((await viewer.selectionQuadsByPage()) ?? []);
     // One entry, naming the page's **id** rather than either of the two page
     // numbers, with the characters page 1 actually spells. A mark is built from
     // this, so a wrong page here writes a highlight into the file over words

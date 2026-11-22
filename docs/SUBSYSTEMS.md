@@ -214,6 +214,11 @@ PDFKit reads `/V` through the parent chain but did not render our fixture's text
 when `/FT` existed only on its grandparent. The unit test pins this compatibility
 requirement. See `BUILD.md` for the fixture-generation and check commands.
 
+The CLI supplies physical points for field rectangles and
+explicit type sizes. The writer converts them with the target page's `/UserUnit`. The
+read-back uses the staged page's unit when comparing with the request. Existing choice
+fields retain their option labels, export values and selections.
+
 Choice answers use option indices in the journal, preserving distinct labels
 that share an export value. The writer saves `/V`, `/I` and explicit appearances
 together. An editable custom answer has no `/I`, so it must differ from every
@@ -611,8 +616,8 @@ Pictures are found by `drawn`, which walks page content and the blocks it draws 
 matrix at each `Do`, including the page’s `UserUnit`; `shrink` scales and re-encodes one picture and leaves it when the new
 form is not a tenth smaller. The JPEG encoder is the `image` crate's, already in the tree
 through `pdfium-render`; the decoder is `zune-jpeg`, as for `tpdf images`.
-Annotation appearance resources can use a page image at another resolution. Their images
-retain their pixel dimensions. A resized transparency mask counts as a change to every
+A tiling pattern, annotation appearance or Type 3 glyph can draw the same image at another
+resolution. Images named by those resources retain their pixel dimensions. A resized transparency mask counts as a change to every
 displayed parent and can supply the before-and-after preview. Preview DPI is taken from
 a page where the image is drawn at the measured width.
 

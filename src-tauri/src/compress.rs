@@ -464,30 +464,48 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
         unfollowed: BTreeSet::new(),
         lost: false,
     };
-    for object in doc.objects.values() {
-        let Ok(pattern) = object.as_stream() else {
-            continue;
-        };
-        if pattern
-            .dict
-            .get(b"PatternType")
-            .ok()
-            .and_then(|p| resolved(doc, p))
-            .and_then(|p| p.as_i64().ok())
-            != Some(1)
-        {
-            continue;
-        }
-        if let Some(resources) = pattern
-            .dict
-            .get(b"Resources")
-            .ok()
-            .and_then(|r| resolved(doc, r))
-            .and_then(|r| r.as_dict().ok())
-        {
-            walk.unfollowed_in(&[resources]);
-        } else {
-            walk.lost = true;
+    // Each of these consumers can draw an XObject without a page-level Do
+    // at the same scale. Include inline font dictionaries nested in resources.
+    let container = |value: &&Object| {
+        matches!(
+            value,
+            Object::Dictionary(_) | Object::Array(_) | Object::Stream(_)
+        )
+    };
+    let mut pending = Vec::new();
+    for root in doc.objects.values() {
+        pending.push(root);
+        while let Some(object) = pending.pop() {
+            let dict = match object {
+                Object::Dictionary(dict) => dict,
+                Object::Stream(stream) => &stream.dict,
+                Object::Array(items) => {
+                    pending.extend(items.iter().filter(container));
+                    continue;
+                }
+                _ => continue,
+            };
+            let glyphs = matches!(dict.get(b"Subtype").and_then(Object::as_name), Ok(b"Type3"));
+            let pattern = dict
+                .get(b"PatternType")
+                .ok()
+                .and_then(|p| resolved(doc, p))
+                .and_then(|p| p.as_i64().ok())
+                == Some(1);
+            if glyphs || pattern {
+                if let Some(resources) = dict
+                    .get(b"Resources")
+                    .ok()
+                    .and_then(|r| resolved(doc, r))
+                    .and_then(|r| r.as_dict().ok())
+                {
+                    walk.unfollowed_in(&[resources]);
+                } else {
+                    // A Type 3 font without its own resources may draw from its page.
+                    walk.lost = true;
+                }
+            }
+            pending.extend(dict.iter().map(|(_, child)| child).filter(container));
         }
     }
     for (index, page) in doc.get_pages().into_values().enumerate() {

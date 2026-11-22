@@ -2452,12 +2452,8 @@ ROWS += [
         # `loadOn` rather than a press -- and so needs its own mutation.
         "viewer: select a whole page under the slot's number",
         "src/lib/viewer.ts",
-        "    const text = this.textOn(page);\n"
-        "    if (!text) {\n"
-        "      void this.loadOn(page).then((arrived) => {",
-        "    const text = this.text.peek(page);\n"
-        "    if (!text) {\n"
-        "      void this.text.load(page).then((arrived) => {",
+        "    const cached = this.textOn(page);\n    if (cached) select(cached);\n    else void this.loadOn(page).then(select);",
+        "    const cached = this.text.peek(page);\n    if (cached) select(cached);\n    else void this.text.load(page).then(select);",
         "selects a whole page, after the page above went",
     ),
     Mutation(
@@ -2490,8 +2486,8 @@ ROWS += [
         # another page's words, which outlives the session in the file.
         "viewer: take a selection's quads from the slot's number",
         "src/lib/viewer.ts",
-        "      const text = this.unturnedOn(page);",
-        "      const text = this.text.peekUnturned(page);",
+        "this.readSelection(selection, (slot) => this.loadUnturnedOn(slot),",
+        "this.readSelection(selection, (slot) => this.text.loadUnturned(slot),",
         "hands back a selection's quads by page, after the page above went",
     ),
     Mutation(
@@ -2573,7 +2569,7 @@ ROWS += [
         # will not hand over.
         "viewer: refuse a copy because a page tpdf made has no text",
         "src/lib/viewer.ts",
-        "          if (made) continue;",
+        "          if (map.addressOf(slot, this.opts.doc) === undefined) continue;",
         "          if (false) continue;",
         "copies a selection that runs across a page tpdf made",
     ),

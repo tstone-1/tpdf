@@ -1156,8 +1156,10 @@ them on one original page.
   longer pinned by it when nothing else pins it (no `/Alt`, no non-empty `/T`, nothing
   inherited) and it holds exactly one marked-content sequence. The scan then keeps it
   editable only where every show of the Span is plain text in exactly one run, the run
-  holds nothing else, no inline ActualText span sits inside it, and the rule below holds;
-  anywhere else the page is scanned again with that Span pinned (`textedit::inspect`,
+  holds nothing else, no inline ActualText span sits inside it, and the rule below holds.
+  A trailing `TJ` that only restores the cursor after a layout edit draws no glyphs, so
+  the scanner excludes it from ownership. The first empty show stays editable after deletion.
+  Anywhere else the page is scanned again with that Span pinned (`textedit::inspect`,
   `Tags::pin`), which is exactly the old behaviour.
 
   **The rule** (`actual::Edges`): with `A` the ActualText decoded as a PDF text string and

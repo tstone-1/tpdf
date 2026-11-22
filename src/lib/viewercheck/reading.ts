@@ -682,7 +682,7 @@ async function markQuadChecks(
 
   key(root, "a", true);
   await settle(() => viewer.idle);
-  const upright = viewer.selectionQuadsByPage();
+  const upright = ((await viewer.selectionQuadsByPage()) ?? []);
   check(
     "a mark's rectangles come from the page's own text",
     upright.length > 0 && upright.every((page) => page.quads.length % 4 === 0),
@@ -715,7 +715,7 @@ async function markQuadChecks(
   const before = viewer.rotation;
   viewer.rotateBy(1);
   await settle(() => viewer.idle);
-  const turned = viewer.selectionQuadsByPage();
+  const turned = ((await viewer.selectionQuadsByPage()) ?? []);
   viewer.rotateBy(-1);
   await settle(() => viewer.idle);
 

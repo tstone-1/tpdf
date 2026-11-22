@@ -2231,7 +2231,8 @@
     // press in the other side during it: what follows a wait is done as this
     // document and never as "the one in the variables".
     const view = openView;
-    const marks = viewer?.selectionQuadsByPage() ?? [];
+    const marks = await viewer?.selectionQuadsByPage();
+    if (!marks) return;
     for (const { page, quads, text } of marks) {
       // The mark that appears is identified by difference, in `markMade` ---
       // `addComment` below gives the argument for asking it that way rather
@@ -2276,14 +2277,16 @@
    * reader had selected when they asked. The two would be the same string today
    * and would part company the moment route B took a whole line.
    */
-  async function redactSelection(): Promise<void> {
+  async function redactSelection(): Promise<boolean> {
     const view = openView;
-    const selected = viewer?.selectionQuadsByPage() ?? [];
+    const selected = await viewer?.selectionQuadsByPage();
+    if (!selected?.length) return false;
     for (const { page, quads } of selected) {
       for (const area of areasFrom(quads)) {
-        await applyEdit((e) => e.redact(page, area), view);
+        if (!await applyEdit((e) => e.redact(page, area), view)) return false;
       }
     }
+    return true;
   }
 
   /**
@@ -2294,7 +2297,7 @@
    */
   async function redactSelectionAndStayArmed(): Promise<void> {
     const view = openView;
-    await redactSelection();
+    if (!await redactSelection()) return;
     asDocument(view, () => {
       viewer?.clearSelection();
       viewer?.armRedact();
@@ -6748,7 +6751,7 @@
       onPageClick: (click) => void pickGraphic(click),
       onCopyGraphic: () => void copyGraphic(),
       onRedactSelection: () =>
-        void redactSelection().then(() => asDocument(view, () => viewer?.clearSelection())),
+        void redactSelection().then((marked) => marked && asDocument(view, () => viewer?.clearSelection())),
       onMarkMoved: (id, dx, dy) =>
         isSaved(id)
           ? changeField(scannedForm && edits ? fieldMoved(scannedForm, edits.state, id, dx, dy) : null)

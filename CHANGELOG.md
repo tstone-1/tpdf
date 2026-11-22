@@ -21,6 +21,11 @@ have the binary.)
 
 ### Fixed
 
+- Multi-page marks load the entire text selection before highlighting or redacting. Reordering pages during Copy cancels the operation, and a delayed Select All preserves a newer selection.
+- Compression preserves images shared with Type 3 glyphs. Form creation honors physical page units and checks the options and answers of existing dropdowns.
+- A second text edit keeps tagged PowerPoint words editable and ordinary paragraphs wrappable. Table rows with large gaps inside grouped text remain separate. Undefined bytes in alternate text keep the span read-only.
+- Extract suppresses printed-label hints that would point to the wrong numeric endpoint.
+- Updated `url` to 2.5.9 to address RUSTSEC-2026-0592 in URL origin handling.
 - Adding page numbers or watermarks preserves tagged reading order. The window and
   CLI verify the added lines before publishing, including typographic ligatures.
   Copies declare the PDF version their new content requires.

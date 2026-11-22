@@ -1940,3 +1940,81 @@ describe("Viewer matches across a page edit", () => {
     viewer.destroy();
   });
 });
+
+describe("Selection changes during extraction", () => {
+  let dom: FakeDom, viewer: Viewer;
+  let written: string[], nav: PropertyDescriptor | undefined;
+  let waiting: number | undefined, release: (() => void) | undefined;
+  beforeEach(() => {
+    dom = installFakeDom();
+    asked = []; written = []; nav = installClipboard(written);
+    waiting = undefined; release = undefined;
+    tiles.fetchTile.mockResolvedValue(null); tiles.nextRequestId.mockReturnValue(1);
+    core.invoke.mockReset();
+    core.invoke.mockImplementation(async (cmd: string, args: { page: number }) => {
+      if (cmd !== "page_text") return null;
+      const p = args.page;
+      asked.push(p);
+      if (p === waiting) await new Promise<void>((resolve) => { release = resolve; });
+      return { ...pageText(), codes: [65 + p, 97 + p] };
+    });
+  });
+  afterEach(() => {
+    viewer?.destroy();
+    if (nav) Object.defineProperty(globalThis, "navigator", nav);
+    dom.restore();
+  });
+  it("control: a complete copy loads every selected page and marking then has quads for all three", async () => {
+    viewer = build(dom);
+    await dragAcrossPages(dom, viewer, 0, 2);
+    expect(asked).not.toContain(1);
+    expect(await viewer.copySelection()).toBe("Aa\nBb\nC");
+    expect((await viewer.selectionQuadsByPage())?.map(row => row.text)).toEqual(["Aa", "Bb", "C"]);
+  });
+  it("three-page marking includes a cold middle page", async () => {
+    viewer = build(dom);
+    await dragAcrossPages(dom, viewer, 0, 2);
+    expect(asked).not.toContain(1);
+    expect(viewer.hasSelection).toBe(true);
+    expect((await viewer.selectionQuadsByPage())?.map(row => row.text)).toEqual(["Aa", "Bb", "C"]);
+  });
+  it("refuses all marks when a source page cannot be read and retains the selection", async () => {
+    viewer = build(dom);
+    await dragAcrossPages(dom, viewer, 0, 2);
+    core.invoke.mockRejectedValueOnce(new Error("no middle page"));
+    expect(await viewer.selectionQuadsByPage()).toBeNull();
+    expect(viewer.hasSelection).toBe(true);
+  });
+  it("a copy interrupted by a reorder never writes the unselected eighteenth page", async () => {
+    viewer = new Viewer(dom.root as unknown as HTMLElement, { doc: 1, pageCount: 18,
+      pages: [{ width_pt: 600, height_pt: 800 }] });
+    await dragAcrossPages(dom, viewer, 0, 16);
+    waiting = 1;
+    const copied = viewer.copySelection();
+    await settle();
+    expect(release).toBeTypeOf("function");
+    const order = viewer.pageOrder;
+    expect(viewer.setPages([...order.slice(0,16), order[17]!, order[16]!])).toBe(true);
+    release!();
+    const actual = await copied;
+    expect(written).toEqual(actual === null ? [] : [actual]);
+    expect(actual).toBeNull();
+  });
+  it("a pending select-all on page one preserves the subsequent one-character selection on page two", async () => {
+    viewer = build(dom);
+    viewer.goToPage(0);
+    waiting = 0;
+    viewer.selectPage();
+    await settle();
+    expect(release).toBeTypeOf("function");
+    viewer.goToPage(1);
+    expect((await viewer.unturnedText(1))?.codes).toEqual([66, 98]);
+    press(dom, viewer, 1);
+    movePointer(dom, viewer, 1);
+    dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root });
+    await settle();
+    expect((await viewer.selectionQuadsByPage())?.map(row => row.text)).toEqual(["B"]);
+    release!(); await settle();
+    expect((await viewer.selectionQuadsByPage())?.map(row => row.text)).toEqual(["B"]);
+  });
+});

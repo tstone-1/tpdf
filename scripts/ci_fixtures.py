@@ -27,8 +27,6 @@ discovered:
   * anything from `make_text_pdf.py` (text-base14, text-truetype, text-cid,
     text-marked) --- it needs fonttools and embeds a *system* font, which differs
     per runner and would make fixture-dependent assertions depend on the image.
-  * `outline-hostile.pdf` from `make_outline_pdf.py`, which needs fonttools for
-    the same reason. Note `outline-simple.pdf` comes from the same script.
   * `text-heavy.pdf`, which **no script writes**: it is a real document, supplied
     by hand, and `BUILD.md` says so. A runner cannot have it and neither can a
     fresh checkout.
@@ -48,11 +46,9 @@ discovered:
     and needs pyhanko.
 
 Tests wanting those still skip on a runner and are covered locally, per
-`BUILD.md`. The four scripts below are the dependency-free ones and cost about
-half a second. ("The three" until 2026-08-21, which had been wrong since
-`make_links_pdf.py` joined them --- a count in prose with nothing asserting it.)
+`BUILD.md`. The default generators use only the standard library.
 
-`--signed` adds a fifth group, and it is the one that needs something installed:
+`--signed` adds another group, and it is the one that needs something installed:
 `make_incremental_pdf.py` and pyhanko, for the fixtures carrying a real
 signature and the two carrying real encryption --- `SIGNED` below is the list,
 and no count is written here because the last one written ("nine") went stale
@@ -64,8 +60,8 @@ for the same writer and is dependency-free for the same reason.
 
 Usage: scripts/ci_fixtures.py [--check] [--signed] [--hostile]
 
-  --check  report which of the fixtures exist and exit non-zero if any is
-           missing, without generating anything. For asking whether a machine
+  --check  report which fixtures are nonempty files and exit non-zero if any
+           fail that check, without generating anything. For asking whether a machine
            is ready rather than making it so.
 """
 
@@ -83,6 +79,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 #: Each entry is the artifact and the command that produces it, argv-style so no
 #: shell is involved. The interpreter is this one, so a venv is honoured.
 FIXTURES: list[tuple[str, list[str]]] = [
+    ("testdata/outline-simple.pdf", ["testdata/make_outline_pdf.py", "testdata"]),
+    ("testdata/outline-labels.pdf", ["testdata/make_outline_pdf.py", "testdata"]),
+    ("testdata/outline-hostile.pdf", ["testdata/make_outline_pdf.py", "testdata"]),
     ("testdata/tagged.pdf", ["testdata/make_tagged_pdf.py", "testdata"]),
     ("testdata/rotated.pdf", ["testdata/make_rotated_pdf.py", "testdata"]),
     ("testdata/comments.pdf", ["testdata/make_comments_pdf.py", "testdata"]),
@@ -229,37 +228,33 @@ def check(wanted: list[tuple[str, list[str]]]) -> int:
     missing = 0
     for artifact, _ in wanted:
         path = ROOT / artifact
-        if path.exists():
+        if path.is_file() and path.stat().st_size > 0:
             print(f"[OK]   {artifact} ({path.stat().st_size:,} bytes)")
         else:
-            print(f"[FAIL] {artifact} is absent")
+            print(f"[FAIL] {artifact} is missing, empty or not a regular file")
             missing += 1
     return 1 if missing else 0
 
 
 def generate(wanted: list[tuple[str, list[str]]]) -> int:
     """Runs every generator. A generator that fails stops the run."""
-    ran: set[tuple[str, ...]] = set()
+    groups: dict[tuple[str, ...], list[pathlib.Path]] = {}
     for artifact, argv in wanted:
-        print(f"[..]   {artifact}", flush=True)
-        # One script may write several artifacts, and nine of them come from one
-        # run. Each is still checked for on its own below --- what is skipped is
-        # re-running a command that has already run in this invocation, not the
-        # question of whether it produced the file.
-        if tuple(argv) not in ran:
-            result = subprocess.run([sys.executable, *argv], cwd=ROOT, check=False)
-            ran.add(tuple(argv))
-            if result.returncode != 0:
-                print(f"[FAIL] {argv[0]} exited {result.returncode}")
-                return result.returncode
-        path = ROOT / artifact
-        if not path.exists():
-            # A generator that exits 0 without writing its artifact is the
-            # silent case this whole script is about, so it is an error here
-            # rather than a surprise in a test three steps later.
-            print(f"[FAIL] {argv[0]} exited 0 but {artifact} does not exist")
-            return 1
-        print(f"[OK]   {artifact} ({path.stat().st_size:,} bytes)")
+        groups.setdefault(tuple(argv), []).append(ROOT / artifact)
+    for command, outputs in groups.items():
+        print(f"[..]   {command[0]}", flush=True)
+        # These are generated fixtures. A producer may skip one and still exit 0.
+        for output in outputs:
+            output.unlink(missing_ok=True)
+        result = subprocess.run([sys.executable, *command], cwd=ROOT, check=False)
+        if result.returncode:
+            print(f"[FAIL] {command[0]} exited {result.returncode}")
+            return result.returncode
+        for output in outputs:
+            if not output.is_file() or output.stat().st_size == 0:
+                print(f"[FAIL] {command[0]} did not produce {output.relative_to(ROOT)}")
+                return 1
+            print(f"[OK]   {output.relative_to(ROOT)} ({output.stat().st_size:,} bytes)")
     return 0
 
 

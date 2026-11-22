@@ -88,6 +88,32 @@ class AnswerRewrites(unittest.TestCase):
 
 
 @unittest.skipUnless(sys.platform == "darwin", "the remote receiver runs on macOS")
+class GeneratedFixtures(unittest.TestCase):
+    def test_hosted_runs_require_both_bookmark_fixtures(self):
+        from ci_fixtures import FIXTURES
+
+        required = {"testdata/outline-simple.pdf", "testdata/outline-labels.pdf"}
+        self.assertLessEqual(required, {name for name, _ in FIXTURES})
+
+    def test_a_stale_sibling_cannot_satisfy_the_current_generator(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+        import ci_fixtures
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "write.py").write_text("from pathlib import Path\nPath('first').write_bytes(b'new')\n")
+            (root / "second").write_bytes(b"old")
+            wanted = [(name, ["write.py"]) for name in ("first", "second")]
+            output = StringIO()
+            with patch.object(ci_fixtures, "ROOT", root), redirect_stdout(output):
+                self.assertEqual(ci_fixtures.generate(wanted), 1)
+            self.assertIn("did not produce second", output.getvalue())
+            self.assertEqual((root / "first").read_bytes(), b"new")
+            self.assertFalse((root / "second").exists())
+
+
 class MacReceiver(unittest.TestCase):
     def test_concurrent_checks_cannot_stage_over_the_active_run(self):
         with tempfile.TemporaryDirectory() as scratch:

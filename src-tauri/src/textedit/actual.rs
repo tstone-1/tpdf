@@ -103,7 +103,12 @@ pub(super) fn logical(value: &Object) -> Result<String, String> {
             .map_err(|_| invalid())?
             .to_owned()
     } else {
-        lopdf::decode_text_string(value).map_err(|_| invalid())?
+        let decoded = lopdf::decode_text_string(value).map_err(|_| invalid())?;
+        // PDFDocEncoding is single-byte. lopdf skips unmapped entries.
+        if decoded.chars().count() != bytes.len() {
+            return Err(invalid());
+        }
+        decoded
     };
     if logical.chars().count() > MAX_TEXT
         || logical
