@@ -216,7 +216,11 @@ requirement. See `BUILD.md` for the fixture-generation and check commands.
 
 Choice answers use option indices in the journal, preserving distinct labels
 that share an export value. The writer saves `/V`, `/I` and explicit appearances
-together; editable custom text removes stale `/I`. Radio indices use widget
+together. An editable custom answer has no `/I`, so it must differ from every
+export value to survive reopening as text. Selected list labels must fit across
+the widget and their selected rows must fit on paper. Text and choice appearances
+fill the widget only when it declares a background in `/MK/BG`.
+Radio indices use widget
 object order, so page moves cannot retarget a pending answer, and `/AS` is updated
 on every sibling while preserving its authored artwork. `TPDF_CHOICE_FIXTURE`
 and `TPDF_CHOICE_PROBE` on the mixed-form Rust test generate synthetic inputs

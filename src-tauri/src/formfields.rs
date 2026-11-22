@@ -579,15 +579,8 @@ pub fn check(
                 name = field.name
             ));
         }
-        if field
-            .tooltip
-            .as_ref()
-            .is_some_and(|tip| tip.chars().count() > 1024)
-        {
-            problems.push(said!(
-                "`{name}`: a tooltip is at most 1024 characters",
-                name = field.name
-            ));
+        if let Some(why) = crate::formedit::tooltip_problem(&field.name, field.tooltip.as_deref()) {
+            problems.push(why);
         }
         if let Some(why) = text_problem(
             &field.name,

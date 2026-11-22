@@ -127,6 +127,8 @@ describe("form answers", () => {
   });
   it("accepts custom text only in editable dropdowns", () => {
     const editable: FormWidget = { ...choice, control: { ...choice.control as Extract<FormWidget["control"], { kind: "choice" }>, editable: true } };
+    expect(answerError(editable, "SAME")).toContain("option code");
+    expect(answerError(editable, "OTHER")).toContain("option code");
     expect(answerError(editable, "Custom answer")).toBeNull();
     expect(answerError(editable, "漢")).not.toBeNull();
     expect(answerError(editable, [2])).toBeNull();

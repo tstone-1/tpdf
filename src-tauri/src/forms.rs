@@ -959,7 +959,21 @@ pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
             choice_layout(widget, indices).map_err(|m| rejected(Invalid::Layout, m))?;
             return Ok(());
         }
-        (Control::Choice { editable: true, .. }, Value::Text(_)) => {}
+        (
+            Control::Choice {
+                editable: true,
+                options,
+                ..
+            },
+            Value::Text(text),
+        ) => {
+            if options.iter().any(|option| option.export == *text) {
+                return Err(rejected(
+                    Invalid::Option,
+                    said!("This text matches an option code. Select the option from the list."),
+                ));
+            }
+        }
         (Control::Text, Value::Text(_)) | (Control::Checkbox, Value::Checked(_)) => {}
         _ => {
             return Err(rejected(
@@ -1024,15 +1038,26 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
     // A list remains a list on paper, with selected rows shaded. TI names the
     // first visible row so another editor starts at the same place.
     let top = indices.first().copied().unwrap_or(0);
-    let (_, height) = widget.drawn_size();
+    let (width, height) = widget.drawn_size();
     let size = widget
         .text_size
         .map_or(AUTO_TEXT_SIZE, f64::from)
         .min((height - 4.0) / 1.2);
+    let widest = indices
+        .iter()
+        .map(|&i| crate::textbox::advance(&options[i].label, 1.0))
+        .fold(0.0, f64::max);
+    let size = if widest > 0.0 {
+        size.min((width - 4.0) / widest)
+    } else {
+        size
+    };
+    let rows = indices.last().map_or(1, |last| last - top + 1);
+    let size = size.min((height - 2.0) / (rows as f64 * 1.2));
     if size < 4.0 {
         return Err(said!("The options do not fit visibly in this field"));
     }
-    let count = ((height - 2.0) / (size * 1.2)).floor() as usize;
+    let count = ((height - 2.0 + 1e-9) / (size * 1.2)).floor() as usize;
     let lines: Vec<_> = options
         .iter()
         .skip(top)
@@ -1133,7 +1158,10 @@ fn write_text_appearance(
 ) -> Result<(), String> {
     let (width, height) = widget.drawn_size();
     let font = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica", "Encoding" => "WinAnsiEncoding" });
-    let mut body = format!("q 1 1 1 rg 0 0 {width} {height} re f ");
+    let mut body = String::from("q ");
+    if let Some(color) = widget_colour(doc, widget.widget, b"BG") {
+        body.push_str(&format!("{color} 0 0 {width} {height} re f "));
+    }
     // The field's own border, redrawn over the fill that would otherwise paint
     // it out: until 2026-10-03 an answered field lost its frame.
     if let Some((color, line)) = border_of(doc, widget.widget) {
@@ -1200,42 +1228,44 @@ pub(crate) fn border_path(width: f64, height: f64, color: &str, line: f64) -> St
 /// other count, or a number outside 0 to 1, is no colour this can draw.
 fn border_of(doc: &Document, widget: ObjectId) -> Option<(String, f64)> {
     let dict = doc.get_dictionary(widget).ok()?;
-    let resolved = |key: &[u8]| {
-        dict.get(key)
-            .ok()
-            .and_then(|o| doc.dereference(o).ok())
-            .and_then(|(_, o)| o.as_dict().ok())
-    };
-    // Kept as the `f32` the file holds, so that 0.2 is written back as 0.2.
-    let numbers: Vec<f32> = resolved(b"MK")?
-        .get(b"BC")
-        .ok()
-        .and_then(|o| doc.dereference(o).ok())
-        .and_then(|(_, o)| o.as_array().ok())?
-        .iter()
-        .map(lopdf::Object::as_float)
-        .collect::<Result<_, _>>()
-        .ok()?;
-    if !numbers.iter().all(|n| (0.0..=1.0).contains(n)) {
-        return None;
-    }
-    let operator = match numbers.len() {
-        1 => "G",
-        3 => "RG",
-        4 => "K",
-        _ => return None,
-    };
+    let color = widget_colour(doc, widget, b"BC")?.to_ascii_uppercase();
     // One point when the widget says nothing, which is the specification's
     // default for `/BS /W`.
-    let line = resolved(b"BS")
+    let line = dict
+        .get(b"BS")
+        .ok()
+        .and_then(|o| doc.dereference(o).ok())
+        .and_then(|(_, o)| o.as_dict().ok())
         .and_then(|style| style.get(b"W").ok())
         .and_then(|w| w.as_float().ok())
         .map_or(1.0, f64::from);
     if !line.is_finite() || line <= 0.0 || line > 12.0 {
         return None;
     }
+    Some((color, line))
+}
+
+fn widget_colour(doc: &Document, widget: ObjectId, key: &[u8]) -> Option<String> {
+    let dict = doc.get_dictionary(widget).ok()?;
+    let (_, mk) = doc.dereference(dict.get(b"MK").ok()?).ok()?;
+    let (_, value) = doc.dereference(mk.as_dict().ok()?.get(key).ok()?).ok()?;
+    let components = value.as_array().ok()?;
+    let operator = match components.len() {
+        1 => "g",
+        3 => "rg",
+        4 => "k",
+        _ => return None,
+    };
+    // Preserve the precision of the PDF numbers when writing the appearance.
+    let numbers: Vec<f32> = components
+        .iter()
+        .map(|one| doc.dereference(one).ok()?.1.as_float().ok())
+        .collect::<Option<_>>()?;
+    if !numbers.iter().all(|n| (0.0..=1.0).contains(n)) {
+        return None;
+    }
     let color: Vec<String> = numbers.iter().map(|n| format!("{n}")).collect();
-    Some((format!("{} {operator}", color.join(" ")), line))
+    Some(format!("{} {operator}", color.join(" ")))
 }
 
 /// A checkbox's two looks: an empty bordered box, and the same box crossed.
@@ -1614,6 +1644,18 @@ pub(crate) mod tests {
             default_value: String::new(),
             turns: 0,
         };
+        let mut narrow = list(None);
+        let Control::Choice { options, .. } = &mut narrow.control else {
+            unreachable!()
+        };
+        *options = vec![option("Standard order A"), option("Standard order B")];
+        for index in 0..2 {
+            narrow.rect[2] = 25.0;
+            assert!(choice_layout(&narrow, &[index]).is_err());
+            narrow.rect[2] = 230.0;
+            let (size, lines) = choice_layout(&narrow, &[index]).unwrap();
+            assert!(crate::textbox::advance(&lines[0], size) <= 226.0);
+        }
         assert_eq!(choice_layout(&list(None), &[0]).unwrap().0, 12.0);
         assert_eq!(choice_layout(&list(Some(8.0)), &[0]).unwrap().0, 8.0);
         // More than the list is high enough for: what fits.
@@ -1831,6 +1873,18 @@ pub(crate) mod tests {
         doc.get_dictionary_mut(combo)
             .unwrap()
             .set("Ff", (1 << 17) | (1 << 18));
+        for code in ["SAME", "OTHER"] {
+            let before = doc.get_dictionary(combo).unwrap().clone();
+            let result = write(
+                &mut doc,
+                &[Change {
+                    object: combo,
+                    value: Value::Text(code.into()),
+                }],
+            );
+            assert!(result.unwrap_err().contains("option code"));
+            assert_eq!(doc.get_dictionary(combo).unwrap(), &before);
+        }
         write(
             &mut doc,
             &[Change {

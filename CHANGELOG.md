@@ -17,6 +17,19 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.14] - Unreleased
+
+### Fixed
+
+- Tagged text keeps its reading order when an inline element sits between two text runs.
+- Filling a form preserves transparent backgrounds, fits selected list entries and
+  refuses custom dropdown answers that would change meaning on reopening.
+  Field creation and editing apply the same tooltip rules.
+- Print preparation uses the verified source file even if its path is replaced.
+  Preview errors remain visible after a layout change. Windows print progress counts sides.
+- The release publication check verifies macOS notarization and the tagged package
+  version. Remote Mac window checks isolate concurrent runs and regenerate their fixtures.
+
 ## [26.11.13] - 2026-11-22
 
 ### Fixed

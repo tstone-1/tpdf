@@ -81,8 +81,8 @@ jobs:
   # 25.1 and 11.3 min on the same SHA.
   #
   # `passed` is 'true' only for a verified yes: a `push` run of `ci.yml` on
-  # exactly this SHA, concluded `success`, with exactly two `Gates (...)` jobs
-  # and both `success`. Anything else -- no run, a failed one, a pull-request
+  # exactly this SHA, concluded `success`, with exactly three `Gates (...)` jobs
+  # and all three `success`. Anything else -- no run, a failed one, a pull-request
   # run, an API error -- leaves it unset, and `gates` below runs in full. A
   # failure of THIS job runs the gates too, because `gates` asks `!cancelled()`
   # rather than for this job's success. The error path is the old behaviour,
@@ -468,7 +468,7 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 scripts/check_glibc_floor.py src-tauri/target/debug/tpdf
 
-  # Creates the one draft release both build legs upload into, and hands them
+  # Creates the one draft release all three build legs upload into, and hands them
   # its id.
   #
   # WHY THIS JOB EXISTS. `tauri-action` resolves the release itself when given a
@@ -576,8 +576,9 @@ jobs:
           Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-261111
 
           **New in 26.11.13.** Saving, reloading and switching between PDFs
-          now preserve form answers and unfinished edits. Page labels and
-          bookmarks follow their pages through merges and deletions. Adding
+          now preserve form answers and unfinished edits. The base document keeps
+          the bookmarks and page labels of its surviving pages. Appendix
+          bookmarks and page labels are omitted during merging. Adding
           a filled form as an appendix keeps its answers visible. Print
           preview counts duplex sheets and poster pages correctly on Windows.
           Compression estimates include unsaved edits and check the size of
@@ -926,11 +927,6 @@ jobs:
           A text box shows its words on the page while you type them.
           Text in a table that states its own bounds can be edited.
 
-          **If you redacted with a version before 26.10.5:** that version
-          could leave removed text in the file on a page whose content is
-          stored in several parts. Open the result and search it for the
-          words you removed.
-
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
           papers, and documents made with XeLaTeX, LuaTeX and Typst. Math
@@ -987,12 +983,10 @@ jobs:
           on Windows, where one caveat applies and the report carries it: that
           engine corrects what it reads and cannot be told not to.
 
-          Two things it does not do, and says so before you commit rather than
-          after. A curve or a dashed line that runs past a region stays where
-          it is and is reported. And it
-          takes whole lines, because removing part of one means removing the
-          instruction that drew it — so a word beside the one you marked goes
-          with it.
+          A curve or dashed line that extends beyond a marked region stays
+          in place and is reported. Where tpdf can identify the marked
+          characters, adjacent text stays in place. Where it cannot, the
+          panel warns before removing the whole line.
 
           **Image-only redaction copies.** For scans and drawings, *Redact to
           image-only copy* renders every page at 300 dpi, blackens marked pixels,

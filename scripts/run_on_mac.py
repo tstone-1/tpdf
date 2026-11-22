@@ -21,8 +21,9 @@ runs a commit instead.
 
 WHERE IT RUNS. In a worktree of its own beside the clone, `<clone>-check`,
 made on the first run and kept, with its own `target` and `node_modules`. The
-clone's checkout is never moved. Generated fixtures are copied from the clone.
-Tracked fixture inputs and generators come from the revision under test. The PDF engine is the one the sent tree
+clone's checkout is never moved. Fixtures are generated from the revision under test; the externally supplied
+text-heavy.pdf comes from the clone. Each run has its own logs and takes an
+exclusive lock on the worktree before it receives the bundle. The PDF engine is the one the sent tree
 pins, installed by `scripts/fetch_pdfium.py` there. The first run is a cold
 build.
 
@@ -91,30 +92,37 @@ NOT A GATE. It needs a second machine that is switched on.
 from __future__ import annotations
 
 import argparse
+import os
 import shlex
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 MARKER = "TPDF-REMOTE-EXIT"
-REF = "refs/tpdf-check/tree"
 APP = "src-tauri/target/release/bundle/macos/tpdf Checks.app"
 
 # What runs on the other Mac. `{...}` are filled in by `remote`; everything it
 # is given is quoted there, and the paths may begin with `~`.
-REMOTE = r"""
+RECEIVE = r"""
 set -u
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 clone={clone}
-tree="$clone-check"; run="$clone-check-run"; sha={sha}
+tree="$clone-check"; runs="$clone-check-run"; run="$runs/{run_id}"; sha={sha}
 capture_ready() {{ [ -n "{capture}" ] && [ -d "$run/{capture}" ] && echo "TPDF-CAPTURE {capture}"; }}
 stop() {{ capture_ready; echo "[FAIL] $1"; echo "{marker} 2"; exit 0; }}
-mkdir -p "$run" || stop "cannot make $run"
 [ -d "$clone/.git" ] || stop "no clone at $clone"
+mkdir -p "$runs" && touch "$runs/worktree.lock" || stop "cannot open the worktree lock"
+zmodload zsh/system || stop "cannot load zsh file locking"
+zsystem flock -t 0 -f lockfd "$runs/worktree.lock" 2>/dev/null || stop "another check is using $tree"
+mkdir "$run" || stop "cannot make $run"
+cat >"$run/tree.bundle" || stop "cannot receive the bundle"
+"""
+
+REMOTE = RECEIVE + r"""
 if ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked | grep -q '<true/>'; then
   stop "the session on this Mac is locked, so no window can be checked. The screen saver locks it: defaults -currentHost write com.apple.screensaver idleTime -int 0, then unlock it once"
 fi
@@ -122,18 +130,38 @@ cd "$clone" || stop "cannot enter $clone"
 # The remote first: the bundle holds only what the remote does not have, and
 # cannot be read into a clone that is behind it.
 git cat-file -e "$sha^{{commit}}" 2>/dev/null || git -c credential.helper= fetch --quiet origin 2>/dev/null
-[ -f "$run/tree.bundle" ] && git fetch --quiet "$run/tree.bundle" "{ref}" 2>/dev/null
+if [ -s "$run/tree.bundle" ]; then
+  git fetch --quiet "$run/tree.bundle" "{ref}" || stop "cannot import the bundle"
+fi
+rm -f "$run/tree.bundle"
 git cat-file -e "$sha^{{commit}}" 2>/dev/null || stop "this Mac does not have commit $sha"
 [ -d "$tree" ] || git worktree add --quiet --detach "$tree" "$sha" || stop "cannot make the worktree $tree"
 cd "$tree" || stop "cannot enter $tree"
 git checkout --quiet --force --detach "$sha" || stop "cannot check out $sha"
 echo "[OK] $tree is at $(git rev-parse --short HEAD)"
-[ -d "$clone/testdata" ] || stop "the clone has no testdata, and git does not carry it"
-# Copy generated files from the local cache. Keep the checked-out generators,
-# manifests and source documents, even when the cache belongs to an older tree.
-git ls-files -- testdata >"$run/tracked-testdata" || stop "cannot list tracked test inputs"
-rsync -ac --exclude-from="$run/tracked-testdata" --exclude='/testdata/private/' "$clone/testdata" "$tree/" || stop "cannot copy testdata"
-git diff --quiet HEAD -- testdata || stop "the fixture copy changed a tracked test input"
+# An explicit phase can name an external document in the clone. Stage it
+# before generation so an older copy cannot override a generated fixture.
+phase_input={phase_input}
+if [[ "$phase_input" == testdata/* && -f "$clone/$phase_input" ]] &&
+   ! git ls-files --error-unmatch -- "$phase_input" >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$phase_input")" && cp "$clone/$phase_input" "$phase_input" || stop "cannot stage the phase input"
+fi
+# Rebuild the window suite's fixtures from the generators in this checkout.
+uv run --no-project --with-requirements scripts/fixture-tools.txt python scripts/ci_fixtures.py --signed --hostile >"$run/fixtures.log" 2>&1 &&
+  uv run --no-project --with fonttools testdata/make_text_pdf.py testdata >>"$run/fixtures.log" 2>&1 &&
+  python3 testdata/make_outline_pdf.py testdata >>"$run/fixtures.log" 2>&1 &&
+  python3 testdata/make_form_pdf.py >>"$run/fixtures.log" 2>&1 &&
+  python3 testdata/make_redact_pages_pdf.py >>"$run/fixtures.log" 2>&1 &&
+  python3 testdata/make_textedit_push.py >>"$run/fixtures.log" 2>&1 &&
+  uv run --no-project --with pypdf --with fonttools testdata/make_textedit_embedded.py >>"$run/fixtures.log" 2>&1 ||
+  {{ tail -15 "$run/fixtures.log"; stop "cannot generate fixtures from $sha"; }}
+# This input is a real document with no generator.
+if [ -f "$clone/testdata/text-heavy.pdf" ]; then
+  cp "$clone/testdata/text-heavy.pdf" testdata/text-heavy.pdf || stop "cannot copy text-heavy.pdf"
+else
+  rm -f testdata/text-heavy.pdf || stop "cannot clear a stale external fixture"
+fi
+git diff --quiet HEAD || stop "fixture preparation changed a tracked test input"
 # The engine the sent tree pins, and not the clone's: until 2026-10-10 this
 # copied `vendor/pdfium` from the clone, so a tree that moved the pin was
 # checked against the engine before it and nothing said so.
@@ -153,7 +181,7 @@ if [ -n "$identity" ]; then
     || {{ cat "$run/sign.log"; stop "the bundled PDFium could not be signed as $identity"; }}
   echo "[OK] the bundled PDFium is signed as the app is: $identity"
 fi
-job="com.tpdf.windowchecks.$$"
+job="com.tpdf.windowchecks.{run_id}"
 rm -f "$run/done" "$run/checks.log"
 # Every other app is hidden for the run and shown again after it; the header
 # says why. Hidden, never quit: a hidden app keeps its windows and its work.
@@ -193,7 +221,7 @@ chmod +x "$run/job.sh"
 python3 - "$run" "$job" <<'PYPLIST'
 import plistlib
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 run = Path(sys.argv[1])
 with (run / "job.plist").open("wb") as file:
     plistlib.dump(dict(Label=sys.argv[2], ProgramArguments=[str(run / "job.sh")], RunAtLoad=True), file)
@@ -253,7 +281,7 @@ def tree_to_send(rev: str | None) -> str:
     return tracked_tree() or git("rev-parse", "HEAD")
 
 
-def remote(args: argparse.Namespace, sha: str, capture: str) -> str:
+def remote(args: argparse.Namespace, sha: str, capture: str, run_id: str) -> str:
     only = " ".join(f"--only {shlex.quote(text)}" for text in args.only)
     start = 'launchctl bootstrap "gui/$(id -u)" "$run/job.plist"'
     if args.pictures:
@@ -280,8 +308,12 @@ def remote(args: argparse.Namespace, sha: str, capture: str) -> str:
         job = f'python3 scripts/window_checks.py "$app/Contents/MacOS/tpdf" {only}'
         show = ('grep -E \'^\\[FAIL\\]|\\[NOTE\\]|not made\' "$run/checks.log"\n'
                 'sed -n \'/^=== summary/,$p\' "$run/checks.log" | grep -v \'^EXIT\'')
-    return REMOTE.format(clone=remote_path(args.clone), sha=shlex.quote(sha), marker=MARKER,
-                         ref=REF, capture=capture, wrap=args.wrap, app=APP, job=job, show=show,
+    phase_input = PurePosixPath(args.phase[1]) if args.phase else None
+    borrow = (phase_input is not None and phase_input.parts[:1] == ("testdata",)
+              and phase_input.parts[:2] != ("testdata", "private") and ".." not in phase_input.parts)
+    return REMOTE.format(clone=remote_path(args.clone), sha=shlex.quote(sha), marker=f"{MARKER} {run_id}",
+                         phase_input=shlex.quote(str(phase_input) if borrow else ""),
+                         ref=f"refs/tpdf-check/{run_id}", run_id=run_id, capture=capture, wrap=args.wrap, app=APP, job=job, show=show,
                          limit=int(args.timeout), start=start)
 
 
@@ -290,12 +322,6 @@ def remote_path(path: str) -> str:
     if path == "~" or path.startswith("~/"):
         return '"$HOME"' + shlex.quote(path[1:])
     return shlex.quote(path)
-
-
-def prepare_clone(path: str) -> str:
-    clone = remote_path(path)
-    return (f'clone={clone}; test -d "$clone/.git" && mkdir -p "$clone-check-run" '
-            '&& rm -f "$clone-check-run/tree.bundle"')
 
 
 def main() -> int:
@@ -322,49 +348,33 @@ def main() -> int:
     sha = tree_to_send(args.rev)
     print(f"--- sending {sha[:10]} to {args.host} ---", flush=True)
     quiet = ["-o", "ConnectTimeout=15", "-o", "BatchMode=yes"]
+    run_id = uuid.uuid4().hex
+    ref = f"refs/tpdf-check/{run_id}"
+    capture = "pictures" if args.pictures else ""
     with tempfile.TemporaryDirectory(prefix="tpdf-run-on-mac-") as scratch:
         bundle = Path(scratch) / "tree.bundle"
-        git("update-ref", REF, sha)
+        if git("rev-list", "--max-count=1", sha, "--not", "--remotes=origin"):
+            git("update-ref", ref, sha)
+            try:
+                git("bundle", "create", str(bundle), ref, "--not", "--remotes=origin")
+            finally:
+                git("update-ref", "-d", ref)
+        # The remote shell reads the bundle only after acquiring the clone lock.
+        # The script travels as an argument so stdin is a binary stream on every OS.
+        command = "zsh -c " + shlex.quote(remote(args, sha, capture, run_id))
         try:
-            made = subprocess.run(["git", "-C", str(ROOT), "bundle", "create", str(bundle), REF,
-                                   "--not", "--remotes=origin"], capture_output=True, text=True,
-                                  check=False)
-        finally:
-            git("update-ref", "-d", REF)
-        # A commit the other Mac can fetch from the remote needs no bundle, and
-        # `git bundle` refuses to write an empty one.
-        folder = f"{args.clone}-check-run"
-        # Nothing is made on the other Mac until the clone is seen to be there.
-        prepare = prepare_clone(args.clone)
-        asked = subprocess.run(["ssh", "-T", *quiet, args.host, prepare], check=False).returncode
-        if asked != 0:
-            print(f"[FAIL] {args.host} does not answer" if asked == 255
-                  else f"[FAIL] no clone at {args.clone} on {args.host}")
+            with (bundle if bundle.exists() else Path(os.devnull)).open("rb") as payload:
+                ran = subprocess.run(["ssh", "-T", *quiet, args.host, command], stdin=payload,
+                                     capture_output=True, timeout=args.timeout + 3600, check=False)
+        except subprocess.TimeoutExpired:
+            print("[FAIL] the run on the other Mac did not return")
             return 2
-        if made.returncode == 0 and bundle.is_file():
-            sent = subprocess.run(["scp", "-q", *quiet, str(bundle), f"{args.host}:{folder}/tree.bundle"],
-                                  check=False)
-            if sent.returncode != 0:
-                print("[FAIL] the tree could not be sent")
-                return 2
-    # Bytes both ways, not text=True. On Windows a text-mode pipe writes every
-    # `\n` as `\r\n`, so zsh read `set -e\r` and stopped at the first line
-    # (2026-10-16, the first run started from a Windows machine); and it decodes
-    # with the console code page, which is not the UTF-8 the Mac prints.
-    capture = f"pictures-{uuid.uuid4().hex}" if args.pictures else ""
-    try:
-        ran = subprocess.run(["ssh", "-T", *quiet, args.host, "zsh", "-s"],
-                             input=remote(args, sha, capture).encode(), capture_output=True,
-                             timeout=args.timeout + 3600, check=False)
-    except subprocess.TimeoutExpired:
-        print("[FAIL] the run on the other Mac did not return")
-        return 2
     stdout = ran.stdout.decode("utf-8", "replace")
     stderr = ran.stderr.decode("utf-8", "replace")
     code = None
     captured = False
     for line in stdout.splitlines():
-        if line.startswith(MARKER):
+        if line.startswith(f"{MARKER} {run_id} "):
             code = line.split()[-1]
         elif capture and line == f"TPDF-CAPTURE {capture}":
             captured = True
@@ -386,13 +396,13 @@ def main() -> int:
         dest = args.pictures
         if any(dest.iterdir()):
             dest = Path(tempfile.mkdtemp(prefix="capture-", dir=dest))
-        folder = f"{args.clone}-check-run/{capture}"
+        folder = f"{args.clone}-check-run/{run_id}/{capture}"
         got = subprocess.run(["scp", "-q", "-r", *quiet, f"{args.host}:{folder}/.", str(dest)],
                              check=False)
         if got.returncode != 0:
             print(f"[FAIL] the pictures could not be copied back from {folder}")
             return 2
-        cleanup = 'clone=' + remote_path(args.clone) + f'; rm -r "$clone-check-run/{capture}"'
+        cleanup = 'clone=' + remote_path(args.clone) + f'; rm -r "$clone-check-run/{run_id}/{capture}"'
         if subprocess.run(["ssh", "-T", *quiet, args.host, cleanup], check=False).returncode:
             print(f"[WARN] could not remove the copied capture at {folder}")
         print(f"[{'OK' if code == '0' else 'FAIL'}] {len(list(dest.glob('*.png')))} pictures in {dest}")

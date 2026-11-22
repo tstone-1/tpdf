@@ -14,6 +14,13 @@ from publish_release import PACKAGE_STEP, PLATFORMS, require_audited, require_pa
 import publish_release
 
 
+def passing_steps(platform):
+    names = [PACKAGE_STEP]
+    if platform == 'macOS (Apple Silicon)':
+        names.extend(publish_release.MAC_STEPS)
+    return [dict(name=name, conclusion='success') for name in names]
+
+
 class PackageGateTests(unittest.TestCase):
     def suite(self, body, *, origin_inside=True):
         with tempfile.TemporaryDirectory() as temporary:
@@ -79,10 +86,10 @@ class PackageGateTests(unittest.TestCase):
                         '  release:\n    continue-on-error: true\n')))
         self.assertTrue(packaged_api(text.replace(PACKAGE_STEP, 'Renamed package check')))
 
-    def test_publication_requires_both_actual_package_steps(self):
+    def test_publication_requires_all_platform_and_signing_steps(self):
         run = dict(headSha='abc', headBranch='v26.9.22', status='completed',
                    conclusion='success', jobs=[
-            dict(name=name, conclusion='success', steps=[dict(name=PACKAGE_STEP, conclusion='success')])
+            dict(name=name, conclusion='success', steps=passing_steps(name))
             for name in sorted(PLATFORMS)])
         require_passed(run, 'v26.9.22', 'abc')
         for key, value in [('headSha', 'other'), ('headBranch', 'v26.9.21'),
@@ -97,6 +104,12 @@ class PackageGateTests(unittest.TestCase):
         self.assertEqual(len(two), 2)
         with self.assertRaises(RuntimeError):
             require_passed({**run, 'jobs': two}, 'v26.9.22', 'abc')
+        for step in publish_release.MAC_STEPS:
+            wrong = deepcopy(run)
+            mac = next(job for job in wrong['jobs'] if job['name'] == 'macOS (Apple Silicon)')
+            next(item for item in mac['steps'] if item['name'] == step)['conclusion'] = 'skipped'
+            with self.assertRaisesRegex(RuntimeError, step):
+                require_passed(wrong, 'v26.9.22', 'abc')
         for index in range(len(PLATFORMS)):
             for state in ['skipped', 'failure', 'cancelled']:
                 wrong = deepcopy(run)
@@ -137,7 +150,8 @@ class PackageGateTests(unittest.TestCase):
             require_audited([dict(green, status='in_progress')], 'abc')
 
     def test_publish_entry_point_calls_the_guard_before_mutating(self):
-        for mode in ['passed', 'failed', 'moved', 'dry-run', 'unaudited', 'audit-red']:
+        for mode in ['passed', 'failed', 'moved', 'dry-run', 'unaudited', 'audit-red', 'mismatch', 'rc-check', 'rc-publish', 'unsigned']:
+            tag = 'v26.9.22-rc1' if mode.startswith('rc-') else 'v26.9.22'
             calls = []
             reads = 0
             def fake_gh(*args):
@@ -147,6 +161,10 @@ class PackageGateTests(unittest.TestCase):
                     reads += 1
                     sha = 'moved' if mode == 'moved' and reads == 2 else 'abc'
                     return dict(object=dict(type='commit', sha=sha))
+                if args == ('api', '-H', 'Accept: application/vnd.github.raw+json',
+                            'repos/tstone-1/tpdf/contents/package.json?ref=abc'):
+                    version = '26.9.21' if mode == 'mismatch' else '26.9.22'
+                    return dict(version=version)
                 if args[:2] == ('run', 'list') and 'audit.yml' in args:
                     if mode == 'unaudited':
                         return []
@@ -154,25 +172,33 @@ class PackageGateTests(unittest.TestCase):
                                  conclusion='failure' if mode == 'audit-red' else 'success',
                                  createdAt='2026-09-29')]
                 if args[:2] == ('run', 'list'):
-                    return [dict(databaseId=1, headBranch='v26.9.22', createdAt='2026-09-29')]
+                    return [dict(databaseId=1, headBranch=tag, createdAt='2026-09-29')]
                 if args[:2] == ('run', 'view'):
-                    return dict(headSha='abc', headBranch='v26.9.22', status='completed',
+                    run = dict(headSha='abc', headBranch=tag, status='completed',
                         conclusion='failure' if mode == 'failed' else 'success', jobs=[
                             dict(name=name, conclusion='success',
-                                 steps=[dict(name=PACKAGE_STEP, conclusion='success')])
+                                 steps=passing_steps(name))
                             for name in PLATFORMS])
+                    if mode == 'unsigned':
+                        mac = next(job for job in run['jobs'] if job['name'] == 'macOS (Apple Silicon)')
+                        mac['steps'][-1]['conclusion'] = 'skipped'
+                    return run
                 if args[:2] == ('api', 'graphql'):
                     return dict(data=dict(repository=dict(releases=dict(nodes=[
-                        dict(databaseId=2, tagName='v26.9.22', isDraft=True)]))))
+                        dict(databaseId=2, tagName=tag, isDraft=True)]))))
                 if args[:3] == ('api', '--method', 'PATCH'):
                     return dict(draft=False)
                 raise AssertionError(args)
-            argv = ['publish_release.py', 'v26.9.22']
-            if mode != 'dry-run':
+            argv = ['publish_release.py', tag]
+            if mode not in ['dry-run', 'rc-check']:
                 argv.append('--publish')
             with self.subTest(mode=mode), patch.object(publish_release, 'gh', fake_gh), \
                     patch.object(sys, 'argv', argv), patch('builtins.print'):
-                if mode in ['failed', 'moved', 'unaudited', 'audit-red']:
+                if mode == 'rc-publish':
+                    with patch('sys.stderr'), self.assertRaises(SystemExit):
+                        publish_release.main()
+                    self.assertEqual(calls, [])
+                elif mode in ['failed', 'moved', 'unaudited', 'audit-red', 'mismatch', 'unsigned']:
                     with self.assertRaises(RuntimeError):
                         publish_release.main()
                 else:

@@ -183,6 +183,26 @@ class ClientTests(unittest.TestCase):
         fixture(self.source)
         self.pdf = Tpdf(BINARY, timeout=30)
 
+    def test_mixed_inline_content_keeps_declared_order(self):
+        words = ['ALPHA', 'BRAVO', 'CHARLIE']
+        content = ''.join(f'/Span <</MCID {i}>> BDC BT /F1 14 Tf {25 + 85*i} 60 Td '
+                          f'({word}) Tj ET EMC\n' for i, word in enumerate(words)).encode()
+        write_pdf(self.source, [
+            b'<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 6 0 R >>',
+            b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+            b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 360 120] /Resources << /Font << /F1 5 0 R >> >> '
+            b'/Contents 4 0 R /StructParents 0 >>',
+            f'<< /Length {len(content)} >>\nstream\n'.encode() + content + b'endstream',
+            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+            b'<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 9 0 R /ParentTreeNextKey 1 >>',
+            b'<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K [0 8 0 R 2] >>',
+            b'<< /Type /StructElem /S /Span /P 7 0 R /Pg 3 0 R /K 1 >>',
+            b'<< /Nums [0 [7 0 R 8 0 R 7 0 R]] >>',
+        ])
+        page, = self.pdf.text(self.source)['pages']
+        self.assertEqual(page['order'], 'tagged')
+        self.assertEqual(page['text'].split(), words)
+
     def test_fill_redact_workflow(self):
         checks = check_document_workflow(self.pdf, self.root)
         self.assertGreaterEqual(len(checks), 8)

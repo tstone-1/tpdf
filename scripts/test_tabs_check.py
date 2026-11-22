@@ -14,11 +14,13 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from run_on_mac import RECEIVE, remote_path
 from tabs_check import answer_rewrites  # noqa: E402
 
 PDF = b"%PDF-1.7\n1 0 obj\n<< >>\nendobj\ntrailer\n<< >>\n%%EOF\n"
@@ -83,6 +85,42 @@ class AnswerRewrites(unittest.TestCase):
                 child.kill()
                 child.wait()
             self.assertEqual(target.read_bytes(), PDF, "nothing asked, nothing changed")
+
+
+@unittest.skipUnless(sys.platform == "darwin", "the remote receiver runs on macOS")
+class MacReceiver(unittest.TestCase):
+    def test_concurrent_checks_cannot_stage_over_the_active_run(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            clone = Path(scratch) / "clone"
+            (clone / ".git").mkdir(parents=True)
+            runs = Path(str(clone) + "-check-run")
+
+            def receive(run_id):
+                return RECEIVE.format(clone=remote_path(str(clone)), run_id=run_id,
+                                      sha="revision", capture="", marker="RESULT") + 'echo "RESULT 0"'
+
+            with subprocess.Popen(["zsh", "-c", receive("first")], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as first:
+                try:
+                    bundle = runs / "first/tree.bundle"
+                    deadline = time.monotonic() + 5
+                    while not bundle.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(bundle.exists())
+                    second = subprocess.run(["zsh", "-c", receive("second")], input=b"second",
+                                            capture_output=True, timeout=5, check=True)
+                    self.assertIn(b"RESULT 2", second.stdout)
+                    self.assertFalse((runs / "second").exists())
+                    output, _ = first.communicate(b"first", timeout=5)
+                    self.assertIn(b"RESULT 0", output)
+                    self.assertEqual(bundle.read_bytes(), b"first")
+                finally:
+                    if first.poll() is None:
+                        first.kill()
+            retry = subprocess.run(["zsh", "-c", receive("retry")], input=b"retry",
+                                   capture_output=True, timeout=5, check=True)
+            self.assertIn(b"RESULT 0", retry.stdout)
+            self.assertEqual((runs / "retry/tree.bundle").read_bytes(), b"retry")
 
 
 if __name__ == "__main__":

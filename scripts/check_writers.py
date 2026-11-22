@@ -76,6 +76,9 @@ TERMINAL = [
     "write_merged",
     "commit_in_place",
     "append_in_place",
+    # The GUI hands its verified source handle directly to these scratch writers.
+    "print_working_from",
+    "print_range_from",
     "print_bytes",
     # Added 2026-09-01 with the page-range print's move. `print_document` already
     # reaches `print_bytes`, so no command was misclassified without it -- but a

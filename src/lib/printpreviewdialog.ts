@@ -68,10 +68,7 @@ export interface Chooser {
 export type Answer = { print: true; settings: PrintSettings | null } | { print: false };
 
 /** A page's picture as drawn so far. */
-interface Picture {
-  width: number;
-  url: string;
-}
+type Picture = { width: number; url: string } | { error: string };
 
 const TEXT = catalog({
   "en-US": {
@@ -733,7 +730,7 @@ export class PrintPreviewDialog {
         holder.append(picture);
         area.append(holder);
         const known = this.drawn.get(placed.page);
-        if (known) this.show(picture, known.url);
+        if (known && "url" in known) this.show(picture, known.url);
         return { page: placed.page, picture };
       });
       const note = document.createElement("span");
@@ -745,6 +742,7 @@ export class PrintPreviewDialog {
       this.boxes.push({ box, note, pictures });
       this.heights.push(height);
     });
+    this.refreshNotes();
     this.list.scrollTop = scrolled;
     this.update();
     this.pump();
@@ -765,15 +763,14 @@ export class PrintPreviewDialog {
     const draw = this.draw;
     if (!this.shown || this.drawing !== null || !draw) return;
     const visible = visibleSheets(this.heights, Math.max(0, this.list.scrollTop - 12), this.list.clientHeight);
-    const widths = new Map([...this.drawn].map(([page, picture]) => [page, picture.width]));
+    const widths = new Map([...this.drawn].map(([page, picture]) => [page, "error" in picture ? Infinity : picture.width]));
     const next = nextPicture(this.sheets, visible, (sheet, placed) => this.wanted(sheet, placed), widths);
     if (!next) return;
-    const { sheet, page, width } = next;
+    const { page, width } = next;
     const run = this.run;
     const marks = this.marks;
     this.drawing = page;
-    const note = this.boxes[sheet]?.note;
-    if (note && !this.drawn.has(page)) note.textContent = TEXT().drawing(page + 1);
+    this.refreshNotes();
     void draw(page, width, marks)
       .then((url) => {
         // Drawn for the other choice of marks: the next pump draws it again.
@@ -783,22 +780,33 @@ export class PrintPreviewDialog {
           for (const box of this.boxes) {
             for (const shown of box.pictures) if (shown.page === page) this.show(shown.picture, url);
           }
-          for (const box of this.boxes) if (box.pictures.some((p) => p.page === page)) box.note.textContent = "";
-        } else if (note) {
-          note.textContent = TEXT().notDrawn(page + 1);
+        } else {
+          this.drawn.set(page, { error: TEXT().notDrawn(page + 1) });
         }
       })
       .catch((error: unknown) => {
         if (run !== this.run || !this.shown || marks !== this.marks) return;
-        // Recorded as drawn, at no width, so it is not asked for again and again.
-        this.drawn.set(page, { width: Number.MAX_SAFE_INTEGER, url: "" });
-        if (note) note.textContent = TEXT().notDrawnBecause(page + 1, spokenError(error));
+        this.drawn.set(page, { error: TEXT().notDrawnBecause(page + 1, spokenError(error)) });
       })
       .finally(() => {
         if (run !== this.run) return;
         this.drawing = null;
+        this.refreshNotes();
         this.pump();
       });
+  }
+
+  private refreshNotes(): void {
+    for (const { pictures, note } of this.boxes) {
+      const reasons = pictures.flatMap(({ page }) => {
+        const result = this.drawn.get(page);
+        return result && "error" in result ? [result.error] : [];
+      });
+      const pending = this.drawing;
+      note.textContent = reasons.join(" ") ||
+        (pending !== null && pictures.some(({ page }) => page === pending) && !this.drawn.has(pending)
+          ? TEXT().drawing(pending + 1) : "");
+    }
   }
 
   private show(picture: HTMLImageElement, url: string): void {

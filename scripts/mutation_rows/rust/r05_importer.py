@@ -1021,8 +1021,8 @@ ROWS += [
         # defect the guard was written for, and the paper does not say so.
         "save: print a file that changed since it was opened",
         "src/save.rs",
-        "    print_ready(source, plan)?;\n",
-        "    let _ = print_ready(source, plan);\n",
+        "        expected.agrees_with_open(&file, source).map_err(changed)?;\n",
+        "        let _ = expected.agrees_with_open(&file, source).map_err(changed);\n",
         "a_print_job_over_a_changed_file_is_refused_or_says_so",
     ),
     Mutation(
@@ -1032,8 +1032,8 @@ ROWS += [
         # see it go.
         "save: refuse a print job whether or not the file changed",
         "src/save.rs",
-        "        .map(|_ready| ())\n",
-        "        .and_then(|_ready| Err(Refusal::changed(\"changed on disk since you opened it\")))\n",
+        "    Ok(PrintSource { file, len })\n",
+        "    Err(Refusal::changed(\"changed on disk since you opened it\"))\n",
         "a_print_job_over_a_changed_file_is_refused_or_says_so",
     ),
     Mutation(
@@ -1062,8 +1062,8 @@ ROWS += [
         # boundary loses the action that answers it".
         "print: flatten the print refusal to its message again",
         "src/commands/print.rs",
-        "            save::print_ready(source, plan)?;",
-        "            save::print_ready(source, plan)\n"
+        "    let input = save::open_for_print(source, plan)?;",
+        "    let input = save::open_for_print(source, plan)\n"
         "                .map_err(|refused| save::Refusal::from(refused.message))?;",
         "a_print_of_a_replaced_file_rejects_with_the_flag_that_offers_reload",
     ),

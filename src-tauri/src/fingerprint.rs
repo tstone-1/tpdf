@@ -270,6 +270,27 @@ impl Fingerprint {
         // read at all and its message names the size rather than the bytes.
         self.len_agrees(path)?;
         let now = Fingerprint::of(path)?;
+        self.check_digest(path, now)
+    }
+
+    pub(crate) fn agrees_with_open(&self, file: &File, path: &Path) -> Result<(), String> {
+        let result = Fingerprint::of_open(file, path).and_then(|now| {
+            if self.len != now.len {
+                return Err(changed(
+                    path,
+                    &said!(
+                        "its length went from {was} to {now}",
+                        was = self.len,
+                        now = now.len
+                    ),
+                ));
+            }
+            self.check_digest(path, now)
+        });
+        result.map(|_| ()).map_err(|fact| way_out(&fact))
+    }
+
+    fn check_digest(&self, path: &Path, now: Fingerprint) -> Result<Fingerprint, String> {
         if now.digest != self.digest {
             return Err(changed(
                 path,

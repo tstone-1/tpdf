@@ -465,15 +465,23 @@ fn an_answer_keeps_the_border_the_field_declares() {
     let colour = |numbers: &[f32]| {
         dictionary! { "BC" => numbers.iter().map(|n| Object::Real(*n)).collect::<Vec<_>>() }
     };
-    // As written: black, one point, after the white fill and before the text.
+    // As written: black, one point, on the transparent field before the text.
     let kept = answered(&|_| {});
     assert!(
-        kept.starts_with(
-            "q 1 1 1 rg 0 0 200 20 re f 0 G 1 w 0.5 0.5 199 19 re S 0 0 200 20 re W n"
-        ),
+        kept.starts_with("q 0 G 1 w 0.5 0.5 199 19 re S 0 0 200 20 re W n"),
         "{kept}"
     );
     assert!(kept.contains("Tj"), "the answer is drawn too: {kept}");
+    let filled = answered(&|w| {
+        w.set(
+            "MK",
+            dictionary! { "BG" => vec![1.into(), 0.into(), 0.into()], "BC" => vec![0.into()] },
+        )
+    });
+    assert!(
+        filled.starts_with("q 1 0 0 rg 0 0 200 20 re f 0 G 1 w"),
+        "{filled}"
+    );
     // A colour another producer wrote, in each of the three spaces.
     assert!(answered(&|w| w.set("MK", colour(&[1.0, 0.0, 0.5]))).contains("1 0 0.5 RG 1 w"));
     assert!(answered(&|w| w.set("MK", colour(&[0.0, 0.2, 0.0, 1.0]))).contains("0 0.2 0 1 K 1 w"));
@@ -591,6 +599,13 @@ fn every_problem_is_named_and_nothing_is_written() {
         ),
         (
             NewField {
+                tooltip: Some("a\tb".into()),
+                ..field("tip", Kind::Text, 0, [10.0, 10.0, 50.0, 20.0])
+            },
+            "a tooltip cannot contain a control character",
+        ),
+        (
+            NewField {
                 tooltip: Some("t".repeat(1025)),
                 ..field("tip", Kind::Text, 0, [10.0, 10.0, 50.0, 20.0])
             },
@@ -612,7 +627,7 @@ fn every_problem_is_named_and_nothing_is_written() {
         field("corner", Kind::Checkbox, 0, [294.0, 194.0, 6.0, 6.0]),
         NewField {
             max_length: Some(16384),
-            tooltip: Some("t".repeat(1024)),
+            tooltip: Some(format!("{}\n", "t".repeat(1023))),
             ..field(&"n".repeat(255), Kind::Text, 0, [10.0, 100.0, 50.0, 20.0])
         },
     ];

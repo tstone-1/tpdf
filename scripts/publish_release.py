@@ -20,6 +20,8 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 REPO = 'tstone-1/tpdf'
 PACKAGE_STEP = 'Test packaged CLI and installed Python API'
+MAC_STEPS = ('Notarize and staple the macOS DMG',
+             'Verify the macOS build is signed, notarized and stapled')
 PLATFORMS = {'macOS (Apple Silicon)', 'Windows (x64)', 'Linux (x64)'}
 
 
@@ -48,10 +50,15 @@ def require_passed(run, tag, sha):
     if len(jobs) != len(PLATFORMS) or {job['name'] for job in jobs} != PLATFORMS:
         raise RuntimeError('Release run does not contain every platform job')
     for job in jobs:
-        checks = [step for step in job['steps'] if step['name'] == PACKAGE_STEP]
-        if (job['conclusion'] != 'success' or len(checks) != 1 or
-                checks[0]['conclusion'] != 'success'):
-            raise RuntimeError(f'{job["name"]}: packaged CLI/API check did not pass')
+        required = [PACKAGE_STEP]
+        if job['name'] == 'macOS (Apple Silicon)' and '-rc' not in tag:
+            required.extend(MAC_STEPS)
+        if job['conclusion'] != 'success':
+            raise RuntimeError(f'{job["name"]}: job did not pass')
+        for name in required:
+            checks = [step['conclusion'] for step in job['steps'] if step['name'] == name]
+            if checks != ['success']:
+                raise RuntimeError(f'{job["name"]}: {name} did not pass')
 
 
 def require_audited(runs, sha):
@@ -81,7 +88,16 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-rc\d+)?', args.tag):
         parser.error('expected a version tag, optionally followed by -rcN')
+    rehearsal = '-rc' in args.tag
+    if rehearsal and args.publish:
+        parser.error('release candidates are for rehearsal only')
     sha = tag_commit(args.tag)
+    if not rehearsal:
+        package = gh('api', '-H', 'Accept: application/vnd.github.raw+json',
+                     f'repos/{REPO}/contents/package.json?ref={sha}')
+        version = package['version']
+        if args.tag != f'v{version}':
+            raise RuntimeError('stable tag differs from package.json at the tagged commit')
     runs = gh('run', 'list', '--repo', REPO, '--workflow', 'release.yml',
               '--commit', sha, '--event', 'push', '--limit', '100',
               '--json', 'databaseId,headBranch,createdAt')

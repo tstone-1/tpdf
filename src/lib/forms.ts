@@ -205,6 +205,9 @@ export function answerError(widget: FormWidget, value: FormValue): string | null
   if (control.kind === "radio" || (control.kind === "choice" && (!control.editable || typeof value !== "string")) || control.kind === "unsupported") return TEXT().answerMismatch;
   if (control.kind !== "choice" && typeof value !== typeof widget.value) return TEXT().answerMismatch;
   if (typeof value === "boolean") return null;
+  if (control.kind === "choice" && control.options.some((option) => option.export === value)) {
+    return spoken("This text matches an option code. Select the option from the list.");
+  }
   if (new TextEncoder().encode(value).length > 16384) return TEXT().answerTooBig;
   if (widget.max_length !== null && [...value].length > widget.max_length) return TEXT().answerTooLong;
   if (!/^[\x20-\x7e\xa0-\xff\n]*$/.test(value)) return TEXT().westernOnly;

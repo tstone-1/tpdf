@@ -1293,7 +1293,10 @@ starts at 0 and increments within the month.
    It sends the tree as it is here, uncommitted work included, builds the checks bundle in
    a worktree beside the other Mac's clone, and starts `window_checks.py` in that Mac's
    logged-in session as a one-off `launchd` job. `--rev` runs a commit and `--only` is
-   passed on. `--wrap` is a command put before the build and the signing, for a host
+   passed on. Each run locks the worktree before receiving the bundle and writes its own
+   completion marker and logs. The window fixtures are regenerated at the checked-out
+   revision. Supply the external `text-heavy.pdf` in the clone.
+   `--wrap` is a command put before the build and the signing, for a host
    whose SSH login has neither the pinned Node nor an unlocked keychain. The other Mac
    needs no display attached. It needs a session that is not locked, and with no setting
    of its own the screen saver locks it after twenty minutes; the script's header has the
@@ -2431,7 +2434,9 @@ starts at 0 and increments within the month.
 
     Use `scripts/publish_release.py` for publication. It requires the latest
     `release.yml` run for the exact tag and commit to have completed successfully,
-    with a successful packaged CLI/API step in both platform jobs. An older
+    with a successful packaged CLI/API step in all three platform jobs. Stable
+    publication also requires the tagged package version to match and both macOS
+    notarization and verification steps to have passed. RC tags support rehearsal only. An older
     green run, a skipped step or an empty job list cannot authorize publication.
     It also requires the newest `audit.yml` run on that commit, pull-request runs
     not counted, to have completed successfully: no run, an unfinished run or a

@@ -465,6 +465,16 @@ describe("readingLines with a structure tree", () => {
     expect(linesAs(text)).toEqual(["two", "one"]);
   });
 
+  it("reads an inline span between the two direct runs of its paragraph", () => {
+    const text = page(word("ALPHACHARLIEBRAVO", 100, 100));
+    text.runs = [
+      { tag: "P", path: ["P"], start: 0, end: 5 },
+      { tag: "Span", path: ["P", "Span"], start: 12, end: 17 },
+      { tag: "P", path: ["P"], start: 5, end: 12 },
+    ];
+    expect(linesAs(text)).toEqual(["ALPHA", "BRAVO", "CHARLIE"]);
+  });
+
   it("puts the copy path in the tagged order too", () => {
     // The runs reach `readingTextOf` through the same funnel, which is the
     // reason they were put on `PageText` rather than fetched separately.

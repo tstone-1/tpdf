@@ -910,36 +910,14 @@ pub(crate) fn print_job(
     password: Option<&str>,
     rewriter: &dyn save::Rewriter,
 ) -> Result<Vec<u8>, save::Refusal> {
-    // **The two routes that do not go through `save::print_bytes`, which asks
-    // this itself.** All three read `source` by name, so all three can be
-    // handed a file that is no longer the one the reader is looking at ---
-    // `Passthrough` prints the whole of it, `Range` prints the page numbers
-    // the reader typed against a document that no longer has those pages.
-    // Asked once here rather than in each arm, because a second call would
-    // hash the file twice for the arm that already did it.
-    //
-    // `plan` is what carries the fingerprint, and a print with no document
-    // open has none to compare: `print::route` sends a plan-less job to
-    // `Range`, and nothing about it was made against a file. See
-    // `save::print_ready` for why a missing fingerprint prints rather than
-    // being refused.
-    if !matches!(route, print::Route::Working) {
-        if let Some(plan) = plan {
-            save::print_ready(source, plan)?;
-        }
-    }
+    let input = save::open_for_print(source, plan)?;
     match route {
-        print::Route::Passthrough => std::fs::read(source).map_err(|e| {
-            save::Refusal::from(said!(
-                "could not read {path}: {e}",
-                path = format!("{source:?}")
-            ))
-        }),
+        print::Route::Passthrough => input.bytes(source),
         print::Route::Working => {
             let plan = plan.ok_or_else(|| said!("the working document has no plan to print"))?;
-            save::print_bytes(source, plan, turns, password, rewriter)
+            save::print_working_from(input, plan, turns, password, rewriter)
         }
-        print::Route::Range(job) => save::print_range_bytes(source, job, rewriter),
+        print::Route::Range(job) => save::print_range_from(input, job, rewriter),
     }
 }
 
@@ -1034,9 +1012,9 @@ pub const PROGRESS_EVENT: &str = "tpdf://print-progress";
 #[cfg(windows)]
 #[derive(serde::Serialize, Clone)]
 struct Printing {
-    /// Sheets handed to the printer so far.
+    /// Printed sides handed to the printer so far.
     sent: u32,
-    /// Sheets in the job.
+    /// Printed sides in the job.
     of: u32,
     /// One of `printing`, `sent`, `stopped`, `failed`.
     state: &'static str,

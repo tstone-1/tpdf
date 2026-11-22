@@ -244,6 +244,9 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageStru
         };
         if !child.is_null() {
             walk.element(child, &mut path, 0);
+            if walk.found.truncated {
+                break;
+            }
         }
     }
 
@@ -353,11 +356,7 @@ impl Found<'_> {
 }
 
 impl Walk<'_> {
-    /// Visits one element, emitting its runs and then its children's.
-    ///
-    /// Pre-order, because that is reading order: an element's own marked content
-    /// comes before whatever is nested inside it, which is how a heading that
-    /// contains a `/Span` reads.
+    /// Emits direct content and nested elements in their declared child order.
     fn element(&mut self, element: FPDF_STRUCTELEMENT, path: &mut Vec<String>, depth: usize) {
         if depth >= MAX_DEPTH || self.visited >= MAX_ELEMENTS {
             self.found.truncated = true;
@@ -368,27 +367,7 @@ impl Walk<'_> {
         let tag = self.type_of(element);
         path.push(tag.clone());
 
-        // SAFETY: `element` is non-null and owned by the tree.
-        let marks = unsafe {
-            self.bindings
-                .FPDF_StructElement_GetMarkedContentIdCount(element)
-        };
-        for index in 0..marks.max(0) {
-            // SAFETY: `index` is below the reported count.
-            let mcid = unsafe {
-                self.bindings
-                    .FPDF_StructElement_GetMarkedContentIdAtIndex(element, index)
-            };
-            // The count above is the document's claim and nothing bounds it, so
-            // the loop is left to the budget rather than clamped here: the first
-            // refusal ends it, and it is page-wide so a later element cannot
-            // start a fresh one.
-            if !self.found.mark(mcid, &tag, path) {
-                break;
-            }
-        }
-
-        // SAFETY: as above.
+        // SAFETY: the tree owns this non-null element.
         let children = unsafe { self.bindings.FPDF_StructElement_CountChildren(element) };
         for index in 0..children.max(0) {
             // SAFETY: `index` is below the reported child count.
@@ -396,8 +375,20 @@ impl Walk<'_> {
                 self.bindings
                     .FPDF_StructElement_GetChildAtIndex(element, index)
             };
-            if !child.is_null() {
+            if child.is_null() {
+                // SAFETY: this is the same valid child slot, queried as content.
+                let mcid = unsafe {
+                    self.bindings
+                        .FPDF_StructElement_GetChildMarkedContentID(element, index)
+                };
+                if !self.found.mark(mcid, &tag, path) {
+                    break;
+                }
+            } else {
                 self.element(child, path, depth + 1);
+                if self.found.truncated {
+                    break;
+                }
             }
         }
         path.pop();

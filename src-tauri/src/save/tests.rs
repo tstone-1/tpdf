@@ -617,6 +617,41 @@ fn a_print_job_from_a_locked_document_names_the_escape_that_exists() {
 }
 
 #[test]
+fn print_uses_verified_source_after_replace() {
+    let Some(source) = fixture("rotated.pdf") else {
+        return;
+    };
+    let _serial = print_lock();
+    let scratch = Scratch::new("print-open-handle");
+    let at = scratch.0.join("source.pdf");
+    std::fs::copy(&source, &at).unwrap();
+    let plan = plan_opened_as(&[0; 4], &at);
+    let open = || open_for_print(&at, Some(&plan)).unwrap();
+    let (whole, working, range) = (open(), open(), open());
+    let replacement = scratch.0.join("replacement.pdf");
+    std::fs::write(&replacement, b"A different revision").unwrap();
+    std::fs::rename(&replacement, &at).unwrap();
+    assert!(open_for_print(&at, Some(&plan)).is_err());
+    assert_eq!(whole.bytes(&at).unwrap(), std::fs::read(source).unwrap());
+    let job = print::Job {
+        pages: print::Pages::Only(vec![print::PagePlan {
+            number: 2,
+            turns: 0,
+        }]),
+        turns: 0,
+    };
+    for (bytes, count) in [
+        (
+            print_working_from(working, &plan, 0, None, &Here).unwrap(),
+            4,
+        ),
+        (print_range_from(range, &job, &Here).unwrap(), 1),
+    ] {
+        assert_eq!(Document::load_mem(&bytes).unwrap().get_pages().len(), count);
+    }
+}
+
+#[test]
 fn a_print_job_over_a_changed_file_is_refused_or_says_so() {
     // **The state that gets a save refused and a print served.** The file
     // planted over the document here is a *valid* PDF of the same page

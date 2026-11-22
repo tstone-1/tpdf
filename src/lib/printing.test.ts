@@ -22,24 +22,24 @@ describe("the event is commands/print.rs's", () => {
 });
 
 describe("printingLine", () => {
-  it("names the sheet being drawn, counted from 1", () => {
-    expect(printingLine({ sent: 0, of: 5, state: "printing" })).toBe("Printing sheet 1 of 5...");
-    expect(printingLine({ sent: 2, of: 5, state: "printing" })).toBe("Printing sheet 3 of 5...");
-    // The last sheet's report arrives before "sent"; it never reads 6 of 5.
-    expect(printingLine({ sent: 5, of: 5, state: "printing" })).toBe("Printing sheet 5 of 5...");
+  it("names the side being drawn, counted from 1", () => {
+    expect(printingLine({ sent: 0, of: 5, state: "printing" })).toBe("Printing side 1 of 5...");
+    expect(printingLine({ sent: 2, of: 5, state: "printing" })).toBe("Printing side 3 of 5...");
+    // The last side's report arrives before "sent"; it never reads 6 of 5.
+    expect(printingLine({ sent: 5, of: 5, state: "printing" })).toBe("Printing side 5 of 5...");
   });
 
   it("says how many were sent once the printer has them all", () => {
-    expect(printingLine({ sent: 5, of: 5, state: "sent" })).toBe("Sent 5 sheets to the printer.");
-    expect(printingLine({ sent: 1, of: 1, state: "sent" })).toBe("Sent 1 sheet to the printer.");
+    expect(printingLine({ sent: 5, of: 5, state: "sent" })).toBe("Sent 5 sides to the printer.");
+    expect(printingLine({ sent: 1, of: 1, state: "sent" })).toBe("Sent 1 side to the printer.");
   });
 
-  it("says a stopped print stopped, and whether the printer may have sheets already", () => {
+  it("says a stopped print stopped, and whether the printer may have sides already", () => {
     expect(printingLine({ sent: 0, of: 5, state: "stopped" })).toBe(
       "Printing stopped. Nothing was sent to the printer.",
     );
     expect(printingLine({ sent: 2, of: 5, state: "stopped" })).toBe(
-      "Printing stopped. The printer may still print the sheets it already had.",
+      "Printing stopped. The printer may still print the sides it already had.",
     );
   });
 

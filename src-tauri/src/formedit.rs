@@ -75,6 +75,22 @@ pub const MAX_LENGTH: u32 = 16384;
 /// The most characters a tooltip has.
 pub const MAX_TOOLTIP: usize = 1024;
 
+pub(crate) fn tooltip_problem(name: &str, tooltip: Option<&str>) -> Option<String> {
+    if let Some(tip) = tooltip {
+        if tip.chars().count() > MAX_TOOLTIP {
+            return Some(said!(
+                "`{name}`: a tooltip is at most {MAX_TOOLTIP} characters"
+            ));
+        }
+        if tip.chars().any(|ch| ch.is_control() && ch != '\n') {
+            return Some(said!(
+                "`{name}`: a tooltip cannot contain a control character"
+            ));
+        }
+    }
+    None
+}
+
 impl Props {
     /// Whether nothing is changed.
     pub fn is_empty(&self) -> bool {
@@ -103,17 +119,8 @@ impl Props {
     /// What is wrong with these that can be said without the document, for a
     /// field called `name`.
     pub fn problem(&self, name: &str) -> Option<String> {
-        if let Some(tip) = &self.tooltip {
-            if tip.chars().count() > MAX_TOOLTIP {
-                return Some(said!(
-                    "`{name}`: a tooltip is at most {MAX_TOOLTIP} characters"
-                ));
-            }
-            if tip.chars().any(|ch| ch.is_control() && ch != '\n') {
-                return Some(said!(
-                    "`{name}`: a tooltip cannot contain a control character"
-                ));
-            }
+        if let Some(why) = tooltip_problem(name, self.tooltip.as_deref()) {
+            return Some(why);
         }
         if self.max_length.is_some_and(|most| most > MAX_LENGTH) {
             return Some(said!(

@@ -359,136 +359,60 @@ impl Job {
     }
 }
 
-/// Asks whether the file a print job is about to be built from is the one the
-/// reader opened.
-///
-/// **All three print routes read the source by name, and until 2026-08-31 none
-/// of them asked.** `Passthrough` hands the file over byte for byte, `Working`
-/// goes through [`print_bytes`], `Range` through `print::build`; every one of
-/// them resolves the pathname afresh, so a sync client landing a newer copy over
-/// it is printed with the reader's plan applied to content the plan was never
-/// made against. The identical file state one keystroke earlier is refused by
-/// `stage_in_place`, and `docs/PLAN.md`'s external-modification section counted
-/// the print path as paying for the fingerprint already --- it did, in
-/// `Edits::plan`, and then never read the answer.
-///
-/// **The deep comparison, and that is the same one every other reader of
-/// [`Plan::opened_as`] makes.** [`Fingerprint::agrees_shallowly`] is used at
-/// exactly one moment --- between staging and the rename, against the *staging*
-/// fingerprint, over a window measured in milliseconds --- because a modification
-/// time is a hint that is wrong in both directions. An hour can pass between
-/// opening a document and printing it, and a `touch` in that hour would refuse a
-/// print of a file that is byte for byte what the reader opened. The escape from
-/// that false refusal is reopening, which spends their edits, so it is not a
-/// cheap mistake to make.
-///
-/// What it costs is one SHA-256 of the file, on a path that already reads the
-/// whole of it and then hands it to PDFKit or `Windows.Data.Pdf` to be parsed a
-/// second time before a panel opens. The passthrough is the one route where this
-/// is the larger share of the work, and it is still a fraction of a print.
-///
-/// **A plan with no fingerprint prints.** [`stage_in_place`] refuses one, because
-/// what is at stake there is the reader's only copy and a check that cannot
-/// answer must fail closed. Here the worst case of proceeding is a sheet of
-/// paper, and refusing every print of a document tpdf could not fingerprint at
-/// open would take away an operation that costs nothing to repeat. The two
-/// answers differ because the stakes do, and this is the one place that is
-/// written down.
-///
-/// **The refusal carries `changed`, and since 2026-09-01 `print_document`
-/// carries it out.** That command rejects with a serialised [`Refusal`] rather
-/// than with its message, so the window branches on the same flag a save's
-/// refusal gives it and can put the actions that answer this one beside the
-/// sentence --- `docs/TRAPS.md`, *A refusal flattened to a string across a
-/// process boundary loses the action that answers it*, whose shape this was for
-/// the day between the guard landing and the wire carrying it. The message
-/// still names the escape, because a reader who can act on the sentence unaided
-/// is not depending on a button being drawn.
-///
-/// # Errors
-///
-/// The file changed since it was opened.
+/// Checks whether the document on disk still matches its print plan.
 pub fn print_ready(source: &Path, plan: &Plan) -> Result<(), Refusal> {
-    rewrite_ready(source, plan, OnChange::Refuse)
-        .map(|_ready| ())
-        // `agrees_with`'s own sentence names the fact and two escapes that are
-        // both real here --- save the edits elsewhere, or reopen --- and neither
-        // of them is what a reader pressing Print expects to be told, so the
-        // clause that says why a print is the operation being refused is added
-        // where it is known.
-        .map_err(|why| {
-            Refusal::changed(said!(
-                "{reason} A print job is built from the file on disk, so the paper would carry \
-                 that document with your edits placed on the pages of the one you opened.",
-                reason = why.message
-            ))
-        })
+    open_for_print(source, Some(plan)).map(drop)
 }
 
-/// The bytes of a print job built from the working document.
-///
-/// **The same writer a save uses, and that is the whole of this function.**
-/// `print::build` grew its own page walk --- selection, deletion, reorder, turns
-/// --- because printing came first and needed a subset of what saving does. The
-/// two then drifted in the way `docs/TRAPS.md` records as two copies of a
-/// distinction: this one gained marks and crops and that one did not, so a
-/// reader who highlighted a paragraph and pressed Print got paper with no
-/// highlight on it, and a page they had cropped printed at its full size.
-/// Measured before it was fixed: a job built from a plan carrying one mark and
-/// one crop came back with **no page carrying `/Annots` and none carrying
-/// `/CropBox`**.
-///
-/// `view` is the reader's own rotation, in quarter turns clockwise, which is the
-/// one input a print job has and a save does not.
-///
-/// **A changed file is refused, through [`print_ready`], before anything is
-/// read.** This paragraph argued the opposite until 2026-08-31 --- *printing is
-/// worth doing from what the reader is looking at, and refusing would take away
-/// the one operation that cannot lose anything* --- and both halves were wrong
-/// about this function. The line below reads `source` by name, so what would go
-/// on paper is the file that is on disk *now*, not the one the reader is looking
-/// at; the mapping serving their screen is of the inode that was there at open.
-/// And what cannot be lost is the *file*. The artifact can be: the reader's
-/// marks land at coordinates measured on the document they opened, over content
-/// that is no longer it, and paper does not say so.
-///
-/// **The parse is `rewriter`'s, and since 2026-09-01 that is what this function
-/// is.** It read the source into this process and parsed it here, which made
-/// every print of an edited document a coordinator-side parse of
-/// attacker-controlled bytes --- `docs/THREAT-MODEL.md` residual risk 18. It now
-/// takes the seam [`stage_in_place`] and [`write_copy`] take, with the one
-/// difference printing forces: the answer has to come **back**, because
-/// `NSPrintOperation` and `Windows.Data.Pdf` are handed bytes and not a
-/// pathname. So the worker writes into a scratch file this process created and
-/// this process reads it, which is a read of bytes tpdf itself wrote a moment
-/// ago and not a parse of the reader's document. The parse that was here is
-/// gone; what the platform then does with the job is the readback, which is
-/// disclosed and is the whole point of it being an independent parser.
-///
-/// `view` is the reader's own rotation, in quarter turns clockwise, which is the
-/// one input a print job has and a save does not --- see [`Job`].
-///
-/// # Errors
-///
-/// The source is not the file the plan was made against ([`print_ready`]), the
-/// scratch file cannot be created or read back, or anything [`rewrite_update`]
-/// refuses --- including an encrypted source, which printing reaches only when
-/// the reader has edited it, since an untouched one is handed over byte for byte
-/// and never parsed at all. `password` is the reader's, and it is what makes
-/// that refusal the encryption one rather than the locked-document one; see
-/// [`rewrite_update`], which is where both now live.
-pub fn print_bytes(
-    source: &Path,
+/// Opens the source once for every print route. When the open document has a
+/// fingerprint, compare its contents on this handle before passing it on.
+/// A timestamp-only change is harmless. A mismatch offers reload or save a copy.
+/// A document without an opening fingerprint can still be printed.
+pub(crate) fn open_for_print(source: &Path, plan: Option<&Plan>) -> Result<PrintSource, Refusal> {
+    let expected = plan.and_then(|plan| plan.opened_as.as_ref());
+    let changed = |reason: String| {
+        Refusal::changed(said!(
+            "{reason} A print job is built from the file on disk, so the paper would carry \
+         that document with your edits placed on the pages of the one you opened."
+        ))
+    };
+    let (file, len) = opened_to_rewrite(source).map_err(|why| {
+        if expected.is_some() {
+            changed(why.message)
+        } else {
+            why
+        }
+    })?;
+    if let Some(expected) = expected {
+        expected.agrees_with_open(&file, source).map_err(changed)?;
+    }
+    Ok(PrintSource { file, len })
+}
+
+/// The same open file serves the fingerprint, passthrough and worker routes.
+pub(crate) struct PrintSource {
+    file: std::fs::File,
+    len: usize,
+}
+
+impl PrintSource {
+    pub(crate) fn bytes(mut self, source: &Path) -> Result<Vec<u8>, Refusal> {
+        read_whole(&mut self.file, self.len).map_err(|e| {
+            Refusal::from(said!(
+                "could not read {path}: {e}",
+                path = format!("{source:?}")
+            ))
+        })
+    }
+}
+
+pub(crate) fn print_working_from(
+    source: PrintSource,
     plan: &Plan,
     view: u8,
     password: Option<&str>,
     rewriter: &dyn Rewriter,
 ) -> Result<Vec<u8>, Refusal> {
-    // Before anything is read, for the reason `rewrite_ready` sits before the
-    // parse in `stage_in_place`: a guard asked after the surgery is a true
-    // sentence about the wrong document. Asked here rather than by the caller
-    // because `print::route`'s `Working` arm calls this function *directly*.
-    print_ready(source, plan)?;
     into_scratch(source, |reading, len, into| {
         staged_rewrite(
             rewriter,
@@ -502,40 +426,40 @@ pub fn print_bytes(
     })
 }
 
-/// The bytes of a print job for the page range a reader typed.
-///
-/// **[`print_bytes`]'s counterpart for the route that carries no plan, and the
-/// last parse of the reader's document this process did.** `print::build` took a
-/// path and ran here; `docs/THREAT-MODEL.md` residual risk 18 never listed it,
-/// because that risk names the paths that *write* a document and a page range
-/// writes nothing --- it builds bytes and hands them to a printer. It is reached
-/// by opening a file and typing two numbers.
-///
-/// Everything else about it is [`print_bytes`]: the source goes in as a handle,
-/// the answer is written into a scratch file this process created, and this
-/// process reads that file back through the handle it created it with.
-///
-/// **No [`print_ready`] here, and the caller is why.** All three print routes
-/// ask it, and the two that do not go through [`print_bytes`] are asked together
-/// in `lib.rs`'s `print_job` --- a second call would hash the file twice.
-///
-/// **No password either**, and that is not an omission. A range job carries no
-/// plan, so there is nothing to decrypt *for*: `print::build_update` refuses an
-/// encrypted document outright, because its writer emits every object in the
-/// clear and a selection cannot be appended. See `print::build_update`.
-///
-/// # Errors
-///
-/// The source cannot be opened, the scratch file cannot be created or read back,
-/// or anything [`crate::print::build_update`] refuses.
-pub fn print_range_bytes(
-    source: &Path,
+pub(crate) fn print_range_from(
+    source: PrintSource,
     job: &print::Job,
     rewriter: &dyn Rewriter,
 ) -> Result<Vec<u8>, Refusal> {
     into_scratch(source, |reading, len, into| {
         staged_range(rewriter, reading, len, into, job)
     })
+}
+
+/// Builds the working document's print job through the save writer.
+pub fn print_bytes(
+    source: &Path,
+    plan: &Plan,
+    view: u8,
+    password: Option<&str>,
+    rewriter: &dyn Rewriter,
+) -> Result<Vec<u8>, Refusal> {
+    print_working_from(
+        open_for_print(source, Some(plan))?,
+        plan,
+        view,
+        password,
+        rewriter,
+    )
+}
+
+/// Builds a CLI range job directly from the file supplied by the caller.
+pub fn print_range_bytes(
+    source: &Path,
+    job: &print::Job,
+    rewriter: &dyn Rewriter,
+) -> Result<Vec<u8>, Refusal> {
+    print_range_from(open_for_print(source, None)?, job, rewriter)
 }
 
 /// Runs a builder against a scratch file and hands back what it wrote.
@@ -555,11 +479,13 @@ pub fn print_range_bytes(
 /// The source cannot be opened, the scratch file cannot be created, `build`
 /// refuses, or the bytes cannot be read back.
 fn into_scratch(
-    source: &Path,
+    source: PrintSource,
     build: impl FnOnce(&mut std::fs::File, usize, &mut std::fs::File) -> Result<usize, Refusal>,
 ) -> Result<Vec<u8>, Refusal> {
-    // The handle, never the pathname handed on --- see `opened_to_rewrite`.
-    let (mut reading, len) = opened_to_rewrite(source)?;
+    let PrintSource {
+        file: mut reading,
+        len,
+    } = source;
     let (at, mut into) = job_scratch()?;
     let built = build(&mut reading, len, &mut into).and_then(|wrote| {
         read_whole(&mut into, wrote)

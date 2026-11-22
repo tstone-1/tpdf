@@ -74,7 +74,7 @@ export default {
     "`{name}`: Ein Signaturfeld nimmt keine Zeichen auf und hat deshalb keine Höchstzahl",
   "`{name}`: a dropdown takes one of its choices, so it has no most characters":
     "`{name}`: Eine Auswahlliste nimmt einen ihrer Einträge auf und hat deshalb keine Höchstzahl an Zeichen",
-  "`{name}`: a tooltip is at most 1024 characters": "`{name}`: Ein Tooltip hat höchstens 1024 Zeichen",
+  "This text matches an option code. Select the option from the list.": "Dieser Text entspricht einem Optionscode. Bitte den Eintrag in der Liste auswählen.",
   "`{name}`: there is no page {page}; the document has {count}": (a) =>
     `\`${a.name}\`: Es gibt keine Seite ${a.page}; das Dokument hat ${pages(a.count!)}`,
   "the document's form is not a dictionary": "Das Formular des Dokuments ist kein Dictionary",

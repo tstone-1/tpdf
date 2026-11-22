@@ -5,6 +5,9 @@
 
 import { describe, expect, it } from "vitest";
 
+import { PrintPreviewDialog } from "./printpreviewdialog";
+import { FakeElement, installFakeDom } from "./testdom";
+import { printingLine } from "./printing";
 import backend from "../../src-tauri/src/commands/print.rs?raw";
 import layout from "../../src-tauri/src/print_layout.rs?raw";
 import {
@@ -368,4 +371,32 @@ describe("the choices are print_layout.rs's", () => {
     expect(layout).toContain(`pub const PER_SHEET: [u8; ${PER_SHEET.length}] = [${PER_SHEET.join(", ")}];`);
     expect(layout).toContain(`pub const MOST_PERCENT: u16 = ${MOST_PERCENT};`);
   });
+});
+
+it("keeps a page's render refusal visible when the sheet is laid out again", async () => {
+  const dom = installFakeDom();
+  const dialog = Object.create(PrintPreviewDialog.prototype);
+  const list = new FakeElement("div");
+  list.clientWidth = 400;
+  list.clientHeight = 500;
+  Object.assign(dialog, { list, shown: true, run: 1, drawing: null, drawn: new Map(), marks: true,
+    draw: async () => { throw new Error("sample refusal"); }, update: () => {} });
+  const sheets = pageSheets([{ width_pt: 300, height_pt: 400 }]);
+  try {
+    dialog.lay(sheets);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dialog.boxes[0].note.textContent).toContain("sample refusal");
+    list.clientWidth = 500;
+    dialog.lay(sheets);
+    expect(dialog.boxes[0].note.textContent).toContain("sample refusal");
+  } finally {
+    dom.restore();
+  }
+});
+
+it("counts duplex paper in the preview and submitted sides in print progress", () => {
+  for (const sides of [3, 4]) {
+    expect(sheetSummary(sides, sides, 1, "long")).toBe(`2 sheets of paper for ${sides} pages`);
+    expect(printingLine({ sent: sides, of: sides, state: "sent" })).toBe(`Sent ${sides} sides to the printer.`);
+  }
 });
