@@ -141,7 +141,7 @@ export class AddTextDialog {
         this.settle(null);
         return;
       }
-      if (event.key === "Enter" && event.target !== this.position) {
+      if (event.key === "Enter" && event.target !== this.position && event.target !== cancel && event.target !== this.save) {
         event.preventDefault();
         this.submit();
       }

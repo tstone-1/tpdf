@@ -100,6 +100,17 @@ export async function addTextCheck(host: OpenCheckHost, expected: string, report
     dialog() === null && host.saveSuggestions().length === dismissedAt,
     `${host.saveSuggestions().length} against ${dismissedAt}`);
 
+  await run("watermark", "Save a copy with a watermark");
+  if (!(await settle(() => dialog() !== null, DIALOG_MS))) throw new Error("the cancel check did not open");
+  const cancel = [...dialog()!.querySelectorAll("button")].find((button) => button.textContent === "Cancel")!;
+  cancel.focus();
+  const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  cancel.dispatchEvent(enter);
+  report.check("Enter on Cancel keeps native button activation", !enter.defaultPrevented, shown());
+  if (dialog()) cancel.click();
+  await pause(100);
+  report.check("activating Cancel skips the file picker", host.saveSuggestions().length === dismissedAt, shown());
+
   // ---- 3. A watermark on the first page alone.
   host.answerSave(at("watermarked.pdf"));
   await run("watermark", "Save a copy with a watermark");
@@ -122,4 +133,15 @@ export async function addTextCheck(host: OpenCheckHost, expected: string, report
   const greek = await settle(() => shown().includes("Saved greek.pdf"), WRITE_MS);
   report.check("Greek page numbers end on their sentence", greek &&
     shown().trim() === "Saved greek.pdf with page numbers.", `${alert()} ${shown().slice(0, 200)}`);
+
+  // PDFium extracts the WinAnsi soft hyphen as a hard hyphen. The staged
+  // page is valid, but its text differs. The disk check reads the earlier copy.
+  host.answerSave(at("numbered.pdf"));
+  await run("page numbers", "Save a copy with page numbers");
+  if (!(await settle(() => dialog() !== null, DIALOG_MS))) throw new Error("the read-back check did not open");
+  field("Text")!.value = "co\u00adoperate";
+  field("Pages")!.value = "2";
+  press("Enter");
+  const refused = await settle(() => shown().includes("on page 2"), WRITE_MS);
+  report.check("a missing line on page two refuses an otherwise valid copy", refused, shown().slice(0, 200));
 }

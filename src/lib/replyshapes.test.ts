@@ -337,6 +337,7 @@ const SCHEMA = {
     char_turns: ["array"],
     extract_ms: ["number"],
     runs: ["array"],
+    artifacts: ["array"],
   } satisfies Shape<PageText>,
   Properties: {
     version: ["string"],

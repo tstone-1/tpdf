@@ -183,6 +183,15 @@ pub fn read(page: &RawPage<'_>) -> Result<PageStructure, String> {
 /// Splitting it here rather than making [`read`] take one keeps the probe and the
 /// tests calling a function with a single argument.
 pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageStructure, String> {
+    read_with_artifacts(page, text, &mut Vec::new())
+}
+
+/// Also collects character intervals positively identified as PDF artifacts.
+pub(crate) fn read_with_artifacts(
+    page: &RawPage<'_>,
+    text: &RawTextPage<'_>,
+    artifacts: &mut Vec<[u32; 2]>,
+) -> Result<PageStructure, String> {
     let chars = text.count();
     let bindings = page.bindings();
 
@@ -210,9 +219,22 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageStru
     // Character -> marked-content id, taken from the text objects themselves.
     let codes: Vec<u32> = (0..chars).map(|index| text.code(index)).collect();
     let mut of_char: Vec<i32> = Vec::with_capacity(chars as usize);
+    let mut previous = std::ptr::null_mut();
+    let mut artifact = false;
     for index in 0..chars {
         // SAFETY: the text page outlives this loop and `index` is in range.
         let object = unsafe { bindings.FPDFText_GetTextObject(text.handle(), index as i32) };
+        if object != previous {
+            previous = object;
+            artifact = !object.is_null() && is_artifact(bindings, object);
+        }
+        if artifact {
+            if let Some(last) = artifacts.last_mut().filter(|span| span[1] == index) {
+                last[1] = index + 1;
+            } else if artifacts.len() < MAX_RUNS {
+                artifacts.push([index, index + 1]);
+            }
+        }
         of_char.push(if object.is_null() {
             -1
         } else {
@@ -259,6 +281,26 @@ pub fn read_using(page: &RawPage<'_>, text: &RawTextPage<'_>) -> Result<PageStru
         chars,
         truncated,
     })
+}
+
+/// PDFium returns the mark name as UTF-16LE, including the terminator.
+fn is_artifact(bindings: Bindings, object: FPDF_PAGEOBJECT) -> bool {
+    // SAFETY: the text page owns the object and its marks throughout this call.
+    unsafe {
+        (0..bindings.FPDFPageObj_CountMarks(object).clamp(0, 32)).any(|i| {
+            let mark = bindings.FPDFPageObj_GetMark(object, i as _);
+            let mut name = [0_u16; 9];
+            let mut length = 0;
+            !mark.is_null()
+                && bindings.FPDFPageObjMark_GetName(mark, name.as_mut_ptr(), 18, &mut length) != 0
+                && length == 18
+                && name
+                    .iter()
+                    .copied()
+                    .map(u16::from_le)
+                    .eq("Artifact\0".encode_utf16())
+        })
+    }
 }
 
 /// Characters no run claims.

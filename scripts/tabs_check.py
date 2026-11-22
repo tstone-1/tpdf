@@ -330,7 +330,7 @@ def main() -> int:
         if args.phase == "protect":
             passed = protected_files(room / "copies", args.binary) and passed
         if args.phase == "add-text":
-            passed = text_added_files(room / "copies", args.binary) and passed
+            passed = text_added_files(room / "copies", args.binary, first) and passed
         if args.phase == "pictures":
             passed = picture_files(room / "copies", args.binary) and passed
         if args.phase == "compress":
@@ -674,7 +674,7 @@ def protected_files(directory: Path, binary: Path) -> bool:
 ADDED_TEXT_FILES = ("numbered.pdf", "watermarked.pdf", "greek.pdf")
 
 
-def text_added_files(directory: Path, binary: Path) -> bool:
+def text_added_files(directory: Path, binary: Path, source: Path) -> bool:
     """What the page-number and watermark phase left on disk, read by the tool.
 
     `numbered.pdf` must read "Seite 1 von N" on its first page and "Seite N von
@@ -688,33 +688,35 @@ def text_added_files(directory: Path, binary: Path) -> bool:
     """
     tool = binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
 
-    def pages(path: Path) -> list[str]:
-        done = subprocess.run([str(tool), "text", str(path), "--json"],
-                              capture_output=True, text=True, encoding="utf-8", timeout=120, check=False)
-        if done.returncode != 0:
-            return []
-        return [" ".join(page.get("text", "").split()) for page in json.loads(done.stdout).get("pages", [])]
+    def report(*args: str) -> dict:
+        done = subprocess.run([str(tool), *args, "--json"], capture_output=True, text=True,
+                              encoding="utf-8", timeout=120, check=False)
+        return json.loads(done.stdout) if done.returncode == 0 else {}
+
+    def hits(path: Path, phrase: str) -> list[int]:
+        files = report("search", str(path), "--text", phrase).get("files", [])
+        return [hit["page"] for file in files for hit in file["matches"]]
 
     numbered, marked, greek = (directory / name for name in ADDED_TEXT_FILES)
     checks = []
     if numbered.is_file() and marked.is_file() and greek.is_file():
-        read = pages(numbered)
-        last = len(read)
+        original = report("text", str(source)).get("pages", [])
+        last = len(original)
         checks += [
-            ("numbered.pdf reads its first page's number", bool(read) and "Seite 1 von" in read[0]),
-            (f"and its last page's, Seite {last} von {last}", bool(read) and f"Seite {last} von {last}" in read[-1]),
+            ("numbered.pdf holds its first page's number", hits(numbered, f"Seite 1 von {last}") == [1]),
+            (f"and its last page's, Seite {last} von {last}", hits(numbered, f"Seite {last} von {last}") == [last]),
+            ("watermarked.pdf holds DRAFT on page 1 alone", hits(marked, "DRAFT") == [1]),
+            ("greek.pdf holds its first page's Greek number", hits(greek, f"Σελίδα 1 από {last}") == [1]),
         ]
-        # Through `text`, the reading order: the turned watermark is read as a
-        # line of its own after the page's (docs/TRAPS.md, *A watermark turned
-        # across the page merged the lines it crossed*).
-        read = pages(marked)
-        drafts = [at + 1 for at, text in enumerate(read) if "DRAFT" in text]
-        checks.append((f"watermarked.pdf reads DRAFT on page 1 alone: {drafts}", drafts == [1]))
-        checks.append(("and reads it after the page's own text",
-                       bool(read) and read[0].endswith("DRAFT")))
-        read = pages(greek)
-        checks.append(("greek.pdf reads its first page's Greek number",
-                       bool(read) and "\u03a3\u03b5\u03bb\u03af\u03b4\u03b1 1 \u03b1\u03c0\u03cc" in read[0]))
+        for output in (numbered, marked, greek):
+            pages = report("text", str(output)).get("pages", [])
+            checks.append((f"{output.name} keeps the source pages and their tagged body text",
+                           last > 0 and len(pages) == last and all(
+                               after == before for before, after in zip(original, pages)
+                               if before["order"] == "tagged")))
+            if output == marked and original and original[0]["order"] == "geometric":
+                checks.append(("geometric order reads the watermark after the page's own text",
+                               bool(pages) and pages[0]["text"].rstrip().endswith("DRAFT")))
     else:
         checks.append((f"{', '.join(ADDED_TEXT_FILES)} were written", False))
     extra = sorted(p.name for p in directory.iterdir() if p.name not in ADDED_TEXT_FILES)

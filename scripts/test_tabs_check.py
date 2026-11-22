@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from run_on_mac import RECEIVE, remote_path
+from run_on_mac import RECEIVE, REMOTE, VOICEOVER_DRIVER, remote_path
 from tabs_check import answer_rewrites  # noqa: E402
 
 PDF = b"%PDF-1.7\n1 0 obj\n<< >>\nendobj\ntrailer\n<< >>\n%%EOF\n"
@@ -121,6 +121,42 @@ class MacReceiver(unittest.TestCase):
                                    capture_output=True, timeout=5, check=True)
             self.assertIn(b"RESULT 0", retry.stdout)
             self.assertEqual((runs / "retry/tree.bundle").read_bytes(), b"retry")
+
+
+@unittest.skipIf(sys.platform == "win32", "the remote driver's process groups are POSIX")
+class RemoteInputsAndTimeout(unittest.TestCase):
+    def test_timeout_stops_a_delayed_descendant_before_a_retry(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            room = Path(scratch)
+            job = room / "job.sh"
+            job.write_text('#!/bin/sh\n(trap "" INT; sleep 0.6; touch "$0.late") &\nwait\n')
+            job.chmod(0o700)
+            command = [sys.executable, "-c", VOICEOVER_DRIVER, scratch, "0.15"]
+            subprocess.run(command, check=True, timeout=6)
+            self.assertTrue((room / "timed-out").exists())
+            job.write_text('#!/bin/sh\ntouch "$0.retry"\n')
+            subprocess.run(command, check=True, timeout=3)
+            self.assertTrue(Path(str(job) + ".retry").exists())
+            time.sleep(0.65)
+            self.assertFalse(Path(str(job) + ".late").exists())
+
+    @unittest.skipUnless(sys.platform == "darwin", "uses the remote Mac's shell")
+    def test_a_removed_phase_input_cannot_survive_a_second_run(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            room = Path(scratch)
+            clone, tree = room / "clone", room / "check"
+            for folder in (clone,tree):
+                (folder / "testdata").mkdir(parents=True)
+            subprocess.run(["git","init","-q","-b","main",str(tree)],check=True)
+            name = "testdata/example.pdf"
+            script = REMOTE[REMOTE.index("phase_input={phase_input}"):REMOTE.index("# Rebuild the window")].format(phase_input=name)
+            cmd = ["zsh","-c",'stop() { exit 2; }; clone=$1\n' + script, "stage",str(clone)]
+            (clone / name).write_bytes(PDF)
+            subprocess.run(cmd,cwd=tree,check=True,capture_output=True)
+            self.assertEqual((tree/name).read_bytes(),PDF)
+            (clone / name).unlink()
+            subprocess.run(cmd,cwd=tree,check=True,capture_output=True)
+            self.assertFalse((tree/name).exists())
 
 
 if __name__ == "__main__":

@@ -83,6 +83,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 #: Each entry is the artifact and the command that produces it, argv-style so no
 #: shell is involved. The interpreter is this one, so a venv is honoured.
 FIXTURES: list[tuple[str, list[str]]] = [
+    ("testdata/tagged.pdf", ["testdata/make_tagged_pdf.py", "testdata"]),
     ("testdata/rotated.pdf", ["testdata/make_rotated_pdf.py", "testdata"]),
     ("testdata/comments.pdf", ["testdata/make_comments_pdf.py", "testdata"]),
     # Written by the same run as the line above; listed so that a check for

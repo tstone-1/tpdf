@@ -83,6 +83,8 @@ export default {
   "a font size of {size} points is outside {low} to {high}":
     "Eine Schriftgröße von {size} Punkt liegt außerhalb von {low} bis {high}",
   "a colour is red, green and blue, each from 0 to 1": "Eine Farbe besteht aus Rot, Grün und Blau, jeweils von 0 bis 1",
+  "does not read {line:?} on page {page}": "Die Zeile {line} fehlt auf Seite {page}",
+  "the staged copy has a different number of pages": "Die geprüfte Kopie hat eine andere Seitenzahl",
   "the opacity is more than 0 and at most 1": "Die Deckkraft ist größer als 0 und höchstens 1",
   "the angle is in degrees, from -360 to 360": "Der Winkel wird in Grad angegeben, von -360 bis 360",
   "the margin is from 0 to {MAX_MARGIN} points": "Der Rand liegt zwischen 0 und {MAX_MARGIN} Punkt",

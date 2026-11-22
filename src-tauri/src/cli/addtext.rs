@@ -218,24 +218,8 @@ impl AddText {
             ));
         }
         // What each page written to must read back as, page by page.
-        let chosen: Vec<u32> = match &self.added.pages {
-            Some(pages) => {
-                let mut pages = pages.clone();
-                pages.sort_unstable();
-                pages.dedup();
-                pages
-            }
-            None => (0..count).collect(),
-        };
-        let total = self.added.last_number(chosen.len());
-        let expected: Vec<(u32, String)> = chosen
-            .iter()
-            .zip(self.added.first_number..)
-            .map(|(page, n)| {
-                let line = addedtext::filled(&self.added.text, n, total);
-                (*page, collapsed(line.chars()))
-            })
-            .collect();
+        let expected = addedtext::plan_lines(count, std::slice::from_ref(&self.added))
+            .map_err(|why| Failure::new(Exit::Refused, why))?;
         input.plan.added_text = vec![self.added.clone()];
 
         let unpublished = |what: String| {
@@ -258,25 +242,13 @@ impl AddText {
                 if !same_sizes(&after.sizes, &input.sizes) {
                     return Err(unpublished("does not have the source's pages".into()));
                 }
-                for (page, line) in &expected {
-                    let read = match session.ask(Request::Text {
-                        page: *page,
-                        crop: None,
-                    }) {
-                        Ok(Reply::Text(text)) => {
-                            collapsed(text.codes.iter().filter_map(|c| char::from_u32(*c)))
-                        }
-                        _ => {
-                            return Err(unpublished(format!("page {} could not be read", page + 1)))
-                        }
-                    };
-                    if !read.contains(line.as_str()) {
-                        return Err(unpublished(format!(
-                            "does not read {line:?} on page {}",
-                            page + 1
-                        )));
+                addedtext::verify_lines(&expected, |page| {
+                    match session.ask(Request::Text { page, crop: None }) {
+                        Ok(Reply::Text(text)) => Ok(text),
+                        _ => Err(format!("page {} could not be read", page + 1)),
                     }
-                }
+                })
+                .map_err(unpublished)?;
                 Ok(())
             },
         )?;
@@ -287,12 +259,12 @@ impl AddText {
             input: self.input.display().to_string(),
             output: self.output.display().to_string(),
             pages: count,
-            written: expected.iter().map(|(page, _)| page + 1).collect(),
+            written: expected.iter().map(|(page, _, _)| page + 1).collect(),
             text: self.added.text.clone(),
             position: self.added.position,
             first: expected
                 .first()
-                .map(|(_, line)| line.clone())
+                .map(|(_, _, line)| collapsed(line.chars()))
                 .unwrap_or_default(),
             signatures_invalidated: match input.signed {
                 Some(SignedState::Signed(n)) => n,

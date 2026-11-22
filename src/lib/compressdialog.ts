@@ -221,8 +221,13 @@ export class CompressDialog {
       }
       // Stopped as well as defaulted away: the window's key handler binds Enter.
       if (event.key === "Enter") {
-        event.preventDefault();
         event.stopPropagation();
+        if (event.target === cancel || event.target === this.save) return;
+        event.preventDefault();
+        if (event.target === this.dpi || event.target === this.quality) {
+          this.select(CUSTOM);
+          this.askCustom();
+        }
         this.submit();
       }
     });

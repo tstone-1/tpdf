@@ -27,7 +27,13 @@
         "Sect"
       ],
       "start": 0,
-      "end": 3
+      "end": 2
     }
+  ],
+  "artifacts": [
+    [
+      2,
+      3
+    ]
   ]
 }

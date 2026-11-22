@@ -67,6 +67,7 @@ export interface PageText {
    * which is most pages.
    */
   runs?: TaggedRun[];
+  artifacts?: [number, number][];
 }
 
 /** Whether lines on this page are separated horizontally rather than vertically. */
@@ -143,6 +144,7 @@ export function turnedView(text: PageText, turns: number): PageText {
   // Assigned rather than spread because the field is absent on most pages and
   // `exactOptionalPropertyTypes` distinguishes absent from `undefined`.
   if (text.runs) view.runs = text.runs;
+  if (text.artifacts) view.artifacts = text.artifacts;
   if (text.char_turns) view.char_turns = text.char_turns;
   return view;
 }

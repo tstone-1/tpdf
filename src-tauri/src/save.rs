@@ -383,13 +383,31 @@ pub(crate) fn open_for_print(source: &Path, plan: Option<&Plan>) -> Result<Print
             why
         }
     })?;
-    if let Some(expected) = expected {
-        expected.agrees_with_open(&file, source).map_err(changed)?;
-    }
+    let (file, len) = if let Some(expected) = expected {
+        // A retained source handle survives rename, but another writer can still
+        // edit its inode. Verify the private bytes every print route will consume.
+        use std::io::Read as _;
+        let mut snapshot = tempfile::tempfile().map_err(|e| Refusal::from(e.to_string()))?;
+        let size = std::io::copy(
+            &mut file.take(expected.len.saturating_add(1)),
+            &mut snapshot,
+        )
+        .map_err(|e| Refusal::from(e.to_string()))?;
+        expected
+            .agrees_with_open(&snapshot, source)
+            .map_err(changed)?;
+        std::io::Seek::rewind(&mut snapshot).map_err(|e| Refusal::from(e.to_string()))?;
+        (
+            snapshot,
+            usize::try_from(size).map_err(|e| Refusal::from(e.to_string()))?,
+        )
+    } else {
+        (file, len)
+    };
     Ok(PrintSource { file, len })
 }
 
-/// The same open file serves the fingerprint, passthrough and worker routes.
+/// A private, verified snapshot when the document carries an opening fingerprint.
 pub(crate) struct PrintSource {
     file: std::fs::File,
     len: usize,

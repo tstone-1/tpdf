@@ -832,6 +832,12 @@ both sides and marks the rows out of date. Closing either view ends it. The wind
 
 ## Text on every page (`tpdf page-numbers`, `tpdf watermark`, the two *Save a copy with* commands)
 
+The window and CLI check selected pages against the expanded lines through the
+sandboxed text reader before publication. PDFium can expand a typographic ligature
+into separate letters. Reading order excludes characters explicitly marked as PDF
+artifacts when using the structure tree. An unclaimed visible body character
+still triggers the geometric fallback.
+
 `addedtext.rs` writes one line of text on each page it is given, with `{page}` and `{pages}`
 filled in. A line Helvetica with `/WinAnsiEncoding` can draw is set in it, not embedded, so a
 Latin-1 page number adds no font program. Any other line is set in subsets of the bundled Noto
@@ -867,8 +873,9 @@ its resources, under names it does not already use.
 Each line is a marked-content sequence `/Artifact <</Type /Pagination ...>> BDC ... EMC`
 (ISO 32000-1 §14.8.2.2), `/Subtype /Header` in the top row, `/Footer` in the bottom and none
 in the middle, so a screen reader and a PDF/UA check on a tagged document skip it. PDFium
-does not skip artifacts when it extracts text: tpdf's own search, copy and the read-back
-below still find the line. A watermark's turned letters are read after the page's own lines
+includes artifact characters in raw text, so search and the staged read-back can find
+the line. Tagged reading omits pagination artifacts. With geometric order, a watermark's
+turned letters are read after the page's own lines
 (`reading.rs`, `OBLIQUE`).
 
 `tpdf page-numbers` and `watermark` read every written page back from the staged copy and

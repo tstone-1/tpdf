@@ -382,6 +382,13 @@ describe("usableRuns", () => {
     expect(usableRuns(marginNote([{ tag: "P", path: ["P"], start: 0, end: 8 }]))).toBeNull();
   });
 
+  it("excludes a confirmed artifact while preserving tagged body order", () => {
+    const text = marginNote([NOTE_LAST[0]!]);
+    text.artifacts = [[8, 12]];
+    expect(usableRuns(text)).toHaveLength(1);
+    expect(readingTextOf(text, 0, text.codes.length)).toBe("bodymore");
+  });
+
   it("is the runs when they claim every visible character", () => {
     expect(usableRuns(marginNote(NOTE_LAST))).toHaveLength(2);
   });

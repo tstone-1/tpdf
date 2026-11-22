@@ -1379,6 +1379,7 @@ mod tests {
             "the fixture must place every character"
         );
         PageText {
+            artifacts: Vec::new(),
             codes,
             boxes: boxes.iter().flat_map(|b| b.iter().copied()).collect(),
             height_pt: 800.0,

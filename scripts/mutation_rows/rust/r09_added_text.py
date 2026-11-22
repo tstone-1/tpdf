@@ -106,8 +106,8 @@ ROWS = [
     Mutation(
         "added text: one page object listed twice written twice",
         "src/addedtext.rs",
-        "            if let Some(&(first, second)) = shared.get(&pages[*page as usize]) {",
-        "            if let Some(&(first, second)) = shared.get(&pages[*page as usize]).filter(|_| false) {",
+        '        if let Some(&(first, second)) = shared.get(&pages[*page as usize]) {',
+        '        if let Some(&(first, second)) = shared.get(&pages[*page as usize]).filter(|_| false) {',
         "a_page_listed_twice_is_refused_rather_than_numbered_twice",
     ),
     # --- How a line is drawn --------------------------------------------------------

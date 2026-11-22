@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use super::{outside_of, password_for};
+use super::{answered, outside_of, password_for};
 use crate::addedtext::{self, AddedText};
 use crate::render::RenderService;
 use crate::{edits, save};
@@ -25,21 +25,39 @@ pub async fn add_text_copy(
     path: String,
     added: Vec<AddedText>,
 ) -> Result<save::Copied, String> {
-    for line in &added {
-        addedtext::check(line)?;
-    }
     let mut plan = edits.plan(doc)?;
+    let count = u32::try_from(plan.pages.len()).map_err(|e| e.to_string())?;
+    let expected = addedtext::plan_lines(count, &added)?;
     plan.added_text = added;
     let opened_with = password_for(&service, doc, "add_text_copy").await;
     let writing = outside_of(&app, service.backend());
+    let service = service.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        save::write_copy(
+        save::write_checked_copy(
             Path::new(&source),
             &plan,
             Path::new(&path),
             opened_with.as_deref(),
             &*writing,
+            &|staged| {
+                let opened = answered("add_text_copy", |reply| {
+                    service.open(staged.to_path_buf(), true, opened_with.clone(), reply)
+                })
+                .map_err(|e| save::Refusal::from(e.reason))?;
+                let checked = if opened.page_count == count as usize {
+                    addedtext::verify_lines(&expected, |page| {
+                        answered("add_text_copy", |reply| {
+                            service.text(opened.id, page, None, reply)
+                        })
+                    })
+                } else {
+                    Err(said!("the staged copy has a different number of pages"))
+                };
+                let closed = answered("add_text_copy", |reply| service.close(opened.id, reply));
+                checked.and(closed).map_err(save::Refusal::from)
+            },
         )
+        .map(|()| save::Copied { changed: false })
     })
     .await
     .map_err(|e| said!("the save did not run: {e}"))?

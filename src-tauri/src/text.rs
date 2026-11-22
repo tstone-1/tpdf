@@ -205,6 +205,9 @@ pub struct PageText {
     /// that decision at two call sites and left one of them to be forgotten.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runs: Vec<crate::structure::TaggedRun>,
+    /// Half-open scalar ranges of text marked as an artifact on a structured page.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<[u32; 2]>,
 }
 
 /// The `char_turns` value of a character turned well away from every quarter
@@ -500,7 +503,15 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
     // has no tree at all. A tagged one pays two calls per character, which is
     // what relating a mark to a character index costs and is why it is not done
     // on a page nobody asked about.
-    let mut runs = structure::read_using(page, &text)?.complete_runs();
+    let mut artifacts = Vec::new();
+    let mut runs = structure::read_with_artifacts(page, &text, &mut artifacts)?.complete_runs();
+    if runs.is_empty() {
+        artifacts.clear();
+    } else {
+        for span in &mut artifacts {
+            *span = [ours[span[0] as usize], ours[span[1] as usize]];
+        }
+    }
     retarget(&mut runs, &ours, codes.len());
     if char_turns.iter().all(|turn| *turn == 0) {
         char_turns.clear();
@@ -515,6 +526,7 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
         char_turns,
         extract_ms: started.elapsed().as_secs_f64() * 1000.0,
         runs,
+        artifacts,
     })
 }
 

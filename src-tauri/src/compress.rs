@@ -219,6 +219,10 @@ struct Shown {
     page: u32,
 }
 
+fn integer(doc: &Document, dict: &Dictionary, key: &[u8]) -> Option<i64> {
+    resolved(doc, dict.get(key).ok()?)?.as_i64().ok()
+}
+
 fn number(object: &Object) -> Option<f64> {
     match object {
         Object::Integer(value) => Some(*value as f64),
@@ -460,6 +464,32 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
         unfollowed: BTreeSet::new(),
         lost: false,
     };
+    for object in doc.objects.values() {
+        let Ok(pattern) = object.as_stream() else {
+            continue;
+        };
+        if pattern
+            .dict
+            .get(b"PatternType")
+            .ok()
+            .and_then(|p| resolved(doc, p))
+            .and_then(|p| p.as_i64().ok())
+            != Some(1)
+        {
+            continue;
+        }
+        if let Some(resources) = pattern
+            .dict
+            .get(b"Resources")
+            .ok()
+            .and_then(|r| resolved(doc, r))
+            .and_then(|r| r.as_dict().ok())
+        {
+            walk.unfollowed_in(&[resources]);
+        } else {
+            walk.lost = true;
+        }
+    }
     for (index, page) in doc.get_pages().into_values().enumerate() {
         walk.page = u32::try_from(index).unwrap_or(u32::MAX);
         let Ok((inline, inherited)) = doc.get_page_resources(page) else {
@@ -619,12 +649,7 @@ fn picture(doc: &Document, id: ObjectId, as_mask: bool) -> Option<Picture> {
             .and_then(|value| value.as_bool().ok())
             .unwrap_or(false)
     };
-    let whole = |key: &[u8]| {
-        dict.get(key)
-            .ok()
-            .and_then(|value| resolved(doc, value))
-            .and_then(|value| value.as_i64().ok())
-    };
+    let whole = |key: &[u8]| integer(doc, dict, key);
     if flag(b"ImageMask") || whole(b"BitsPerComponent") != Some(8) {
         return None;
     }
@@ -870,6 +895,9 @@ fn shrink(
     how: Pictures,
     is_mask: bool,
 ) -> bool {
+    if !shown.width.is_finite() || !shown.height.is_finite() {
+        return false;
+    }
     let dpi = f64::from(how.dpi);
     let to = (
         side(picture.width, shown.width, dpi),
@@ -1278,8 +1306,8 @@ fn focus(before: &Document, after: &Document, shown: &BTreeMap<ObjectId, Shown>)
     let size = |doc: &Document, id: ObjectId| -> Option<(i64, i64)> {
         let dict = &doc.get_object(id).ok()?.as_stream().ok()?.dict;
         Some((
-            dict.get(b"Width").and_then(Object::as_i64).ok()?,
-            dict.get(b"Height").and_then(Object::as_i64).ok()?,
+            integer(doc, dict, b"Width")?,
+            integer(doc, dict, b"Height")?,
         ))
     };
     fn content(doc: &Document, id: ObjectId) -> Option<&[u8]> {

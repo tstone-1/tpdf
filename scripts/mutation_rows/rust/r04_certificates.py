@@ -1198,8 +1198,8 @@ ROWS += [
         # it printed is a perfectly good file.
         "redact: call a plan that only redacts the file on disk",
         "src/edits.rs",
-        "        self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()",
-        "        self.marks.is_empty() && self.pages_are_the_file()",
+        '            || !redactions.is_empty()\n',
+        '',
         "a_plan_that_only_redacts_is_neither_the_file_nor_an_append",
     ),
     Mutation(
@@ -1995,16 +1995,16 @@ ROWS += [
         # An identity plan is handed over byte for byte, with the old password.
         'plan: a password change is still the file',
         'src/edits.rs',
-        '        if self.protection != crate::protect::Protection::Keep {\n            return false;\n        }\n',
-        '',
+        '!self.may_leave_orphans()\n            && self.protection == crate::protect::Protection::Keep',
+        '!self.may_leave_orphans()',
         'a_plan_that_changes_the_password_is_neither_the_file_nor_an_append',
     ),
     Mutation(
         # An append writes under the encryption the file has.
         'plan: a password change can be an append',
         'src/edits.rs',
-        '            && self.protection == crate::protect::Protection::Keep\n',
-        '',
+        '            && self.protection == crate::protect::Protection::Keep\n            // And a smaller copy',
+        '            // And a smaller copy',
         'a_plan_that_changes_the_password_is_neither_the_file_nor_an_append',
     ),
     Mutation(

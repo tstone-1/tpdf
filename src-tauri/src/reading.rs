@@ -103,6 +103,7 @@ struct View {
     quarter_turns: u32,
     char_turns: Vec<u8>,
     runs: Vec<TaggedRun>,
+    artifacts: Vec<[u32; 2]>,
 }
 
 impl View {
@@ -113,6 +114,7 @@ impl View {
             quarter_turns: u32::from(text.quarter_turns),
             char_turns: text.char_turns.clone(),
             runs: text.runs.clone(),
+            artifacts: text.artifacts.clone(),
         }
     }
 
@@ -379,6 +381,7 @@ fn fragments_of(view: &View, axes: Axes, gap: f64) -> Vec<Fragment> {
             quarter_turns: turns,
             char_turns: Vec::new(),
             runs: Vec::new(),
+            artifacts: Vec::new(),
         };
         let own = axes_for(turns);
         for fragment in aligned_fragments(&group, own, cut_width(&group, own)) {
@@ -886,6 +889,13 @@ fn usable_runs(view: &View) -> Option<&[TaggedRun]> {
             *slot = true;
         }
     }
+    for &[start, end] in &view.artifacts {
+        claimed
+            .iter_mut()
+            .take(end as usize)
+            .skip(start as usize)
+            .for_each(|c| *c = true);
+    }
     for (index, claimed) in claimed.iter().enumerate() {
         if *claimed {
             continue;
@@ -921,6 +931,13 @@ fn ownership(view: &View, runs: &[TaggedRun]) -> Vec<Vec<usize>> {
         } else {
             next = *slot;
         }
+    }
+    for &[start, end] in &view.artifacts {
+        owner
+            .iter_mut()
+            .take(end as usize)
+            .skip(start as usize)
+            .for_each(|slot| *slot = -1);
     }
     let mut owned: Vec<Vec<usize>> = vec![Vec::new(); runs.len()];
     for (index, at) in owner.iter().enumerate() {

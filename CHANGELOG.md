@@ -21,6 +21,14 @@ have the binary.)
 
 ### Fixed
 
+- Adding page numbers or watermarks preserves tagged reading order. The window and
+  CLI verify the added lines before publishing, including typographic ligatures.
+  Copies declare the PDF version their new content requires.
+- Compression preserves pictures shared with tiling patterns and can preview
+  images with indirect dimensions. Enter respects the focused dialog button and
+  commits custom compression settings before saving.
+- Print includes unsaved annotation deletions and uses a private snapshot when
+  another application can update the open file in place.
 - Tagged text keeps its reading order when an inline element sits between two text runs.
 - Filling a form preserves transparent backgrounds, fits selected list entries and
   refuses custom dropdown answers that would change meaning on reopening.

@@ -450,6 +450,54 @@ fn a_shared_images_preview_names_the_page_where_its_dpi_was_measured() {
 }
 
 #[test]
+fn a_pattern_and_its_thumbnail_share_original_pixels_while_another_thumbnail_shrinks() {
+    let mut doc = Document::with_version("1.7");
+    let raw =
+        Stream::new(image(400, 400, "DeviceGray".into()), noise(400 * 400)).with_compression(false);
+    let logo = doc.add_object(raw.clone());
+    let other = doc.add_object(raw);
+    let page = page_with(
+        &mut doc,
+        "q 12 0 0 12 0 0 cm /Logo Do /Other Do Q /Pattern cs /P scn 0 0 256 256 re f",
+        &[("Logo", logo), ("Other", other)],
+    );
+    let pattern = doc.add_object(Stream::new(
+        dictionary! {
+            "Type"=>"Pattern", "PatternType"=>1, "PaintType"=>1, "TilingType"=>1,
+            "BBox"=>vec![0.into(),0.into(),256.into(),256.into()], "XStep"=>256, "YStep"=>256,
+            "Resources"=>dictionary!{"XObject"=>dictionary!{"Logo"=>logo}},
+        },
+        b"q 256 0 0 256 0 0 cm /Logo Do Q".to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .get_mut(b"Resources")
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Pattern", dictionary! {"P"=>pattern});
+    let done = apply(&mut doc, SCREEN);
+    assert_eq!(done.pictures_changed, 1);
+    assert_eq!(whole(&doc, logo, b"Width"), 400);
+    assert!(whole(&doc, other, b"Width") < 400);
+}
+
+#[test]
+fn preview_accepts_indirect_image_dimensions() {
+    let (mut doc, image) = one_picture(image(400, 400, "DeviceGray".into()), noise(400 * 400));
+    let width = doc.add_object(Object::Integer(400));
+    doc.get_object_mut(image)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("Width", width);
+    let estimated = super::estimate(&doc, SCREEN).unwrap();
+    assert_eq!(estimated.estimate.done.pictures_changed, 1);
+    assert_eq!(estimated.focus.unwrap().page, 0);
+}
+
+#[test]
 fn a_page_logo_also_used_by_a_stamp_keeps_its_resolution() {
     let (mut doc, id) = one_picture(image(400, 400, "DeviceGray".into()), noise(400 * 400));
     let page = doc.get_pages()[&1];
@@ -736,7 +784,7 @@ fn an_estimate_writes_nothing_and_names_the_page_that_loses_most() {
     doc.trailer.set("Root", catalog);
 
     let before = doc.clone();
-    let estimated = estimate(&doc, SCREEN).expect("estimates");
+    let estimated = super::estimate(&doc, SCREEN).expect("estimates");
     assert_eq!(doc.objects, before.objects, "the document is as it was");
     let done = estimated.estimate.done;
     assert_eq!((done.pictures, done.pictures_changed), (2, 2));

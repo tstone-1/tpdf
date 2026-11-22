@@ -1021,8 +1021,8 @@ ROWS += [
         # defect the guard was written for, and the paper does not say so.
         "save: print a file that changed since it was opened",
         "src/save.rs",
-        "        expected.agrees_with_open(&file, source).map_err(changed)?;\n",
-        "        let _ = expected.agrees_with_open(&file, source).map_err(changed);\n",
+        '        expected\n            .agrees_with_open(&snapshot, source)\n            .map_err(changed)?;',
+        '        let _ = expected.agrees_with_open(&snapshot, source).map_err(changed);',
         "a_print_job_over_a_changed_file_is_refused_or_says_so",
     ),
     Mutation(

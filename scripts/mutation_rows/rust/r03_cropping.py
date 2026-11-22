@@ -666,8 +666,8 @@ ROWS += [
         # Re-aimed 2026-08-26, when a redaction clause joined the predicate.
         "edits: call a plan with marks in it the file itself",
         "src/edits.rs",
-        "        self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()",
-        "        self.redactions.is_empty() && self.pages_are_the_file()",
+        '            || !marks.is_empty()\n',
+        '',
         "a_plan_carrying_a_mark_is_not_the_file_on_disk",
     ),
     Mutation(

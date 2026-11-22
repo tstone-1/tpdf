@@ -142,9 +142,15 @@ echo "[OK] $tree is at $(git rev-parse --short HEAD)"
 # An explicit phase can name an external document in the clone. Stage it
 # before generation so an older copy cannot override a generated fixture.
 phase_input={phase_input}
-if [[ "$phase_input" == testdata/* && -f "$clone/$phase_input" ]] &&
-   ! git ls-files --error-unmatch -- "$phase_input" >/dev/null 2>&1; then
-  mkdir -p "$(dirname "$phase_input")" && cp "$clone/$phase_input" "$phase_input" || stop "cannot stage the phase input"
+if [[ "$phase_input" == testdata/* ]] &&
+   ! git --literal-pathspecs ls-files --error-unmatch -- "$phase_input" >/dev/null 2>&1; then
+  # Clear only this run's selected file in the reusable test worktree.
+  if [[ -f "$phase_input" || -L "$phase_input" ]]; then
+    git --literal-pathspecs clean -fx -- "$phase_input" || stop "cannot clear the previous phase input"
+  fi
+  if [[ -f "$clone/$phase_input" ]]; then
+    mkdir -p "$(dirname "$phase_input")" && cp "$clone/$phase_input" "$phase_input" || stop "cannot stage the phase input"
+  fi
 fi
 # Rebuild the window suite's fixtures from the generators in this checkout.
 uv run --no-project --with-requirements scripts/fixture-tools.txt python scripts/ci_fixtures.py --signed --hostile >"$run/fixtures.log" 2>&1 &&
@@ -161,6 +167,7 @@ if [ -f "$clone/testdata/text-heavy.pdf" ]; then
 else
   rm -f testdata/text-heavy.pdf || stop "cannot clear a stale external fixture"
 fi
+[[ -z "$phase_input" || -f "$phase_input" ]] || stop "the selected phase input is missing: $phase_input"
 git diff --quiet HEAD || stop "fixture preparation changed a tracked test input"
 # The engine the sent tree pins, and not the clone's: until 2026-10-10 this
 # copied `vendor/pdfium` from the clone, so a tree that moved the pin was
@@ -229,9 +236,9 @@ PYPLIST
 [ "$?" -eq 0 ] || {{ show_again; stop "could not write the launchd job"; }}
 {start} || {{ show_again; stop "launchd did not take the job; is anybody logged in on this Mac?"; }}
 waited=0
-while [ ! -f "$run/done" ] && [ "$waited" -lt {limit} ]; do sleep 5; waited=$((waited + 5)); done
+while [ ! -f "$run/done" ] && [ ! -f "$run/timed-out" ] && [ "$waited" -lt {limit} ]; do sleep 5; waited=$((waited + 5)); done
 launchctl bootout "gui/$(id -u)/$job" 2>/dev/null
-if [ ! -f "$run/done" ]; then
+if [[ -f "$run/timed-out" || ! -f "$run/done" ]]; then
   pkill -f "$app/Contents/MacOS/tpdf" 2>/dev/null
   show_again
   tail -8 "$run/checks.log" 2>/dev/null
@@ -281,6 +288,31 @@ def tree_to_send(rev: str | None) -> str:
     return tracked_tree() or git("rev-parse", "HEAD")
 
 
+# The controller and its desktop driver share the SSH session's AppleEvent
+# permissions. Keep the controller in the foreground until its process group exits.
+VOICEOVER_DRIVER = """
+import os, signal, subprocess, sys
+from pathlib import Path
+run = Path(sys.argv[1])
+driver = subprocess.Popen([run / "job.sh"], start_new_session=True)
+try:
+    driver.wait(timeout=float(sys.argv[2]))
+except subprocess.TimeoutExpired:
+    (run / "timed-out").touch()
+    try:
+        os.killpg(driver.pid, signal.SIGINT)
+        driver.wait(timeout=3)
+    except (subprocess.TimeoutExpired, ProcessLookupError):
+        pass
+    finally:
+        try:
+            os.killpg(driver.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        driver.wait()
+"""
+
+
 def remote(args: argparse.Namespace, sha: str, capture: str, run_id: str) -> str:
     only = " ".join(f"--only {shlex.quote(text)}" for text in args.only)
     start = 'launchctl bootstrap "gui/$(id -u)" "$run/job.plist"'
@@ -297,7 +329,7 @@ def remote(args: argparse.Namespace, sha: str, capture: str, run_id: str) -> str
         # AppleEvent from the first and lets one from a `gui/<uid>` job time
         # out (-1712), measured 2026-11-15. `open` puts the app on the
         # desktop from either.
-        start = '( nohup "$run/job.sh" >/dev/null 2>&1 & )'
+        start = f'python3 -c {shlex.quote(VOICEOVER_DRIVER)} "$run" {float(args.timeout)}'
     elif args.phase:
         phase, fixture = args.phase
         job = (f'uv run scripts/tabs_check.py "$app/Contents/MacOS/tpdf" {shlex.quote(fixture)} '

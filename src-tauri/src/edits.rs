@@ -3320,37 +3320,13 @@ impl Plan {
     /// too. Measured, not deduced --- a plan carrying `crop: Some(...)` reported
     /// `is_identity = true` and `select` answered `Pages::All`.
     ///
-    /// The shape of the mistake is worth more than the missing clause: this
-    /// predicate is a **list of the ways a document can differ from its file**,
-    /// and a list like that is wrong the moment a new way is added, silently and
-    /// in the reassuring direction. `a_plan_that_differs_in_any_one_field_is_not
-    /// _the_file` walks the fields rather than naming them, so the next one has
-    /// to be classified rather than forgotten.
+    /// Classify every field through the exhaustive graph-change decision below.
+    /// Protection and compression change the serialized result after the sweep.
     #[must_use]
     pub fn is_identity(&self) -> bool {
-        // A mark is a change the file does not have, so a plan carrying one is
-        // never the file. Written first because it is the cheap half and because
-        // leaving it out would let the print path hand over the original bytes
-        // for a document the reader has highlighted --- which prints, correctly
-        // and confusingly, without the highlights.
-        if !self.forms.is_empty() || !self.text_edits.is_empty() || !self.text_layers.is_empty() {
-            return false;
-        }
-        // Text written on pages is a rewrite of their content, never the
-        // file's own bytes and never an append. See `addedtext.rs`.
-        if !self.added_text.is_empty() {
-            return false;
-        }
-        if self.protection != crate::protect::Protection::Keep {
-            return false;
-        }
-        if self.compress != crate::compress::Compress::No {
-            return false;
-        }
-        if !self.new_fields.is_empty() || !self.field_edits.is_empty() || self.tab_order {
-            return false;
-        }
-        self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
+        !self.may_leave_orphans()
+            && self.protection == crate::protect::Protection::Keep
+            && self.compress == crate::compress::Compress::No
     }
 
     /// Whether a rewrite from this plan changes the document's graph before
@@ -3365,8 +3341,8 @@ impl Plan {
     /// no `..`, so a field added to [`Plan`] does not compile here until it is
     /// placed.
     ///
-    /// Not [`Plan::is_identity`], which answers a narrower question for the
-    /// print path and leaves out comment edits and deletions.
+    /// Printing additionally considers protection and compression, which are
+    /// applied after the sweep.
     #[must_use]
     pub fn may_leave_orphans(&self) -> bool {
         let Plan {

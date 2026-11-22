@@ -617,6 +617,48 @@ fn a_print_job_from_a_locked_document_names_the_escape_that_exists() {
 }
 
 #[test]
+fn printing_keeps_the_checked_bytes_after_an_in_place_edit() {
+    let scratch = Scratch::new("print-in-place");
+    let at = scratch.0.join("input.pdf");
+    let (original, _, _) = document_with_a_drawn_comment();
+    std::fs::write(&at, &original).unwrap();
+    let plan = plan_opened_as(&[0, 0], &at);
+    let input = open_for_print(&at, Some(&plan)).unwrap();
+    std::fs::write(&at, vec![b' '; original.len()]).unwrap();
+    assert!(open_for_print(&at, Some(&plan)).is_err());
+    assert_eq!(input.bytes(&at).unwrap(), original);
+}
+
+#[test]
+fn printing_a_discard_uses_the_working_copy_until_undo() {
+    let scratch = Scratch::new("print-existing-mark");
+    let at = scratch.0.join("source.pdf");
+    let (original, id, marker) = document_with_a_drawn_comment();
+    std::fs::write(&at, &original).unwrap();
+    let edits = crate::edits::Edits::default();
+    edits.open(1, 2, None);
+    let page = edits.plan(1).unwrap().pages[0].id;
+    edits.discard(1, id, page).unwrap();
+    let plan = edits.plan(1).unwrap();
+    assert_eq!(print::route(Some(&plan), None, 0), print::Route::Working);
+    let bytes = print_bytes(&at, &plan, 0, None, &Here).unwrap();
+    assert!(!bytes.windows(marker.len()).any(|w| w == marker.as_bytes()));
+    edits.undo(1).unwrap();
+    let restored = edits.plan(1).unwrap();
+    assert_eq!(
+        print::route(Some(&restored), None, 0),
+        print::Route::Passthrough
+    );
+    assert_eq!(
+        open_for_print(&at, Some(&restored))
+            .unwrap()
+            .bytes(&at)
+            .unwrap(),
+        original
+    );
+}
+
+#[test]
 fn print_uses_verified_source_after_replace() {
     let Some(source) = fixture("rotated.pdf") else {
         return;

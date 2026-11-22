@@ -1183,6 +1183,7 @@ fn samples() -> BTreeMap<&'static str, String> {
     put(
         "PageText",
         &text::PageText {
+            artifacts: vec![[2, 3]],
             codes: vec![84, 104, 101],
             boxes: vec![10.0, 20.0, 18.0, 32.0],
             height_pt: 842.0,
@@ -1194,7 +1195,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 tag: "H1".into(),
                 path: vec!["Document".into(), "Sect".into()],
                 start: 0,
-                end: 3,
+                end: 2,
             }],
         },
     );

@@ -132,6 +132,30 @@ describe("CompressDialog", () => {
     });
   });
 
+  it("leaves Enter on Cancel to the button", async () => {
+    const d = open();
+    await settle(60);
+    d.backdrop.dispatch("keydown", {key:"Enter",target:d.cancel,preventDefault(){ throw Error("cancel activation suppressed"); },stopPropagation(){}});
+    expect(d.dialog.isOpen).toBe(true);
+    d.cancel.dispatch("click",{});
+    await expect(d.answer).resolves.toBeNull();
+  });
+
+  it("commits the typed DPI before Enter can choose a copy", async () => {
+    const d = open();
+    await settle(60);
+    const enter = () => d.backdrop.dispatch("keydown", {key:"Enter",target:d.dpi,preventDefault(){},stopPropagation(){}});
+    d.dpi.value = "invalid";
+    enter();
+    expect(d.save.disabled).toBe(true);
+    d.dpi.value = "96";
+    enter();
+    expect(d.dialog.isOpen).toBe(true);
+    await settle(60);
+    enter();
+    expect((await d.answer)?.pictures?.dpi).toBe(96);
+  });
+
   it("works out the reader's own numbers when a field is left, and saves with them", async () => {
     const d = open();
     await settle(60);

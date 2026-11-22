@@ -296,6 +296,7 @@ fn remapped(page: &RawPage<'_>, turns: u8) -> Result<text::PageText, String> {
         extract_ms: 0.0,
         // Geometry is this probe's subject; the tags are `structure-probe`'s.
         runs: Vec::new(),
+        artifacts: Vec::new(),
     })
 }
 
@@ -350,6 +351,7 @@ fn viewed(extracted: &text::PageText, view_turns: u8) -> text::PageText {
         // Carried through a turn unchanged, which is the point of runs being
         // character indices: rotating the view moves every box and no index.
         runs: extracted.runs.clone(),
+        artifacts: extracted.artifacts.clone(),
     }
 }
 

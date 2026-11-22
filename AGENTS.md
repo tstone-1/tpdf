@@ -222,7 +222,7 @@ verified by digest. TPDF builds the unpatched 8154 source through
 licensing notices. Our RTL report (PDFium issue 561066233) was fixed upstream by a
 revert, so 8044's patch went; `scripts/pdfium_verify.py` pins the two known
 mixed-direction limitations to upstream's exact output.
-Only mac-arm64 and win-x64 are published. Engine releases are prereleases with
+The pin covers mac-arm64, win-x64 and linux-x64. Engine releases are prereleases with
 Latest disabled so they do not replace the application updater's release.
 Phase 0 measurements used `chromium/7881`; they remain historical evidence.
 On a pin change, re-run the compatibility probes in `docs/build/pdfium-probes.md`.

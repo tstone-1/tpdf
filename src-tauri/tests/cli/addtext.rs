@@ -53,6 +53,26 @@ pub(super) fn adds_text_to_every_page(report: &mut Report) {
     let dir = scratch("addtext");
     let source = dir.join("source.pdf");
     document(&source);
+    if let Some(tagged) = super::fixture("tagged.pdf") {
+        let tagged = tagged.to_str().unwrap();
+        let numbered = dir.join("tagged-numbered.pdf");
+        let numbered = numbered.to_str().unwrap();
+        let read = |file| {
+            let (code, out, err) = tool(&["text", file, "--json"], &[]);
+            assert_eq!(code, 0, "{err}");
+            serde_json::from_str::<serde_json::Value>(&out).unwrap()["pages"].clone()
+        };
+        let before = read(tagged);
+        let (code, _, err) = tool(
+            &["page-numbers", tagged, "--text", "ﬁnal", "-o", numbered],
+            &[],
+        );
+        report.check(
+            "numbering preserves tagged body order and verifies the expanded fi ligature",
+            code == 0 && before[0]["order"] == "tagged" && before == read(numbered),
+            &err,
+        );
+    }
     let before = std::fs::read(&source).unwrap();
     let input = source.display().to_string();
     let numbered = dir.join("numbered.pdf").display().to_string();

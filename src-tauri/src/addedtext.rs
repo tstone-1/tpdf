@@ -288,26 +288,17 @@ pub fn filled(text: &str, page: u32, pages: u32) -> String {
         .replace("{page}", &page.to_string())
 }
 
-/// Writes every line onto its pages.
-///
-/// # Errors
-///
-/// Anything [`check`] refuses, more than [`MAX_LINES`] lines, a page the
-/// document does not have, or a page that is not a dictionary. Nothing is
-/// written when any line is refused.
-pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
-    if lines.is_empty() {
-        return Ok(());
-    }
+/// Selected pages and expanded page numbers in the same order as the writer.
+pub(crate) fn plan_lines(
+    count: u32,
+    lines: &[AddedText],
+) -> Result<Vec<(u32, usize, String)>, String> {
     if lines.len() > MAX_LINES {
         return Err(said!(
             "{count} lines of text to add, and one write takes {MAX_LINES}",
             count = lines.len()
         ));
     }
-    let pages = pagetree::ordered_pages(doc);
-    let shared = pagetree::shared_pages(&pages);
-    let count = u32::try_from(pages.len()).unwrap_or(u32::MAX);
     // Checked, and every page resolved, before anything is added.
     let mut planned: Vec<(u32, usize, String)> = Vec::new();
     for (index, line) in lines.iter().enumerate() {
@@ -328,26 +319,100 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
             }
         };
         let total = line.last_number(chosen.len());
-        // **Two page numbers can be one page object**, which a page tree may
-        // list twice. Each would then carry both lines, drawn over each other,
-        // so that is refused rather than written. `docs/TRAPS.md` has the shape.
-        for page in &chosen {
-            if let Some(&(first, second)) = shared.get(&pages[*page as usize]) {
-                return Err(said!(
-                    "pages {first} and {second} are one page in this file, listed twice, so a \
-                     line cannot be written on each",
-                    first = first + 1,
-                    second = second + 1
-                ));
-            }
-        }
         for (nth, page) in chosen.iter().enumerate() {
             let number = line.first_number + u32::try_from(nth).unwrap_or(0);
             planned.push((*page, index, filled(&line.text, number, total)));
         }
     }
+    Ok(planned)
+}
+
+fn searchable_line(chars: impl Iterator<Item = char>) -> String {
+    let mut out = String::new();
+    for ch in chars {
+        if ch.is_whitespace() {
+            if !out.is_empty() && !out.ends_with(' ') {
+                out.push(' ');
+            }
+        } else {
+            match ch {
+                'ﬀ' => out.push_str("ff"),
+                'ﬁ' => out.push_str("fi"),
+                'ﬂ' => out.push_str("fl"),
+                'ﬃ' => out.push_str("ffi"),
+                'ﬄ' => out.push_str("ffl"),
+                'ﬅ' => out.push_str("ſt"),
+                'ﬆ' => out.push_str("st"),
+                other => out.push(other),
+            }
+        }
+    }
+    out.truncate(out.trim_end().len());
+    out
+}
+
+/// Check the staged copy through the caller's sandboxed text reader, once per selected page.
+pub(crate) fn verify_lines(
+    planned: &[(u32, usize, String)],
+    mut read: impl FnMut(u32) -> Result<crate::text::PageText, String>,
+) -> Result<(), String> {
+    let mut per_page = std::collections::BTreeMap::<u32, Vec<&str>>::new();
+    for (page, _, line) in planned {
+        per_page.entry(*page).or_default().push(line);
+    }
+    for (page, lines) in per_page {
+        let text = read(page)?;
+        let actual = searchable_line(text.codes.into_iter().filter_map(char::from_u32));
+        for line in lines {
+            if !actual.contains(&searchable_line(line.chars())) {
+                return Err(said!(
+                    "does not read {line:?} on page {page}",
+                    page = page + 1
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Writes every line onto its pages.
+///
+/// # Errors
+///
+/// Anything [`check`] refuses, more than [`MAX_LINES`] lines, a page the
+/// document does not have, or a page that is not a dictionary. Nothing is
+/// written when any line is refused.
+pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+    let pages = pagetree::ordered_pages(doc);
+    let shared = pagetree::shared_pages(&pages);
+    let count = u32::try_from(pages.len()).unwrap_or(u32::MAX);
+    let planned = plan_lines(count, lines)?;
+    for (page, _, _) in &planned {
+        if let Some(&(first, second)) = shared.get(&pages[*page as usize]) {
+            return Err(said!(
+                "pages {first} and {second} are one page in this file, listed twice, so a line cannot be written on each",
+                first = first + 1, second = second + 1
+            ));
+        }
+    }
     if planned.is_empty() {
         return Ok(());
+    }
+
+    // Pagination artifacts require PDF 1.4; the Header and Footer subtypes require 1.7.
+    let required = if planned
+        .iter()
+        .any(|(_, index, _)| lines[*index].position.row() != 1)
+    {
+        "1.7"
+    } else {
+        "1.4"
+    };
+    if doc.version.as_str() < required {
+        doc.version = required.to_owned();
     }
 
     // Helvetica for what it can draw, one embedded subset for the rest, each
@@ -1003,6 +1068,42 @@ mod tests {
         write(&mut doc, &[AddedText::page_numbers()]).expect("writes");
         assert_eq!(leading_q(&doc), MAX_UNCLOSED + 1);
         assert_eq!(shown(&doc, 1), ["Page 2 of 2"]);
+    }
+
+    #[test]
+    fn new_features_raise_only_older_pdf_versions() {
+        for (line, minimum) in [
+            (AddedText::page_numbers(), "1.7"),
+            (AddedText::watermark("DRAFT"), "1.4"),
+        ] {
+            for version in ["1.3", "2.0"] {
+                let mut doc = document(1, 0, b"");
+                doc.version = version.into();
+                write(&mut doc, std::slice::from_ref(&line)).unwrap();
+                assert_eq!(doc.version, version.max(minimum));
+            }
+        }
+    }
+
+    #[test]
+    fn verification_requires_the_line_on_each_selected_page_and_accepts_ligatures() {
+        let mut line = AddedText::page_numbers();
+        line.text = "ﬁnal ﬅamp {page}".into();
+        let expected = plan_lines(2, &[line]).unwrap();
+        let page = |s: &str| crate::text::PageText {
+            codes: s.chars().map(u32::from).collect(),
+            ..Default::default()
+        };
+        verify_lines(&expected, |i| {
+            Ok(page(if i == 0 {
+                "final ſtamp 1"
+            } else {
+                "final ſtamp 2"
+            }))
+        })
+        .unwrap();
+        let err = verify_lines(&expected, |_| Ok(page("final ſtamp 1"))).unwrap_err();
+        assert!(err.contains("page 2"));
     }
 
     #[test]

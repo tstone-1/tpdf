@@ -976,6 +976,7 @@ export function usableRuns(text: PageText): TaggedRun[] | null {
     const to = Math.min(run.end, text.codes.length);
     for (let index = Math.max(0, run.start); index < to; index++) claimed[index] = 1;
   }
+  for (const [start, end] of text.artifacts ?? []) claimed.fill(1, start, end);
   for (let index = 0; index < text.codes.length; index++) {
     if (claimed[index]) continue;
     const code = text.codes[index] ?? 0;
@@ -1042,6 +1043,7 @@ function ownership(text: PageText, runs: readonly TaggedRun[]): number[][] {
     if (owner[index] === -1) owner[index] = next;
     else next = owner[index] as number;
   }
+  for (const [start, end] of text.artifacts ?? []) owner.fill(-1, start, end);
   const owned: number[][] = runs.map(() => []);
   for (let index = 0; index < owner.length; index++) {
     const at = owner[index] as number;
