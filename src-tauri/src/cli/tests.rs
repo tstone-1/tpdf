@@ -568,6 +568,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("extract", "extract a.pdf --pages 1 -o b.pdf"),
         ("split", "split a.pdf --every 2 -o b.pdf"),
         ("rotate", "rotate a.pdf --degrees 90 -o b.pdf"),
+        ("reverse", "reverse a.pdf -o b.pdf"),
         ("crop", "crop a.pdf --rect 0,0,100,200 -o b.pdf"),
         ("edit", "edit a.pdf --plan edits.json -o b.pdf"),
         ("comments", "comments a.pdf --json"),

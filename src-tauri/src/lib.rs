@@ -1034,6 +1034,7 @@ pub fn run() {
             page_crop_box,
             page_delete,
             page_move,
+            page_reverse,
             page_insert,
             page_import_prepare,
             page_import,

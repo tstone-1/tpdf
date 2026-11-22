@@ -19,6 +19,13 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+### Added
+
+- **Reverse page order** puts every page of a document in reverse order in one step, for
+  a stack scanned the wrong way round. It is in the palette, the Page menu and the Pages
+  toolbar group, and one undo takes it back. `tpdf reverse <in.pdf> -o <out.pdf>` does
+  the same from the command line.
+
 ### Fixed
 
 - Multi-page marks load the entire text selection before highlighting or redacting. Reordering pages during Copy cancels the operation, and a delayed Select All preserves a newer selection.

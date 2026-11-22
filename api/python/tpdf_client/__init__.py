@@ -732,6 +732,14 @@ class Tpdf:
         return self._pages('rotate', [source], output, options, force=force,
             invalidate_signatures=invalidate_signatures, password=password)
 
+    def reverse(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        force: bool = False, invalidate_signatures: bool = False, password: str | None = None,
+    ) -> reports.PagesReport:
+        """Write every page in reverse order, the last page first."""
+        return self._pages('reverse', [source], output, [], force=force,
+            invalidate_signatures=invalidate_signatures, password=password)
+
     def crop(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         rect: Sequence[float], pages: str | None = None, force: bool = False,

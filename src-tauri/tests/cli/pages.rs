@@ -93,6 +93,35 @@ pub(super) fn operations(report: &mut Report) {
         &stderr,
     );
 
+    let reversed = dir.join("reversed.pdf");
+    let (code, stdout, stderr) = tool(&["reverse", &input, "-o", &s(&reversed), "--json"], &[]);
+    let turns = if reversed.exists() {
+        let doc = Document::load(&reversed).unwrap();
+        doc.get_pages()
+            .values()
+            .map(|id| {
+                doc.get_dictionary(*id)
+                    .unwrap()
+                    .get(b"Rotate")
+                    .unwrap()
+                    .as_i64()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    report.check(
+        "reverse writes the last page first, each page with its own rotation",
+        code == 0
+            && names(&reversed) == ["Charlie", "Bravo", "Alpha"]
+            && turns == [180, 90, 0]
+            && json(&stdout)["command"] == "reverse"
+            && json(&stdout)["outputs"][0]["pages"] == 3
+            && std::fs::read(&source).expect("input") == original,
+        &stderr,
+    );
+
     let rotated = dir.join("rotated.pdf");
     let (code, _, stderr) = tool(
         &[

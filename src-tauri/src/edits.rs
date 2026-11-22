@@ -1296,6 +1296,19 @@ impl Edits {
         )
     }
 
+    /// Reverses the order of every page in one step, so one undo takes it back.
+    ///
+    /// Takes no page, unlike [`move_page`](Edits::move_page): the reversal is
+    /// of whatever order the model holds when the command arrives, so there is
+    /// no frontend order for it to be out of step with.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document, or the document has one page.
+    pub fn reverse(&self, doc: u32) -> Result<EditState, String> {
+        self.command(doc, Command::Reverse)
+    }
+
     /// Puts a new blank page immediately after `after`, or first when `after` is
     /// `None`.
     ///
@@ -3531,6 +3544,7 @@ impl From<Refusal> for failure::Failure {
             // in it, take their own reply off first.
             Refusal::TextEdit(_)
             | Refusal::LastPage(_)
+            | Refusal::OnePage
             | Refusal::DegenerateCrop(_)
             | Refusal::DegeneratePage(_)
             | Refusal::CropOnMadePage(_)
@@ -3579,6 +3593,7 @@ pub(crate) fn describe(why: Refusal) -> String {
         Refusal::PageDeleted(_) => said!("that page has been deleted"),
         Refusal::AnchorIsTarget(_) => said!("a page cannot be moved after itself"),
         Refusal::LastPage(_) => said!("a document must keep at least one page"),
+        Refusal::OnePage => said!("a document of one page has no order to reverse"),
         Refusal::DegenerateCrop(_) => said!("that crop encloses no area"),
         Refusal::DegeneratePage(_) => said!("a page must have a width and a height"),
         // **Two variants because they are two sentences.** They were one, and
@@ -5389,6 +5404,47 @@ mod tests {
         );
         assert!(after.dirty);
         assert!(after.can_undo);
+    }
+
+    #[test]
+    fn a_reversal_reverses_every_page_as_one_undo_and_the_plan_follows() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        // A turn on the first page, so the test can see that each page's own
+        // state travels with it rather than staying in its slot.
+        edits.rotate(7, pages[0].id, 1).expect("rotate");
+        let after = edits.reverse(7).expect("reverse");
+        assert_eq!(
+            after.pages.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![pages[2].id, pages[1].id, pages[0].id]
+        );
+        assert_eq!(sources(&after.pages), vec![2, 1, 0]);
+        assert_eq!(
+            after.pages.iter().map(|p| p.turns).collect::<Vec<_>>(),
+            vec![0, 0, 1],
+            "the turn went with the first page to the end"
+        );
+        // What a save writes, and not only what the window shows.
+        let plan = edits.plan(7).expect("a plan");
+        assert_eq!(sources(&plan.pages), vec![2, 1, 0]);
+        // One press takes the whole reversal back, leaving the turn.
+        let back = edits.undo(7).expect("undo");
+        assert_eq!(sources(&back.pages), vec![0, 1, 2]);
+        assert_eq!(
+            back.pages.iter().map(|p| p.turns).collect::<Vec<_>>(),
+            vec![1, 0, 0]
+        );
+        assert_eq!(sources(&edits.redo(7).expect("redo").pages), vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn a_document_of_one_page_is_not_reversed() {
+        let edits = Edits::default();
+        edits.open(7, 1, None);
+        let why = edits.reverse(7).expect_err("one page");
+        assert_eq!(why, "a document of one page has no order to reverse");
+        let state = edits.state(7).expect("state");
+        assert!(!state.dirty && !state.can_undo);
     }
 
     #[test]

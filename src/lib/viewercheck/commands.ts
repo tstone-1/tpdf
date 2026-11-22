@@ -495,6 +495,7 @@ export async function appCommandChecks(
     redactMatches: () => fired.push("redactMatches"),
     matchCount: () => viewer.matchCount,
     movePage: (delta) => fired.push(`movePage:${delta}`),
+    reversePages: () => fired.push("reversePages"),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
     canUndo: () => canUndo,
@@ -1604,6 +1605,11 @@ export async function appCommandChecks(
     {
       id: "edit.movePageDown",
       ...shell("movePage:1"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "edit.reversePages",
+      ...shell("reversePages"),
       read: () => fired.join(","),
     },
     {

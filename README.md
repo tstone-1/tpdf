@@ -624,6 +624,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
   file states none of them on the page itself — a PDF lets a page inherit those from the
   group it sits in, and that is where moving one silently changes it.
   <!-- built: edit.movePageUp edit.movePageDown -->
+- **Reverse the page order** in one step, for a stack that went through the scanner the
+  wrong way round and came out last page first. Each page keeps its own rotation, crop
+  and marks, and one undo puts the old order back. `tpdf reverse` does the same from
+  the command line.
+  <!-- built: edit.reversePages -->
 - **Insert a blank page** after the one you are reading — the size of the page you are
   looking at, or A3, A4, A5, US Letter or US Legal by name. It turns, moves, deletes and
   takes marks like any other page. You cannot crop one or redact it: a crop box is
@@ -1143,7 +1148,7 @@ both.
 
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf compare`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf long-term`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
-`tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
+`tpdf reverse`, `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
 `tpdf protect`, `tpdf unprotect`, `tpdf page-numbers`, `tpdf watermark`, `tpdf compress`, `tpdf form`, `tpdf images` and
 `tpdf hidden` expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
 `tpdf explorer` turns tpdf's Explorer thumbnails and preview pane on or off there,
@@ -1199,6 +1204,7 @@ tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
 tpdf extract combined.pdf --pages 1-3,7 -o selected.pdf --json
 tpdf split combined.pdf --every 10 -o part.pdf --json
 tpdf rotate report.pdf --degrees 90 --pages 2-4 -o rotated.pdf --json
+tpdf reverse scan.pdf -o scan-in-order.pdf --json
 tpdf crop report.pdf --rect 36,36,500,700 -o cropped.pdf --json
 tpdf identities
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe"

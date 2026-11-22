@@ -319,6 +319,7 @@ export interface Commands {
     args: { doc: DocHandle; page: PageId; after: PageId | null };
     reply: EditState;
   };
+  page_reverse: { args: { doc: DocHandle }; reply: EditState };
   page_insert: {
     args: {
       doc: DocHandle;

@@ -2057,6 +2057,7 @@
     redactMatches: () => void redactMatches(),
     matchCount: () => viewer?.matchCount ?? 0,
     movePage: (delta) => void movePage(delta),
+    reversePages: () => void applyEdit((e) => e.reverse()),
     undoEdit: () => void applyEdit((e) => e.undo()),
     redoEdit: () => void applyEdit((e) => e.redo()),
     canUndo: () => edits?.state.can_undo ?? false,

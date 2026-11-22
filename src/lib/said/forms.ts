@@ -248,6 +248,7 @@ export default {
   "no such page": "Diese Seite gibt es nicht",
   "that page has been deleted": "Diese Seite wurde gelöscht",
   "a page cannot be moved after itself": "Eine Seite kann nicht hinter sich selbst verschoben werden",
+  "a document of one page has no order to reverse": "Ein Dokument mit einer Seite hat keine Reihenfolge zum Umkehren",
   "that crop encloses no area": "Dieser Zuschnitt umschließt keine Fläche",
   "a page must have a width and a height": "Eine Seite braucht eine Breite und eine Höhe",
   "a blank page has nothing to crop to": "Eine leere Seite hat nichts, worauf sich zuschneiden ließe",

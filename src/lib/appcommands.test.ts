@@ -213,6 +213,7 @@ function harness(
     redactMatches: () => fired.push("redactMatches"),
     matchCount: () => (matched ? 3 : 0),
     movePage: (delta) => fired.push(`movePage:${delta}`),
+    reversePages: () => fired.push("reversePages"),
     undoEdit: () => fired.push("undoEdit"),
     redoEdit: () => fired.push("redoEdit"),
     // Default false for the same reason the update pair is: an empty journal is
@@ -2204,6 +2205,7 @@ describe("the window shortcuts for editing", () => {
       // This harness is about key handling, and no chord reaches a redaction.
       matchCount: () => 0,
       movePage: (delta) => fired.push(`movePage:${delta}`),
+      reversePages: () => fired.push("reversePages"),
       undoEdit: () => fired.push("undoEdit"),
       redoEdit: () => fired.push("redoEdit"),
       canUndo: () => journal.undo ?? false,
@@ -2729,6 +2731,33 @@ describe("adding a certificate file", () => {
       expect(other.fired).toEqual([]);
     } finally {
       setLinux();
+    }
+  });
+});
+
+describe("edit.reversePages", () => {
+  const onePage = () =>
+    harness(true, {}, {}, false, false, false, {}, false, false, false, false, false, false, null, null, null, { pageCount: () => 1 });
+
+  it("runs the reversal and nothing else", () => {
+    const { registry, fired } = harness();
+    expect(registry.run("edit.reversePages")).toBe(true);
+    expect(fired).toEqual(["reversePages"]);
+  });
+
+  it("is offered for a document of several pages and found by the scanner's words", () => {
+    const { registry } = harness();
+    expect(registry.search("").map((ranked) => ranked.command.id)).toContain("edit.reversePages");
+    expect(registry.search("backwards").map((ranked) => ranked.command.id)).toContain("edit.reversePages");
+  });
+
+  it("is withheld, and refuses to run, for one page or no document", () => {
+    // One page is the model's refusal arriving early: a reversal there changes
+    // nothing, and the palette must not offer a command that can only fail.
+    for (const { registry, fired } of [onePage(), harness(false)]) {
+      expect(registry.search("").map((ranked) => ranked.command.id)).not.toContain("edit.reversePages");
+      expect(registry.run("edit.reversePages")).toBe(false);
+      expect(fired).toEqual([]);
     }
   });
 });

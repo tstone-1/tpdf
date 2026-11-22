@@ -60,6 +60,7 @@ function harness(locale?: UiLocale) {
     syncScrolling: () => false,
     tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: true }),
     documentCount: () => 1,
+    pageCount: () => 3,
     sides: () => ({ split: false, focused: "left" as const, others: [] }),
     recentDocuments: () => 0,
     tabsToReopen: () => 0,

@@ -40,6 +40,18 @@ pub async fn page_move(
     edits.move_page(doc, page, after)
 }
 
+/// Reverses the page order of the working document, without touching the file.
+///
+/// Names no page: the model reverses the order it holds, so there is no
+/// position or neighbour the frontend could have read out of date.
+#[tauri::command]
+pub async fn page_reverse(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+) -> Result<edits::EditState, String> {
+    edits.reverse(doc)
+}
+
 /// Puts a new blank page into the working document, without touching the file.
 ///
 /// `after` is the id of the page it should sit behind, and `null` means the

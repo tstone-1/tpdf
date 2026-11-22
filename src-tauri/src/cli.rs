@@ -613,6 +613,7 @@ pub const COMMANDS: &[Registered] = &[
     pages::EXTRACT,
     pages::SPLIT,
     pages::ROTATE,
+    pages::REVERSE,
     pages::CROP,
     edit::COMMAND,
     edit::COMMENTS,

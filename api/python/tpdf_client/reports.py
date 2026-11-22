@@ -692,7 +692,7 @@ class TextRunsReport(TypedDict):
     runs: list[TextRun]
 
 
-# --- pages: merge, extract, split, rotate, crop ------------------------------
+# --- pages: merge, extract, split, rotate, reverse, crop ---------------------
 
 
 class PageOutput(TypedDict):
@@ -705,7 +705,7 @@ class PageOutput(TypedDict):
 
 
 class PagesReport(TypedDict):
-    """A merge, extract, split, rotation or crop, including partial publication."""
+    """A merge, extract, split, rotation, reversal or crop, including partial publication."""
 
     schema: int
     # The requested operation.

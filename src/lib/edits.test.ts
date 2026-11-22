@@ -178,6 +178,19 @@ describe("Edits", () => {
     });
   });
 
+  it("asks the model to reverse the order and adopts what it answers", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+    const reversed = state(3);
+    reversed.pages.reverse();
+    core.invoke.mockResolvedValueOnce(reversed);
+    const after = await edits.reverse();
+    expect(core.invoke).toHaveBeenLastCalledWith("page_reverse", { doc: 9 });
+    expect(after.pages.map((p) => p.id)).toEqual([3, 2, 1]);
+    expect(edits.state.pages.map((p) => p.id)).toEqual([3, 2, 1]);
+  });
+
   it("inserts behind the page in a slot, naming it by identity", async () => {
     core.invoke.mockResolvedValueOnce(state(3));
     const edits = new Edits(9);

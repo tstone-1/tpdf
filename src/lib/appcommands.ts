@@ -247,6 +247,7 @@ const TEXT = catalog({
     noFileWaiting: "No file is waiting to be inserted",
     movePageUp: "Move page up",
     movePageDown: "Move page down",
+    reversePages: "Reverse page order",
     undo: "Undo",
     redo: "Redo",
     save: "Save",
@@ -475,6 +476,7 @@ const TEXT = catalog({
     noFileWaiting: "Es wartet keine Datei darauf, eingefügt zu werden",
     movePageUp: "Seite nach oben verschieben",
     movePageDown: "Seite nach unten verschieben",
+    reversePages: "Seitenreihenfolge umkehren",
     undo: "Rückgängig",
     redo: "Wiederholen",
     save: "Speichern",
@@ -865,6 +867,8 @@ export interface AppActions {
    * second one drifts.
    */
   movePage(delta: number): void;
+  /** Reverse the order of every page, as one undoable step. */
+  reversePages(): void;
   /** Step the edit journal back one command. */
   undoEdit(): void;
   /** Step the edit journal forward one command. */
@@ -2778,6 +2782,17 @@ export function registerAppCommands(
       title: TEXT(locale).movePageDown,
       enabled: withDocument,
       run: () => actions.movePage(1),
+    },
+    {
+      // For a scan fed in the wrong way up, which comes out last page first.
+      // One command and one undo, where the two above would take a reader
+      // n(n-1)/2 presses. Off for one page: the model refuses a reversal that
+      // changes nothing, and a palette entry that can only be refused teaches
+      // that the command is broken.
+      id: "edit.reversePages",
+      title: TEXT(locale).reversePages,
+      enabled: () => withDocument() && actions.pageCount() > 1,
+      run: () => actions.reversePages(),
     },
     {
       // Guarded on there being something to undo rather than merely on a

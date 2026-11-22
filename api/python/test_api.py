@@ -411,6 +411,12 @@ class ClientTests(unittest.TestCase):
         sizes = self.pdf.info(rotated)['files'][0]['document']['page_sizes']
         self.assertEqual([(p['width_pt'], p['height_pt'], p['count']) for p in sizes],
                          [(300, 400, 1), (400, 300, 1)])
+        reversed_ = self.root / 'reversed.pdf'
+        report = self.pdf.reverse(rotated, reversed_)
+        self.assertEqual((report['command'], report['outputs'][0]['pages']), ('reverse', 2))
+        sizes = self.pdf.info(reversed_)['files'][0]['document']['page_sizes']
+        self.assertEqual([(p['width_pt'], p['height_pt'], p['count']) for p in sizes],
+                         [(400, 300, 1), (300, 400, 1)])
         cropped = self.root / 'cropped.pdf'
         self.pdf.crop(rotated, cropped, rect=[10, 20, 100, 150], pages='1')
         sizes = self.pdf.info(cropped)['files'][0]['document']['page_sizes']

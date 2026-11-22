@@ -410,6 +410,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.insertPages",
       "edit.movePageUp",
       "edit.movePageDown",
+      "edit.reversePages",
       SEPARATOR,
       "edit.cropToDrag",
       "edit.cropToContent",

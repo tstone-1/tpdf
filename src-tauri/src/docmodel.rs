@@ -1349,6 +1349,16 @@ pub enum Command {
     /// Expressed against a neighbouring *id* rather than a destination index for
     /// the reason the module note gives.
     Move { page: PageId, after: Option<PageId> },
+    /// Reverse the order of every page: the last becomes the first.
+    ///
+    /// **One command rather than a run of [`Command::Move`]s**, for
+    /// [`Command::Import`]'s reason: a reader who reverses a scan fed in
+    /// upside down and presses undo wants the old order back in one press.
+    /// It names no page, because it acts on all of them, and it needs no table
+    /// entry, because the order it produces is a function of the order it finds
+    /// --- so replay from a snapshot reverses the same pages. It is its own
+    /// inverse, but undo does not rely on that: undo replays.
+    Reverse,
     /// Put a new blank page immediately after `after`, or at the front when
     /// `after` is `None`.
     ///
@@ -1545,6 +1555,8 @@ impl Command {
             | Command::Refit { .. }
             | Command::Unredact { .. }
             | Command::TabOrder
+            // Every page, so no one of them is the subject.
+            | Command::Reverse
             | Command::Fill { .. } => None,
         }
     }
@@ -1568,6 +1580,10 @@ pub enum Refusal {
     /// A document must keep at least one page. A zero-page PDF is not a
     /// document, so this is refused rather than left to the save path.
     LastPage(PageId),
+    /// A document of one page has no order to reverse. Refused rather than
+    /// applied, because an accepted reversal that changed nothing would still
+    /// cost an undo and mark the document as edited.
+    OnePage,
     /// A crop box enclosing no area, `NaN` included.
     ///
     /// **This variant does not compare equal to itself when the rectangle holds
@@ -2406,6 +2422,12 @@ impl Working {
                     Some(anchor) => self.position(anchor) + 1,
                 };
                 self.order.insert(to, page);
+            }
+            Command::Reverse => {
+                if self.order.len() < 2 {
+                    return Err(Refusal::OnePage);
+                }
+                self.order.reverse();
             }
             Command::Insert { page, after, size } => {
                 if !size.is_proper() {
@@ -4127,6 +4149,7 @@ impl Doc {
                 | Command::Crop { .. }
                 | Command::Delete { .. }
                 | Command::Move { .. }
+                | Command::Reverse
                 // Here rather than above with the six that issue a body, and
                 // the size is why it looks like it belongs there: it is carried
                 // *in* the command rather than in a table keyed by an id, so a
@@ -4739,6 +4762,26 @@ mod tests {
         })
         .unwrap();
         assert_eq!(ids(&doc), vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn a_reversal_reverses_the_live_pages_only() {
+        let mut doc = Doc::open(4);
+        let b = doc.working().order()[1];
+        doc.apply(Command::Delete { page: b }).unwrap();
+        doc.apply(Command::Reverse).unwrap();
+        assert_eq!(ids(&doc), vec![4, 3, 1]);
+        assert!(doc.working().is_deleted(b));
+        assert_eq!(doc.depth(), (2, 0));
+    }
+
+    #[test]
+    fn a_reversal_of_one_page_is_refused_and_not_journalled() {
+        let mut doc = Doc::open(2);
+        let a = doc.working().order()[0];
+        doc.apply(Command::Delete { page: a }).unwrap();
+        assert_eq!(doc.apply(Command::Reverse), Err(Refusal::OnePage));
+        assert_eq!(doc.depth(), (1, 0));
     }
 
     #[test]

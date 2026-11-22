@@ -68,6 +68,13 @@ command!(
     "rotate <in.pdf> --degrees 90|180|270 -o <out.pdf> [--pages 1-3,7]",
     "Turns selected pages clockwise, relative to their existing rotation. -o is required."
 );
+command!(
+    REVERSE,
+    Reverse,
+    "reverse",
+    "reverse <in.pdf> -o <out.pdf>",
+    "Writes every page in reverse order: the last page first. For a stack scanned the wrong way round."
+);
 command!(CROP, Crop, "crop", "crop <in.pdf> --rect x,y,w,h -o <out.pdf> [--pages 1-3,7]",
     "Sets the visible area in display points from the top-left corner. Hidden content stays in the PDF; this is not redaction.");
 
@@ -77,6 +84,7 @@ enum Kind {
     Extract,
     Split,
     Rotate,
+    Reverse,
     Crop,
 }
 
@@ -87,6 +95,7 @@ impl Kind {
             Self::Extract => "extract",
             Self::Split => "split",
             Self::Rotate => "rotate",
+            Self::Reverse => "reverse",
             Self::Crop => "crop",
         }
     }
@@ -553,6 +562,13 @@ impl Pages {
                     .iter()
                     .map(|n| input.sizes[*n as usize - 1])
                     .collect();
+            }
+            // The same plan entries and sizes, last first. Each entry carries
+            // its page's turn and crop, so those travel with the page; the
+            // read-back then holds the staged file's sizes to this order.
+            Kind::Reverse => {
+                input.plan.pages.reverse();
+                input.sizes.reverse();
             }
             Kind::Rotate => {
                 for n in selection {

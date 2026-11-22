@@ -456,6 +456,16 @@ export class Edits {
   }
 
   /**
+   * Reverses the order of every page, as one step that one undo takes back.
+   *
+   * Sends no page, unlike {@link move}: the model reverses the order it holds,
+   * so there is nothing here for an edit in flight to have made stale.
+   */
+  async reverse(): Promise<EditState> {
+    return this.adopt(await call("page_reverse", { doc: this.doc }));
+  }
+
+  /**
    * Marks `quads` on the page `page` names, with a mark of `kind`.
    *
    * The quads are display-space rectangles --- see {@link MarkView} --- and they
