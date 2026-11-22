@@ -14,7 +14,7 @@
  * clashes with neither, so that neither refusal is what a reader meets.
  */
 
-import type { Form } from "./forms";
+import { radioExport, type Form } from "./forms";
 import type { FieldKind, MarkView, PlacedField } from "./pages";
 import { catalog } from "./i18n";
 
@@ -189,7 +189,8 @@ function radioValues(group: string, marks: readonly MarkView[], form: Form | nul
   }
   for (const widget of form?.widgets ?? []) {
     if (widget.name !== group || widget.control.kind !== "radio") continue;
-    for (const state of widget.control.states) values.add(new TextDecoder().decode(new Uint8Array(state)));
+    const control = widget.control;
+    control.states.forEach((_, index) => values.add(radioExport(control, index)));
   }
   return values;
 }

@@ -95,6 +95,7 @@ export default {
     "Eine Auswahl mit doppelten Exportwerten hat keine gültige Auswahl",
   "The saved choice is absent from its options": "Die gespeicherte Auswahl fehlt unter ihren Einträgen",
   "A radio button has no appearance states": "Ein Optionsfeld hat keine Zustände für sein Erscheinungsbild",
+  "The radio group's export values do not match its widgets": "Die Exportwerte der Optionsfeldgruppe passen nicht zu ihren Feldern",
   "A radio button has ambiguous appearance states": "Ein Optionsfeld hat mehrdeutige Zustände für sein Erscheinungsbild",
   "A radio button is missing an appearance": "Einem Optionsfeld fehlt ein Erscheinungsbild",
   "A radio button appearance is not a stream": "Das Erscheinungsbild eines Optionsfelds ist kein Stream",
@@ -153,6 +154,8 @@ export default {
     "`{name}`: Ein Standardwert darf kein Steuerzeichen enthalten",
   "`{name}`: only a radio button has a value it gives its group":
     "`{name}`: Nur ein Optionsfeld hat einen Wert, den es seiner Gruppe gibt",
+  "`{name}`: this group lists what its buttons export, so tpdf cannot change its button list":
+    "`{name}`: Die Gruppe legt die Exportwerte ihrer Optionsfelder fest. tpdf kann ihre Optionsfelder deshalb nicht ändern.",
   "`{name}` keeps its value: {reason}": "`{name}` behält seinen Wert: {reason}",
   "`{name}` keeps its value: the group lists what its buttons export, which tpdf does not rewrite":
     "`{name}` behält seinen Wert: Die Gruppe führt auf, was ihre Optionsfelder exportieren, und das schreibt tpdf nicht um",

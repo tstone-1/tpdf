@@ -153,7 +153,7 @@ ROWS = [
         "      this.pending.set(place.path, place);",
         "keeps a waiting place for each of two documents read in one interval"),
     Mutation("session: a waiting place kept once the reader is back", "src/lib/session.ts",
-        "      this.pending.delete(place.path);\n      return;",
+        "      this.pending.delete(place.path);\n      if (this.pending.size === 0) return;",
         "      return;",
         "drops a waiting place once the reader is back where it was written"),
     Mutation("session: a flush writes the first waiting place only", "src/lib/session.ts",

@@ -1547,6 +1547,8 @@ export class Viewer {
    * field.
    */
   private current: ArmedTool = NO_TOOL;
+  /** Changes even when a later cancellation puts the same NO_TOOL object back. */
+  private toolRevision = 0;
   /**
    * Who is waiting for {@link armPlacement}'s rectangle, while `place` is armed.
    *
@@ -1564,6 +1566,7 @@ export class Viewer {
     return this.current;
   }
   private set tool(next: ArmedTool) {
+    this.toolRevision++;
     this.current = next;
     if (next.kind !== "place" && this.placing) {
       const waiting = this.placing;
@@ -7135,6 +7138,20 @@ export class Viewer {
   copy(): void {
     if (this.graphic && !this.hasSelection) this.opts.onCopyGraphic?.();
     else void this.copySelection();
+  }
+
+  /** Only the gesture that supplied the committed regions may clear its selection. */
+  async redactSelected(
+    write: (selected: readonly { page: PageId; quads: number[]; text: string }[]) => Promise<boolean>,
+    keepArmed = false,
+  ): Promise<void> {
+    const intent = this.selectionIntent;
+    const revision = this.toolRevision;
+    const selected = await this.selectionQuadsByPage();
+    if (!selected?.length || !await write(selected)) return;
+    if (this.life.ended || this.selectionIntent !== intent || this.toolRevision !== revision) return;
+    this.clearSelection();
+    if (keepArmed) this.armRedact();
   }
 
   /** Clears the selection. */

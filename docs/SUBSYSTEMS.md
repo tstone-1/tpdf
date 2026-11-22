@@ -217,7 +217,10 @@ requirement. See `BUILD.md` for the fixture-generation and check commands.
 The CLI supplies physical points for field rectangles and
 explicit type sizes. The writer converts them with the target page's `/UserUnit`. The
 read-back uses the staged page's unit when comparing with the request. Existing choice
-fields retain their option labels, export values and selections.
+fields retain their option labels, export values and selections. A radio group's `/Opt`
+strings correspond to widgets in `/Kids` order. The CLI lists and accepts those strings
+while the PDF stores the selected appearance name. Removing individual buttons or
+appending to an explicitly mapped group is refused to preserve the remaining mappings.
 
 Choice answers use option indices in the journal, preserving distinct labels
 that share an export value. The writer saves `/V`, `/I` and explicit appearances
@@ -616,8 +619,8 @@ Pictures are found by `drawn`, which walks page content and the blocks it draws 
 matrix at each `Do`, including the page’s `UserUnit`; `shrink` scales and re-encodes one picture and leaves it when the new
 form is not a tenth smaller. The JPEG encoder is the `image` crate's, already in the tree
 through `pdfium-render`; the decoder is `zune-jpeg`, as for `tpdf images`.
-A tiling pattern, annotation appearance or Type 3 glyph can draw the same image at another
-resolution. Images named by those resources retain their pixel dimensions. A resized transparency mask counts as a change to every
+A tiling pattern, annotation appearance, Type 3 glyph or graphics-state soft mask
+can draw the same image at another resolution. Images named by those resources retain their pixel dimensions. A resized transparency mask counts as a change to every
 displayed parent and can supply the before-and-after preview. Preview DPI is taken from
 a page where the image is drawn at the measured width.
 

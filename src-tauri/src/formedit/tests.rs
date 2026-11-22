@@ -1529,6 +1529,12 @@ fn a_value_a_button_cannot_take_is_refused_and_nothing_is_written() {
         refused(&listed, &[valued(&buttons[0], "New")]).contains("lists what its buttons export")
     );
 
+    assert!(refused(&listed, &[gone(&buttons[0])]).contains("cannot change its button list"));
+    let all: Vec<_> = buttons.iter().map(gone).collect();
+    let mut removed = listed.clone();
+    apply(&mut removed, &all).expect("a complete group can be removed");
+    assert!(widgets(&removed, "Pay").is_empty());
+
     // Two buttons with one value are chosen together, and stay so.
     let mut shared = doc.clone();
     for look in [b"N".as_slice(), b"D"] {

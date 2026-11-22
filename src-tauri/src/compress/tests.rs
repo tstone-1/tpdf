@@ -512,6 +512,41 @@ fn a_type3_glyph_keeps_shared_pixels_at_their_original_resolution() {
 }
 
 #[test]
+fn a_transparency_mask_keeps_shared_pixels_while_an_independent_thumbnail_shrinks() {
+    let mut doc = Document::with_version("1.7");
+    let raw = Stream::new(image(256, 256, "DeviceGray".into()), noise(256 * 256));
+    let shared = doc.add_object(raw.clone());
+    let other = doc.add_object(raw);
+    let page = page_with(
+        &mut doc,
+        "q 12 0 0 12 0 0 cm /Logo Do /Other Do Q q /Soft gs 0 0 256 256 re f Q",
+        &[("Logo", shared), ("Other", other)],
+    );
+    let group = doc.add_object(Stream::new(
+        dictionary! {
+            "Type"=>"XObject", "Subtype"=>"Form", "BBox"=>vec![0.into(),0.into(),256.into(),256.into()],
+            "Group"=>dictionary!{"S"=>"Transparency", "CS"=>"DeviceGray"},
+            "Resources"=>dictionary!{"XObject"=>dictionary!{"MaskPixels"=>shared}},
+        },
+        b"q 256 0 0 256 0 0 cm /MaskPixels Do Q".to_vec(),
+    ));
+    let mask = doc.add_object(dictionary! {"S"=>"Luminosity", "G"=>group});
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .get_mut(b"Resources")
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set(
+            "ExtGState",
+            dictionary! {"Soft"=>dictionary!{"SMask"=>mask}},
+        );
+    assert_eq!(apply(&mut doc, SCREEN).pictures_changed, 1);
+    assert_eq!(whole(&doc, shared, b"Width"), 256);
+    assert!(whole(&doc, other, b"Width") < 256);
+}
+
+#[test]
 fn preview_accepts_indirect_image_dimensions() {
     let (mut doc, image) = one_picture(image(400, 400, "DeviceGray".into()), noise(400 * 400));
     let width = doc.add_object(Object::Integer(400));

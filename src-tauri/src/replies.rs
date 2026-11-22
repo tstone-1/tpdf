@@ -413,6 +413,7 @@ fn samples() -> BTreeMap<&'static str, String> {
         radio.control = crate::forms::Control::Radio {
             index: 0,
             states: vec![b"One".to_vec(), b"Two".to_vec()],
+            exports: None,
             unison: false,
             no_toggle_off: true,
         };

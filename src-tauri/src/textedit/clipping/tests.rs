@@ -104,6 +104,45 @@ fn textedit_clip_intersections_contain_every_side_of_text() {
 }
 
 #[test]
+fn miter_tips_follow_curve_tangents_and_path_closure() {
+    // Each curve follows the same two segments as the V, including curves
+    // whose endpoint controls coincide. Closing the triangle supplies the
+    // join at its starting point only to the closed versions.
+    for (path, stroked_tip) in [
+        ("30 98 m 35 136 l 40 98 l S", true),
+        ("30 98 m 35 136 35 136 v 35 136 40 98 y S", true),
+        ("30 98 m 30 98 35 136 35 136 c 40 98 l S", true),
+        ("35 136 m 40 98 l 30 98 l S", false),
+        ("35 136 m 40 98 l 30 98 l h S", true),
+        ("35 136 m 40 98 l 30 98 l s", true),
+        ("35 136 m 40 98 l 30 98 l 35 136 l h S", true),
+    ] {
+        let doc = page(format!("6 w {path} {FIRST}").as_bytes());
+        let bounds = textedit::inspect(&doc, 0).unwrap().graphics[0];
+        let top = if stroked_tip { 81. } else { 101. };
+        assert!((bounds[1] - top).abs() < 0.1, "{path}: {bounds:?}");
+    }
+}
+
+#[test]
+fn a_clip_over_only_the_blank_em_margin_leaves_no_text_target() {
+    // FIRST's ink ends at y=188.4, and its em box at 192.
+    for (bottom, visible) in [(190, false), (186, true)] {
+        let doc = page(
+            format!(
+                "0 {bottom} 300 {} re W n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET",
+                192 - bottom,
+            )
+            .as_bytes(),
+        );
+        let runs = textedit::scan(&doc, 0).unwrap().runs;
+        assert_eq!(runs[0].text, "FIRST");
+        let [left, top, right, bottom] = runs[0].display_rect;
+        assert_eq!(left < right && top < bottom, visible);
+    }
+}
+
+#[test]
 fn textedit_clip_transform_is_fixed_at_creation_and_restored_by_q() {
     // The clip is made under a translated/scaled CTM; later text has a new CTM.
     let doc = page(

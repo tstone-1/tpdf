@@ -1579,6 +1579,74 @@ fn a_drawing_partly_over_the_moved_lines_refuses_and_one_holding_them_does_not()
     wrapped(&background, WIDEST, LONGER);
 }
 
+#[test]
+fn a_wrap_respects_the_tip_of_a_miter_and_the_bevel_at_its_limit() {
+    // LAST moves from y=172 to 158. Only the acute miter reaches it:
+    // its tip is at 136 + 3*hypot(38,5)/5, about 159.
+    for (pen, blocked) in [
+        ("", true), // PDF defaults: miter join and limit 10
+        ("2 j", false),
+        ("0 j 7 M", false),
+        ("0 j 8 M", true),
+        ("2 j q 0 j Q", false),
+        ("10 M q 7 M Q", true),
+    ] {
+        let doc = tagged(
+            &format!(
+                "q 6 w {pen} 30 98 m 35 136 l 40 98 l S Q {}",
+                content(52., "")
+            ),
+            &[&[0, 1, 2], &[3]],
+        );
+        if blocked {
+            assert!(
+                refusal(&doc, WIDEST, LONGER).contains("a drawing or an annotation"),
+                "{pen}"
+            );
+        } else {
+            let saved = wrapped(&doc, WIDEST, LONGER);
+            assert_eq!(run(&saved, LAST).matrix[5], 158., "{pen}");
+        }
+    }
+}
+
+#[test]
+fn a_diagonal_projecting_cap_can_stop_a_wrap() {
+    // LAST's moved box starts at y=155. The diagonal line finishes at
+    // y=149. Its round cap reaches 154 and its projecting cap reaches 156.07.
+    for (pen, blocked) in [("0 J", false), ("1 J", false), ("2 J q 0 J Q", true)] {
+        let doc = tagged(
+            &format!("q 10 w {pen} 25 139 m 35 149 l S Q {}", content(52., "")),
+            &[&[0, 1, 2], &[3]],
+        );
+        if blocked {
+            assert!(refusal(&doc, WIDEST, LONGER).contains("a drawing or an annotation"));
+        } else {
+            assert_eq!(run(&wrapped(&doc, WIDEST, LONGER), LAST).matrix[5], 158.);
+        }
+    }
+}
+
+#[test]
+fn a_wrap_ignores_an_unused_moveto_but_respects_a_segment_there() {
+    for (end, blocked) in [
+        ("", false),
+        ("40 156 m", false),
+        ("40 156 m 45 156 l", true),
+    ] {
+        let path = format!("4 w 125 30 m 130 30 l {end} S");
+        let doc = tagged(&format!("{path} {}", content(52., "")), &[&[0, 1, 2], &[3]]);
+        if blocked {
+            assert!(refusal(&doc, WIDEST, LONGER).contains("a drawing or an annotation"));
+        } else {
+            let saved = wrapped(&doc, WIDEST, LONGER);
+            assert_eq!(run(&saved, LAST).matrix[5], 158.);
+            let page = crate::pagetree::ordered_pages(&saved)[0];
+            assert!(saved.get_page_content(page).starts_with(path.as_bytes()));
+        }
+    }
+}
+
 // Word draws an underline as a filled rectangle of its own, apart from the
 // text. Under a line the wrap moves, it goes with the line, drawn under a
 // translation as far as the line goes; under two runs of one line it goes with

@@ -1602,7 +1602,7 @@ currently displayed; the rectangle must fit every selected page. Crop hides cont
 it does not remove it and must not be used for redaction. Rotation and crop apply to
 all pages unless `--pages` selects some. Page selections are limited to 100,000 pages.
 
-All five require `-o` and preserve their inputs, including when an output is a link
+These commands require `-o` and preserve their inputs, including when an output is a link
 to an input. They refuse signed documents, or documents whose signatures could not
 be fully enumerated, unless `--invalidate-signatures` explicitly permits rewriting
 them. A merge checks every input for signatures. `--password-env` supplies the first
@@ -1722,7 +1722,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 ```
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
-`edit()`, `render()`, `ocr()`, `images()`, `compress()`, `add_fields()`, `protect()`, `unprotect()`, `page_numbers()`, `watermark()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
+`edit()`, `render()`, `ocr()`, `images()`, `compress()`, `add_fields()`, `protect()`, `unprotect()`, `page_numbers()`, `watermark()`, `verify()`, `merge()`, `extract()`, `split()`, `reverse()`, `rotate()`,
 `crop()`, `redact()`, `identities()` and `sign()` return parsed reports. `search()` and `mark_matches()` are described below. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
@@ -2100,7 +2100,7 @@ never replaced. The JSON report carries `schema`, `command`, `input`, `output`, 
 the copy), `fields_before`, `fields_after`, `signatures_invalidated` and
 `signatures_unknown`.
 
-**Passwords.** `form`, `protect`, `unprotect`, `compress`, `ocr`, `render`, `hidden`, `info`, `text`, `search`, `compare`, `page-numbers`, `watermark`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
+**Passwords.** `form`, `protect`, `unprotect`, `compress`, `ocr`, `render`, `hidden`, `info`, `text`, `search`, `compare`, `page-numbers`, `watermark`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the page operations (including `reverse`) read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's
@@ -2171,7 +2171,7 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   and optional `minimum_height`. These addresses describe the inspected source.
 - `help`: `version` is the application version, and `commands` lists every available
   command, each with `name`, `usage` and `summary` from the same registry as plain help.
-- `merge`, `extract`, `split`, `rotate`, `crop`: `inputs` lists source paths in argument
+- `merge`, `extract`, `split`, `reverse`, `rotate`, `crop`: `inputs` lists source paths in argument
   order, `complete` says every requested output was published, and `outputs` lists only
   published files, each with `path` and `pages`. `signatures_invalidated` counts source
   signatures affected by rewriting; `signatures_unknown` says an input's enumeration

@@ -246,6 +246,17 @@ describe("existing text editing", () => {
     }
     editor.destroy();
   });
+  it("skips a run clipped to zero height and focuses the partly visible run", () => {
+    const focus = vi.spyOn(FakeElement.prototype, "focus");
+    const first = { ...runs.runs[0]!, display_rect: [40, 50, 76, 50] as [number, number, number, number] };
+    const second = { ...first, operator: 9, display_rect: [40, 48, 76, 54] as [number, number, number, number] };
+    const { editor, root } = mount(undefined, { ...runs, runs: [first, second] }, ({ display_rect: [left, top, right, bottom] }) =>
+      ({ left, top, right, bottom, clip: "inset(0px)" }));
+    expect(root.children[0]).toHaveProperty("hidden", true);
+    expect(root.children[1]).toHaveProperty("hidden", false);
+    expect(focus.mock.contexts[0]).toBe(root.children[1]);
+    editor.destroy();
+  });
   it("starts keyboard navigation at the first visible target or the PDF", () => {
     for (const visible of [true, false]) {
       const focus = vi.spyOn(FakeElement.prototype, "focus");

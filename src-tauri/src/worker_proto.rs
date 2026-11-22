@@ -654,6 +654,8 @@ pub enum Reply {
     Graphic(crate::graphic::GraphicFound),
     /// A page's size and origin under the crop the reader has.
     Geometry(crate::render::CropGeometry),
+    /// The requested geometry is past the end of the document.
+    NoSuchPage,
     /// The rectangle a proposed crop would actually produce.
     CropBox([f32; 4]),
     /// Physical points per native coordinate unit, in request order.
@@ -1484,6 +1486,7 @@ mod tests {
                 rect: None,
             }),
             Reply::CropBox([1.0, 2.0, 3.0, 4.0]),
+            Reply::NoSuchPage,
             Reply::PageUnits(vec![1.0, 2.0]),
             Reply::Geometry(crate::render::CropGeometry {
                 width_pt: 595.0,
@@ -1590,6 +1593,7 @@ mod tests {
                 | Reply::CropBox(_)
                 | Reply::PageUnits(_)
                 | Reply::RedactPlans(_)
+                | Reply::NoSuchPage
                 | Reply::Geometry(_)
                 | Reply::Outline(_)
                 | Reply::Form(_)

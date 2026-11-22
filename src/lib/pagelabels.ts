@@ -115,9 +115,11 @@ export function positionsFor(
   accepts: (positions: string) => boolean = () => true,
 ): string | null {
   const slotsOf = new Map<string, number[]>();
+  const displacedNumbers = new Set<number>();
   for (let slot = 0; slot < pageCount; slot++) {
     const label = labelOf(slot);
     if (label === null) continue;
+    if (/^[0-9]+$/.test(label) && Number(label) !== slot + 1) displacedNumbers.add(Number(label));
     // Pushed, not copied: a document whose every page prints the same label
     // would otherwise copy a growing list once per page.
     const slots = slotsOf.get(label);
@@ -129,7 +131,7 @@ export function positionsFor(
   const one = (text: string): string | null => {
     if (/^[0-9]+$/.test(text)) {
       const slot = Number(text) - 1;
-      if (slot < 0 || slot >= pageCount) return null;
+      if (slot < 0 || slot >= pageCount || displacedNumbers.has(slot + 1)) return null;
       const printed = labelOf(slot);
       return printed === null || printed === text ? text : null;
     }

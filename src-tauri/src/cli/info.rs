@@ -5,7 +5,8 @@
 //! the application already asks: `Request::Properties` (the dialog itself ---
 //! the same request `verify` makes, so the signatures are `verify`'s objects
 //! built by `verify`'s function), `Request::Open` for the page sizes the
-//! viewer lays out from, and `Request::Form` for the form the viewer fills.
+//! viewer lays out from, `Request::PageUnits` for their physical scale, and
+//! `Request::Form` for the form the viewer fills.
 //! Nothing was added to any of them.
 //!
 //! **A locked document is a finding, not a failure.** `info` reports it with
@@ -172,7 +173,7 @@ type Answers = (
     Result<crate::forms::Form, String>,
 );
 
-/// The three requests, in the order the dialog's data arrives.
+/// The requests that supply the document report.
 fn ask_all(session: &mut Session) -> Result<Answers, Declined> {
     let unexpected = |what: &str, reply: &Reply| {
         Declined::Failed(format!("the worker answered {what} with {reply:?}"))
@@ -181,12 +182,26 @@ fn ask_all(session: &mut Session) -> Result<Answers, Declined> {
         Reply::Properties(properties) => *properties,
         other => return Err(unexpected("the properties request", &other)),
     };
-    let sizes = match session.ask(Request::Open {
+    let mut sizes = match session.ask(Request::Open {
         lazy_geometry: false,
     })? {
-        Reply::Open { pages, .. } => pages,
+        Reply::Open {
+            pages, page_count, ..
+        } if pages.len() == page_count => pages,
         other => return Err(unexpected("an open", &other)),
     };
+    let count = u32::try_from(sizes.len())
+        .map_err(|_| Declined::Failed("the worker returned too many pages".into()))?;
+    let units = super::pages::units_for_slots(session, (0..count).collect())?;
+    for (size, unit) in sizes.iter_mut().zip(units) {
+        size.width_pt *= unit;
+        size.height_pt *= unit;
+        if !size.width_pt.is_finite() || !size.height_pt.is_finite() {
+            return Err(Declined::Refused(
+                "the physical page size is too large".into(),
+            ));
+        }
+    }
     // A form the worker refuses --- XFA, or past a bound --- is a fact about
     // the form and not about the document, so it is kept rather than raised.
     let form = match session.ask(Request::Form) {

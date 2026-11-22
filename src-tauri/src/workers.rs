@@ -2076,6 +2076,7 @@ impl Engine for Workers {
     ) -> Result<crate::render::CropGeometry, String> {
         match self.ask(doc, &Request::Geometry { page, crop })? {
             Reply::Geometry(size) => Ok(size),
+            Reply::NoSuchPage => Err(said!("no such page: {index}", index = page)),
             other => Err(mismatched("geometry", &other)),
         }
     }

@@ -782,6 +782,11 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         ));
     }
     let form = forms::scan(doc)?;
+    let removed: BTreeSet<_> = edits
+        .iter()
+        .filter(|e| e.remove)
+        .map(|e| e.widget)
+        .collect();
     let mut seen = BTreeSet::new();
     let mut rects: Vec<(ObjectId, [f64; 4])> = Vec::new();
     let mut redraw: BTreeMap<ObjectId, forms::Value> = BTreeMap::new();
@@ -826,6 +831,21 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             properties.insert(widget.object, to);
         }
         if edit.remove {
+            if matches!(widget.control, Control::Radio { .. }) && widget.widget != widget.object {
+                if let Some(why) =
+                    crate::formfields::mapped_group_problem(doc, widget.object, &widget.name)
+                {
+                    // Removing the complete field drops its mapping with it.
+                    let kids = forms::inherited(doc, widget.object, b"Kids")
+                        .and_then(|v| v.as_array().ok());
+                    if !kids.is_some_and(|kids| {
+                        kids.iter()
+                            .all(|kid| kid.as_reference().is_ok_and(|id| removed.contains(&id)))
+                    }) {
+                        return Err(why);
+                    }
+                }
+            }
             removals.push(widget);
             continue;
         }

@@ -14,7 +14,7 @@
  */
 
 import type { EditState } from "./edits";
-import type { Form, FormAlign, FormWidget } from "./forms";
+import { radioExport, type Form, type FormAlign, type FormWidget } from "./forms";
 import { INK_WIDTH } from "./markband";
 import type { MarkView, PageId, PageView } from "./pages";
 import { catalog } from "./i18n";
@@ -274,7 +274,7 @@ export function buttonValue(widget: FormWidget, state: Pick<EditState, "fields">
   const given = editOf(widget, state)?.value;
   if (given !== undefined) return given;
   const control = widget.control;
-  return control.kind === "radio" ? new TextDecoder().decode(new Uint8Array(control.states[control.index] ?? [])) : "";
+  return control.kind === "radio" ? radioExport(control, control.index) : "";
 }
 
 /** The properties of the saved field an id names, or `null` when it names none. */

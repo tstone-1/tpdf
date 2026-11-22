@@ -11,6 +11,7 @@
  * Nothing here waits, and nothing here reads the component's variables.
  */
 
+import { CoveredWords } from "./coveredwords";
 import { isOpenRefusal, type DocumentInfo, type PageSize } from "./ipc";
 import { freshState, twinsOf, type DocumentTab, type FreshState } from "./documenttabs";
 import type { Edits } from "./edits";
@@ -83,6 +84,13 @@ export function retainedPlace(tab: DocumentTab | undefined): Place | null {
   return page < 0 ? place : { ...place, page };
 }
 
+/** A completed in-place write makes the old journal's current slots the new file's slots. */
+export function keepSavedPlaces(tabs: readonly DocumentTab[], model: Edits): void {
+  for (const tab of tabs) {
+    if (tab.edits === model) tab.place = retainedPlace(tab);
+  }
+}
+
 /**
  * Points the other views of a document at what a save or a reload made of it.
  *
@@ -98,7 +106,7 @@ export function retainedPlace(tab: DocumentTab | undefined): Place | null {
  * The words and how they are matched stay.
  */
 export function repoint<D, E>(
-  twins: readonly ({ doc: D; edits: E } & Pick<DocumentTab, "searchScope" | "measures" | "place">)[],
+  twins: readonly ({ doc: D; edits: E } & Pick<DocumentTab, "searchScope" | "measures" | "place" | "covered">)[],
   doc: D,
   edits: E,
 ): void {
@@ -106,6 +114,7 @@ export function repoint<D, E>(
     twin.doc = doc;
     twin.edits = edits;
     twin.searchScope = null;
+    twin.covered = new CoveredWords();
     twin.measures.clear();
     if (twin.place) delete twin.place.pageId;
   }

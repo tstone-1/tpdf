@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import app from "../App.svelte?raw";
 import {
-  abandonedBy, documentsBusy, dropAbandoned, dropView, openFailure, pageTable, placeOnSide, placeToResume, readerIsIn, repoint, retainedPlace, sharedByTwin,
+  abandonedBy, documentsBusy, dropAbandoned, dropView, openFailure, pageTable, keepSavedPlaces, placeOnSide, placeToResume, readerIsIn, repoint, retainedPlace, sharedByTwin,
   tabToKeep, toldAfterFallback,
   type OpenFound,
 } from "./documentopen";
@@ -75,7 +75,7 @@ it("applies an external location to the view found by the shared path lookup", (
 
 describe("the other views of a document that was saved", () => {
   it("are pointed at the new handle and the new model, every one of them", () => {
-    const twin = () => ({ doc: "old", edits: 1, path: "/a.pdf", searchScope: null, place: null, measures: freshState().measures });
+    const twin = () => ({ doc: "old", edits: 1, path: "/a.pdf", ...freshState(), place: null });
     const twins = [twin(), twin()];
     repoint(twins, "new", 2);
     expect(twins).toEqual([{ ...twin(), doc: "new", edits: 2 }, { ...twin(), doc: "new", edits: 2 }]);
@@ -128,6 +128,35 @@ describe("a search confined to a selection, when the file is opened again", () =
     keepState(tab, { ...tab, edits: { state } as unknown as Edits, place: place(tab.path, 2, { top_pt: 75 }) });
     state.pages.shift();
     expect(retainedPlace(tab)).toMatchObject({ page: 1, top_pt: 75 });
+  });
+
+  it("restores both parked twins to their saved pages and forgets words from the replaced model", () => {
+    const tabs = [scoped(3), scoped(4)];
+    const state = { pages: pages(1, 2, 3) };
+    const old = { state } as unknown as Edits;
+    for (const [index, tab] of tabs.entries()) {
+      keepState(tab, { ...tab, edits: old, place: place(tab.path, index * 2, { top_pt: 75 }) });
+      tab.covered.note(1, "Old highlight");
+      expect(restoredState(tab).covered.of(1)).toBe("Old highlight");
+    }
+    state.pages.reverse();
+    keepSavedPlaces(tabs, old);
+    repoint(tabs, info(2), after);
+    expect(tabs.map((tab) => retainedPlace(tab)?.page)).toEqual([2, 0]);
+    for (const tab of tabs) {
+      expect(tab.place?.top_pt).toBe(75);
+      expect(tab.place?.pageId).toBeUndefined();
+      // The next model can issue mark 1 again.
+      expect(restoredState(tab).covered.of(1)).toBe("");
+    }
+  });
+
+  it("rebases the saved order only after a successful in-place write", () => {
+    for (const method of ["saveDocument", "redactAnyway"]) {
+      const body = functionIn(app, `async function ${method}(`);
+      expect(body).toMatch(/return;\s*}\s*rebaseAfterSave\(path, model\);\s*await reopenAfterWrite/);
+    }
+    expect(functionIn(app, "function rebaseAfterSave(")).toContain("keepSavedPlaces(tabs.all, model)");
   });
 
   it("is gone from the tab a save or a reload opens the file again in", () => {
@@ -524,6 +553,30 @@ describe("what the reader is told once the window has gone back to another tab",
       "const told = toldAfterFallback(failed, refused);",
       "if (told !== null) say(told);",
     ])).toEqual([]);
+  });
+});
+
+describe("edits requested in a mounted view", () => {
+  it("binds the page before queuing each window action, including a thumbnail drop", () => {
+    for (const method of ["deletePage", "rotatePage", "insertBlankPage", "insertSizedPage"]) {
+      expect(functionIn(app, `async function ${method}(`)).toContain("await applyToPage(at,");
+    }
+    expect(functionIn(app, "function applyToPage(")).toContain("applyEdit(queuedPage(edits.map, slot, edit))");
+    expect(functionIn(app, "function applyEdit(")).toContain("owner = asDocument(view, () => edits)");
+    expect(functionIn(app, "function applyEdit(")).toContain("runEdit(view, owner, run)");
+    expect(functionIn(app, "async function runEdit(")).toMatch(/if \(!model \|\| model !== owner\) return null;[\s\S]*await run\(model\)/);
+    expect(functionIn(app, "function buildSidebar(")).toMatch(/onReorder:[^}]*movePageTo\(from, to\)/);
+    expect(functionIn(app, "async function movePage(")).toContain("await movePageTo(at, at + delta)");
+    expect(functionIn(app, "function movePageTo(")).toMatch(/const order = edits\?\.state\.pages;[\s\S]*applyEdit\(\(model\) => model.move\(from, to, order\)/);
+  });
+
+  it("sends both window routes through the gesture's commit, with the palette requesting a rearm", () => {
+    expect(functionIn(app, "function buildViewer(")).toContain("onRedactSelection: () => void redactSelection()");
+    expect(withoutComments(app)).toContain("redactSelection: () => void redactSelection(true)");
+    const body = functionIn(app, "async function redactSelection(");
+    expect(body).toContain("viewer?.redactSelected(");
+    expect(body).toContain("applyEdit((e) => e.redact(page, area), view, model)");
+    expect(body).toContain("}, keepArmed)");
   });
 });
 

@@ -183,12 +183,14 @@ pub(super) fn every_control_pdf() -> Vec<u8> {
     first.push(consent);
     fields.push(consent);
 
-    // A radio group, one button on each page.
+    // Child order is the reverse of page and object-id order. The field
+    // exports human-readable values and holds numeric appearance names.
     let radio = doc.add_object(dictionary! {
-        "FT" => "Btn", "Ff" => 1 << 15, "T" => text("delivery"), "V" => "First",
+        "FT" => "Btn", "Ff" => 1 << 15, "T" => text("delivery"), "V" => "1",
+        "Opt" => vec![text("Second"), text("First")],
     });
     let mut buttons = Vec::new();
-    for (i, state) in ["First", "Second"].iter().enumerate() {
+    for (i, state) in ["1", "0"].iter().enumerate() {
         let off = appearance(&mut doc, 20, 20, b"q 0 0 0 RG 1 1 18 18 re S Q");
         let on = appearance(
             &mut doc,
@@ -201,7 +203,7 @@ pub(super) fn every_control_pdf() -> Vec<u8> {
         let button = doc.add_object(dictionary! {
             "Type" => "Annot", "Subtype" => "Widget", "Parent" => radio, "F" => 4,
             "Rect" => rect(200, 20, 220, 40), "AP" => dictionary! { "N" => states },
-            "AS" => if i == 0 { "First" } else { "Off" },
+            "AS" => if i == 0 { "1" } else { "Off" },
         });
         buttons.push(Object::Reference(button));
         if i == 0 {
@@ -210,6 +212,7 @@ pub(super) fn every_control_pdf() -> Vec<u8> {
             second.push(button);
         }
     }
+    buttons.reverse();
     doc.get_dictionary_mut(radio)
         .expect("radio")
         .set("Kids", buttons);
@@ -566,6 +569,35 @@ pub(super) fn fill_round_trips(report: &mut Report) {
             .unwrap_or_default(),
     );
     let before = values_of(&every, &[], &[]);
+    report.check(
+        "the radio group's initial answer is its export in child order",
+        before.get("delivery") == Some(&serde_json::json!("First")),
+        &format!("{before:?}"),
+    );
+    let raw_radio = |path: &Path| -> Option<Vec<Vec<u8>>> {
+        let doc = Document::load(path).ok()?;
+        let group = doc
+            .objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .find(|d| {
+                d.get(b"T").and_then(Object::as_str).ok() == text("delivery").as_str().ok()
+            })?;
+        let mut values = vec![group.get(b"V").ok()?.as_name().ok()?.to_vec()];
+        for kid in group.get(b"Kids").ok()?.as_array().ok()? {
+            let button = doc.get_dictionary(kid.as_reference().ok()?).ok()?;
+            values.push(button.get(b"AS").ok()?.as_name().ok()?.to_vec());
+        }
+        Some(values)
+    };
+    let raw_before = raw_radio(&every);
+    let raw_after = raw_radio(&filled);
+    report.check(
+        "the field value and the two widget appearances retain the PDF's internal state names",
+        raw_before == Some(vec![b"1".to_vec(), b"Off".to_vec(), b"1".to_vec()])
+            && raw_after == Some(vec![b"0".to_vec(), b"0".to_vec(), b"Off".to_vec()]),
+        &format!("before {raw_before:?}, after {raw_after:?}"),
+    );
     let after = values_of(&filled, &[], &[]);
     let untouched: Vec<&String> = before
         .keys()
@@ -642,6 +674,11 @@ pub(super) fn fill_round_trips(report: &mut Report) {
             "a list answered with a string",
             r#"{"items": "A"}"#.into(),
             "type",
+        ),
+        (
+            "the internal radio appearance name is not an export",
+            r#"{"delivery": "0"}"#.into(),
+            "option",
         ),
         (
             "an option the radio group lacks",

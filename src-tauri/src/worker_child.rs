@@ -652,6 +652,9 @@ fn handle(
         },
         Request::PageCopy { page, crop, turns } => page_copy(document, tile, *page, *crop, *turns),
         Request::Graphic(request) => graphic(document, tile, request),
+        Request::Geometry { page, .. } if *page >= document.page_count() => {
+            Response::reply(Reply::NoSuchPage)
+        }
         Request::Geometry { page, crop } => match render::geometry_of(document, *page, *crop) {
             Ok(size) => Response::reply(Reply::Geometry(size)),
             Err(e) => Response::err(e),

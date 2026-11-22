@@ -87,7 +87,6 @@ class AnswerRewrites(unittest.TestCase):
             self.assertEqual(target.read_bytes(), PDF, "nothing asked, nothing changed")
 
 
-@unittest.skipUnless(sys.platform == "darwin", "the remote receiver runs on macOS")
 class GeneratedFixtures(unittest.TestCase):
     def test_hosted_runs_require_both_bookmark_fixtures(self):
         from ci_fixtures import FIXTURES
@@ -114,6 +113,7 @@ class GeneratedFixtures(unittest.TestCase):
             self.assertFalse((root / "second").exists())
 
 
+@unittest.skipUnless(sys.platform == "darwin", "the remote receiver runs on macOS")
 class MacReceiver(unittest.TestCase):
     def test_concurrent_checks_cannot_stage_over_the_active_run(self):
         with tempfile.TemporaryDirectory() as scratch:

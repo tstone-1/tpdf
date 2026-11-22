@@ -23,6 +23,45 @@ fn fixture(state: Object, body: &str) -> Document {
 }
 
 #[test]
+fn a_named_projecting_cap_follows_its_tangent_and_the_paint_transform() {
+    // The nonuniform quarter-turn takes the cap's top to the left of the
+    // drawing: 300 - 2*(149 + 5*sqrt(2)). The default margin is 10.
+    let path = "25 139 m 35 149 l";
+    let left = |cap, path: &str, end: &str| {
+        let body = format!(
+            "10 w /G3 gs q 0 1 -2 0 300 0 cm {path} {end} Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET"
+        );
+        let doc = fixture(dictionary! { "LC" => Object::Integer(cap) }.into(), &body);
+        textedit::inspect(&doc, 0).unwrap().graphics[0][0]
+    };
+    for cap in [0, 1] {
+        assert_eq!(left(cap, path, "S"), -8.);
+    }
+    assert!((left(2, path, "S") - (2. - 10. * std::f32::consts::SQRT_2)).abs() < 0.001);
+    assert_eq!(left(2, "25 149 m 35 149 l", "S"), -8.);
+    // Closing a solid path removes its cap. A dashed closed path still
+    // has caps at each dash; resetting the dash pattern restores solid ink.
+    assert_eq!(left(2, path, "s"), -8.);
+    assert!(left(2, &format!("[3 1] 0 d {path}"), "s") < -12.);
+    assert_eq!(left(2, &format!("[3 1] 0 d [] 0 d {path}"), "s"), -8.);
+}
+
+#[test]
+fn a_named_join_bounds_the_transformed_miter_in_page_space() {
+    // A quarter-turn takes the long tip to the left, with its reach
+    // doubled by the nonuniform scale.
+    let body = "6 w 2 j /G3 gs q 1 j 1 M Q q 0 1 -2 0 300 0 cm 30 98 m 35 136 l 40 98 l S Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET";
+    for (join, limit, left) in [(0, 10, -18.), (0, 7, 22.), (2, 10, 22.)] {
+        let doc = fixture(dictionary! { "LJ" => join, "ML" => limit }.into(), body);
+        let rect = textedit::inspect(&doc, 0).unwrap().graphics[0];
+        assert!(
+            (f64::from(rect[0]) - left).abs() < 0.1,
+            "{join} {limit}: {rect:?}"
+        );
+    }
+}
+
+#[test]
 fn textedit_normal_graphics_state_preserves_fill_geometry_and_saved_operators() {
     for state in [
         dictionary! {},

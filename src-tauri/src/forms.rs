@@ -33,6 +33,9 @@ pub enum Control {
     Radio {
         index: usize,
         states: Vec<Vec<u8>>,
+        /// Explicit /Opt strings in the same stable widget order as `states`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exports: Option<Vec<String>>,
         unison: bool,
         no_toggle_off: bool,
     },
@@ -259,6 +262,16 @@ pub struct Form {
 }
 
 pub(crate) fn inherited<'a>(doc: &'a Document, start: ObjectId, key: &[u8]) -> Option<&'a Object> {
+    doc.dereference(inherited_raw(doc, start, key)?)
+        .ok()
+        .map(|(_, v)| v)
+}
+
+pub(crate) fn inherited_raw<'a>(
+    doc: &'a Document,
+    start: ObjectId,
+    key: &[u8],
+) -> Option<&'a Object> {
     let mut at = start;
     let mut seen = HashSet::new();
     for _ in 0..32 {
@@ -267,7 +280,7 @@ pub(crate) fn inherited<'a>(doc: &'a Document, start: ObjectId, key: &[u8]) -> O
         }
         let dict = doc.get_dictionary(at).ok()?;
         if let Ok(value) = dict.get(key) {
-            return doc.dereference(value).ok().map(|(_, v)| v);
+            return Some(value);
         }
         at = dict.get(b"Parent").and_then(Object::as_reference).ok()?;
     }
@@ -347,6 +360,57 @@ fn choice_options(doc: &Document, id: ObjectId) -> Result<Vec<Choice>, String> {
             Ok(choice)
         })
         .collect()
+}
+
+/// /Opt follows the field's /Kids, while journal selections follow widget IDs.
+fn radio_exports(
+    doc: &Document,
+    field: ObjectId,
+    widgets: impl Iterator<Item = ObjectId>,
+) -> Result<Option<Vec<String>>, String> {
+    let invalid = || said!("The radio group's export values do not match its widgets");
+    let Some(raw) = inherited_raw(doc, field, b"Opt") else {
+        return Ok(None);
+    };
+    let (_, raw) = doc.dereference(raw).map_err(|_| invalid())?;
+    let opts = raw.as_array().map_err(|_| invalid())?;
+    if opts.len() > 4096 {
+        return Err(said!("This form exceeds the option limit"));
+    }
+    let mut by_widget = BTreeMap::new();
+    let field_dict = doc.get_dictionary(field).map_err(|_| invalid())?;
+    if let Ok(kids) = field_dict.get(b"Kids") {
+        let kids = doc
+            .dereference(kids)
+            .and_then(|(_, k)| k.as_array())
+            .map_err(|_| invalid())?;
+        if kids.len() != opts.len() {
+            return Err(invalid());
+        }
+        for (kid, option) in kids.iter().zip(opts) {
+            let id = kid.as_reference().map_err(|_| invalid())?;
+            if by_widget.insert(id, option).is_some() {
+                return Err(invalid());
+            }
+        }
+    } else if let [only] = opts.as_slice() {
+        by_widget.insert(field, only);
+    } else {
+        return Err(invalid());
+    }
+    let mut bytes = 0;
+    widgets
+        .map(|id| {
+            let option = by_widget.get(&id).ok_or_else(invalid)?;
+            let text = option_text(doc, option)?;
+            bytes += text.len() + 32;
+            if bytes > 1_048_576 {
+                return Err(said!("This form exceeds the option text limit"));
+            }
+            Ok(text)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
 }
 
 fn choice_value(
@@ -552,6 +616,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 Control::Radio {
                     index: 0,
                     states: Vec::new(),
+                    exports: None,
                     unison: flags & (1 << 25) != 0,
                     no_toggle_off: flags & (1 << 14) != 0,
                 }
@@ -766,7 +831,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             groups.entry(widget.object).or_default().push(i);
         }
     }
-    for group in groups.values_mut() {
+    for (&field, group) in &mut groups {
         // Page moves must not change the meaning of an answer already journalled.
         group.sort_by_key(|i| result.widgets[*i].widget);
         let found: Vec<Result<Vec<u8>, String>> = group
@@ -814,7 +879,10 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 result.widgets[*i].reason = Some(said!("Another program saved this group with its answer drawn in, so it can be read and not changed"));
             }
         }
-        text_bytes += group.len() * states.iter().map(|s| s.len() * 4 + 16).sum::<usize>();
+        let exports = radio_exports(doc, field, group.iter().map(|i| result.widgets[*i].widget))?;
+        let export_bytes: usize = exports.iter().flatten().map(|s| s.len() + 32).sum();
+        text_bytes +=
+            group.len() * (states.iter().map(|s| s.len() * 4 + 16).sum::<usize>() + export_bytes);
         if text_bytes > 1_048_576 {
             return Err(said!("This form exceeds the text limit"));
         }
@@ -842,11 +910,13 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             if let Control::Radio {
                 index: at,
                 states: all,
+                exports: option_values,
                 ..
             } = &mut widget.control
             {
                 *at = index;
                 *all = states.clone();
+                option_values.clone_from(&exports);
             }
         }
     }

@@ -187,6 +187,11 @@ describe("the field a drag places", () => {
     const form: Form = { widgets: [saved("Pay", ["Choice 1", "Choice 2"]), saved("Send", ["Choice 4"])] };
     expect(placing(armed("radio", { group: "Pay" }), true, [], [radio(1, "Pay", "Choice 3")], form).field.options)
       .toEqual(["Choice 4"]);
+    const mapped = saved("Pay", ["1", "0"]);
+    if (mapped.control.kind !== "radio") throw new Error("expected radio");
+    mapped.control.exports = ["Choice 1", "Choice 2"];
+    expect(placing(armed("radio", { group: "Pay" }), true, [], [], { widgets: [mapped] }).field.options)
+      .toEqual(["Choice 3"]);
     const text: Form = { widgets: [{ ...saved("Pay", []), control: { kind: "text" } }] };
     expect(placing(armed("radio", { group: "Pay" }), true, [], [], text).field.options).toEqual(["Choice 1"]);
   });

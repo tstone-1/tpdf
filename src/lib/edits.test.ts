@@ -19,9 +19,11 @@ import {
   Edits,
   NOTHING_OPEN,
   markMade,
+  queuedPage,
   type EditState,
   type MarkView,
 } from "./edits";
+import { Serial } from "./serial";
 import { pageId } from "./pages";
 import { INK_WIDTH } from "./markband";
 
@@ -189,6 +191,57 @@ describe("Edits", () => {
     expect(core.invoke).toHaveBeenLastCalledWith("page_reverse", { doc: 9 });
     expect(after.pages.map((p) => p.id)).toEqual([3, 2, 1]);
     expect(edits.state.pages.map((p) => p.id)).toEqual([3, 2, 1]);
+  });
+
+  it.each(["delete", "rotate", "insert", "move", "redact"] as const)(
+    "a %s requested while reversing addresses the page and anchor visible when invoked",
+    async (action) => {
+      const edits = new Edits(9, 4);
+      const original = edits.state.pages;
+      const reversed = { ...state(4), pages: [...original].reverse() };
+      let release!: (state: EditState) => void;
+      core.invoke.mockReturnValueOnce(new Promise<EditState>((resolve) => { release = resolve; }));
+      const queue = new Serial();
+      const reversing = queue.run(() => edits.reverse());
+      const command = (() => {
+        if (action === "move") return (model: Edits) => model.move(0, 3, original);
+        if (action === "redact") {
+          const page = original[0]!.id;
+          return (model: Edits) => model.redact(page, [10, 20, 30, 40]);
+        }
+        return queuedPage(edits.map, 0, (model, slot) => {
+          if (action === "delete") return model.delete(slot);
+          if (action === "rotate") return model.rotate(slot, 1);
+          return model.insertPage(slot, [400, 500]);
+        });
+      })();
+      const changing = queue.run(() => command(edits));
+      const sent = {
+        delete: ["page_delete", { doc: 9, page: 1 }],
+        redact: ["redact_mark", { doc: 9, page: 1, area: [10, 20, 30, 40] }],
+        rotate: ["page_rotate", { doc: 9, page: 1, turns: 1 }],
+        insert: ["page_insert", { doc: 9, after: 1, size: [400, 500] }],
+        move: ["page_move", { doc: 9, page: 1, after: 4 }],
+      };
+      core.invoke.mockImplementationOnce(async (_cmd, args) => ({
+        ...reversed,
+        pages: action === "delete" ? reversed.pages.filter((p) => p.id !== args.page) : reversed.pages,
+      }));
+      release(reversed);
+      await reversing;
+      await changing;
+      expect(core.invoke).toHaveBeenLastCalledWith(...sent[action]);
+      if (action === "delete") expect(edits.state.pages.map((p) => p.id)).toEqual([4, 3, 2]);
+    },
+  );
+
+  it("drops a queued page edit when its original page was removed", async () => {
+    const edits = new Edits(9, 3);
+    const removing = queuedPage(edits.map, 0, (model, slot) => model.delete(slot));
+    core.invoke.mockResolvedValueOnce({ ...state(3), pages: edits.state.pages.slice(1) });
+    await edits.delete(0);
+    await removing(edits);
+    expect(core.invoke).toHaveBeenCalledTimes(1);
   });
 
   it("inserts behind the page in a slot, naming it by identity", async () => {

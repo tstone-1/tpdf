@@ -13,7 +13,8 @@ qualified name from the `/T` chain, so a name here agreeing with `tpdf fields`
 is two readers agreeing, not one reader agreeing with itself. Each answer is
 compared with the field's `/V` as pypdf decodes it: a string for text and
 choices, a name for a checkbox (`true` is any state but `/Off`) and a radio
-group, an array for a list that takes several. Every widget of an answered
+group (mapped through its chosen widget's /Opt entry when provided), an array
+for a list that takes several. Every widget of an answered
 field must also carry an `/AP` normal appearance, because an answer without one
 is an answer some readers do not show.
 """
@@ -50,6 +51,22 @@ def verify(pdf: str, answers_path: str) -> list:
             wrong.append(f"{name}: pypdf finds no such field among {sorted(fields)}")
             continue
         found = field.get("/V")
+        raw = field.indirect_reference.get_object()
+        if field.field_type == "/Btn" and raw.get_inherited("/Opt") is not None:
+            # /Opt is ordered like /Kids. /V and the chosen widget's /AS
+            # still hold the appearance name, which can differ from the export.
+            options = raw.get_inherited("/Opt").get_object()
+            kids = raw["/Kids"] if "/Kids" in raw else [raw]
+            on = [i for i, kid in enumerate(kids) if kid.get_object().get("/AS") not in (None, "/Off")]
+            if len(kids) != len(options) or any(kids[i].get_object().get("/AS") != found for i in on):
+                wrong.append(f"{name}: the widgets disagree with the field value or export list")
+            elif on:
+                exports = [str(options[i].get_object()) for i in on]
+                if any(export != value for export in exports):
+                    wrong.append(f"{name}: asked {value!r}, the selected buttons export {exports!r}")
+            elif value is not None or found not in (None, "/Off"):
+                wrong.append(f"{name}: asked {value!r}, no button is on and the field holds {found!r}")
+            continue
         if not expected(value, found):
             wrong.append(f"{name}: asked {value!r}, pypdf reads {found!r}")
     # Every widget of an answered field has a normal appearance.

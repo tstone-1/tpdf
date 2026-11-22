@@ -7243,3 +7243,19 @@ SVG. The solid red control still produced a red SVG path. At the left page edge
 a wrapped, untouched D with a 1.2-point overhang refused the edit. The same word
 with an ordinary D fitted. A painted tab leader stopped a longer edit, and a
 Type 3 space with an empty glyph program left room for it.
+
+## Mask compression, text reflow and CLI page geometry, verified 2026-11-22
+
+A grayscale image shared by a 12-point thumbnail and a 256-point luminosity
+mask retained its 256 source pixels across compression. Independent Poppler
+renders agreed on every pixel of a 220 by 200 region inside the mask. A separate
+thumbnail in the compression regression still shrank. On a clipped text run,
+Poppler measured zero painted pixels and the editor reported zero target height.
+Moving the clip to expose the glyph caps gave 185 painted pixels and a positive
+target height. The acute miter refused reflow while the bevel and the path with a
+trailing unused moveto both allowed it.
+
+The CLI groups a 200 by 300 page with `/UserUnit 2` and a 400 by 600 page as
+one physical paper size. Its thumbnail path renders either good page in a pair
+whose other page cannot be loaded. Requesting the unreadable sibling still
+fails. Both cases exercise stdin, `--fit` and PNG output through the worker.

@@ -74,16 +74,17 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function build(): Promise<Viewer> {
+async function build(commit: () => Promise<void> = async () => {}): Promise<Viewer> {
   const viewer: Viewer = new Viewer(dom.root as unknown as HTMLElement, {
     doc: 1,
     pageCount: 1,
     pages: [PAGE],
     onRedacted: (page) => regions.push(page),
-    onRedactSelection: async () => {
-      marked.push(((await viewer.selectionQuadsByPage()) ?? []).map((one) => one.text).join("|"));
-      viewer.clearSelection();
-    },
+    onRedactSelection: () => void viewer.redactSelected(async (selected) => {
+      marked.push(selected.map((one) => one.text).join("|"));
+      await commit();
+      return true;
+    }),
   });
   current = viewer;
   await settle();
@@ -158,6 +159,69 @@ describe("a selection drag the browser cancels", () => {
 });
 
 describe("the redaction tool pressed on text", () => {
+  it.each(["tool", "palette"] as const)("finishing an earlier %s mark leaves the next drag intact", async (route) => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const viewer = await build(() => pending);
+    if (route === "tool") viewer.armRedact();
+    drag(at(60, 200), at(240, 200));
+    if (route === "palette") {
+      void viewer.redactSelected(async (selected) => {
+        marked.push(selected.map((row) => row.text).join("|"));
+        await pending;
+        return true;
+      }, true);
+    }
+    await settle();
+    expect(marked).toEqual(["ab"]);
+    const from = at(305, 200);
+    const to = at(490, 200);
+    dom.root.dispatch("pointerdown", { pointerId: 1, button: 0, clientX: from.x, clientY: from.y, target: dom.root });
+    release();
+    await settle();
+    dom.root.dispatch("pointermove", { pointerId: 1, clientX: to.x, clientY: to.y });
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: to.x, clientY: to.y });
+    await settle();
+    if (route === "tool") expect(marked).toEqual(["ab", "cd"]);
+    else expect((await viewer.selectionQuadsByPage())?.map((row) => row.text)).toEqual(["cd"]);
+    viewer.destroy();
+  });
+
+  it.each([false, true])("keeps the tool put away after Escape (another tool armed: %s)", async (otherTool) => {
+    const viewer = await build();
+    drag(at(60, 200), at(240, 200));
+    let release!: (ok: boolean) => void;
+    const pending = new Promise<boolean>((resolve) => { release = resolve; });
+    const write = vi.fn(() => pending);
+    const marking = viewer.redactSelected(write, true);
+    await settle();
+    expect(write).toHaveBeenCalledOnce();
+    if (otherTool) viewer.armRedact();
+    dom.root.dispatch("keydown", {
+      key: "Escape", ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, target: dom.root,
+    });
+    expect(viewer.hasSelection).toBe(otherTool);
+    release(true);
+    await marking;
+    expect(viewer.redactArmed).toBe(false);
+    viewer.destroy();
+  });
+
+  it("arms the palette tool only after it records the selected words", async () => {
+    const viewer = await build();
+    drag(at(60, 200), at(240, 200));
+    await viewer.redactSelected(async () => false, true);
+    expect(viewer.hasSelection).toBe(true);
+    expect(viewer.redactArmed).toBe(false);
+    await viewer.redactSelected(async (selected) => {
+      expect(selected.map((row) => row.text)).toEqual(["ab"]);
+      return true;
+    }, true);
+    expect(viewer.hasSelection).toBe(false);
+    expect(viewer.redactArmed).toBe(true);
+    viewer.destroy();
+  });
+
   it("marks the words dragged across and stays armed", async () => {
     const viewer = await build();
     viewer.armRedact();

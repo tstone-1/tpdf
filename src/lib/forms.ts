@@ -58,8 +58,13 @@ export type FormValue = string | boolean | number[];
 export type FormControl = { kind: "text" | "checkbox" | "unsupported" }
   /** A signature field: a place for a signature while `signed` is false. */
   | { kind: "signature"; signed: boolean }
-  | { kind: "radio"; index: number; states: number[][]; unison: boolean; no_toggle_off: boolean }
+  | { kind: "radio"; index: number; states: number[][]; exports?: string[]; unison: boolean; no_toggle_off: boolean }
   | { kind: "choice"; options: { export: string; label: string }[]; combo: boolean; editable: boolean; multiple: boolean };
+
+/** The string a recipient sees when this button is the form's answer. */
+export function radioExport(control: Extract<FormControl, { kind: "radio" }>, index: number): string {
+  return control.exports?.[index] ?? new TextDecoder().decode(new Uint8Array(control.states[index] ?? []));
+}
 
 /** Mirrors the worker's AcroForm reply. Object ids name shared fields. */
 export interface FormWidget {

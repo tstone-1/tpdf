@@ -1036,7 +1036,9 @@ fn inspect_pinning(
                 clipping::line_width(value)?;
                 state.line_width = number(value)?;
             }
-            ("J" | "j" | "M" | "d", values) => graphics::stroke(&op.operator, values)?,
+            ("J" | "j" | "M" | "d", values) => {
+                state.stroke_settings(graphics::stroke(&op.operator, values)?);
+            }
             ("i", [value]) => graphics::tolerance(b"FL", value)?,
             // ISO 32000-1 Figure 9 does not list cm inside a text object, but
             // arXiv's stamp (`BT 0 1 -1 0 0 0 cm ... Tm ... TJ ET`) puts it

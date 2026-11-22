@@ -221,6 +221,20 @@ describe("SessionWriter", () => {
     expect(sent.map((p) => p.page).slice(3)).toEqual([5]);
   });
 
+  it.each(["quit", "timer"])("keeps the revisited document most recent on %s", async (when) => {
+    const { sent, send } = recorder();
+    const writer = new SessionWriter(send, 1000);
+    const a = place({ path: "/tmp/a.pdf", page: 1 });
+    const b = place({ path: "/tmp/b.pdf", page: 2 });
+    writer.note(a);
+    writer.note(b);
+    writer.note(a);
+    if (when === "quit") writer.flush();
+    else await vi.advanceTimersByTimeAsync(1000);
+    await writer.settled();
+    expect(sent).toEqual([a, b, a]);
+  });
+
   it("flushes the waiting place of every document", async () => {
     const { sent, send } = recorder();
     const writer = new SessionWriter(send, 1000);
@@ -234,7 +248,7 @@ describe("SessionWriter", () => {
 
   it("drops a waiting place once the reader is back where it was written", async () => {
     // Page 1 written, page 2 waiting, back to page 1: the reader is on page 1.
-    // Mutation: drop `this.pending.delete(place.path)` in the early return -> red.
+    // Returning before removing the pending page 2 writes a stale position.
     const { sent, send } = recorder();
     const writer = new SessionWriter(send, 1000);
     writer.note(place({ page: 1 }));

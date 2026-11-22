@@ -24,6 +24,10 @@ pub(super) struct Graphics<'a> {
     // glyphs, so their ink reaches half the line width beyond the outlines.
     pub render: i64,
     pub line_width: f64,
+    square_cap: bool,
+    dashed: bool,
+    miter_join: bool,
+    miter_limit: f64,
     // Whether a clip the axis-aligned model cannot hold is in force
     // (`clipping::quadrilateral`): text drawn under it is kept read-only.
     pub turned_clip: bool,
@@ -43,6 +47,10 @@ impl<'a> Graphics<'a> {
             compound_clips: Vec::new(),
             render: 0_i64,
             line_width: 1.0_f64,
+            square_cap: false,
+            dashed: false,
+            miter_join: true,
+            miter_limit: 10.,
             turned_clip: false,
         }
     }
@@ -164,7 +172,13 @@ impl<'a> Graphics<'a> {
             .filter_map(|(i, op)| matches!(op.operator.as_str(), "re" | "m").then_some(i))
             .chain(std::iter::once(path.len()))
             .collect();
-        for pair in starts.windows(2) {
+        // A lone moveto after a drawing has no stroke and does not prevent
+        // the one painted subpath from travelling with its line.
+        let painted = starts
+            .windows(2)
+            .filter(|pair| pair[1] > pair[0] + 1 || path[pair[0]].operator == "re");
+        let single = painted.clone().nth(1).is_none();
+        for pair in painted {
             let subpath = &path[pair[0]..pair[1]];
             let Some(mut bounds) = clipping::drawn(subpath, self.page_transform)? else {
                 continue;
@@ -172,19 +186,49 @@ impl<'a> Graphics<'a> {
             if stroked {
                 let [a, b, c, d, ..] = self.page_transform;
                 let radius = self.line_width * 0.5;
-                let dx = radius * (a.abs() + c.abs());
-                let dy = radius * (b.abs() + d.abs());
+                let last = pair[1] == path.len();
+                let close = last && matches!(paint.operator.as_str(), "s" | "b" | "b*");
+                let mut dx = radius * (a.abs() + c.abs());
+                let mut dy = radius * (b.abs() + d.abs());
+                if self.square_cap
+                    && (self.dashed
+                        || !close && subpath.last().is_some_and(|op| op.operator != "h"))
+                {
+                    let direction = clipping::cap_direction(subpath)?;
+                    // A square projects a half width along and across the
+                    // tangent. With varying tangents, its circumradius bounds
+                    // every orientation, including caps on individual dashes.
+                    let reach = |x: f64, y: f64| {
+                        radius
+                            * match direction {
+                                Some([u, v]) => (x * u + y * v).abs() + (y * u - x * v).abs(),
+                                None => std::f64::consts::SQRT_2 * x.hypot(y),
+                            }
+                    };
+                    dx = dx.max(reach(a, c));
+                    dy = dy.max(reach(b, d));
+                }
                 bounds = [
                     bounds[0] - dx,
                     bounds[1] - dy,
                     bounds[2] + dx,
                     bounds[3] + dy,
                 ];
+                if self.miter_join && radius > 0. {
+                    clipping::include_miters(
+                        &mut bounds,
+                        subpath,
+                        close,
+                        self.page_transform,
+                        radius,
+                        self.miter_limit,
+                    )?;
+                }
             }
             // Translating one subpath would translate its siblings as well.
             let simple_line =
                 subpath.len() == 2 && subpath[1].operator == "l" && self.line_width > 0.;
-            if starts.len() == 2
+            if single
                 && (!stroked || simple_line)
                 && !self.turned_clip
                 && self.compound_clips.is_empty()
@@ -213,10 +257,26 @@ impl<'a> Graphics<'a> {
     }
 
     pub fn external(&mut self, name: &[u8], checked: &mut Checked) -> Result<(), String> {
-        if let Some(width) = checked.graphics_state(name)? {
+        self.stroke_settings(checked.graphics_state(name)?);
+        Ok(())
+    }
+
+    pub fn stroke_settings(&mut self, settings: graphics::StrokeSettings) {
+        if let Some(width) = settings.width {
             self.line_width = width;
         }
-        Ok(())
+        if let Some(square) = settings.square_cap {
+            self.square_cap = square;
+        }
+        if let Some(dashed) = settings.dashed {
+            self.dashed = dashed;
+        }
+        if let Some(miter) = settings.miter_join {
+            self.miter_join = miter;
+        }
+        if let Some(limit) = settings.miter_limit {
+            self.miter_limit = limit;
+        }
     }
 
     pub fn colour_space(
@@ -523,8 +583,8 @@ pub(super) struct Checked<'a> {
     pub resources: &'a Dictionary,
     colour_spaces: BTreeMap<Vec<u8>, patterns::Colour>,
     shading_patterns: BTreeSet<Vec<u8>>,
-    // Each validated state and the line width it sets, if any.
-    graphics_states: BTreeMap<Vec<u8>, Option<f64>>,
+    // Each validated state and the stroke parameters it sets.
+    graphics_states: BTreeMap<Vec<u8>, graphics::StrokeSettings>,
     image_names: BTreeSet<Vec<u8>>,
     stencils: BTreeSet<Vec<u8>>,
     form_bounds: BTreeMap<Vec<u8>, Option<[f64; 4]>>,
@@ -560,14 +620,14 @@ impl<'a> Checked<'a> {
         }
     }
 
-    /// The line width the named ExtGState sets, if it sets one.
-    fn graphics_state(&mut self, name: &[u8]) -> Result<Option<f64>, String> {
+    /// The stroke geometry the named ExtGState changes.
+    fn graphics_state(&mut self, name: &[u8]) -> Result<graphics::StrokeSettings, String> {
         if !self.graphics_states.contains_key(name) {
             if self.graphics_states.len() >= 32 {
                 return Err(said!("too many external text graphics states"));
             }
-            let width = graphics::normal(self.doc, self.resources, name)?;
-            self.graphics_states.insert(name.to_vec(), width);
+            let settings = graphics::normal(self.doc, self.resources, name)?;
+            self.graphics_states.insert(name.to_vec(), settings);
         }
         Ok(self.graphics_states[name])
     }
@@ -1045,6 +1105,14 @@ impl Found {
                     bounds[2].clamp(rect[0], rect[2]),
                     bounds[3].clamp(rect[1], rect[3]),
                 ];
+                // The em box can still reach into the clip when all the
+                // validated ink lies outside it. Remove that axis of the hit
+                // target so the invisible run cannot take pointer or key focus.
+                for axis in 0..2 {
+                    if ink_bounds[axis + 2] <= rect[axis] || ink_bounds[axis] >= rect[axis + 2] {
+                        bounds[axis + 2] = bounds[axis];
+                    }
+                }
             }
             for region in &state.compound_clips {
                 region.contains(ink_bounds)?;

@@ -541,6 +541,9 @@ pub fn check(
         {
             problems.push(said!("`{name}` is named more than once", name = field.name));
         }
+        if let Some(why) = group.and_then(|id| mapped_group_problem(doc, id, &field.name)) {
+            problems.push(why);
+        }
         if let (true, Some(value)) = (radio, field.options.first()) {
             let held = group
                 .is_some_and(|group| radio_values(doc, group).contains(&value.as_bytes().to_vec()));
@@ -928,6 +931,14 @@ fn radio_group(doc: &Document, name: &str) -> Option<ObjectId> {
         })
 }
 
+/// A change to the button list would also need to rewrite the export mapping.
+pub(crate) fn mapped_group_problem(doc: &Document, group: ObjectId, name: &str) -> Option<String> {
+    forms::inherited_raw(doc, group, b"Opt")?;
+    Some(said!(
+        "`{name}`: this group lists what its buttons export, so tpdf cannot change its button list"
+    ))
+}
+
 /// The names of the states a group's buttons have: the value each gives the
 /// group, and `Off`, which no button may have as its value.
 fn radio_values(doc: &Document, group: ObjectId) -> Vec<Vec<u8>> {
@@ -1018,7 +1029,12 @@ fn radio(
     to: &Grouped,
 ) -> Result<ObjectId, String> {
     let group = match radio_group(doc, to.name) {
-        Some(group) => group,
+        Some(group) => {
+            if let Some(why) = mapped_group_problem(doc, group, to.name) {
+                return Err(why);
+            }
+            group
+        }
         None => {
             let group = doc.add_object(dictionary! {
                 "FT" => "Btn", "T" => forms::pdf_string(to.name),

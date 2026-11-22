@@ -443,10 +443,11 @@ export class Edits {
    *
    * A move to slot 0 has no anchor, which is what `null` means on the wire.
    */
-  async move(from: number, to: number): Promise<EditState> {
-    const page = this.current.pages[from]?.id;
+  async move(from: number, to: number, order = this.current.pages): Promise<EditState> {
+    // A queued drop names both pages in the order the reader saw.
+    const page = order[from]?.id;
     if (page === undefined) return this.current;
-    const rest = this.current.pages.filter((_, slot) => slot !== from);
+    const rest = order.filter((_, slot) => slot !== from);
     const landing = Math.max(0, Math.min(to, rest.length));
     if (landing === from) return this.current;
     const after = landing === 0 ? null : (rest[landing - 1]?.id ?? null);
@@ -1096,6 +1097,19 @@ export class Edits {
     this.pageMap = new PageMap(joined.pages);
     return joined;
   }
+}
+
+/** Bind the page at invocation, then resolve its slot after earlier edits have landed. */
+export function queuedPage(
+  map: PageMap,
+  slot: number,
+  edit: (model: Edits, currentSlot: number) => Promise<EditState>,
+): (model: Edits) => Promise<EditState> {
+  const id = map.idOf(slot);
+  return (model) => {
+    const currentSlot = id === undefined ? undefined : model.map.slotOfId(id);
+    return currentSlot === undefined ? Promise.resolve(model.state) : edit(model, currentSlot);
+  };
 }
 
 /**

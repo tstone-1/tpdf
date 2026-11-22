@@ -299,18 +299,21 @@ pub fn read_back(
                         crate::forms::Control::Radio {
                             index,
                             states,
+                            exports,
                             unison,
                             no_toggle_off,
                         },
                         crate::forms::Control::Radio {
                             index: after_index,
                             states: after_states,
+                            exports: after_exports,
                             unison: after_unison,
                             no_toggle_off: after_toggle,
                         },
                     ) => {
                         index == after_index
                             && after_states.starts_with(states)
+                            && exports == after_exports
                             && unison == after_unison
                             && no_toggle_off == after_toggle
                     }

@@ -403,7 +403,7 @@ ROWS += [
     Mutation("radio group: take a name past the longest", "src/lib/fieldnames.ts", "  if ([...group].length > 255) return", "  if (false) return", "is held to what a field's name may be"),
     Mutation("radio value: count another group's values", "src/lib/fieldnames.ts", "mark.kind === \"field\" && mark.note === group && mark.field?.kind === \"radio\"", "mark.kind === \"field\" && mark.field?.kind === \"radio\"", "is a radio button named for its group, with the first value the group does not have"),
     Mutation("radio value: count a text field's choices", "src/lib/fieldnames.ts", "mark.kind === \"field\" && mark.note === group && mark.field?.kind === \"radio\"", "mark.kind === \"field\" && mark.note === group", "is a radio button named for its group, with the first value the group does not have"),
-    Mutation("radio value: ignore the file's buttons", "src/lib/fieldnames.ts", "    for (const state of widget.control.states) values.add(new TextDecoder().decode(new Uint8Array(state)));", "", "counts the values the file's group has as well"),
+    Mutation("radio value: ignore the file's buttons", "src/lib/fieldnames.ts", "    const control = widget.control;\n    control.states.forEach((_, index) => values.add(radioExport(control, index)));", "", "counts the values the file's group has as well"),
     Mutation("radio value: count another saved group's buttons", "src/lib/fieldnames.ts", "    if (widget.name !== group || widget.control.kind !== \"radio\") continue;", "    if (widget.control.kind !== \"radio\") continue;", "counts the values the file's group has as well"),
     Mutation("radio value: start past the highest and not at the first free", "src/lib/fieldnames.ts", "    while (taken.has(`Choice ${n}`)) n += 1;", "    n = taken.size + 1;", "is a radio button named for its group, with the first value the group does not have"),
     Mutation("radio: name a button as a field of its own", "src/lib/fieldnames.ts", "    return { field: { kind: \"radio\", border: false, options: [`Choice ${n}`] }, name: armed.group };", "    return { field: { kind: \"radio\", border: false, options: [`Choice ${n}`] }, name: nextFieldName(\"radio\", takenNames(formNames, marks)) };", "is a radio button named for its group, with the first value the group does not have"),
@@ -1929,8 +1929,8 @@ ROWS += [
         # lands just before where the reader dropped it.
         "edits: pick the move anchor out of the order the page is still in",
         "src/lib/edits.ts",
-        "    const rest = this.current.pages.filter((_, slot) => slot !== from);",
-        "    const rest = this.current.pages;",
+        "    const rest = order.filter((_, slot) => slot !== from);",
+        "    const rest = order;",
         "turns a destination slot into the neighbour the model accepts",
     ),
     Mutation(

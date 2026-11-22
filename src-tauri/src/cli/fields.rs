@@ -231,11 +231,16 @@ pub fn state_name(bytes: &[u8]) -> String {
     }
 }
 
+/// A radio button exports its /Opt string if present, otherwise its state name.
+pub(super) fn radio_export(bytes: &[u8], explicit: Option<&String>) -> String {
+    explicit.cloned().unwrap_or_else(|| state_name(bytes))
+}
+
 /// A radio group's states or a choice's options, as `fields` lists them, each
 /// saying whether `value` chooses it.
 ///
-/// A radio group lists each state once, in the order of the first widget that
-/// has it: buttons in unison share a state, and one answer turns all of them on.
+/// Buttons in unison sharing one state are a single choice. Separate buttons
+/// with the same export stay distinguishable by their selected flag.
 #[must_use]
 pub fn options(control: &Control, value: &Value) -> Vec<FieldOption> {
     let chosen: &[usize] = match value {
@@ -243,20 +248,28 @@ pub fn options(control: &Control, value: &Value) -> Vec<FieldOption> {
         _ => &[],
     };
     match control {
-        Control::Radio { states, .. } => {
-            let on: Option<String> = chosen
-                .first()
-                .and_then(|i| states.get(*i))
-                .map(|s| state_name(s));
+        Control::Radio {
+            states,
+            exports,
+            unison,
+            ..
+        } => {
+            let on = chosen.first().and_then(|i| states.get(*i));
             let mut seen = BTreeSet::new();
             states
                 .iter()
-                .map(|s| state_name(s))
-                .filter(|s| seen.insert(s.clone()))
-                .map(|s| FieldOption {
-                    selected: on.as_ref() == Some(&s),
-                    export: s.clone(),
-                    label: s,
+                .enumerate()
+                .filter_map(|(i, state)| {
+                    let export = radio_export(state, exports.as_ref().and_then(|e| e.get(i)));
+                    // Only identical states acting in unison describe the same button choice.
+                    if *unison && !seen.insert((state, export.clone())) {
+                        return None;
+                    }
+                    Some(FieldOption {
+                        selected: chosen.contains(&i) || (*unison && on == Some(state)),
+                        label: export.clone(),
+                        export,
+                    })
                 })
                 .collect()
         }
@@ -280,10 +293,19 @@ pub fn value_json(control: &Control, value: &Value) -> serde_json::Value {
     match (control, value) {
         (Control::Unsupported | Control::Signature { .. }, _) => J::Null,
         (Control::Checkbox, Value::Checked(on)) => J::Bool(*on),
-        (Control::Radio { states, .. }, Value::Selection(at)) => at
+        (
+            Control::Radio {
+                states, exports, ..
+            },
+            Value::Selection(at),
+        ) => at
             .first()
-            .and_then(|i| states.get(*i))
-            .map_or(J::Null, |s| J::String(state_name(s))),
+            .and_then(|&i| {
+                states
+                    .get(i)
+                    .map(|s| radio_export(s, exports.as_ref().and_then(|e| e.get(i))))
+            })
+            .map_or(J::Null, J::String),
         (Control::Choice { options, .. }, Value::Selection(at)) if multiple(control) => J::Array(
             at.iter()
                 .filter_map(|i| options.get(*i))

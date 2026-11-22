@@ -30,7 +30,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use super::args::{lexically_same, unknown, value};
-use super::fields::{ask_form, grouped, kind, multiple, options, state_name, value_json, Grouped};
+use super::fields::{
+    ask_form, grouped, kind, multiple, options, radio_export, value_json, Grouped,
+};
 use super::pages::{check_target, publish_copy, refused};
 use super::report::{self, FieldKind, Problem, ProblemKind, SCHEMA};
 use super::text::{declined, password, variable};
@@ -320,8 +322,17 @@ pub fn to_value(group: &Grouped<'_>, answer: &serde_json::Value) -> Result<Value
             J::Bool(on) => Ok(Value::Checked(*on)),
             _ => Err(wrong("true or false")),
         },
-        Control::Radio { states, unison, .. } => {
-            let names: Vec<String> = states.iter().map(|s| state_name(s)).collect();
+        Control::Radio {
+            states,
+            exports,
+            unison,
+            ..
+        } => {
+            let names: Vec<String> = states
+                .iter()
+                .enumerate()
+                .map(|(i, state)| radio_export(state, exports.as_ref().and_then(|e| e.get(i))))
+                .collect();
             match answer {
                 J::Null => Ok(Value::Selection(Vec::new())),
                 J::String(wanted) => {
@@ -346,15 +357,14 @@ pub fn to_value(group: &Grouped<'_>, answer: &serde_json::Value) -> Result<Value
                         }
                         // Buttons in unison share the state and turn on
                         // together, so the first one says everything.
-                        [first, ..] if at.len() == 1 || *unison => {
+                        [first, rest @ ..] if rest.is_empty() || (*unison && rest.iter().all(|&i| states[i] == states[*first])) => {
                             Ok(Value::Selection(vec![*first]))
                         }
                         several => Err(problem(
                             name,
                             ProblemKind::Ambiguous,
                             format!(
-                                "{} of its buttons have the state `{wanted}` and are not in \
-                                 unison, so the state cannot say which is meant",
+                                "{} of its buttons export `{wanted}` and can be selected separately, so the answer cannot say which is meant",
                                 several.len()
                             ),
                         )),

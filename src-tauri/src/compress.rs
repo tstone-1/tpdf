@@ -492,8 +492,22 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
                 .and_then(|p| resolved(doc, p))
                 .and_then(|p| p.as_i64().ok())
                 == Some(1);
-            if glyphs || pattern {
-                if let Some(resources) = dict
+            // A graphics-state soft mask paints a transparency group. Its scale
+            // comes from the graphics state where it is used. An image's SMask
+            // is a sample stream instead and is handled with its parent image.
+            let mask_group = dict
+                .get(b"SMask")
+                .ok()
+                .and_then(|mask| resolved(doc, mask)?.as_dict().ok())
+                .and_then(|mask| mask.get(b"G").ok())
+                .and_then(|group| resolved(doc, group)?.as_stream().ok())
+                .map(|group| &group.dict);
+            for consumer in (glyphs || pattern)
+                .then_some(dict)
+                .into_iter()
+                .chain(mask_group)
+            {
+                if let Some(resources) = consumer
                     .get(b"Resources")
                     .ok()
                     .and_then(|r| resolved(doc, r))
@@ -501,7 +515,7 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
                 {
                     walk.unfollowed_in(&[resources]);
                 } else {
-                    // A Type 3 font without its own resources may draw from its page.
+                    // No local resource table identifies the images this consumer may draw.
                     walk.lost = true;
                 }
             }

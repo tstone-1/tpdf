@@ -465,6 +465,110 @@ pub(super) fn drawn(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<Rect>, St
     Ok(envelope)
 }
 
+// Square cap extents are unchanged when the tangent turns by a right angle.
+// A rectangle's dashes and a single line have a known cap orientation. For
+// other paths use the orientation-independent bound.
+pub(super) fn cap_direction(ops: &[Operation]) -> Result<Option<[f64; 2]>, String> {
+    match ops {
+        [rect] if rect.operator == "re" => Ok(Some([1., 0.])),
+        [start, line] if line.operator == "l" => {
+            let xy = |op: &Operation| -> Result<[f64; 2], String> {
+                Ok([
+                    super::number(&op.operands[0])?,
+                    super::number(&op.operands[1])?,
+                ])
+            };
+            Ok(unit(xy(start)?, xy(line)?))
+        }
+        _ => Ok(None),
+    }
+}
+
+// The ordinary half-width envelope covers a bevel, a round join and an
+// axis-aligned re in user space (including after its affine transformation).
+// A miter can reach beyond it. Compute its actual outer tip in user space,
+// where both the pen width and the PDF miter-limit ratio are defined.
+pub(super) fn include_miters(
+    bounds: &mut Rect,
+    ops: &[Operation],
+    implicit_close: bool,
+    ctm: [f64; 6],
+    radius: f64,
+    limit: f64,
+) -> Result<(), String> {
+    let [first, segments @ ..] = ops else {
+        return Ok(());
+    };
+    if first.operator == "re" || segments.is_empty() {
+        return Ok(());
+    }
+    let start = [
+        super::number(&first.operands[0])?,
+        super::number(&first.operands[1])?,
+    ];
+    let include = |bounds: &mut Rect, vertex: [f64; 2], a: [f64; 2], b: [f64; 2]| {
+        // a and b point along the two segments, in traversal order. The
+        // outer tip points along a-b. Its distance is radius/cos(turn/2).
+        let cosine = (a[0] + b[0]).hypot(a[1] + b[1]) / 2.;
+        let Some(direction) = unit(b, a) else { return };
+        if cosine == 0. || 1. / cosine > limit {
+            return; // The renderer bevels the join at the miter limit.
+        }
+        let [x, y] = point(
+            ctm,
+            vertex[0] + radius * direction[0] / cosine,
+            vertex[1] + radius * direction[1] / cosine,
+        );
+        *bounds = [
+            bounds[0].min(x),
+            bounds[1].min(y),
+            bounds[2].max(x),
+            bounds[3].max(y),
+        ];
+    };
+    let mut current = start;
+    let mut first_tangent = None;
+    let mut incoming = None;
+    let mut close = implicit_close;
+    for segment in segments {
+        if segment.operator == "h" {
+            close = true;
+            break;
+        }
+        // For c, v and y the first and last distinct control points give the
+        // endpoint tangents, including when a control coincides with its end.
+        let mut points = [current; 4];
+        let mut end = 0;
+        for operands in segment.operands.chunks_exact(2) {
+            end += 1;
+            points[end] = [super::number(&operands[0])?, super::number(&operands[1])?];
+        }
+        let Some(out) = points[1..=end].iter().find_map(|p| unit(current, *p)) else {
+            continue;
+        };
+        if let Some(previous) = incoming {
+            include(bounds, current, previous, out);
+        }
+        first_tangent.get_or_insert(out);
+        current = points[end];
+        incoming = points[..end].iter().rev().find_map(|p| unit(*p, current));
+    }
+    if let (true, Some(mut previous), Some(first)) = (close, incoming, first_tangent) {
+        if let Some(back) = unit(current, start) {
+            include(bounds, current, previous, back);
+            previous = back;
+        }
+        include(bounds, start, previous, first);
+    }
+    Ok(())
+}
+
+fn unit(from: [f64; 2], to: [f64; 2]) -> Option<[f64; 2]> {
+    let (x, y) = (to[0] - from[0], to[1] - from[1]);
+    let length = x.hypot(y);
+    (length > 0.).then(|| [x / length, y / length])
+}
+
 fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
     if rect.operator != "re" || rect.operands.len() != 4 {
         return Err(said!("invalid rectangle operands"));

@@ -83,6 +83,15 @@ describe("positionsFor", () => {
     expect(of("ii-3", ["i", "ii", "3"])).toBe("Printed as ii-3: type 2-3");
   });
 
+  it("suppresses a hint when the numeric endpoint is printed beyond an inserted blank", () => {
+    const labels = ["i", "2", "4"];
+    const sources = [0, undefined, 1, 2];
+    const label = (slot: number) => printedLabel(labels, sources[slot], slot + 1);
+    expect(positionsFor("i-2", sources.length, label)).toBeNull();
+    expect(positionsFor("i-02", sources.length, label)).toBeNull();
+    expect(positionsFor("i-4", sources.length, label)).toBe("Printed as i-4: type 1-4");
+  });
+
   it("names nothing for a value with no label in it, or with a word that is none", () => {
     // Numbers alone are positions, and the parser decides about them.
     expect(of("1-3")).toBeNull();

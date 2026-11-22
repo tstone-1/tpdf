@@ -377,6 +377,20 @@ class ClientTests(unittest.TestCase):
             self.pdf.render(cropped, png, dpi=72, force=True)
             self.assertEqual(struct.unpack('>II', png.read_bytes()[16:24]), (80, 90))
 
+    def test_info_groups_page_sizes_in_physical_points(self):
+        write_pdf(self.source, [
+            b'<< /Type /Catalog /Pages 2 0 R >>',
+            b'<< /Type /Pages /Count 3 /Kids [3 0 R 4 0 R 5 0 R] >>',
+            b'<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 400 600] >>',
+            b'<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 200 300] /UserUnit 2 >>',
+            b'<< /Type /Page /Parent 2 0 R /Resources << >> /MediaBox [0 0 200 300] >>',
+        ])
+        sizes = self.pdf.info(self.source)['files'][0]['document']['page_sizes']
+        self.assertEqual(sizes, [
+            {'width_pt': 400, 'height_pt': 600, 'count': 2},
+            {'width_pt': 200, 'height_pt': 300, 'count': 1},
+        ])
+
     def test_page_helpers_merge_extract_and_split_read_back(self):
         second = self.root / 'second.pdf'
         self.pdf.edit(self.source, second, [
@@ -740,6 +754,26 @@ class ClientTests(unittest.TestCase):
             self.pdf.hidden(self.source, pages='2')
         self.assertEqual(caught.exception.exit_code, 3)
 
+    def test_thumbnail_sizes_only_the_requested_page(self):
+        import struct
+        good = b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] >>'
+        for wanted, kids in [(1, [good, b'null']), (2, [b'null', good])]:
+            with self.subTest(page=wanted):
+                write_pdf(self.source, [
+                    b'<< /Type /Catalog /Pages 2 0 R >>',
+                    b'<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>',
+                    *kids,
+                ])
+                def thumbnail(page):
+                    return subprocess.run(
+                        [BINARY, 'render', '-', '-o', '-', '--fit', '32x32', '--page', str(page)],
+                        input=self.source.read_bytes(), capture_output=True,
+                    )
+                visible = thumbnail(wanted)
+                self.assertEqual(visible.returncode, 0, visible.stderr)
+                self.assertEqual(struct.unpack('>II', visible.stdout[16:24]), (24, 32))
+                self.assertNotEqual(thumbnail(3 - wanted).returncode, 0)
+
     def test_render_supports_repeatable_visual_assertions(self):
         first = self.root / 'before.png'
         second = self.root / 'after.png'
@@ -757,6 +791,7 @@ class ClientTests(unittest.TestCase):
         with self.assertRaises(CommandError) as caught:
             self.pdf.render(self.source, first, page=2, force=True)
         self.assertEqual(caught.exception.exit_code, 3)
+        self.assertIn("past the end of the document", str(caught.exception))
         self.assertEqual(first.read_bytes(), baseline)
 
     def test_form_helpers_fill_through_stdin_and_read_back(self):

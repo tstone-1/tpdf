@@ -181,7 +181,10 @@ rather than reaching Noto. `fonts/installed/tests.rs` and `sysfont/tests.rs` use
 fonts (`testdata/make_installed_fonts.py`); `scripts/text_installed_check.py` and
 `text_edit_pdfkit.swift --installed` read a saved result back independently.
 A moved underline must fit its own clip at both positions. Stroke width contributes to
-its bounds. Disconnected painted subpaths count as separate obstacles to moving text.
+its bounds, including projecting square caps. Mitered joins use the active miter limit and the tangents of the joining segments.
+Disconnected painted subpaths count as separate obstacles to moving text. A moveto without
+a segment paints nothing. A run whose validated ink lies outside its rectangular clip
+keeps its text address but has no interactive edit target.
 
 New text must fit the page, active clips and the selected box without colliding
 with other source text. Draft previews use the worker's save path and a bounded

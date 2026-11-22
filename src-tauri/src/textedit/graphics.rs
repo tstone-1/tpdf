@@ -10,14 +10,25 @@ use lopdf::{Dictionary, Document, Object};
 #[cfg(test)]
 mod tests;
 
-/// Stroke-only parameters cannot affect the supported fill-only text (Tr = 0).
-/// Preserve the operators, including q/Q scoping, instead of recreating paths.
+/// Only the stroke settings changed by an operator or named ExtGState.
+#[derive(Clone, Copy, Default)]
+pub(super) struct StrokeSettings {
+    pub width: Option<f64>,
+    pub square_cap: Option<bool>,
+    pub dashed: Option<bool>,
+    pub miter_join: Option<bool>,
+    pub miter_limit: Option<f64>,
+}
+
+/// Keep the geometry needed to bound joins while preserving every authored operator.
 /// Dash arrays follow PDF 1.7 section 4.3.2; the 32-entry limit bounds validation.
-pub(super) fn stroke(operator: &str, values: &[Object]) -> Result<(), String> {
+pub(super) fn stroke(operator: &str, values: &[Object]) -> Result<StrokeSettings, String> {
     let invalid = || said!("unsupported line stroke state");
+    let mut settings = StrokeSettings::default();
     match (operator, values) {
-        ("J" | "j", [Object::Integer(0..=2)]) => Ok(()),
-        ("M", [value]) if number(value)? >= 1. => Ok(()),
+        ("J", [Object::Integer(cap @ 0..=2)]) => settings.square_cap = Some(*cap == 2),
+        ("j", [Object::Integer(join @ 0..=2)]) => settings.miter_join = Some(*join == 0),
+        ("M", [value]) if number(value)? >= 1. => settings.miter_limit = Some(number(value)?),
         ("d", [Object::Array(pattern), phase]) => {
             if pattern.len() > 32 || number(phase)? < 0. {
                 return Err(invalid());
@@ -35,10 +46,11 @@ pub(super) fn stroke(operator: &str, values: &[Object]) -> Result<(), String> {
             if !pattern.is_empty() && !positive {
                 return Err(invalid());
             }
-            Ok(())
+            settings.dashed = Some(!pattern.is_empty());
         }
-        _ => Err(invalid()),
+        _ => return Err(invalid()),
     }
+    Ok(settings)
 }
 
 /// ISO 32000-1 Table 58 and 10.6.2-10.6.3: flatness (`i`, `FL`) and smoothness
@@ -54,17 +66,16 @@ pub(super) fn tolerance(key: &[u8], value: &Object) -> Result<(), String> {
     Ok(())
 }
 
-/// Returns the line width the state sets, if it sets one: stroked text (Tr 1
-/// and 2) reaches half of it beyond its outlines.
+/// Validate a named graphics state and return the stroke settings it changes.
 pub(super) fn normal(
     doc: &Document,
     resources: &Dictionary,
     name: &[u8],
-) -> Result<Option<f64>, String> {
+) -> Result<StrokeSettings, String> {
     let invalid = || said!("unsupported external text graphics state");
     let states = dictionary(doc, resources.get(b"ExtGState").map_err(|_| invalid())?)?;
     let state = dictionary(doc, states.get(name).map_err(|_| invalid())?)?;
-    let mut width = None;
+    let mut settings = StrokeSettings::default();
     for (key, value) in state {
         match (key.as_slice(), value) {
             (b"Type", Object::Name(name)) if name == b"ExtGState" => {}
@@ -80,14 +91,20 @@ pub(super) fn normal(
             (b"RI", Object::Name(name)) => super::colors::intent(name)?,
             (b"LW", value) => {
                 super::clipping::line_width(value)?;
-                width = Some(number(value)?);
+                settings.width = Some(number(value)?);
             }
-            (b"LC", value) => stroke("J", std::slice::from_ref(value))?,
-            (b"LJ", value) => stroke("j", std::slice::from_ref(value))?,
-            (b"ML", value) => stroke("M", std::slice::from_ref(value))?,
+            (b"LC", value) => {
+                settings.square_cap = stroke("J", std::slice::from_ref(value))?.square_cap
+            }
+            (b"LJ", value) => {
+                settings.miter_join = stroke("j", std::slice::from_ref(value))?.miter_join
+            }
+            (b"ML", value) => {
+                settings.miter_limit = stroke("M", std::slice::from_ref(value))?.miter_limit
+            }
             (b"FL" | b"SM", value) => tolerance(key, value)?,
             _ => return Err(invalid()),
         }
     }
-    Ok(width)
+    Ok(settings)
 }

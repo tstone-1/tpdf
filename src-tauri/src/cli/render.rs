@@ -192,38 +192,35 @@ impl Subcommand for Render {
             .worker()
             .session(&file, len, key.as_deref())
             .map_err(|e| declined(&self.input.display().to_string(), e, key.is_some()))?;
-        let reply = session.ask(Request::Open {
-            lazy_geometry: false,
-        })?;
-        let Reply::Open {
-            pages, page_count, ..
-        } = reply
-        else {
-            return Err(Failure::new(
-                Exit::Internal,
-                "the worker did not return page sizes",
-            ));
+        let size = match session.ask(Request::Geometry {
+            page: self.page - 1,
+            crop: None,
+        })? {
+            Reply::Geometry(size) => PageSize {
+                width_pt: size.width_pt,
+                height_pt: size.height_pt,
+            },
+            Reply::NoSuchPage => {
+                return Err(Failure::new(
+                    Exit::Refused,
+                    "--page names a page past the end of the document",
+                ))
+            }
+            _ => {
+                return Err(Failure::new(
+                    Exit::Internal,
+                    "the worker did not return the page size",
+                ))
+            }
         };
-        if pages.len() != page_count {
-            return Err(Failure::new(
-                Exit::Internal,
-                "the worker returned incomplete page sizes",
-            ));
-        }
-        let size = pages.get(self.page as usize - 1).ok_or_else(|| {
-            Failure::new(
-                Exit::Refused,
-                "--page names a page past the end of the document",
-            )
-        })?;
         let unit = if self.fit.is_some() && stdout {
             // A pixel box needs no physical scale when no DPI report is written.
             1.0
         } else {
             super::pages::page_units(&mut session, &[self.page], &self.input, key.is_some())?[0]
         };
-        let scale = self.scale(*size, unit);
-        let (width, height) = dimensions(*size, scale)?;
+        let scale = self.scale(size, unit);
+        let (width, height) = dimensions(size, scale)?;
         if let Some((w, h)) = self.fit {
             // Rounding the other side may not overshoot the box; the page's
             // own aspect makes one side exact and the other smaller.

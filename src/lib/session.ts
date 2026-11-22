@@ -206,11 +206,10 @@ export class SessionWriter {
   note(place: Place): void {
     if (this.stopped) return;
     if (this.written && samePlace(this.written, place)) {
-      // Nothing a reader would notice changed, and the reader is back where
-      // this document was last written: a place still waiting for it is older
-      // than that. Another document's waiting place is left to land.
+      // Returning to the last written position supersedes this path's pending
+      // note. If another path is waiting, record this visit after it for recency.
       this.pending.delete(place.path);
-      return;
+      if (this.pending.size === 0) return;
     }
 
     if (this.timer !== 0) {

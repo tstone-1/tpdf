@@ -1504,6 +1504,18 @@ fn a_radio_button_joins_the_group_the_form_already_has() {
         }],
     )
     .expect("chosen");
+    let mut mapped = doc.clone();
+    mapped.get_dictionary_mut(group).unwrap().set(
+        "Opt",
+        vec![
+            Object::string_literal("Card payment"),
+            Object::string_literal("Cash payment"),
+        ],
+    );
+    assert!(add(&mut mapped, &[button("Pay", "Cheque", 60.0)])
+        .unwrap_err()
+        .contains("cannot change its button list"));
+    assert_eq!(buttons(&mapped, "Pay").len(), 2);
     add(&mut doc, &[button("Pay", "Cheque", 60.0)]).expect("joined");
     let doc = reread(&doc);
     let now = buttons(&doc, "Pay");

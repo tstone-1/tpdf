@@ -22,7 +22,7 @@ use crate::edits::Plan;
 use crate::fingerprint::Fingerprint;
 use crate::render::PageSize;
 use crate::save;
-use crate::save_outside::Session;
+use crate::save_outside::{Declined, Session};
 use crate::worker_proto::{Reply, Request};
 
 const MAX_OUTPUTS: usize = 10_000;
@@ -246,17 +246,26 @@ pub(super) fn page_units(
     path: &Path,
     has_password: bool,
 ) -> Result<Vec<f32>, Failure> {
-    let request = Request::PageUnits {
-        pages: pages.iter().map(|page| page - 1).collect(),
-    };
-    match ask(session, request, path, has_password)? {
+    units_for_slots(session, pages.iter().map(|page| page - 1).collect())
+        .map_err(|why| declined(&path.display().to_string(), why, has_password))
+}
+
+/// Physical points per native unit, in the order of the zero-based slots.
+pub(super) fn units_for_slots(
+    session: &mut Session,
+    slots: Vec<u32>,
+) -> Result<Vec<f32>, Declined> {
+    let count = slots.len();
+    match session.ask(Request::PageUnits { pages: slots })? {
         Reply::PageUnits(units)
-            if units.len() == pages.len()
-                && units.iter().all(|unit| unit.is_finite() && *unit > 0.0) =>
+            if units.len() == count && units.iter().all(|unit| unit.is_finite() && *unit > 0.0) =>
         {
             Ok(units)
         }
-        other => Err(unexpected(&other)),
+        other => Err(Declined::Failed(format!(
+            "invalid page units reply: {}",
+            other.described()
+        ))),
     }
 }
 

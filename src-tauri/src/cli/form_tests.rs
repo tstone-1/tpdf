@@ -184,6 +184,50 @@ fn fields_are_grouped_by_field_with_their_answers_in_the_form_fill_takes() {
     }
 }
 
+#[test]
+fn an_unresolvable_radio_export_table_refuses_the_form() {
+    let (mut doc, radio, ..) = mixed_fixture();
+    let missing = doc.new_object_id();
+    doc.get_dictionary_mut(radio)
+        .unwrap()
+        .set("Opt", Object::Reference(missing));
+    assert!(forms::scan(&doc)
+        .unwrap_err()
+        .contains("export values do not match its widgets"));
+}
+
+#[test]
+fn equally_named_radio_exports_are_ambiguous_if_their_buttons_are_separately_selectable() {
+    let (mut doc, radio, ..) = mixed_fixture();
+    let field = doc.get_dictionary_mut(radio).unwrap();
+    field.set(
+        "Opt",
+        vec![
+            Object::string_literal("Mail"),
+            Object::string_literal("Mail"),
+        ],
+    );
+    for flags in [1 << 15, (1 << 15) | (1 << 25)] {
+        doc.get_dictionary_mut(radio).unwrap().set("Ff", flags);
+        let form = scanned(&doc);
+        let listed = fields::report("radio.pdf", &form);
+        let radio = listed.fields.iter().find(|f| f.name == "delivery").unwrap();
+        assert_eq!(radio.value, serde_json::json!("Mail"));
+        assert_eq!(
+            radio
+                .options
+                .iter()
+                .map(|o| (o.export.as_str(), o.selected))
+                .collect::<Vec<_>>(),
+            [("Mail", true), ("Mail", false)]
+        );
+        assert_eq!(
+            problems(&form, r#"{"delivery":"Mail"}"#),
+            [("delivery".into(), ProblemKind::Ambiguous)]
+        );
+    }
+}
+
 /// The inherited fixture, with `edit` applied to its terminal text field.
 fn acme_with(edit: impl FnOnce(&mut Document, ObjectId, ObjectId)) -> Form {
     let (mut doc, field, check) = fixture();

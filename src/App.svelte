@@ -443,7 +443,7 @@
     PAGE_MENU,
   } from "./lib/contextmenu";
   import { contentBox, cropBox } from "./lib/crop";
-  import { Edits, markMade, type EditState } from "./lib/edits";
+  import { Edits, markMade, queuedPage, type EditState } from "./lib/edits";
   import {
     DEFAULT_SWATCH,
     swatch,
@@ -610,7 +610,7 @@
   import { Viewer, type PageClick, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
   import { Stage, blankLive, scoped, type LiveDocument, type Slots } from "./lib/livedocument";
   import {
-    abandonedBy, documentsBusy, dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, retainedPlace, readerIsIn, repoint,
+    abandonedBy, documentsBusy, dropAbandoned, openFailure, pageTable, placeOnSide, placeToResume, retainedPlace, keepSavedPlaces, readerIsIn, repoint,
     sharedByTwin, tabToKeep, toldAfterFallback,
     type OpenFound,
   } from "./lib/documentopen";
@@ -1301,7 +1301,8 @@
   }
 
   /** A successful in-place write makes the working order the new file order. */
-  function rebaseFavourites(path: string, model: Edits): void {
+  function rebaseAfterSave(path: string, model: Edits): void {
+    keepSavedPlaces(tabs.all, model);
     if (favourites.rebase(path, (source) => model.map.slotOf(source))) saveFavourites();
   }
 
@@ -2053,7 +2054,7 @@
     dropImport: () => pendingImports.drop(),
     cropPage: (to) => void cropPage(to),
     redactRegion: () => viewer?.armRedact(),
-    redactSelection: () => void redactSelectionAndStayArmed(),
+    redactSelection: () => void redactSelection(true),
     redactMatches: () => void redactMatches(),
     matchCount: () => viewer?.matchCount ?? 0,
     movePage: (delta) => void movePage(delta),
@@ -2205,7 +2206,7 @@
   async function rotatePage(delta: number): Promise<void> {
     const at = viewer?.position.page;
     if (at === undefined) return;
-    await applyEdit((e) => e.rotate(at, delta));
+    await applyToPage(at, (model, slot) => model.rotate(slot, delta));
   }
 
   /**
@@ -2278,31 +2279,17 @@
    * reader had selected when they asked. The two would be the same string today
    * and would part company the moment route B took a whole line.
    */
-  async function redactSelection(): Promise<boolean> {
+  async function redactSelection(keepArmed = false): Promise<void> {
     const view = openView;
-    const selected = await viewer?.selectionQuadsByPage();
-    if (!selected?.length) return false;
-    for (const { page, quads } of selected) {
-      for (const area of areasFrom(quads)) {
-        if (!await applyEdit((e) => e.redact(page, area), view)) return false;
+    const model = edits;
+    await viewer?.redactSelected(async (selected) => {
+      for (const { page, quads } of selected) {
+        for (const area of areasFrom(quads)) {
+          if (!await applyEdit((e) => e.redact(page, area), view, model)) return false;
+        }
       }
-    }
-    return true;
-  }
-
-  /**
-   * {@link redactSelection}, and the tool left armed in the document it was
-   * asked in: the next word the reader double-clicks there is marked without
-   * coming back to the command. Reported from use: choosing it again for every
-   * passage was the tedious part. Esc puts the tool away.
-   */
-  async function redactSelectionAndStayArmed(): Promise<void> {
-    const view = openView;
-    if (!await redactSelection()) return;
-    asDocument(view, () => {
-      viewer?.clearSelection();
-      viewer?.armRedact();
-    });
+      return true;
+    }, keepArmed);
   }
 
   /**
@@ -2953,7 +2940,7 @@
   async function deletePage(): Promise<void> {
     const at = viewer?.position.page;
     if (at === undefined) return;
-    await applyEdit((e) => e.delete(at));
+    await applyToPage(at, (model, slot) => model.delete(slot));
   }
 
   /**
@@ -2975,7 +2962,7 @@
     const at = viewer?.position.page;
     const size = at === undefined ? undefined : viewer?.pageSize(at);
     if (at === undefined || !size) return;
-    await applyEdit((e) => e.insertPage(at, [size.width_pt, size.height_pt]));
+    await applyToPage(at, (model, slot) => model.insertPage(slot, [size.width_pt, size.height_pt]));
   }
 
   /**
@@ -3053,17 +3040,19 @@
     const release = () =>
       void call("page_import_cancel", { doc: waiting.doc, pending: waiting.pending }).catch(() => {});
     const at = viewer?.position.page;
-    if (at === undefined) return release();
+    const anchor = at === undefined ? undefined : model.map.idOf(at);
+    if (anchor === undefined) return release();
     // Released too when the edit never ran: refused while a task runs, which
     // answers without calling this, the answer having already been taken.
     await ranOr(applyEdit, (e) => {
       // The queue runs this later, against whichever document is open then.
       // The file was prepared for `model`, so another one releases it.
-      if (e !== model) {
+      const slot = e.map.slotOfId(anchor);
+      if (e !== model || slot === undefined) {
         release();
         return Promise.resolve(e.state);
       }
-      return e.importPages(at, waiting.pending, pages);
+      return e.importPages(slot, waiting.pending, pages);
     }, release);
   }
 
@@ -3078,7 +3067,7 @@
   async function insertSizedPage(name: PageSizeName): Promise<void> {
     const at = viewer?.position.page;
     if (at === undefined) return;
-    await applyEdit((e) => e.insertPage(at, dimensionsOf(name)));
+    await applyToPage(at, (model, slot) => model.insertPage(slot, dimensionsOf(name)));
   }
 
   /**
@@ -3229,7 +3218,16 @@
   async function movePage(delta: number): Promise<void> {
     const at = viewer?.position.page;
     if (at === undefined) return;
-    await applyEdit((e) => e.move(at, at + delta));
+    await movePageTo(at, at + delta);
+  }
+
+  function movePageTo(from: number, to: number) {
+    const order = edits?.state.pages;
+    if (order) return applyEdit((model) => model.move(from, to, order));
+  }
+
+  function applyToPage(slot: number, edit: (model: Edits, currentSlot: number) => Promise<EditState>) {
+    if (edits) return applyEdit(queuedPage(edits.map, slot, edit));
   }
 
   /**
@@ -3266,6 +3264,7 @@
   function applyEdit(
     run: (edits: Edits) => Promise<EditState>,
     view: ViewId = openView,
+    owner = asDocument(view, () => edits),
   ): Promise<EditState | null> {
     if (copyTaskBusy || (documentBusy && !committingPopup)) return Promise.resolve(null);
     // Queued rather than started, so a reply can never be adopted after a
@@ -3273,7 +3272,7 @@
     //
     // The document is named here, when the edit is asked for. The queue runs
     // it later, and the reader may be working in the other side by then.
-    const done = editing.run(() => runEdit(view, run));
+    const done = editing.run(() => runEdit(view, owner, run));
     // What a save waits for is the edit of its own document.
     if (view === openView) pendingEdit = done;
     else asDocument(view, () => { pendingEdit = done; });
@@ -3347,10 +3346,12 @@
 
   async function runEdit(
     id: ViewId,
+    owner: Edits | null | undefined,
     run: (edits: Edits) => Promise<EditState>,
   ): Promise<EditState | null> {
     const model = asDocument(id, () => (viewer ? edits : null));
-    if (!model) return null;
+    // A replacement model can issue the same page or mark IDs.
+    if (!model || model !== owner) return null;
     try {
       const after = await run(model);
       // Everything below reads and writes the variables of the document the
@@ -3692,7 +3693,7 @@
         if (!error) say(prompt.message, prompt.offers);
         return;
       }
-      rebaseFavourites(path, model);
+      rebaseAfterSave(path, model);
       await reopenAfterWrite(path, place);
     });
   }
@@ -4364,7 +4365,7 @@
         if (!error) say(prompt.message, prompt.offers);
         return;
       }
-      rebaseFavourites(path, model);
+      rebaseAfterSave(path, model);
       await reopenAfterWrite(path, place);
       if (!error) say(said, [], resultTone(success));
     });
@@ -6553,7 +6554,7 @@
         // slot arithmetic that turns a drop into a destination is the strip's
         // because the strip is what knows where the pointer was.
         onReorder: (from, to) => {
-          void applyEdit((e) => e.move(from, to));
+          void movePageTo(from, to);
         },
         // Right-clicking a thumbnail goes to that page first, and then offers
         // the page operations. Navigating on a right-click is unusual and it
@@ -6751,8 +6752,7 @@
       onMeasured: (label, scaled) => tell(scaled ? label : TEXT().measuredNoScale(label)),
       onPageClick: (click) => void pickGraphic(click),
       onCopyGraphic: () => void copyGraphic(),
-      onRedactSelection: () =>
-        void redactSelection().then((marked) => marked && asDocument(view, () => viewer?.clearSelection())),
+      onRedactSelection: () => void redactSelection(),
       onMarkMoved: (id, dx, dy) =>
         isSaved(id)
           ? changeField(scannedForm && edits ? fieldMoved(scannedForm, edits.state, id, dx, dy) : null)
