@@ -344,9 +344,10 @@ fn is_visible(code: u32) -> bool {
 }
 
 /// `fragmentsOf`.
-fn fragments_of(view: &View, axes: Axes, gap: f64) -> Vec<Fragment> {
+fn fragments_of(view: &View, axes: Axes, gap: f64) -> (Vec<Fragment>, [f64; 4]) {
+    let mut gaps = [gap; 4];
     if view.char_turns.is_empty() {
-        return aligned_fragments(view, axes, gap);
+        return (aligned_fragments(view, axes, gap), gaps);
     }
     // A `Map` iterates in insertion order, so a list searched linearly is the
     // same thing; there are at most four keys.
@@ -384,7 +385,9 @@ fn fragments_of(view: &View, axes: Axes, gap: f64) -> Vec<Fragment> {
             artifacts: Vec::new(),
         };
         let own = axes_for(turns);
-        for fragment in aligned_fragments(&group, own, cut_width(&group, own)) {
+        let group_gap = cut_width(&group, own);
+        gaps[turns as usize] = group_gap;
+        for fragment in aligned_fragments(&group, own, group_gap) {
             let original: Vec<usize> = fragment
                 .ranges
                 .iter()
@@ -398,7 +401,7 @@ fn fragments_of(view: &View, axes: Axes, gap: f64) -> Vec<Fragment> {
             });
         }
     }
-    fragments
+    (fragments, gaps)
 }
 
 /// `obliqueFragments`: one fragment per run of consecutive characters, in the
@@ -692,7 +695,7 @@ pub fn read(text: &PageText) -> Reading {
     let view = View::of(text);
     let axes = axes_for(view.quarter_turns);
     let gap = cut_width(&view, axes);
-    let fragments = fragments_of(&view, axes, gap);
+    let (fragments, gaps) = fragments_of(&view, axes, gap);
     if let Some(tagged) = usable_runs(&view) {
         let lines = within(&view, &fragments, &ownership(&view, tagged))
             .into_iter()
@@ -716,7 +719,7 @@ pub fn read(text: &PageText) -> Reading {
                     return oblique_lines(group);
                 }
                 let own = axes_for(turns);
-                blocks_of(&view, group, own, gap, 0)
+                blocks_of(&view, group, own, gaps[turns as usize], 0)
                     .into_iter()
                     .flat_map(|block| lines_of(&view, block, own))
                     .collect()

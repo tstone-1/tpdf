@@ -150,6 +150,7 @@ fn plan_with(baseline: u32, pages: Vec<PageView>, other: &Path) -> Plan {
 /// A highlight on the plan's page `at`.
 fn highlight(at: u32) -> PlannedMark {
     PlannedMark {
+        text_size: None,
         kind: MarkKind::Highlight,
         stamp: None,
         field: None,

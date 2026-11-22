@@ -150,7 +150,16 @@ fn document(path: &Path) {
     };
 
     page(&mut doc, drawn_over(), dictionary! {});
-    page(&mut doc, never_painted(), dictionary! {});
+    // Same physical sheet and type sizes encoded in half-sized native units.
+    let scaled = page(
+        &mut doc,
+        format!("0.5 0 0 0.5 0 0 cm\n{}", never_painted()),
+        dictionary! { "UserUnit" => 2 },
+    );
+    doc.get_dictionary_mut(scaled).unwrap().set(
+        "MediaBox",
+        vec![0.into(), 0.into(), 297.5.into(), 421.into()],
+    );
 
     let (x0, y0) = (LEFT - 3.0, 730.0 - 6.0);
     let (x1, y1) = (LEFT + width_of(UNDER_ANNOTATION) + 3.0, 730.0 + SIZE + 2.0);
@@ -362,12 +371,24 @@ fn window_path(report: &mut Report, source: &Path, json: &str, plain: &str) {
             (
                 u64::from(f.page),
                 f.text.clone(),
-                f.rect,
+                // The window rings native display coordinates. The CLI reports physical points.
+                if f.page == 2 {
+                    f.rect.map(|edge| edge * 2.0)
+                } else {
+                    f.rect
+                },
                 u64::from(f.characters),
                 f.off_page,
             )
         })
         .collect();
+    report.check(
+        "a hidden passage on a scaled sheet is reported in physical points",
+        theirs.iter().any(|(page, text, rect, _, _)| {
+            *page == 2 && text == "white on white words" && (rect[0] - LEFT).abs() < 2.0
+        }),
+        &format!("{theirs:?}"),
+    );
     let wide = |pages: &[u32]| pages.iter().map(|n| u64::from(*n)).collect::<Vec<_>>();
     report.check(
         "the window's path finds what the tool finds, place for place and count for count",

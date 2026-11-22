@@ -12,7 +12,14 @@
       "target": {
         "kind": "page",
         "page": 2,
-        "top_pt": 700.0
+        "top_pt": 700.0,
+        "other_edges": {
+          "left": 10.0,
+          "right": 80.0,
+          "bottom": 730.0,
+          "width": 612.0,
+          "height": 792.0
+        }
       }
     },
     {

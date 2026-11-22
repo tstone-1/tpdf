@@ -410,8 +410,9 @@ function combining(code: number): boolean {
  * there is nothing before it, and it starts a fragment of its own with a
  * degenerate box; {@link blocksOf} then leaves it where it is.
  */
-export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[] {
-  if (!text.char_turns?.length) return alignedFragments(text, axes, gap);
+function fragmentsOf(text: PageText, axes: Axes, gap: number): { fragments: Fragment[]; gaps: number[] } {
+  const gaps = [gap, gap, gap, gap];
+  if (!text.char_turns?.length) return { fragments: alignedFragments(text, axes, gap), gaps };
 
   // Band each direction separately: the height of a vertical label is its
   // line length, not a band into which nearby horizontal body text may merge.
@@ -436,7 +437,9 @@ export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[]
       quarter_turns: turns, extract_ms: 0,
     };
     const ownAxes = axesFor(turns);
-    for (const fragment of alignedFragments(group, ownAxes, cutWidth(group, ownAxes))) {
+    const groupGap = cutWidth(group, ownAxes);
+    gaps[turns] = groupGap;
+    for (const fragment of alignedFragments(group, ownAxes, groupGap)) {
       const original: number[] = [];
       for (const range of fragment.ranges) {
         for (let index = range.from; index < range.to; index++) original.push(indices[index]!);
@@ -444,7 +447,7 @@ export function fragmentsOf(text: PageText, axes: Axes, gap: number): Fragment[]
       fragments.push({ ranges: rangesOf(original), box: fragment.box, turns });
     }
   }
-  return fragments;
+  return { fragments, gaps };
 }
 
 /** One fragment per run of consecutive characters, in the order the file draws them. */
@@ -758,7 +761,7 @@ export function readingLines(text: PageText): ReadingLine[] {
 export function readingBlocks(text: PageText): ReadingBlock[] {
   const axes = axesFor(text.quarter_turns);
   const gap = cutWidth(text, axes);
-  const fragments = fragmentsOf(text, axes, gap);
+  const { fragments, gaps } = fragmentsOf(text, axes, gap);
   const tagged = usableRuns(text);
   if (tagged) {
     return within(text, fragments, ownership(text, tagged)).map((parts, at) => ({
@@ -770,7 +773,7 @@ export function readingBlocks(text: PageText): ReadingBlock[] {
     return directionGroups(fragments, axes).flatMap(({ turns, fragments }) => {
       if (turns === OBLIQUE) return [{ tag: null, lines: obliqueLines(fragments) }];
       const ownAxes = axesFor(turns);
-      return blocksOf(fragments, ownAxes, gap, 0, text).map((block) => ({
+      return blocksOf(fragments, ownAxes, gaps[turns]!, 0, text).map((block) => ({
         tag: null, lines: linesOf(text, block, ownAxes),
       }));
     });
@@ -1224,7 +1227,19 @@ export function touchedText(text: PageText, quads: readonly number[]): string {
 function inReadingOrder(text: PageText, indices: readonly number[]): string {
   const wanted = new Set(indices);
   if (wanted.size === 0) return "";
-  const order = readingOrder(text).filter((index) => wanted.has(index));
+  // A region describes visible ink, including running headers which the
+  // accessible reading order deliberately omits. When it covers one, order
+  // the whole selection with those glyphs present, including a header before
+  // its body or a footer after it.
+  const artifacts = text.artifacts ?? [];
+  const coversArtifact = artifacts.some(([start, end]) => {
+    for (let index = Math.max(0, start); index < Math.min(end, text.codes.length); index++) {
+      if (wanted.has(index)) return true;
+    }
+    return false;
+  });
+  const page = coversArtifact ? { ...text, artifacts: [] } : text;
+  const order = readingOrder(page).filter((index) => wanted.has(index));
   return charsOf(order.map((index) => text.codes[index] ?? 0));
 }
 

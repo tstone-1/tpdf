@@ -1,5 +1,5 @@
 import { SearchRecovery } from "./searchrecovery";
-import { call } from "./ipc";
+import { call, physicalPageUnit } from "./ipc";
 import { catalog } from "./i18n";
 import { changedTextPages, type TextChange } from "./textedit";
 import { redrawn, type FieldEdited } from "./savedfields";
@@ -135,7 +135,7 @@ import {
   type Place,
 } from "./links";
 import { Lifetime } from "./lifetime";
-import { DESTINATION_MARGIN_PT, type WebTarget } from "./outline";
+import { DESTINATION_MARGIN_PT, type DestinationEdges, type WebTarget } from "./outline";
 import {
   markWalk,
   PageMap,
@@ -488,7 +488,7 @@ export interface ViewerOptions {
    * reader would notice changed and therefore not while scrolling *within* a
    * page --- which is exactly the movement an outline highlight has to follow.
    */
-  onPosition?: (page: number, top: number) => void;
+  onPosition?: (page: number, top: number, destinationGeometry: number) => void;
   /**
    * Called when something the reader asked for could not be done.
    *
@@ -1427,6 +1427,7 @@ export class Viewer {
   private zoom = 1;
   /** Quarter-turns clockwise the view is rotated by, 0 to 3. */
   private turns = 0;
+  private destinationGeometry = 0;
 
   /**
    * Whether the page's lightness is inverted, for reading in the dark.
@@ -1720,7 +1721,7 @@ export class Viewer {
    */
   private measures = new Measurements();
   /** The line being dragged, in its slot's laid-out points. */
-  private measuring: { slot: number; from: MeasurePoint; to: MeasurePoint } | null = null;
+  private measuring: { slot: number; from: MeasurePoint; to: MeasurePoint; ready: Promise<boolean> } | null = null;
   /**
    * Where the pointer is, in the page's own space, while a tool is armed.
    *
@@ -2200,7 +2201,18 @@ export class Viewer {
         if (this.tool.kind !== "measure") return false;
         const { page, x, y } = this.pageAndPoint(at);
         const from = keepOnPage({ x, y }, this.laidSize(page));
-        this.measuring = { slot: page, from, to: from };
+        const id = this.pages.idOf(page);
+        if (id === undefined) return false;
+        const source = this.pages.addressOf(page, this.opts.doc);
+        const view = this.pages.at(page);
+        if (!source && !(view && "blank" in view.source)) return false;
+        const ready = this.measures.prepareUnit(id, () =>
+          source ? physicalPageUnit(source.doc, source.page) : Promise.resolve(1)
+        ).then(() => { this.wake(); return true; }, error => {
+          if (!this.life.ended) this.opts.onError?.(String(error));
+          return false;
+        });
+        this.measuring = { slot: page, from, to: from, ready };
         this.wake();
         return true;
       },
@@ -2228,7 +2240,13 @@ export class Viewer {
         if (id === undefined) return;
         const line = this.measures.add(id, this.filePointOn(live.slot, live.from), this.filePointOn(live.slot, live.to));
         this.wake();
-        this.opts.onMeasured?.(this.measures.label(line), this.measures.scaled(id));
+        const measures = this.measures;
+        void live.ready.then(ok => {
+          if (ok && !this.life.ended && this.measures === measures &&
+              this.pages.slotOfId(id) !== undefined && measures.all.at(-1) === line) {
+            this.opts.onMeasured?.(measures.label(line), measures.scaled(id));
+          }
+        });
       },
     });
 
@@ -2655,8 +2673,9 @@ export class Viewer {
     this.paintOverlay(visible);
     this.paintThumb();
     this.report(stats);
-    const where = this.position;
-    this.opts.onPosition?.(where.page, where.top);
+    const at = this.scroller.pageAt(this.scrollTop);
+    const displayedTop = Math.max(0, (this.scrollTop - this.scroller.pageTopOf(at)) / this.zoom);
+    this.opts.onPosition?.(at, displayedTop, this.destinationGeometry);
 
     // Work outstanding keeps the loop awake indefinitely; `tail` covers the
     // frames after the last of it settles, and is refilled by every input.
@@ -2740,6 +2759,7 @@ export class Viewer {
       return;
     }
 
+    this.destinationGeometry++;
     // The fit follows the page being read, so a page that has just turned out to
     // be A3 is refitted rather than left at the previous page's scale. Before
     // the re-anchor: a fit changes the zoom, which changes the pitch the
@@ -3441,6 +3461,7 @@ export class Viewer {
     // turned when it was found; under another turn it outlines nothing there.
     this.endGraphic();
     this.turns = next;
+    this.destinationGeometry++;
     this.text.setTurns(next);
     for (const other of this.otherText.values()) other.setTurns(next);
     this.scroller.setTurns(next);
@@ -3483,6 +3504,7 @@ export class Viewer {
     const at = this.textAt(page);
     if (at) at.cache.setPageTurns(at.page, turns);
     this.scroller.setPageTurns(page, turns);
+    this.destinationGeometry++;
     this.opts.onPageGeometryChanged?.(page);
     // Earlier sheets can have changed height underneath the old scroll offset.
     this.applyFit(false, anchor);
@@ -3700,17 +3722,9 @@ export class Viewer {
    * the screen, and "which section am I in" is about the heading above me,
    * which sits at the top.
    *
-   * A page under a quarter turn reports the page and no offset, for the same
-   * reason {@link goToDestination} ignores one: the destinations this is
-   * compared against are measured down an upright page, and under a quarter
-   * turn that is not the axis being scrolled. Outline highlighting falls back to
-   * page granularity, which is coarse and right, rather than fine and wrong.
-   *
-   * **Either turn counts**, which is what `effectiveTurns` is asked rather than
-   * the view's own number: a page the reader rotated with Rotate Right is as
-   * turned as one under a rotated view, and reported an offset down an axis it
-   * no longer had until 2026-08-18. That number goes into the history and the
-   * session, so it is what Back and a restart land on.
+   * History and session entries store an upright offset. For a page rotated
+   * by the user or the view they record the page alone. The sidebar receives
+   * the live displayed offset and projects its destinations into that frame.
    */
   get position(): { page: number; top: number } {
     const page = this.scroller.pageAt(this.scrollTop);
@@ -3719,24 +3733,39 @@ export class Viewer {
     return { page, top: Math.max(0, top) };
   }
 
-  /**
-   * Scrolls to an outline destination.
-   *
-   * `top` is points from the page's top, or `null` for a destination like
-   * `/Fit` that names no coordinate --- which means the page, so the page's top
-   * is the honest interpretation of it.
-   *
-   * **It records where the reader was**, so Back can undo it. Here rather than
-   * at the four places that call it --- a link, an outline row, a search result,
-   * a comment --- because "remember to record the jump" is a rule someone has
-   * to keep following, and the fifth caller is the one that forgets. The only
-   * jump not recorded is the history's own, which would otherwise push the
-   * place it is leaving straight back onto the stack it just popped from.
-   *
-   * A destination that lands where the reader already is records nothing: see
-   * {@link History.push}.
-   */
+  /** Project a destination from the file's displayed page into the live crop and turn. */
+  fileDestinationTop(page: number, top: number | null, edges?: DestinationEdges): number | null {
+    const id = this.pages.idOf(page);
+    const pendingCrop = id === undefined ? undefined : this.crops.get(id);
+    const turns = this.scroller.effectiveTurns(page);
+    if (!pendingCrop && !edges && turns === 0) return top;
+    const crop = pendingCrop ?? (edges ? uncropped(edges.width, edges.height) : this.cropAt(page));
+    const left = edges?.left ?? null, right = edges?.right ?? null;
+    const bottom = edges ? edges.bottom : top;
+    let offset: number | null;
+    switch (turns) {
+      case 1: offset = left === null ? null : left - crop.left; break;
+      case 2: offset = bottom === null ? null : crop.height_pt - (bottom - crop.top); break;
+      case 3: offset = right === null ? null : crop.width_pt - (right - crop.left); break;
+      default: offset = top === null ? null : top - crop.top;
+    }
+    if (offset === null) return null;
+    return Math.max(0, Math.min(offset, turns % 2 ? crop.width_pt : crop.height_pt));
+  }
+
+  goToFileDestination(page: number, top: number | null, edges?: DestinationEdges): void {
+    this.scrollToDestination(page, this.fileDestinationTop(page, top, edges));
+  }
+
+  /** Jump to a page and an optional upright offset. */
   goToDestination(page: number, top: number | null): void {
+    const clamped = Math.max(0, Math.min(page, this.opts.pageCount - 1));
+    const offset = this.scroller.effectiveTurns(clamped) === 0 ? top : null;
+    this.scrollToDestination(clamped, offset);
+  }
+
+  /** Jump to a displayed offset and remember the previous position for Back. */
+  private scrollToDestination(page: number, top: number | null): void {
     if (!this.replaying) {
       this.history.push(this.position);
       // **Announced here for the reason the push itself is here.** Back has
@@ -3751,17 +3780,7 @@ export class Viewer {
     }
     const clamped = Math.max(0, Math.min(page, this.opts.pageCount - 1));
     const base = this.scroller.pageTopOf(clamped);
-    // A turned page has no vertical offset to scroll to: at a quarter turn the
-    // destination's axis is the screen's horizontal one, and at a half turn it
-    // counts upwards from the bottom while the reader still scrolls down.
-    // Rather than place a heading somewhere plausible and wrong, this lands on
-    // the page --- which is exactly what `/Fit` means, and what `outline.rs`
-    // already returns for a destination it cannot place.
-    //
-    // The page's own turn as well as the view's, and for the page being jumped
-    // *to* rather than the one being left: this asked `this.turns === 0` until
-    // 2026-08-18 and scrolled 394 pt down a page an edit had made 600 pt tall.
-    const offset = this.scroller.effectiveTurns(clamped) === 0 ? (top ?? 0) : 0;
+    const offset = top ?? 0;
     // A little air above, for the same reason `goToMatch` leaves a third of a
     // screen: a heading flush against the top edge reads as cut off.
     //
@@ -4469,7 +4488,7 @@ export class Viewer {
     // goes for *announcing* it --- this line used to call `onNavigate` itself,
     // which is why the link was the one route that told the window and the
     // other three were not.
-    this.goToDestination(link.target.page, link.target.top_pt);
+    this.goToFileDestination(link.target.page, link.target.top_pt, link.target.other_edges);
   }
 
   /**
@@ -7498,6 +7517,7 @@ export class Viewer {
       // another page's size and looks like a rendering fault.
       if (this.pages !== pages || this.life.ended) return;
       if (!at) continue;
+      this.destinationGeometry++;
       if (want) {
         this.crops.set(view.id, at);
         this.cropBoxes.set(view.id, [...want]);
@@ -7799,6 +7819,7 @@ export class Viewer {
         ctx.lineTo(b.x, b.y);
       }
       ctx.stroke();
+      if (!line.label) continue;
       const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
       const width = ctx.measureText(line.label).width + 8 * dpr;
       const height = (MEASURE_LABEL_PX + 6) * dpr;

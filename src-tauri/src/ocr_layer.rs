@@ -181,20 +181,16 @@ fn already_there(rect: [f32; 4], centres: &[(char, f32, f32)], text: &str) -> bo
 /// words this engine reads otherwise, or a scan half of whose words are typed.
 pub const ALREADY_READ: f32 = 0.5;
 
-/// Whether a page whose engine read `there` words it already has and `new` it
-/// does not already has its layer ([`ALREADY_READ`]).
-fn has_its_layer(there: usize, new: usize) -> bool {
-    there > 0 && there as f32 >= ALREADY_READ * (there + new) as f32
-}
-
-/// The size in pixels to render a page at, and the scale that gives it.
+/// Raster dimensions and pixels per physical point for a page measured in native units.
+/// Render it at `scale * unit` pixels per native unit; the recogniser takes `scale`.
 ///
 /// The largest scale up to [`WANTED_SCALE`] whose image is at most `capacity`
 /// bytes at four per pixel and at most [`MAX_EDGE`] on its longer side. `None`
 /// when the page has no size, or when the image would not fit even at
 /// [`MIN_SCALE`].
 #[must_use]
-pub fn render_size(width_pt: f32, height_pt: f32, capacity: usize) -> Option<(u32, u32, f32)> {
+pub fn render_size(width: f32, height: f32, unit: f32, capacity: usize) -> Option<(u32, u32, f32)> {
+    let (width_pt, height_pt) = (width * unit, height * unit);
     if !(width_pt.is_finite() && height_pt.is_finite() && width_pt > 0.0 && height_pt > 0.0) {
         return None;
     }
@@ -220,6 +216,14 @@ pub fn render_size(width_pt: f32, height_pt: f32, capacity: usize) -> Option<(u3
         scale *= 0.995;
     }
     None
+}
+
+/// Convert recogniser boxes in physical points to the PDF reader's native display coordinates.
+pub(crate) fn native_items(mut items: Vec<RecognisedItem>, unit: f32) -> Vec<RecognisedItem> {
+    for item in &mut items {
+        item.rect = item.rect.map(|value| value / unit);
+    }
+    items
 }
 
 /// One page's recognition as the layer to write, or `None` if nothing was read.
@@ -297,18 +301,19 @@ pub fn outcome_of(
 ) -> Result<Outcome, RecogniseError> {
     match answer {
         Ok(items) => {
+            let Some(mut layer) = layer_of(page, items) else {
+                return Ok(Outcome::Nothing);
+            };
             let centres = centres(before);
-            let (there, new): (Vec<RecognisedItem>, Vec<RecognisedItem>) = items
-                .into_iter()
-                .filter(|item| !item.text.trim().is_empty())
-                .partition(|item| already_there(item.rect, &centres, &item.text));
-            if has_its_layer(there.len(), new.len()) {
+            let count = layer.words.len();
+            layer
+                .words
+                .retain(|item| !already_there(item.rect, &centres, &item.text));
+            let present = count - layer.words.len();
+            if present as f32 >= ALREADY_READ * count as f32 {
                 return Ok(Outcome::AlreadyThere);
             }
-            Ok(match layer_of(page, new) {
-                Some(layer) => Outcome::Layer(layer),
-                None => Outcome::Nothing,
-            })
+            Ok(Outcome::Layer(layer))
         }
         Err(RecogniseError::Rejected(_)) => Ok(Outcome::Refused),
         Err(other) => Err(other),
@@ -576,7 +581,7 @@ mod tests {
     #[test]
     fn an_a4_page_is_rendered_as_finely_as_sixteen_megabytes_allow() {
         let capacity = 16 * 1024 * 1024;
-        let (width, height, scale) = render_size(595.0, 842.0, capacity).expect("fits");
+        let (width, height, scale) = render_size(595.0, 842.0, 1.0, capacity).expect("fits");
         assert!(width as usize * height as usize * 4 <= capacity);
         // 2.89 is where 595 x 842 points fills the budget exactly.
         assert!((2.85..=2.90).contains(&scale), "{scale}");
@@ -586,13 +591,13 @@ mod tests {
 
     #[test]
     fn a_small_page_stops_at_300_dpi() {
-        let (_, _, scale) = render_size(200.0, 100.0, 16 * 1024 * 1024).expect("fits");
+        let (_, _, scale) = render_size(200.0, 100.0, 1.0, 16 * 1024 * 1024).expect("fits");
         assert_eq!(scale, WANTED_SCALE);
     }
 
     #[test]
     fn a_long_narrow_page_is_bounded_by_its_longer_side() {
-        let (width, height, _) = render_size(100.0, 5000.0, 64 * 1024 * 1024).expect("fits");
+        let (width, height, _) = render_size(100.0, 5000.0, 1.0, 64 * 1024 * 1024).expect("fits");
         assert!(height <= MAX_EDGE, "{height}");
         assert!(width >= 1);
     }
@@ -600,9 +605,9 @@ mod tests {
     #[test]
     fn a_page_too_large_to_read_at_100_dpi_is_refused() {
         // An A0 sheet at 100 DPI is 3311 x 4681 px: 62 MB.
-        assert_eq!(render_size(2384.0, 3370.0, 16 * 1024 * 1024), None);
-        assert_eq!(render_size(0.0, 100.0, 16 * 1024 * 1024), None);
-        assert_eq!(render_size(f32::NAN, 100.0, 16 * 1024 * 1024), None);
+        assert_eq!(render_size(2384.0, 3370.0, 1.0, 16 * 1024 * 1024), None);
+        assert_eq!(render_size(0.0, 100.0, 1.0, 16 * 1024 * 1024), None);
+        assert_eq!(render_size(f32::NAN, 100.0, 1.0, 16 * 1024 * 1024), None);
     }
 
     #[test]
@@ -896,6 +901,41 @@ mod tests {
         };
         let texts: Vec<&str> = written.words.iter().map(|w| w.text.as_str()).collect();
         assert_eq!(texts, ["of", "black", "quartz"]);
+    }
+
+    #[test]
+    fn repeated_typed_observations_do_not_suppress_new_words() {
+        let rect = [2.0, 2.0, 20.0, 12.0];
+        let before = typed("FAX", rect);
+        let mut items = vec![
+            word("FAX", rect),
+            word("new", [2., 15., 20., 25.]),
+            word("words", [23., 15., 50., 25.]),
+        ];
+        let expected = outcome_of(1, Ok(items.clone()), &before).unwrap();
+        assert!(matches!(&expected, Outcome::Layer(layer) if layer.words.len() == 2));
+        items.push(word("FAX", rect));
+        assert_eq!(outcome_of(1, Ok(items), &before), Ok(expected));
+    }
+
+    #[test]
+    fn recognition_resolution_and_word_positions_use_the_physical_page_scale() {
+        let capacity = 16 * 1024 * 1024;
+        let reference = render_size(400.0, 600.0, 1.0, capacity).unwrap();
+        assert_eq!(reference, (1667, 2500, WANTED_SCALE));
+        for unit in [1.0, 2.0, 4.0] {
+            assert_eq!(
+                render_size(400.0 / unit, 600.0 / unit, unit, capacity),
+                Some(reference)
+            );
+            assert_eq!(
+                render_size(2384.0 / unit, 3370.0 / unit, unit, capacity),
+                None
+            );
+            let physical = [20., 40., 80., 56.];
+            let items = native_items(vec![word("word", physical)], unit);
+            assert_eq!(items[0].rect.map(|value| value * unit), physical);
+        }
     }
 
     #[test]

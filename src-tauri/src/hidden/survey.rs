@@ -47,7 +47,7 @@ pub trait Pages {
     fn text(&mut self, page: u32) -> Result<PageText, Self::Error>;
 
     /// The page as `width * height` RGBA, upright with no crop, at `scale`
-    /// pixels per point.
+    /// pixels per native display unit.
     ///
     /// # Errors
     ///
@@ -119,7 +119,7 @@ pub fn image_of(size: PageSize) -> Option<(u32, u32, f32)> {
 
 /// Compares every page of `selection` with its rendering.
 ///
-/// `selection` counts from 1 and is walked in its own order. `before` is
+/// Each selection entry gives a one-based page number and its physical points per native unit. `before` is
 /// called ahead of each page with how many are done and the page's number,
 /// which is where a caller says how far the walk has got; an error from it
 /// stops the walk before the page is asked for, which is how a caller stops.
@@ -133,14 +133,14 @@ pub fn image_of(size: PageSize) -> Option<(u32, u32, f32)> {
 /// returned with it: a walk that did not finish has no result.
 pub fn survey<P: Pages>(
     pages: &mut P,
-    selection: &[u32],
+    selection: &[(u32, f32)],
     before: &mut dyn FnMut(usize, u32) -> Result<(), P::Error>,
 ) -> Result<Survey, P::Error> {
     let mut out = Survey {
         selected: selection.len(),
         ..Survey::default()
     };
-    for (done, n) in selection.iter().enumerate() {
+    for (done, (n, unit)) in selection.iter().enumerate() {
         before(done, *n)?;
         let page = n.saturating_sub(1);
         let text = pages.text(page)?;
@@ -149,13 +149,14 @@ pub fn survey<P: Pages>(
             continue;
         }
         let size = PageSize {
-            width_pt: text.width_pt,
-            height_pt: text.height_pt,
+            width_pt: text.width_pt * unit,
+            height_pt: text.height_pt * unit,
         };
         let Some((width, height, scale)) = image_of(size) else {
             out.not_compared.push(*n);
             continue;
         };
+        let scale = scale * unit;
         let pixels = pages.pixels(page, width, height, scale)?;
         let judged = super::judge(&text, &pixels, width as usize, height as usize, scale);
         out.compared += judged.judged as u64;
@@ -164,7 +165,7 @@ pub fn survey<P: Pages>(
             .extend(judged.found.into_iter().map(|found| Passage {
                 page: *n,
                 text: found.text,
-                rect: found.rect,
+                rect: found.rect.map(|edge| edge * unit),
                 characters: found.hidden as u32,
                 off_page: found.off_page,
             }));
@@ -415,7 +416,8 @@ mod tests {
             ],
             ..Fake::default()
         };
-        let all = survey(&mut pages, &[1, 2, 3], &mut quiet).expect("the walk ends");
+        let all =
+            survey(&mut pages, &[(1, 1.0), (2, 1.0), (3, 1.0)], &mut quiet).expect("the walk ends");
         assert_eq!(pages.asked_text, [0, 1, 2]);
         // At the size `image_of` gives a page of 100 points.
         assert_eq!(
@@ -438,10 +440,31 @@ mod tests {
             pages: pages.pages,
             ..Fake::default()
         };
-        let some = survey(&mut pages, &[3, 2], &mut quiet).expect("the walk ends");
+        let some = survey(&mut pages, &[(3, 1.0), (2, 1.0)], &mut quiet).expect("the walk ends");
         assert_eq!(pages.asked_text, [2, 1]);
         assert_eq!((some.found.len(), some.found[0].page), (1, 2));
         assert_eq!((some.compared, some.selected), (9 + 8, 2));
+    }
+
+    #[test]
+    fn equivalent_sheets_yield_the_same_raster_counts_and_physical_rectangles() {
+        let regular = page("hidden", 4.0, 30.0);
+        let mut scaled = regular.clone();
+        scaled.width_pt /= 4.0;
+        scaled.height_pt /= 4.0;
+        for edge in &mut scaled.boxes {
+            *edge /= 4.0;
+        }
+        let mut pages = Fake {
+            pages: vec![(regular, false), (scaled, false)],
+            ..Fake::default()
+        };
+        let regular = survey(&mut pages, &[(1, 1.0)], &mut quiet).unwrap();
+        let scaled = survey(&mut pages, &[(2, 4.0)], &mut quiet).unwrap();
+        assert_eq!(pages.asked_pixels, [(0, 200, 200, 2.0), (1, 200, 200, 8.0)]);
+        assert_eq!((regular.compared, scaled.compared), (6, 6));
+        assert_eq!((regular.unjudged, scaled.unjudged), (0, 0));
+        assert_eq!(regular.found[0].rect, scaled.found[0].rect);
     }
 
     #[test]
@@ -450,7 +473,7 @@ mod tests {
             pages: vec![(page("margin", -300.0, 10.0), true)],
             ..Fake::default()
         };
-        let all = survey(&mut pages, &[1], &mut quiet).expect("the walk ends");
+        let all = survey(&mut pages, &[(1, 1.0)], &mut quiet).expect("the walk ends");
         assert_eq!(all.found.len(), 1, "{all:?}");
         assert!(all.found[0].off_page);
     }
@@ -467,7 +490,8 @@ mod tests {
             ],
             ..Fake::default()
         };
-        let all = survey(&mut pages, &[1, 2, 3], &mut quiet).expect("the walk ends");
+        let all =
+            survey(&mut pages, &[(1, 1.0), (2, 1.0), (3, 1.0)], &mut quiet).expect("the walk ends");
         assert_eq!(all.without_text, [1]);
         assert_eq!(all.not_compared, [2]);
         // Only the third page was rendered, and the words of the page that
@@ -493,7 +517,7 @@ mod tests {
         };
         let mut pages = three();
         let mut seen = Vec::new();
-        survey(&mut pages, &[1, 3], &mut |done, page| {
+        survey(&mut pages, &[(1, 1.0), (3, 1.0)], &mut |done, page| {
             seen.push((done, page));
             Ok(())
         })
@@ -503,13 +527,17 @@ mod tests {
         // Stopped ahead of the second page: it is not asked for, and what the
         // first page gave is not returned as a result.
         let mut pages = three();
-        let stopped = survey(&mut pages, &[1, 2, 3], &mut |done, _| {
-            if done == 1 {
-                Err("stopped".to_string())
-            } else {
-                Ok(())
-            }
-        });
+        let stopped = survey(
+            &mut pages,
+            &[(1, 1.0), (2, 1.0), (3, 1.0)],
+            &mut |done, _| {
+                if done == 1 {
+                    Err("stopped".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+        );
         assert_eq!(stopped, Err("stopped".to_string()));
         assert_eq!(pages.asked_text, [0]);
     }
@@ -521,7 +549,7 @@ mod tests {
             ..Fake::default()
         };
         assert_eq!(
-            survey(&mut pages, &[1, 2], &mut quiet),
+            survey(&mut pages, &[(1, 1.0), (2, 1.0)], &mut quiet),
             Err("no page 1".to_string())
         );
         let mut pages = Fake {
@@ -530,7 +558,7 @@ mod tests {
             ..Fake::default()
         };
         assert_eq!(
-            survey(&mut pages, &[1], &mut quiet),
+            survey(&mut pages, &[(1, 1.0)], &mut quiet),
             Err("page 0 did not render".to_string())
         );
     }

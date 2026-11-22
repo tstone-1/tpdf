@@ -881,6 +881,39 @@ fn an_estimate_writes_nothing_and_names_the_page_that_loses_most() {
 }
 
 #[test]
+fn a_pdfa_one_declaration_keeps_the_classic_xref_and_metadata() {
+    use lopdf::xref::XrefType;
+    for part in [1, 2] {
+        let mut doc = Document::with_version("1.4");
+        doc.reference_table.cross_reference_type = XrefType::CrossReferenceTable;
+        page_with(&mut doc, "q Q", &[]);
+        let packet = format!(
+            r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description xmlns:id="http://www.aiim.org/pdfa/ns/id/" id:part="{part}" id:conformance="B"/>
+            </rdf:RDF>"#
+        );
+        let id = doc.add_object(Stream::new(
+            dictionary! { "Type" => "Metadata", "Subtype" => "XML" },
+            packet.as_bytes().to_vec(),
+        ));
+        doc.catalog_mut().unwrap().set("Metadata", id);
+        let estimated = super::estimate(&doc, Compress::Lossless).unwrap();
+        let copy = Document::load_mem(&estimated.bytes).unwrap();
+        assert_eq!(
+            matches!(
+                copy.reference_table.cross_reference_type,
+                XrefType::CrossReferenceTable
+            ),
+            part == 1
+        );
+        assert_eq!(stream(&copy, id).content, packet.as_bytes());
+        if part == 1 {
+            assert_eq!(copy.version, "1.4");
+        }
+    }
+}
+
+#[test]
 fn a_sample_is_the_part_of_the_page_that_differs_most() {
     use super::{Focus, Sample};
     let focus = Focus {
@@ -936,6 +969,14 @@ fn a_sample_is_the_part_of_the_page_that_differs_most() {
     // Two drawings that do not differ, or are not the size stated, give none.
     assert!(Sample::of_page(&before, &before, width, height, focus, 200).is_none());
     assert!(Sample::of_page(&before, &after, width, height + 1, focus, 200).is_none());
+    // A single-pixel detail on any row or column is visible in the preview.
+    let blank = vec![255; 64 * 64 * 4];
+    for (x, y) in [(30, 30), (30, 31), (31, 30), (31, 31)] {
+        let mut line = blank.clone();
+        line[(y * 64 + x) * 4] = 0;
+        let found = Sample::of_page(&blank, &line, 64, 64, focus, 200).unwrap();
+        assert_eq!(found.after[(y * 64 + x) * 3], 0);
+    }
     // A page smaller than the window is the whole page.
     let tiny =
         Sample::of_page(&[0, 0, 0, 255], &[9, 9, 9, 255], 1, 1, focus, 200).expect("differs");
@@ -962,18 +1003,8 @@ fn a_preset_is_named_by_one_word() {
 
 /// A deflated picture whose predictor would not be undone is left as it is.
 ///
-/// **The length cannot tell.** A TIFF predictor stores each sample as its
-/// difference from the one to its left and adds no byte to a row, so samples
-/// still differenced are exactly as many as the picture has pixels, and the
-/// one check between the decoder and the scaling passes. `lopdf` undoes a
-/// predictor only when `/DecodeParms` is a dictionary written in place with
-/// its numbers written in place; given an array of one, or a reference, it
-/// inflates and stops. Scaled like that, a half-black half-white picture came
-/// out black with one bright column down the middle, stored as a smaller
-/// picture and counted as shrunk.
-///
-/// The first case is the control and has to be shrunk correctly, which is
-/// what makes the others a fact about how the parameters are spelled.
+/// TIFF predictor differences have the same byte length as decoded samples.
+/// Accept both direct parameter spellings, and leave unresolved parameters alone.
 #[test]
 fn a_deflated_picture_whose_predictor_would_not_be_undone_is_left() {
     // Left half black, right half white, each row differenced along itself.
@@ -1002,23 +1033,24 @@ fn a_deflated_picture_whose_predictor_would_not_be_undone_is_left() {
         (doc, picture)
     };
 
-    // The control: parameters `lopdf` reads, so the samples are the picture.
-    let (mut doc, picture) = picture_with(|_, parms| parms.into());
-    assert_eq!(apply(&mut doc, SCREEN).pictures_changed, 1);
-    assert_eq!(whole(&doc, picture, b"Width"), 110);
-    let pixels = stream(&doc, picture)
-        .decompressed_content_with_limit(1 << 20)
-        .expect("decodes");
-    assert!(
-        pixels
+    let readable: [Spelled; 2] = [
+        |_, parms| parms.into(),
+        |_, parms| vec![Object::Dictionary(parms)].into(),
+    ];
+    for spell in readable {
+        let (mut doc, picture) = picture_with(spell);
+        assert_eq!(apply(&mut doc, SCREEN).pictures_changed, 1);
+        assert_eq!(whole(&doc, picture, b"Width"), 110);
+        let pixels = stream(&doc, picture)
+            .decompressed_content_with_limit(1 << 20)
+            .expect("decodes");
+        assert!(pixels
             .chunks(110)
-            .all(|row| row[..55] == [0; 55] && row[55..] == [255; 55]),
-        "the control is still half black and half white"
-    );
-
+            .all(|row| row[..55] == [0; 55] && row[55..] == [255; 55]));
+    }
     let cases: [(&str, Spelled); 3] = [
-        ("an array of one", |_, parms| {
-            vec![Object::Dictionary(parms)].into()
+        ("an array containing a reference", |doc, parms| {
+            vec![Object::Reference(doc.add_object(parms))].into()
         }),
         ("a reference", |doc, parms| doc.add_object(parms).into()),
         ("a predictor given by reference", |doc, mut parms| {
@@ -1078,19 +1110,26 @@ fn a_picture_behind_a_png_predictor_is_read_and_shrunk_again() {
     };
     let raw = noise(400 * 400);
     let mut dict = image(400, 400, "DeviceGray".into());
-    dict.set("Filter", "FlateDecode");
-    dict.set(
-        "DecodeParms",
-        dictionary! { "Predictor" => 15, "Colors" => 1, "BitsPerComponent" => 8, "Columns" => 400 },
-    );
+    let parms =
+        dictionary! { "Predictor" => 15, "Colors" => 1, "BitsPerComponent" => 8, "Columns" => 400 };
     let stored = super::deflated_rows(&raw, 400).expect("deflates");
-    let (mut doc, picture) = one_picture(dict, stored);
-    assert_eq!(
-        apply(&mut doc, Compress::Pictures(lossless)).pictures_changed,
-        1
-    );
-    assert_eq!(whole(&doc, picture, b"Width"), 110);
-    assert_eq!(filter(&doc, picture), "FlateDecode");
+    dict.set("Filter", "FlateDecode");
+    dict.set("DecodeParms", parms.clone());
+    let (mut doc, picture) = one_picture(dict.clone(), stored.clone());
+    dict.set("Filter", vec![Object::Name(b"FlateDecode".to_vec())]);
+    dict.set("DecodeParms", vec![Object::Dictionary(parms)]);
+    let (mut array_doc, array_picture) = one_picture(dict, stored);
+    for (doc, id) in [(&mut doc, picture), (&mut array_doc, array_picture)] {
+        assert_eq!(apply(doc, Compress::Pictures(lossless)).pictures_changed, 1);
+        assert_eq!(whole(doc, id, b"Width"), 110);
+        assert_eq!(filter(doc, id), "FlateDecode");
+    }
+    let decoded = |doc: &Document, id| {
+        stream(doc, id)
+            .decompressed_content_with_limit(1 << 20)
+            .unwrap()
+    };
+    assert_eq!(decoded(&doc, picture), decoded(&array_doc, array_picture));
 
     // What it wrote, read once more for a coarser setting.
     let coarser = Pictures {

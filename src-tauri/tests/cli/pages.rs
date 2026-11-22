@@ -613,6 +613,13 @@ pub(super) fn navigation(report: &mut Report) {
         let read = tpdf_lib::outline::read(&opened);
         let scanned = tpdf_lib::links::scan_from(&doc, 3).unwrap();
         let target = tpdf_lib::outline::Target::Page {
+            other_edges: Some(tpdf_lib::outline::DestinationEdges {
+                left: None,
+                right: None,
+                bottom: Some(expected),
+                width: if inset { 495.0 } else { 595.0 },
+                height: if inset { 692.0 } else { 842.0 },
+            }),
             page: 0,
             top_pt: Some(expected),
         };
@@ -625,6 +632,46 @@ pub(super) fn navigation(report: &mut Report) {
             &format!("inset={inset}, expected={expected}"),
         );
         assert_eq!(read.page_labels, ["i", "ii", "Body-3"]);
+    }
+
+    // The same rectangular target, reached through PDFium and through the
+    // link scan. Rotation changes which of its four edges is the visible top.
+    let link_id = doc
+        .get_dictionary(ids[0])
+        .unwrap()
+        .get(b"Annots")
+        .unwrap()
+        .as_array()
+        .unwrap()[0]
+        .as_reference()
+        .unwrap();
+    let fit = vec![
+        Object::Reference(ids[0]),
+        "FitR".into(),
+        100.into(),
+        200.into(),
+        150.into(),
+        260.into(),
+    ];
+    doc.get_dictionary_mut(bookmarks[0])
+        .unwrap()
+        .set("Dest", fit.clone());
+    doc.get_dictionary_mut(link_id).unwrap().set("Dest", fit);
+    // The working CropBox is [50,50,545,742].
+    for (degrees, expected) in [(0, 482.0), (90, 50.0), (180, 150.0), (270, 395.0)] {
+        doc.get_dictionary_mut(ids[0])
+            .unwrap()
+            .set("Rotate", degrees);
+        doc.save(&path).unwrap();
+        let opened = tpdf_lib::document::OpenDocument::open(bindings, &path, None).unwrap();
+        let outline = tpdf_lib::outline::read(&opened);
+        let scanned = tpdf_lib::links::scan_from(&doc, 3).unwrap();
+        for target in [&outline.items[0].target, &scanned.items[0].target] {
+            assert!(
+                matches!(target, tpdf_lib::outline::Target::Page { page: 0, top_pt: Some(top), .. } if *top == expected),
+                "FitR under /Rotate {degrees}: {target:?}, expected {expected}"
+            );
+        }
     }
 
     // Drop the first page, insert an unlabeled one, and move the body ahead

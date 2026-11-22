@@ -65,6 +65,7 @@ import {
   reachOrder,
   reasonFor,
   type Outline,
+  type DestinationEdges,
   type Reached,
   type Row,
   type WebTarget,
@@ -100,7 +101,9 @@ export type Tab =
 
 export interface SidebarOptions {
   /** Called when a row is activated. `top` is points from the page's top. */
-  onNavigate: (page: number, top: number | null) => void;
+  onNavigate: (page: number, top: number | null, edges?: DestinationEdges) => void;
+  /** Offset in the layout currently on screen, for the active chapter. */
+  destinationTop?: (page: number, top: number | null, edges?: DestinationEdges) => number | null;
   /**
    * Called when an activated row is a web link rather than a destination.
    *
@@ -197,6 +200,7 @@ export class Sidebar {
    * thousands of rows. See `outline.ts`'s `reachOrder`.
    */
   private reach: Reached[] = [];
+  private destinationGeometry = -1;
   private readonly elements = new Map<string, HTMLElement>();
   /** Last position asked about, so an unchanged frame costs one comparison. */
   private asked = { page: -1, top: -1 };
@@ -546,7 +550,7 @@ export class Sidebar {
       this.focused = null;
     }
     this.ordered = outline ? allRows(outline.items) : [];
-    this.reach = reachOrder(this.ordered);
+    this.destinationGeometry = -1;
     this.current = null;
     this.asked = { page: -1, top: -1 };
     this.paint();
@@ -559,11 +563,19 @@ export class Sidebar {
    * changed: it recomputes an id from the row list and returns without touching
    * the DOM unless that id moved.
    */
-  setPosition(page: number, top: number): void {
+  setPosition(page: number, top: number, geometry = 0): void {
     // Before the outline guard, and not inside it: the page strip has to follow
     // the reader on a document with no outline at all, which is most of them.
     this.strip?.setCurrentPage(page);
     if (!this.outline) return;
+    if (this.destinationGeometry !== geometry) {
+      this.destinationGeometry = geometry;
+      const project = this.opts.destinationTop;
+      this.reach = reachOrder(this.ordered, project
+        ? (target) => project(target.page, target.top_pt, target.other_edges)
+        : undefined);
+      this.asked = { page: -1, top: -1 };
+    }
     // Rounded, because the answer cannot change on a sub-point movement and
     // the scroll offset is a float that changes on every frame of a trackpad
     // flick.
@@ -736,7 +748,7 @@ export class Sidebar {
       return;
     }
     if (!isNavigable(row.target)) return;
-    this.opts.onNavigate(row.target.page, row.target.top_pt);
+    this.opts.onNavigate(row.target.page, row.target.top_pt, row.target.other_edges);
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {

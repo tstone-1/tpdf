@@ -63,7 +63,7 @@ beforeEach(() => {
   erased = [];
   unmarked = [];
   sweeps = [];
-  core.invoke.mockResolvedValue(null);
+  core.invoke.mockImplementation(async (name: string) => name === "page_units" ? [1] : null);
 });
 
 afterEach(() => {
@@ -2014,10 +2014,38 @@ describe("the measure tool", () => {
     viewer.armMeasure();
     along(viewer, { x: 200, y: 200 }, { x: 30, y: 40 });
 
+    await settle();
     expect(viewer.measureLines.map((line) => line.label)).toEqual(["50 pt"]);
     expect(said).toEqual([["50 pt", false]]);
     expect(drawn).toEqual([]);
     expect(viewer.measureArmed).toBe(true);
+    viewer.destroy();
+  });
+
+  it("waits for the page unit, reports physical points, and keeps calibration in native coordinates", async () => {
+    let resolve!: (units: number[]) => void;
+    const unit = new Promise<number[]>(done => { resolve = done; });
+    core.invoke.mockImplementation(async (name: string) => name === "page_units" ? unit : null);
+    const viewer = await ready();
+    const pointer = (dx: number) => ({ pointerId: 1, clientX: 200 + dx * viewer.currentZoom, clientY: 100 });
+    dom.root.dispatch("pointerdown", { button: 0, target: dom.root, ...pointer(0) });
+    dom.root.dispatch("pointermove", pointer(72));
+    const fillText = vi.fn();
+    const ctx = {
+      save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+      measureText: () => ({ width: 20 }), fillRect() {}, fillText,
+    } as unknown as CanvasRenderingContext2D;
+    viewer["paintMeasures"](ctx, 1, [0]);
+    expect(fillText).not.toHaveBeenCalled();
+    resolve([2]);
+    await settle();
+    viewer["paintMeasures"](ctx, 1, [0]);
+    expect(fillText.mock.lastCall?.[0]).toBe("144 pt");
+    dom.root.dispatch("pointerup", pointer(72));
+    expect(viewer.measureLines[0]?.label).toBe("144 pt");
+    expect(viewer.setMeasureScale({ value: 18, unit: "cm", decimals: 0 })).toBe(true);
+    along(viewer, { x: 200, y: 200 }, { x: 36, y: 0 });
+    expect(viewer.measureLines[1]?.label).toBe("9 cm");
     viewer.destroy();
   });
 
@@ -2061,6 +2089,7 @@ describe("the measure tool", () => {
   it("puts a line drawn on a turned page back where it was drawn", async () => {
     const viewer = await ready(turnedPage(1));
     along(viewer, { x: 200, y: 200 }, { x: 0, y: 80 });
+    await settle();
     const line = viewer.measureLines[0]!;
 
     expect(line.label).toBe("80 pt");
@@ -2081,6 +2110,7 @@ describe("the measure tool", () => {
     dom.root.dispatch("pointerdown", { button: 0, target: dom.root, ...at(0, 0, true) });
     dom.root.dispatch("pointermove", at(100, 10, true));
     dom.root.dispatch("pointerup", at(100, 10, true));
+    await settle();
     const line = viewer.measureLines[0]!;
 
     expect(line.label).toBe("100 pt");
@@ -2134,6 +2164,7 @@ describe("the measure tool", () => {
     viewer.clearMeasures();
     along(viewer, { x: 200, y: 200 }, { x: 100, y: 0 });
 
+    await settle();
     expect(viewer.measureLines.map((line) => line.label)).toEqual(["100 pt"]);
     viewer.destroy();
   });

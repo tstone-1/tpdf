@@ -73,6 +73,7 @@ fn marked(plan: Plan) -> Plan {
             .map(|page| crate::edits::PageView { turns: 0, ..*page })
             .collect(),
         marks: vec![crate::edits::PlannedMark {
+            text_size: None,
             kind: MarkKind::Highlight,
             stamp: None,
             field: None,

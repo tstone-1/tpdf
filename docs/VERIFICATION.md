@@ -7259,3 +7259,25 @@ The CLI groups a 200 by 300 page with `/UserUnit 2` and a 400 by 600 page as
 one physical paper size. Its thumbnail path renders either good page in a pair
 whose other page cannot be loaded. Requesting the unreadable sibling still
 fails. Both cases exercise stdin, `--fit` and PNG output through the worker.
+
+## Compression, physical page units and OCR, verified 2026-11-22
+
+The lossless CLI compressor reduced veraPDF's passing PDF/A-1b fixture
+`6-1-4-t03-pass-a` from 9,573 to 9,302 bytes. veraPDF 1.30.4 passed both files
+against the 1b profile. Both files declare PDF 1.4, and both final `startxref`
+offsets point to classic tables. Separate two-page tests inspect the pixel
+dimensions stored after compression when a picture is drawn at different sizes
+through inherited inline resources or used as a print alternate.
+
+On two physically identical sheets with page units 1 and 2, the edit command
+wrote visible lettering for the entire text-box label. The CLI tests read back
+the text-showing operation and check the font size in the default and drawn
+appearances. For signing they compare explicit and text-anchored placements
+with the saved widget rectangle. A 72-unit ruler drag on the second sheet
+displayed 144 pt, both during the drag and after release. With an 18 cm
+calibration on that segment, a half-length drag displayed 9 cm.
+
+The hidden-text CLI test reads the position of a passage from the scaled PDF's
+report. The OCR save test requests cancellation after staging and compares the
+previous destination bytes. The redaction panel test distinguishes the text
+of a tagged footer from a neighbouring empty region.

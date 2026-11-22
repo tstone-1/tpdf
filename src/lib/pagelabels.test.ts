@@ -100,6 +100,8 @@ describe("positionsFor", () => {
   });
 
   it("names nothing for a label printed on two pages, or in a document without labels", () => {
+    expect(of("A-B", ["A", "A-B", "A-B", "B"])).toBeNull();
+    expect(of("A-B", ["A", "B"])).toBe("Printed as A-B: type 1-2");
     expect(of("ii", ["i", "ii", "ii"])).toBeNull();
     expect(of("ii", [null, null])).toBeNull();
   });

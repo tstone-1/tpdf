@@ -580,7 +580,7 @@ ROWS += [
     Mutation(
         "sign visible: accept a rectangle too small to read",
         "src/sign_prepare/appearance.rs",
-        "    if f64::from(right - left) < MIN_SIDE || f64::from(bottom - top) < MIN_SIDE {",
+        "    if f64::from(right - left) * unit < MIN_SIDE || f64::from(bottom - top) * unit < MIN_SIDE {",
         "    if false {",
         "a_rectangle_off_its_page_too_small_or_on_no_page_is_refused",
     ),
@@ -1568,8 +1568,8 @@ ROWS += [
     Mutation(
         "reading: order a turned run in the page's direction",
         "src/reading.rs",
-        "    if view.char_turns.is_empty() {\n        return aligned_fragments(view, axes, gap);",
-        "    if true {\n        return aligned_fragments(view, axes, gap);",
+        "    if view.char_turns.is_empty() {\n        return (aligned_fragments(view, axes, gap), gaps);",
+        "    if true {\n        return (aligned_fragments(view, axes, gap), gaps);",
         "text_turned_a_quarter_is_read_in_its_own_direction",
     ),
     Mutation(

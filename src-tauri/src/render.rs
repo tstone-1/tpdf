@@ -3205,6 +3205,62 @@ mod tests {
         regex: false,
     };
 
+    #[test]
+    fn search_recovery_renders_scaled_pixels_even_if_native_text_is_unreadable() {
+        use super::{CropGeometry, Job, RenderService, Tile, TileFormat, TileOutcome};
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let service = RenderService {
+            views: Default::default(),
+            tx,
+            queue: Default::default(),
+            workers: None,
+            backend: Backend::Worker,
+        };
+        let responder = std::thread::spawn(move || {
+            for job in rx {
+                match job {
+                    Job::Text { reply, .. } => reply(Err("native text is unreadable".into())),
+                    Job::Geometry { reply, .. } => reply(Ok(CropGeometry {
+                        width_pt: 100.,
+                        height_pt: 150.,
+                        left: 0.,
+                        top: 0.,
+                    })),
+                    Job::PageUnits { reply, .. } => reply(Ok(vec![4.])),
+                    Job::Tile { request, reply } => {
+                        assert_eq!((request.width, request.height), (1667, 2500));
+                        assert_eq!(request.scale, crate::ocr_layer::WANTED_SCALE * 4.);
+                        // Stop at the OCR input-size check, before a platform engine is needed.
+                        reply(Ok(TileOutcome::Rendered(Tile {
+                            bytes: vec![],
+                            width: request.width,
+                            height: request.height,
+                            format: TileFormat::Raw,
+                            render_us: 0,
+                            encode_us: 0,
+                        })));
+                    }
+                    _ => panic!("unexpected recovery request"),
+                }
+            }
+        });
+
+        let (answer, native) = std::sync::mpsc::channel();
+        service.text(1, 0, None, Box::new(move |r| answer.send(r).unwrap()));
+        assert_eq!(
+            native.recv().unwrap().unwrap_err(),
+            "native text is unreadable"
+        );
+        let recovered = crate::commands::ocr::recognise_one(&service, 1, 0, None);
+        assert_eq!(
+            recovered.unwrap_err(),
+            "The page was rendered at the wrong size."
+        );
+        drop(service);
+        responder.join().unwrap();
+    }
+
     /// A backend that never started answers every job with its reason, and an
     /// open as not locked.
     ///

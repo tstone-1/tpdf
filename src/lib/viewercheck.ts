@@ -164,7 +164,8 @@ async function run(path: string): Promise<void> {
   panel.style.cssText = `position:fixed;left:${WIDTH}px;top:0;width:300px;height:${HEIGHT}px;`;
   document.body.appendChild(panel);
   const sidebar = new Sidebar(panel, {
-    onNavigate: (target, top) => viewer.goToDestination(target, top),
+    destinationTop: (page, top, edges) => viewer.fileDestinationTop(page, top, edges),
+    onNavigate: (target, top, edges) => viewer.goToFileDestination(target, top, edges),
     // Recorded, never opened. A check that handed an address to the operating
     // system would put a browser window over the one this harness is measuring
     // --- and `AGENTS.md` records that a locked or occluded screen is enough to
@@ -248,7 +249,7 @@ async function run(path: string): Promise<void> {
       // went red --- against a viewer that had rotated perfectly.
       sidebar.setTurns(next.turns);
     },
-    onPosition: (at, top) => sidebar.setPosition(at, top),
+    onPosition: (at, top, geometry) => sidebar.setPosition(at, top, geometry),
     // Recorded rather than shown. `App.svelte` puts this on the header; here it
     // is what makes "a refused link said so" an assertion instead of an
     // observation about a press that may simply have missed.

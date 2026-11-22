@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use tauri::Emitter;
 
-use super::{outside_at, password_for};
+use super::{outside_at, password_for, reading_units};
 use crate::ocr::Pixels;
 use crate::ocr_layer::{self, Outcome};
 use crate::ocr_worker::{OcrWorker, PIXELS_CAPACITY};
@@ -162,10 +162,12 @@ pub fn recognise_one(
     page: u32,
     language: Option<String>,
 ) -> Result<crate::text::PageText, String> {
-    let original: crate::text::PageText = wait(|reply| service.text(doc, page, None, reply))?;
+    let original = wait(|reply| service.geometry(doc, page, None, reply))?;
+    let unit = reading_units(service, doc, vec![page], "recognising text")?[0];
     let (width, height, scale) = ocr_layer::render_size(
         original.width_pt,
         original.height_pt,
+        unit,
         PIXELS_CAPACITY.min(TILE_CAPACITY),
     )
     .ok_or_else(|| said!("This page is too large to recognise."))?;
@@ -175,7 +177,7 @@ pub fn recognise_one(
         rid: 0,
         doc,
         page,
-        scale,
+        scale: scale * unit,
         turns: 0,
         invert: false,
         crop: None,
@@ -215,7 +217,7 @@ pub fn recognise_one(
             &ocr_layer::options(choice.languages),
         )
         .map_err(|e| e.to_string())?;
-    let layer = ocr_layer::layer_of(page, items)
+    let layer = ocr_layer::layer_of(page, ocr_layer::native_items(items, unit))
         .ok_or_else(|| said!("No words could be recognised on this page."))?;
     recovered_text(original.width_pt, original.height_pt, &layer.words)
 }
@@ -307,7 +309,11 @@ fn read(
     let mut layers = Vec::new();
     let mut before = Vec::new();
     let mut report = Recognised::default();
-    for page in 0..pages {
+    if cancelled() {
+        return Err(CANCELLED.into());
+    }
+    let units = reading_units(service, doc, (0..pages).collect(), "recognising text")?;
+    for (page, unit) in (0..pages).zip(units) {
         if cancelled() {
             return Err(CANCELLED.into());
         }
@@ -325,7 +331,7 @@ fn read(
             continue;
         }
         let Some((width, height, scale)) =
-            ocr_layer::render_size(text.width_pt, text.height_pt, capacity)
+            ocr_layer::render_size(text.width_pt, text.height_pt, unit, capacity)
         else {
             report.too_large.push(n);
             continue;
@@ -338,7 +344,7 @@ fn read(
             rid: 0,
             doc,
             page,
-            scale,
+            scale: scale * unit,
             turns: 0,
             invert: false,
             crop: None,
@@ -377,7 +383,7 @@ fn read(
             if report.engine.is_empty() {
                 report.engine = id.to_string();
             }
-            items
+            ocr_layer::native_items(items, unit)
         });
         let outcome = ocr_layer::outcome_of(page, answer, &text)
             .map_err(|why| said!("Page {n} could not be read: {why}"))?;
@@ -412,11 +418,19 @@ fn read(
 /// whatever became of the others: it is the cause a reader can act on.
 fn nothing_to_add(report: &Recognised) -> String {
     if !report.refused.is_empty() {
-        return said!(
+        let refusal = said!(
             "No page was given text. The recogniser refused {pages}, {means}.",
             pages = ocr_layer::pages_named(&report.refused),
             means = ocr_layer::REFUSED_MEANS
         );
+        return if report.too_large.is_empty() {
+            refusal
+        } else {
+            said!(
+                "{refusal} Too large to recognise: {pages}.",
+                pages = ocr_layer::pages_named(&report.too_large)
+            )
+        };
     }
     let read = !report.nothing_read.is_empty();
     let had = !report.already_text.is_empty();
@@ -427,11 +441,19 @@ fn nothing_to_add(report: &Recognised) -> String {
         (false, false, true) => {
             said!("Every page is too large to render finely enough to read its text.")
         }
+        (_, _, true) => oversized_pages(report),
         _ => said!(
             "No page was given text: each one either has text already, or none was recognised \
               on it."
         ),
     }
+}
+
+fn oversized_pages(report: &Recognised) -> String {
+    said!(
+        "Too large to recognise: {pages}.",
+        pages = ocr_layer::pages_named(&report.too_large)
+    )
 }
 
 /// Whether the staged file has the pages and reads back the layers.
@@ -445,7 +467,11 @@ fn reads_back(
     pages: u32,
     layers: &[Layer],
     before: &[crate::text::PageText],
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<(), String> {
+    if cancelled() {
+        return Err(CANCELLED.into());
+    }
     let opened = wait(|reply| service.open(staged.to_path_buf(), true, password, reply)).map_err(
         |refusal| {
             said!(
@@ -462,6 +488,9 @@ fn reads_back(
             ));
         }
         for (layer, before) in layers.iter().zip(before) {
+            if cancelled() {
+                return Err(CANCELLED.into());
+            }
             let text: crate::text::PageText =
                 wait(|reply| service.text(opened.id, layer.page, None, reply))?;
             if !ocr_layer::reads_back(layer, before, &text) {
@@ -527,7 +556,7 @@ pub fn ocr_copy_asked(
     plan.text_layers = read.layers.clone();
     // Who parses the reader's document: `save_copy`'s choice, for its reason.
     let writing = outside_at(library, service.backend());
-    save::write_checked_copy(
+    save::write_checked_copy_until(
         source,
         &plan,
         out,
@@ -541,8 +570,16 @@ pub fn ocr_copy_asked(
                 pages,
                 &read.layers,
                 &read.before,
+                cancelled,
             )
             .map_err(save::Refusal::from)
+        },
+        &|| {
+            if cancelled() {
+                Err(CANCELLED.into())
+            } else {
+                Ok(())
+            }
         },
     )
     .map_err(|why| why.message)?;
@@ -652,6 +689,10 @@ mod tests {
         assert!(nothing_to_add(&report(&[1, 2], &[], &[])).contains("already has text"));
         assert!(nothing_to_add(&report(&[], &[1], &[])).contains("No text was recognised"));
         assert!(nothing_to_add(&report(&[], &[], &[1])).contains("too large"));
+        assert_eq!(
+            nothing_to_add(&report(&[1], &[], &[2])),
+            "Too large to recognise: page 2."
+        );
         let mixed = nothing_to_add(&report(&[1], &[2], &[]));
         assert!(mixed.contains("either"), "{mixed}");
     }

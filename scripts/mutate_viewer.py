@@ -1091,8 +1091,8 @@ MUTATIONS = [
         # the box.
         "turned: a text box wraps to the page's width",
         "src-tauri/src/save/marks.rs",
-        "        let width = seen.width - textbox::INSET * 2.0;",
-        "        let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
+        "        let width = seen.width - inset * 2.0;",
+        "        let width = (quad[2] - quad[0]) - inset * 2.0;",
         "TextBox: page 1 reads as page 0 does",
         "turned",
     ),

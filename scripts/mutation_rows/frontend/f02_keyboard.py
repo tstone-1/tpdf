@@ -1082,7 +1082,7 @@ ROWS += [
         # is not what copying the same rectangle gives.
         "reading: list a mark's covered words in the file's order",
         "src/lib/reading.ts",
-        "  const order = readingOrder(text).filter((index) => wanted.has(index));",
+        "  const order = readingOrder(page).filter((index) => wanted.has(index));",
         "  const order = [...wanted].sort((a, b) => a - b);",
         "reads a highlight across a gutter column by column, not line by line",
     ),
@@ -1790,8 +1790,8 @@ ROWS += [
         # the other route.
         "viewer: scroll into a turned page as though the view were upright",
         "src/lib/viewer.ts",
-        "    const offset = this.scroller.effectiveTurns(clamped) === 0 ? (top ?? 0) : 0;",
-        "    const offset = this.turns === 0 ? (top ?? 0) : 0;",
+        "    const offset = this.scroller.effectiveTurns(clamped) === 0 ? top : null;",
+        "    const offset = this.turns === 0 ? top : null;",
         "lands a destination on a turned page rather than partway down it",
     ),
     Mutation(

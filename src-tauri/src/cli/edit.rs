@@ -641,6 +641,13 @@ fn apply(
         result.map_err(|error| error.at(index))?;
     }
     let mut plan = model.plan(1).map_err(|e| Failure::new(Exit::Internal, e))?;
+    for mark in &mut plan.marks {
+        if mark.kind == MarkKind::TextBox {
+            if let PageSource::Baseline(page) = plan.pages[mark.at as usize].source {
+                mark.text_size = Some(crate::textbox::SIZE / f64::from(units[page as usize]));
+            }
+        }
+    }
     plan.opened_as.clone_from(&baseline.plan.opened_as);
     Ok((plan, fonts))
 }

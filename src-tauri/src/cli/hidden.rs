@@ -146,6 +146,8 @@ impl Subcommand for Hidden {
             ));
         }
 
+        let units = super::pages::page_units(&mut session, &selection, &self.input, key.is_some())?;
+        let selection: Vec<_> = selection.into_iter().zip(units).collect();
         let walked = survey::survey(
             &mut Opened {
                 session: &mut session,

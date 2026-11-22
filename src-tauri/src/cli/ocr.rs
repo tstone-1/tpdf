@@ -185,7 +185,8 @@ impl Ocr {
         let options = ocr_layer::options(self.languages.clone());
         let mut engine: Option<OcrWorker> = None;
         let mut read = Read::default();
-        for n in selection {
+        let units = super::pages::page_units(session, selection, &self.input, has_password)?;
+        for (n, unit) in selection.iter().zip(units) {
             let page = n - 1;
             let reply = session
                 .ask(Request::Text { page, crop: None })
@@ -219,19 +220,19 @@ impl Ocr {
             }
             let size = sizes[page as usize];
             let (width, height, scale) =
-                ocr_layer::render_size(size.width_pt, size.height_pt, PIXELS_CAPACITY).ok_or_else(
-                    || {
+                ocr_layer::render_size(size.width_pt, size.height_pt, unit, PIXELS_CAPACITY)
+                    .ok_or_else(|| {
                         Failure::new(
                             Exit::Refused,
                             format!(
                                 "page {n} is {:.0} x {:.0} pt, too large to read at a resolution \
                                  text can be recognised at; use --pages to leave it out",
-                                size.width_pt, size.height_pt
+                                size.width_pt * unit,
+                                size.height_pt * unit
                             ),
                         )
-                    },
-                )?;
-            let rgba = render(session, page, width, height, scale, false)?;
+                    })?;
+            let rgba = render(session, page, width, height, scale * unit, false)?;
             // Spawned at the first page that needs it, so a document whose
             // pages all have text never starts an engine.
             let worker = match &mut engine {
@@ -250,7 +251,7 @@ impl Ocr {
             // else it reports stops the run (`ocr_layer::outcome_of`).
             let answer = worker.recognise_page(pixels, &options).map(|(id, items)| {
                 read.engine.get_or_insert_with(|| id.to_string());
-                items
+                ocr_layer::native_items(items, unit)
             });
             let outcome = ocr_layer::outcome_of(page, answer, &text).map_err(|why| {
                 Failure::new(Exit::Internal, format!("page {n} could not be read: {why}"))

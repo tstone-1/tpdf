@@ -394,6 +394,7 @@ mod tests {
             compress: Default::default(),
             new_fields: Vec::new(),
             marks: vec![PlannedMark {
+                text_size: None,
                 kind: MarkKind::Highlight,
                 stamp: None,
                 field: None,

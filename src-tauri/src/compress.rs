@@ -485,6 +485,28 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
                 }
                 _ => continue,
             };
+            // A base image can select a different image for printing. That
+            // alternate may also be drawn directly at a much smaller size.
+            if matches!(dict.get(b"Subtype").and_then(Object::as_name), Ok(b"Image")) {
+                if let Some(alternates) = dict
+                    .get(b"Alternates")
+                    .ok()
+                    .and_then(|o| resolved(doc, o)?.as_array().ok())
+                {
+                    for item in alternates {
+                        if let Some(id) = resolved(doc, item)
+                            .and_then(|o| o.as_dict().ok())
+                            .and_then(|entry| entry.get(b"Image").ok())
+                            .and_then(|o| o.as_reference().ok())
+                        {
+                            walk.unfollowed.insert(id);
+                            if let Some(mask) = soft_mask(doc, id) {
+                                walk.unfollowed.insert(mask);
+                            }
+                        }
+                    }
+                }
+            }
             let glyphs = matches!(dict.get(b"Subtype").and_then(Object::as_name), Ok(b"Type3"));
             let pattern = dict
                 .get(b"PatternType")
@@ -524,16 +546,11 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
     }
     for (index, page) in doc.get_pages().into_values().enumerate() {
         walk.page = u32::try_from(index).unwrap_or(u32::MAX);
-        let Ok((inline, inherited)) = doc.get_page_resources(page) else {
+        let Ok(resources) = crate::pagetree::resources(doc, page) else {
             walk.lost = true;
             continue;
         };
-        let mut resources: Vec<&Dictionary> = inline.into_iter().collect();
-        resources.extend(
-            inherited
-                .into_iter()
-                .filter_map(|id| doc.get_dictionary(id).ok()),
-        );
+        let resources = resources.as_slice();
         // Appearance coordinates include the annotation rectangle. Preserve the
         // resolution of images these streams may use, including named states.
         for appearance in crate::unused::appearances(doc, page) {
@@ -545,17 +562,17 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
             if let Some(own) = own {
                 walk.unfollowed_in(&[own]);
             } else {
-                walk.unfollowed_in(&resources);
+                walk.unfollowed_in(resources);
             }
         }
         let Ok(data) = doc.get_page_content_with_limit(page, MAX_CONTENT_BYTES) else {
-            walk.unfollowed_in(&resources);
+            walk.unfollowed_in(resources);
             continue;
         };
         let unit = crate::pagetree::user_unit(doc, page);
         walk.content(
             &data,
-            &resources,
+            resources,
             unit.map(|u| [u, 0.0, 0.0, u, 0.0, 0.0]),
             0,
         );
@@ -641,27 +658,30 @@ fn stored(doc: &Document, dict: &Dictionary) -> Option<Stored> {
     }
 }
 
-/// Whether `lopdf` will undo the predictor a deflated stream was stored with.
-///
-/// It reads `/DecodeParms` only as a dictionary written in the stream's own
-/// dictionary, and each number in it only as a number written there. An array
-/// of one dictionary and a reference are both allowed by the format, and for
-/// either it inflates the stream and hands back samples that are still
-/// differences. For a TIFF predictor those are exactly as many bytes as the
-/// picture has samples, so [`samples`] cannot tell by counting them, and a
-/// picture scaled from them is a different picture stored as this one.
-///
-/// No parameters at all is no predictor, and is read.
-fn parms_are_read(dict: &Dictionary) -> bool {
-    /// The numbers a predictor is undone by.
+/// The predictor the decoder will apply, or None for parameters it cannot
+/// read. lopdf accepts a direct dictionary or the matching entry in the
+/// filter-parameter array, but does not resolve indirect parameter values.
+fn predictor(dict: &Dictionary) -> Option<i64> {
     const NUMBERS: [&[u8]; 4] = [b"Predictor", b"Colors", b"Columns", b"BitsPerComponent"];
-    match dict.get(b"DecodeParms") {
-        Err(_) => true,
-        Ok(Object::Dictionary(parms)) => NUMBERS
-            .iter()
-            .all(|key| matches!(parms.get(key), Err(_) | Ok(Object::Integer(_)))),
-        Ok(_) => false,
-    }
+    let parms = match dict.get(b"DecodeParms") {
+        Err(_) | Ok(Object::Null) => return Some(1),
+        Ok(Object::Dictionary(parms)) => parms,
+        Ok(Object::Array(entries)) => match entries.as_slice() {
+            [Object::Null] => return Some(1),
+            [Object::Dictionary(parms)] => parms,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    NUMBERS
+        .iter()
+        .all(|key| matches!(parms.get(key), Err(_) | Ok(Object::Integer(_))))
+        .then(|| {
+            parms
+                .get(b"Predictor")
+                .and_then(Object::as_i64)
+                .unwrap_or(1)
+        })
 }
 
 /// What a picture is, when it is one this can shrink.
@@ -698,7 +718,7 @@ fn picture(doc: &Document, id: ObjectId, as_mask: bool) -> Option<Picture> {
         return None;
     }
     let stored = stored(doc, dict)?;
-    if stored == Stored::Flate && !parms_are_read(dict) {
+    if stored == Stored::Flate && (stream.filters().is_err() || predictor(dict).is_none()) {
         return None;
     }
     // A JPEG's parameters say how its colours were coded (`/ColorTransform`),
@@ -733,13 +753,7 @@ fn samples(doc: &Document, id: ObjectId, picture: &Picture) -> Option<Vec<u8>> {
             // this module writes itself among them. The length after is held
             // to the samples exactly all the same.
             let png = picture.stored == Stored::Flate
-                && stream
-                    .dict
-                    .get(b"DecodeParms")
-                    .and_then(Object::as_dict)
-                    .and_then(|parms| parms.get(b"Predictor"))
-                    .and_then(Object::as_i64)
-                    .is_ok_and(|predictor| predictor >= 10);
+                && predictor(&stream.dict).is_some_and(|value| value >= 10);
             let limit = if png {
                 wanted.checked_add(picture.height)?
             } else {
@@ -1254,21 +1268,33 @@ impl Sample {
             at.push(room);
             at
         };
-        // How much each row of a column band differs is summed once per row.
+        // Sum every pixel. Adjacent candidate windows share most of their
+        // columns, so prefix sums give each window's difference in one lookup.
+        let lefts = places(w, window.0);
         let mut best: Option<(u64, usize, usize)> = None;
+        let mut columns = vec![0u64; w + 1];
         for top in places(h, window.1) {
-            for left in places(w, window.0) {
-                let mut sum = 0u64;
-                // Every other pixel is enough to rank windows.
-                for y in (top..top + window.1).step_by(2) {
-                    let row = (y * w + left) * 4;
-                    for x in (0..window.0 * 4).step_by(8) {
-                        for c in 0..3 {
-                            let at = row + x + c;
-                            sum += u64::from(before[at].abs_diff(after[at]));
-                        }
-                    }
+            columns.fill(0);
+            let band = top * w * 4..(top + window.1) * w * 4;
+            for (old, new) in before[band.clone()]
+                .chunks_exact(w * 4)
+                .zip(after[band].chunks_exact(w * 4))
+            {
+                for ((old, new), total) in old
+                    .chunks_exact(4)
+                    .zip(new.chunks_exact(4))
+                    .zip(&mut columns[1..])
+                {
+                    *total += u64::from(old[0].abs_diff(new[0]))
+                        + u64::from(old[1].abs_diff(new[1]))
+                        + u64::from(old[2].abs_diff(new[2]));
                 }
+            }
+            for x in 0..w {
+                columns[x + 1] += columns[x];
+            }
+            for &left in &lefts {
+                let sum = columns[left + window.0] - columns[left];
                 if best.is_none_or(|(most, ..)| sum > most) {
                     best = Some((sum, left, top));
                 }

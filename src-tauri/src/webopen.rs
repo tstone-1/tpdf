@@ -248,6 +248,7 @@ mod tests {
             web(7, "nowhere.example", "/"),
             web(2, "fine.example", "/"),
             Target::Page {
+                other_edges: None,
                 page: 3,
                 top_pt: None,
             },
@@ -264,6 +265,7 @@ mod tests {
         assert_eq!(
             targets[4],
             Target::Page {
+                other_edges: None,
                 page: 3,
                 top_pt: None
             }

@@ -140,7 +140,7 @@ fn bind(library: &Path) -> Result<progressive::Bindings, String> {
 /// A target in one line, for a human and for an assertion message.
 fn describe(target: &Target) -> String {
     match target {
-        Target::Page { page, top_pt } => match top_pt {
+        Target::Page { page, top_pt, .. } => match top_pt {
             Some(top) => format!("page {} at {top:.1} pt", page + 1),
             None => format!("page {}", page + 1),
         },
@@ -265,6 +265,7 @@ fn wanted(value: &serde_json::Value) -> Result<Target, String> {
         .ok_or("a manifest target has no kind")?;
     Ok(match kind {
         "page" => Target::Page {
+            other_edges: None,
             page: value
                 .get("page")
                 .and_then(serde_json::Value::as_u64)
@@ -319,10 +320,12 @@ fn same(left: &Target, right: &Target) -> bool {
             Target::Page {
                 page: a,
                 top_pt: top_a,
+                ..
             },
             Target::Page {
                 page: b,
                 top_pt: top_b,
+                ..
             },
         ) => {
             a == b

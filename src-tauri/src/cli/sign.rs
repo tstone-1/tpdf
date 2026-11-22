@@ -545,8 +545,12 @@ fn image_file(
 /// drawn. Rounded to a thousandth of a point.
 #[must_use]
 pub fn drawn(visible: &Visible, at: u64) -> report::Appearance {
+    appearance_at(visible, visible.rect, at)
+}
+
+fn appearance_at(visible: &Visible, rect: [f32; 4], at: u64) -> report::Appearance {
     use crate::sign_prepare::appearance;
-    let [left, top, right, bottom] = visible.rect.map(f64::from);
+    let [left, top, right, bottom] = rect.map(f64::from);
     let date = save::pdf_date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(at));
     let lines = appearance::words(&visible.name, &date, &visible.options);
     let layout = appearance::layout(
@@ -661,17 +665,14 @@ const ANCHOR_SEARCH: crate::search::Options = crate::search::Options {
 ///
 /// Exit 3 for a document whose form cannot be read, a name it does not have,
 /// a field that is not an empty signature field, or one in several places.
-fn field_place(env: &Env<'_>, sign: &Sign) -> Result<(u32, [f32; 4]), Failure> {
+fn field_place(
+    session: &mut crate::save_outside::Session,
+    sign: &Sign,
+) -> Result<(u32, [f32; 4]), Failure> {
     let refused = |why: String| Failure::new(Exit::Refused, why);
     let shown = sign.input.display().to_string();
     let name = &sign.field;
-    let (file, len) = opened(&sign.input).map_err(refused)?;
-    let mut session = env.worker().session(&file, len, None).map_err(|why| {
-        refused(format!(
-            "{shown} could not be opened to find `{name}`: {why:?}"
-        ))
-    })?;
-    let form = super::fields::ask_form(&mut session, &shown, false)?;
+    let form = super::fields::ask_form(session, &shown, false)?;
     let found: Vec<_> = form.widgets.iter().filter(|w| &w.name == name).collect();
     let [widget] = found.as_slice() else {
         return Err(refused(if found.is_empty() {
@@ -693,13 +694,18 @@ fn field_place(env: &Env<'_>, sign: &Sign) -> Result<(u32, [f32; 4]), Failure> {
     Ok((widget.page, widget.display_rect))
 }
 
-fn anchored(env: &Env<'_>, sign: &Sign, page: u32, anchor: &Anchor) -> Result<[f32; 4], Failure> {
+fn anchored(
+    env: &Env<'_>,
+    file: std::fs::File,
+    sign: &Sign,
+    page: u32,
+    anchor: &Anchor,
+) -> Result<([f32; 4], f32), Failure> {
     use super::redact::{search_pages, wait};
     use super::report::SearchKind;
     use crate::render::{Backend, RenderService};
     let refused = |why: String| Failure::new(Exit::Refused, why);
     let shown = sign.input.display().to_string();
-    let (file, _) = opened(&sign.input).map_err(refused)?;
     let service = RenderService::start_with(env.library_dir.clone(), Backend::Worker);
     let info = wait(|reply| {
         service.open_handed(sign.input.clone(), Some(file), true, None, reply);
@@ -759,15 +765,23 @@ fn anchored(env: &Env<'_>, sign: &Sign, page: u32, anchor: &Anchor) -> Result<[f
             ))
         })?,
     };
+    let units =
+        wait(|reply| service.page_units(info.id, vec![page - 1], reply)).map_err(refused)?;
+    let unit = match units.as_slice() {
+        [unit] if unit.is_finite() && *unit > 0.0 => *unit,
+        _ => return Err(refused("the page has no usable physical scale".into())),
+    };
+    let chosen = chosen.map(|native| native * unit);
     let [dx, dy] = anchor.offset;
     let [w, h] = anchor.size;
-    rectangle_of(chosen[0] + dx, chosen[1] + dy, w, h).ok_or_else(|| {
+    let physical = rectangle_of(chosen[0] + dx, chosen[1] + dy, w, h).ok_or_else(|| {
         refused(format!(
             "`{text}` is at {},{} on page {page}, and the offset puts the signature off the \
              page's top or left edge --- nothing was written",
             chosen[0], chosen[1]
         ))
-    })
+    })?;
+    Ok((physical, unit))
 }
 
 /// `--anchor-match`: which match, counted from 1.
@@ -1028,32 +1042,33 @@ fn run_sign(
 
     // The anchor, before the store too: text that is not on the page ends
     // the run with no certificate listed and no key touched.
-    let rect = match &sign.visible {
-        None => None,
-        Some(Placement {
-            at: Where::Rect(rect),
-            ..
-        }) => Some(*rect),
-        Some(Placement {
-            page,
-            at: Where::Anchor(anchor),
-        }) => Some(anchored(env, sign, *page, anchor)?),
-        Some(Placement {
-            at: Where::Field, ..
-        }) => None,
+    let placement = if let Some(placement) = &sign.visible {
+        let page = placement.page;
+        let (slot, native, physical) = match &placement.at {
+            Where::Field => {
+                let mut session = env.worker().session(&file, len, None)?;
+                let (slot, native) = field_place(&mut session, sign)?;
+                let unit =
+                    super::pages::page_units(&mut session, &[slot + 1], &sign.input, false)?[0];
+                (slot, native, native.map(|v| v * unit))
+            }
+            Where::Rect(physical) => {
+                let mut session = env.worker().session(&file, len, None)?;
+                let unit = super::pages::page_units(&mut session, &[page], &sign.input, false)?[0];
+                (page - 1, physical.map(|v| v / unit), *physical)
+            }
+            Where::Anchor(anchor) => {
+                let handle = file
+                    .try_clone()
+                    .map_err(|why| Failure::new(Exit::Refused, why.to_string()))?;
+                let (physical, unit) = anchored(env, handle, sign, page, anchor)?;
+                (page - 1, physical.map(|v| v / unit), physical)
+            }
+        };
+        Some((slot, native, physical))
+    } else {
+        None
     };
-    // The field, before the store as well: a name the document does not have
-    // ends the run with no certificate listed and no key touched.
-    let in_field = match &sign.visible {
-        Some(Placement {
-            at: Where::Field, ..
-        }) => Some(field_place(env, sign)?),
-        _ => None,
-    };
-    let page = in_field
-        .map(|(page, _)| page)
-        .or(sign.visible.as_ref().map(|placement| placement.page - 1));
-    let rect = in_field.map(|(_, rect)| rect).or(rect);
 
     // The certificate, from the store --- which asks the OS for certificates
     // only. The key is not touched until the digest is signed.
@@ -1081,9 +1096,9 @@ fn run_sign(
     let opened_as = crate::fingerprint::Fingerprint::of_open(&file, &sign.input)
         .map_err(|why| Failure::new(Exit::Refused, why))?;
 
-    let visible = match page.zip(rect) {
+    let visible = match placement {
         None => None,
-        Some((page, rect)) => {
+        Some((page, rect, _)) => {
             let image = match &sign.image {
                 Picture::Saved => env.store.saved_image().map_err(|why| {
                     Failure::new(
@@ -1118,7 +1133,10 @@ fn run_sign(
     };
 
     let worker = env.worker();
-    let appearance = visible.as_ref().map(|visible| drawn(visible, env.now));
+    let appearance = visible
+        .as_ref()
+        .zip(placement)
+        .map(|(visible, (_, _, physical))| appearance_at(visible, physical, env.now));
     let notes = crate::sign_prepare::Notes {
         reason: sign.reason.clone(),
         location: sign.location.clone(),

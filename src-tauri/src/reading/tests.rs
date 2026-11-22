@@ -404,6 +404,26 @@ pub(crate) fn cases() -> Vec<Case> {
         text: page(vec![vec![(32, [0.0; 4])], word("after", 72.0, 100.0)]),
     });
 
+    // Identical displayed glyphs. The first producer rotated the page and
+    // the second turned each text object. The 20-point gutter clears three
+    // 5-point advances, but not three 12-point glyph heights.
+    let mut turned_page = page(vec![vec![
+        (65, [100., 0., 112., 5.]),
+        (66, [80., 0., 92., 5.]),
+        (67, [100., 25., 112., 30.]),
+        (68, [80., 25., 92., 30.]),
+    ]]);
+    let mut turned_glyphs = turned_page.clone();
+    turned_page.quarter_turns = 1;
+    turned_glyphs.char_turns = vec![1; 4];
+    out.push(Case {
+        name: "sideways-columns-page",
+        text: turned_page,
+    });
+    out.push(Case {
+        name: "sideways-columns-glyphs",
+        text: turned_glyphs,
+    });
     out
 }
 
@@ -623,4 +643,16 @@ fn a_number_is_the_one_the_viewer_holds() {
     assert_eq!(super::webview_number(595.2756), 595.2756);
     assert_ne!(f64::from(595.2756f32), 595.2756);
     assert_eq!(super::webview_number(f32::NAN), 0.0);
+}
+
+#[test]
+fn sideways_columns_use_the_glyph_advance_for_both_kinds_of_rotation() {
+    for name in ["sideways-columns-page", "sideways-columns-glyphs"] {
+        let text = case(name);
+        assert_eq!(
+            text_of(&text, &read(&text).lines),
+            ["A", "B", "C", "D"],
+            "{name}"
+        );
+    }
 }

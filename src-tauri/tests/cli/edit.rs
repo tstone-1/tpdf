@@ -60,6 +60,29 @@ fn annotations(path: &Path) -> Vec<(usize, String, String, Vec<f32>)> {
     found
 }
 
+/// Inspect the default appearance and the actual drawing commands independently.
+fn has_text_box(doc: &Document, page: lopdf::ObjectId, native_size: f64) -> Option<bool> {
+    let annots = doc.get_dictionary(page).ok()?.get(b"Annots").ok()?;
+    for annot in doc.dereference(annots).ok()?.1.as_array().ok()? {
+        let dict = doc.dereference(annot).ok()?.1.as_dict().ok()?;
+        if dict.get(b"Subtype").ok()?.as_name().ok()? != b"FreeText" {
+            continue;
+        }
+        let da = dict.get(b"DA").ok()?.as_str().ok()?;
+        let normal = dict.get(b"AP").ok()?.as_dict().ok()?.get(b"N").ok()?;
+        let stream = doc.dereference(normal).ok()?.1.as_stream().ok()?;
+        let bytes = stream.get_plain_content().ok()?;
+        let appearance = String::from_utf8_lossy(&bytes);
+        let font = format!("/Helv {native_size} Tf");
+        return Some(
+            String::from_utf8_lossy(da).contains(&font)
+                && appearance.contains(&font)
+                && appearance.contains("<5245564945572044415445> Tj"),
+        );
+    }
+    None
+}
+
 pub(super) fn operations(report: &mut Report) {
     let dir = scratch("edit-plans");
     let source = dir.join("source.pdf");
@@ -98,6 +121,30 @@ pub(super) fn operations(report: &mut Report) {
             && read["pages"][1]["width_pt"] == 400.0
             && rects == [vec![350., 540., 370., 560.], vec![175., 270., 185., 280.]],
         &format!("{read} {rects:?} {stderr}"),
+    );
+    let boxes = dir.join("scaled-text-boxes.pdf");
+    let ops = [1, 2]
+        .into_iter()
+        .map(|page| {
+            json!({
+                "op": "annotate", "page": page, "kind": "textbox",
+                "rect": [35,40,140,24], "text": "REVIEW DATE"
+            })
+        })
+        .collect();
+    let (code, _, stderr) = edit(&scaled, &boxes, Value::Array(ops), &[]);
+    let saved = Document::load(&boxes);
+    report.check(
+        "text boxes are visible and use the same physical font size",
+        code == 0
+            && saved.is_ok_and(|doc| {
+                let pages = doc.get_pages();
+                pages.len() == 2
+                    && pages.iter().all(|(page, id)| {
+                        has_text_box(&doc, *id, 11.0 / f64::from(*page)) == Some(true)
+                    })
+            }),
+        &stderr,
     );
     let operations = json!([
         {"op":"move_page","page":1,"to":3},

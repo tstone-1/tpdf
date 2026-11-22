@@ -808,35 +808,34 @@ fn build(
         ));
     }
     // The page, its rectangle in page space and its turns, for a visible one.
-    let placed = match (visible, &target) {
-        (None, _) => None,
-        // In the field: where the field is, at the size it has.
-        (Some(visible), Some(target)) => {
+    let placed = if let Some(visible) = visible {
+        let page = if let Some(target) = &target {
+            target.page
+        } else {
+            *pages
+                .get(visible.page as usize)
+                .ok_or_else(|| said!("the page chosen for the signature is not in this document"))?
+        };
+        let unit = crate::pagetree::user_unit(&prev, page)
+            .ok_or_else(|| said!("the signature page has an invalid physical scale"))?;
+        let shown = crate::pagetree::displayed_page(&prev, page);
+        let rect = if let Some(target) = &target {
             let [left, bottom, right, top] = target.rect;
+            let (width, height) = ((right - left) * unit, (top - bottom) * unit);
             let least = appearance::MIN_SIDE;
-            if right - left < least || top - bottom < least {
+            if width < least || height < least {
                 return Err(said!(
                     "the field is {width} by {height} points, smaller than the {least} a side a \
-                     visible signature is drawn in --- sign it without an appearance",
-                    width = right - left,
-                    height = top - bottom
+                     visible signature is drawn in --- sign it without an appearance"
                 ));
             }
-            let shown = crate::pagetree::displayed_page(&prev, target.page);
-            Some((target.page, target.rect, shown.turns, visible))
-        }
-        (Some(visible), None) => {
-            let page = *pages.get(visible.page as usize).ok_or_else(|| {
-                said!("the page chosen for the signature is not in this document")
-            })?;
-            let shown = crate::pagetree::displayed_page(&prev, page);
-            Some((
-                page,
-                appearance::place(visible, shown)?,
-                shown.turns,
-                visible,
-            ))
-        }
+            target.rect
+        } else {
+            appearance::place(visible, shown, unit)?
+        };
+        Some((page, rect, shown.turns, unit, visible))
+    } else {
+        None
     };
     let page = match (&target, placed) {
         (Some(target), _) => target.page,
@@ -867,11 +866,16 @@ fn build(
     let signature = incremental
         .new_document
         .add_object(signature_dictionary(&date, details, reference));
-    let drawn = placed.map(|(_, rect, turns, visible)| {
+    let drawn = placed.map(|(_, rect, turns, unit, visible)| {
         let lines = appearance::words(&visible.name, &date, &visible.options);
         let form = appearance::stream(
             &mut incremental.new_document,
-            rect,
+            [
+                0.0,
+                0.0,
+                (rect[2] - rect[0]) * unit,
+                (rect[3] - rect[1]) * unit,
+            ],
             turns,
             &lines,
             visible.image.as_ref(),

@@ -313,6 +313,8 @@ export default {
   "Every page already has text, so there is nothing to add.":
     "Jede Seite hat schon Text, daher gibt es nichts hinzuzufügen.",
   "No text was recognised on any page.": "Auf keiner Seite wurde Text erkannt.",
+  "{refusal} Too large to recognise: {pages}.": (a) => `${a.refusal} Zu groß für die Texterkennung: ${pagesNamed(a.pages!)}.`,
+  "Too large to recognise: {pages}.": (a) => `Zu groß für die Texterkennung: ${pagesNamed(a.pages!)}.`,
   "Every page is too large to render finely enough to read its text.":
     "Jede Seite ist zu groß, um sie fein genug darzustellen, dass ihr Text gelesen werden kann.",
   "No page was given text: each one either has text already, or none was recognised on it.":

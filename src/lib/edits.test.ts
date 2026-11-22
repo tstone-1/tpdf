@@ -676,6 +676,24 @@ describe("Edits", () => {
     expect(core.invoke).toHaveBeenLastCalledWith("page_insert", { doc: 9, after: 1, size: [400, 600] });
   });
 
+  it.each([[1, 600, 400], [2, 400, 600], [3, 600, 400]])(
+    "matches the pending turn %i on file and inserted pages", async (turns, width, height) => {
+      for (const source of [{ baseline: 0 }, { blank: { width: 400, height: 600 } }]) {
+        const opened = state(1, { 0: turns });
+        opened.pages[0]!.source = source;
+        core.invoke.mockImplementation(async (command: string) => {
+          if (command === "page_geometry") return { width_pt: 200, height_pt: 300 };
+          if (command === "page_units") return [2];
+          return opened;
+        });
+        const edits = new Edits(9);
+        await edits.refresh();
+        await edits.insertMatchingPage(0);
+        expect(core.invoke).toHaveBeenLastCalledWith("page_insert", { doc: 9, after: 1, size: [width, height] });
+      }
+    },
+  );
+
   it.each([true, false])("a save waits for every search mark and sees batch success %s", async (success) => {
     const edits = new Edits(9, 1);
     let answer!: (result: EditState | null) => void;

@@ -6462,8 +6462,9 @@
    */
   function buildSidebar(host: HTMLElement, view: ViewId, doc: DocumentInfo, page: PageSize): Sidebar {
     return new Sidebar(host, scoped<SidebarOptions>({
-      onNavigate: (target, top) => {
-        viewer?.goToDestination(target, top);
+      destinationTop: (page, top, edges) => viewer ? viewer.fileDestinationTop(page, top, edges) : top,
+      onNavigate: (target, top, edges) => {
+        viewer?.goToFileDestination(target, top, edges);
         viewer?.focus();
       },
       // `outline`, not `links`: the two scans number their tokens
@@ -6833,8 +6834,8 @@
         // because the last thing to refresh it was an edit.
         refreshMenu();
       },
-      onPosition: (at, top) => {
-        sidebar?.setPosition(at, top);
+      onPosition: (at, top, geometry) => {
+        sidebar?.setPosition(at, top, geometry);
         // A form's controls and the text editor sit over the page, and
         // `onStatus` does not fire for a scroll within a page that brings no
         // new tile: the status has no place in it. Laid out there alone, a

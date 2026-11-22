@@ -11,6 +11,7 @@ const n = (count: string | undefined, one: string, many: string): string =>
   count === "1" ? one : many;
 
 export default {
+  "Invalid text size in save plan": "Ungültige Schriftgröße im Speicherplan",
   "An imported form field has no usable appearance to preserve":
     "Für ein importiertes Formularfeld ist keine verwendbare Darstellung vorhanden.",
   "Page {number}: the removed area could not be checked on the written page: {why}":

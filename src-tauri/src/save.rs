@@ -629,7 +629,7 @@ pub fn write_copy(
     password: Option<&str>,
     rewriter: &dyn Rewriter,
 ) -> Result<Copied, Refusal> {
-    copy_with(source, plan, out, password, rewriter, None)
+    copy_with(source, plan, out, password, rewriter, None, &|| Ok(()))
 }
 
 /// [`write_copy`] for a copy that is only worth having if it reads back.
@@ -656,7 +656,29 @@ pub fn write_checked_copy(
     rewriter: &dyn Rewriter,
     check: Check<'_>,
 ) -> Result<(), Refusal> {
-    copy_with(source, plan, out, password, rewriter, Some(check)).map(|_| ())
+    write_checked_copy_until(source, plan, out, password, rewriter, check, &|| Ok(()))
+}
+
+/// A checked copy with a final cancellation check after source revalidation, before rename.
+pub(crate) fn write_checked_copy_until(
+    source: &Path,
+    plan: &Plan,
+    out: &Path,
+    password: Option<&str>,
+    rewriter: &dyn Rewriter,
+    check: Check<'_>,
+    before_publish: &dyn Fn() -> Result<(), Refusal>,
+) -> Result<(), Refusal> {
+    copy_with(
+        source,
+        plan,
+        out,
+        password,
+        rewriter,
+        Some(check),
+        before_publish,
+    )
+    .map(|_| ())
 }
 
 /// What [`write_checked_copy`] shows the staged file to.
@@ -670,6 +692,7 @@ fn copy_with(
     password: Option<&str>,
     rewriter: &dyn Rewriter,
     check: Option<Check<'_>>,
+    before_publish: &dyn Fn() -> Result<(), Refusal>,
 ) -> Result<Copied, Refusal> {
     if same_file(source, out) {
         return Err(said!(
@@ -713,7 +736,7 @@ fn copy_with(
             if let Some(opened) = &ready.verified {
                 opened.agrees_with(source).map_err(Refusal::changed)?;
             }
-            Ok(())
+            before_publish()
         });
         if let Err(why) = checked {
             let _ = std::fs::remove_file(&staged);
@@ -4819,7 +4842,7 @@ pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
 }
 
 /// [`serialise`] with object streams and a cross-reference stream, which is
-/// how a smaller copy is written.
+/// how a smaller copy is written unless PDF/A-1 requires a classic xref table.
 ///
 /// `lopdf` writes an encrypted document without object streams: its objects
 /// are already encrypted when they reach the writer, and an object stream
@@ -4829,7 +4852,19 @@ pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
 ///
 /// As [`serialise`].
 pub fn serialise_packed(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
-    serialise_as(doc, what, true)
+    let classic = doc
+        .catalog()
+        .ok()
+        .and_then(|catalog| crate::docinfo::read_xmp(doc, catalog))
+        .is_some_and(|xmp| {
+            xmp.conformance
+                .iter()
+                .any(|claim| matches!(claim.as_str(), "PDF/A-1A" | "PDF/A-1B" | "PDF/A-1"))
+        });
+    if classic {
+        doc.reference_table.cross_reference_type = lopdf::xref::XrefType::CrossReferenceTable;
+    }
+    serialise_as(doc, what, !classic)
 }
 
 fn serialise_as(doc: &mut Document, what: &str, packed: bool) -> Result<Vec<u8>, String> {

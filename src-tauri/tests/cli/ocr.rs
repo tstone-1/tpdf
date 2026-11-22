@@ -259,6 +259,8 @@ enum Ask {
     Stopped,
     /// The reader pressed Stop while the last page was being read.
     StoppedReading,
+    /// The destination has been staged and is being verified.
+    StoppedVerifying,
     /// The reader chose this language for recognised text.
     In(&'static str),
 }
@@ -306,7 +308,20 @@ fn app_path(path: &Path, out: &Path, ask: Ask) -> (Result<Recognised, String>, V
         library_dir(),
         language,
         &offered,
-        &|| stop.load(std::sync::atomic::Ordering::Relaxed),
+        &|| {
+            if ask == Ask::StoppedVerifying {
+                return std::fs::read_dir(out.parent().unwrap())
+                    .unwrap()
+                    .any(|entry| {
+                        entry
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".tpdf-partial-")
+                    });
+            }
+            stop.load(std::sync::atomic::Ordering::Relaxed)
+        },
         &|at| {
             seen.lock().unwrap().push(at);
             if ask == Ask::StoppedReading {
@@ -448,6 +463,18 @@ fn window_path(report: &mut Report, source: &str, scanned: &str, out: &str, refu
             })
             .count()
     };
+    let late = scratch("ocr-late-stop").join("existing.pdf");
+    let prior = b"previous destination";
+    std::fs::write(&late, prior).unwrap();
+    let (result, seen) = app_path(Path::new(scanned), &late, Ask::StoppedVerifying);
+    report.check(
+        "stopping a staged OCR copy preserves the previous destination",
+        result.as_ref().is_err_and(|why| why.contains(CANCELLED))
+            && seen.len() == 1
+            && std::fs::read(&late).unwrap() == prior
+            && std::fs::read_dir(late.parent().unwrap()).unwrap().count() == 1,
+        &format!("{result:?}; {seen:?}"),
+    );
     let before = staging_left();
     // `started` is how many pages were begun: a stop asked for before the
     // first page begins none, and one asked for during the only page begins it

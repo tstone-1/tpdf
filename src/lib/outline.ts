@@ -39,9 +39,20 @@ const TEXT = catalog({
   },
 });
 
+/** File-display edges beyond the top: left, right and bottom, where known. */
+export interface DestinationEdges {
+  left: number | null;
+  right: number | null;
+  bottom: number | null;
+  width: number;
+  height: number;
+}
+
+type PageTarget = { kind: "page"; page: number; top_pt: number | null; other_edges?: DestinationEdges };
+
 /** Where an entry points, mirroring `outline.rs`'s `Target`. */
 export type Target =
-  | { kind: "page"; page: number; top_pt: number | null }
+  | PageTarget
   | { kind: "broken" }
   /**
    * A web address, split into the two halves a reader is shown.
@@ -159,11 +170,7 @@ export const REACHED_TOLERANCE_PT = 8;
 export type WebTarget = Extract<Target, { kind: "web" }>;
 
 /** Whether an entry can be navigated to. */
-export function isNavigable(target: Target): target is {
-  kind: "page";
-  page: number;
-  top_pt: number | null;
-} {
+export function isNavigable(target: Target): target is PageTarget {
   return target.kind === "page";
 }
 
@@ -353,11 +360,14 @@ export interface Reached {
  * so the answer is the last entry at or before the reader, and a binary search
  * finds it.
  */
-export function reachOrder(rows: readonly Row[]): Reached[] {
+export function reachOrder(
+  rows: readonly Row[],
+  topOf: (target: PageTarget) => number | null = (target) => target.top_pt,
+): Reached[] {
   const reached: Reached[] = [];
   for (const [at, row] of rows.entries()) {
     if (!isNavigable(row.target)) continue;
-    reached.push({ id: row.id, page: row.target.page, top: row.target.top_pt ?? 0, at });
+    reached.push({ id: row.id, page: row.target.page, top: topOf(row.target) ?? 0, at });
   }
   reached.sort((a, b) => a.page - b.page || a.top - b.top || a.at - b.at);
   return reached;

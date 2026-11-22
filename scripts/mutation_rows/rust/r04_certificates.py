@@ -1741,12 +1741,11 @@ ROWS += [
         "a_needle_outside_ascii_in_a_pdfdocencoded_string_is_found",
     ),
     Mutation(
-        # Scale a deflated picture whatever its parameters look like. An array
-        # of one, which `lopdf` does not read, leaves a TIFF predictor in the
-        # samples, and the picture stored is not the one the page drew.
+        # Scaling with unresolved parameters can leave a TIFF predictor in
+        # the decoded samples and change the image.
         "compress: scale a picture whose predictor was not undone",
         "src/compress.rs",
-        "    if stored == Stored::Flate \u0026\u0026 !parms_are_read(dict) {",
+        "    if stored == Stored::Flate \u0026\u0026 (stream.filters().is_err() || predictor(dict).is_none()) {",
         "    if false {",
         "a_deflated_picture_whose_predictor_would_not_be_undone_is_left",
     ),
@@ -1754,8 +1753,8 @@ ROWS += [
         # Believe any number in the parameters, written in place or not.
         "compress: read a predictor given by reference as none",
         "src/compress.rs",
-        "            .all(|key| matches!(parms.get(key), Err(_) | Ok(Object::Integer(_)))),",
-        "            .all(|_| true),",
+        "        .all(|key| matches!(parms.get(key), Err(_) | Ok(Object::Integer(_))))",
+        "        .all(|_| true)",
         "a_deflated_picture_whose_predictor_would_not_be_undone_is_left",
     ),
     Mutation(

@@ -57,7 +57,7 @@ use std::collections::{HashMap, HashSet};
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 
 use crate::encoding::resolve;
-use crate::outline::Target;
+use crate::outline::{Destination, Target};
 
 use crate::encoding::MAX_DECODE;
 
@@ -665,56 +665,29 @@ fn place(
         return Target::Broken;
     }
 
-    Target::Page {
-        page,
-        top_pt: top_of(array, document, geometry, page),
-    }
-}
-
-/// The destination's y coordinate, flipped to points from the page's top.
-///
-/// PDF measures it upwards from the page's bottom-left and every consumer
-/// downstream works from the top edge. Getting that backwards does not look like
-/// a bug --- it still lands on the right *page*, at the mirror image of the
-/// right place on it, which reads as a document whose links are slightly off.
-///
-/// **A rotated page returns `None`, and that is deliberate.** The destination is
-/// written in the page's own unrotated space; under a quarter turn the display's
-/// vertical axis is the page's horizontal one, so there is no offset to scroll
-/// to. `outline.rs` reaches the same answer through the same reasoning, and the
-/// honest interpretation of a destination with no coordinate is the page's top.
-fn top_of(array: &[Object], document: &Document, geometry: &[PageBox], page: u32) -> Option<f32> {
-    let fit = array.get(1).and_then(|object| match object {
-        Object::Name(name) => Some(name.as_slice()),
-        _ => None,
-    })?;
-
-    // Which element carries the top, per §12.3.2.2. `/Fit`, `/FitB` and the two
-    // that name only an x carry none.
-    let index = match fit {
-        b"XYZ" => 3,
-        b"FitH" | b"FitBH" => 2,
-        b"FitR" => 5,
-        _ => return None,
+    let fit = array
+        .get(1)
+        .and_then(|o| resolve(document, o).as_name().ok());
+    let number = |index| {
+        array
+            .get(index)
+            .and_then(|v| resolve(document, v).as_float().ok())
     };
-
-    let raw = array
-        .get(index)
-        .map(|object| resolve(document, object))
-        .and_then(|object| object.as_float().ok())
-        .filter(|value| value.is_finite())?;
-
-    // The *destination* page's height, which is rarely the page the link is on:
-    // a document may mix sizes, and flipping an offset against the wrong one
-    // lands somewhere plausible and wrong on the right page.
-    let shown = *geometry.get(page as usize)?;
-    if shown.turns != 0 {
-        return None;
-    }
-
-    // Into crop space first: a destination is written in the page's own
-    // coordinates, and the page is displayed from its crop box's corner.
-    Some((shown.height - (raw - shown.origin.1)).clamp(0.0, shown.height))
+    let bounds = match fit {
+        Some(b"XYZ") => Destination::point(number(2), number(3)),
+        Some(b"FitH" | b"FitBH") => Destination::point(None, number(2)),
+        Some(b"FitV" | b"FitBV") => Destination::point(number(2), None),
+        Some(b"FitR") => match (number(2), number(3), number(4), number(5)) {
+            (Some(left), Some(bottom), Some(right), Some(top)) => Destination {
+                x: Some([left, right]),
+                y: Some([bottom, top]),
+            },
+            _ => Destination::default(),
+        },
+        _ => Destination::default(),
+    };
+    let shown = geometry[page as usize];
+    bounds.place(page, shown.turns, shown.width, shown.height, shown.origin)
 }
 
 /// Every outline entry's destination, resolved through `lopdf`, in tree order.
@@ -994,6 +967,7 @@ fn rect_of(annot: &Dictionary, document: &Document, shown: PageBox) -> [f32; 4] 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::outline::DestinationEdges;
     use lopdf::dictionary;
 
     /// A document with `pages` pages, each carrying the annotations given for it.
@@ -1094,6 +1068,13 @@ mod tests {
         assert_eq!(
             links.items[0].target,
             Target::Page {
+                other_edges: Some(DestinationEdges {
+                    left: None,
+                    right: None,
+                    bottom: Some(292.0),
+                    width: 612.0,
+                    height: 792.0
+                }),
                 page: 2,
                 top_pt: Some(292.0)
             }
@@ -1148,6 +1129,13 @@ mod tests {
         assert_eq!(
             links.items[0].target,
             Target::Page {
+                other_edges: Some(DestinationEdges {
+                    left: None,
+                    right: None,
+                    bottom: Some(500.0),
+                    width: 612.0,
+                    height: 1000.0
+                }),
                 page: 1,
                 top_pt: Some(500.0)
             },
@@ -1187,6 +1175,7 @@ mod tests {
         assert_eq!(
             links.items[0].target,
             Target::Page {
+                other_edges: None,
                 page: 1,
                 top_pt: None
             }
@@ -1233,6 +1222,30 @@ mod tests {
             assert_eq!(
                 links.items[0].target,
                 Target::Page {
+                    other_edges: match fit {
+                        "FitR" => Some(DestinationEdges {
+                            left: Some(0.0),
+                            right: Some(612.0),
+                            bottom: Some(792.0),
+                            width: 612.0,
+                            height: 792.0
+                        }),
+                        "FitV" => Some(DestinationEdges {
+                            left: Some(100.),
+                            right: Some(100.),
+                            bottom: None,
+                            width: 612.,
+                            height: 792.
+                        }),
+                        "FitH" | "FitBH" => Some(DestinationEdges {
+                            left: None,
+                            right: None,
+                            bottom: Some(92.),
+                            width: 612.,
+                            height: 792.
+                        }),
+                        _ => None,
+                    },
                     page: 1,
                     top_pt: expected
                 },
@@ -1452,6 +1465,7 @@ mod tests {
         assert_eq!(
             links.items[0].target,
             Target::Page {
+                other_edges: None,
                 page: 2,
                 top_pt: None
             }
@@ -1491,6 +1505,7 @@ mod tests {
         assert_eq!(
             links.items[0].target,
             Target::Page {
+                other_edges: None,
                 page: 2,
                 top_pt: None
             }
@@ -1542,6 +1557,13 @@ mod tests {
         assert_eq!(
             links.items[0].target,
             Target::Page {
+                other_edges: Some(DestinationEdges {
+                    left: None,
+                    right: None,
+                    bottom: Some(92.0),
+                    width: 612.0,
+                    height: 792.0
+                }),
                 page: 2,
                 top_pt: Some(92.0)
             }
@@ -1697,7 +1719,11 @@ mod tests {
 
         let links = scan_of(&mut document, 2);
         let targets: Vec<&Target> = links.items.iter().map(|link| &link.target).collect();
-        let page = |page: u32| Target::Page { page, top_pt: None };
+        let page = |page: u32| Target::Page {
+            page,
+            top_pt: None,
+            other_edges: None,
+        };
         assert_eq!(
             targets,
             [&page(0), &page(1), &Target::Broken, &Target::Broken]
@@ -1886,6 +1912,13 @@ mod tests {
         assert_eq!(
             links.items[0].target,
             Target::Page {
+                other_edges: Some(DestinationEdges {
+                    left: Some(500.),
+                    right: Some(500.),
+                    bottom: None,
+                    width: 792.,
+                    height: 612.
+                }),
                 page: 0,
                 top_pt: None
             },

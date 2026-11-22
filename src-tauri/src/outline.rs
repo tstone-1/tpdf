@@ -121,15 +121,26 @@ mod action {
 
 /// `PDFDEST_VIEW_*` fit types from `fpdf_doc.h`.
 ///
-/// Only the three that name a vertical coordinate are here. The others are
-/// reachable and are deliberately absent: naming them would invite a match arm
-/// that returns a number for a fit that carries none.
+/// Fits which supply a coordinate on at least one page axis.
 mod view {
     use std::os::raw::c_ulong;
 
     pub const FITH: c_ulong = 3;
+    pub const FITV: c_ulong = 4;
     pub const FITR: c_ulong = 5;
     pub const FITBH: c_ulong = 7;
+    pub const FITBV: c_ulong = 8;
+}
+
+/// File-display geometry needed when the reader turns or crops the destination.
+/// Page dimensions are exact even if the viewport has not laid this page out yet.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DestinationEdges {
+    pub left: Option<f32>,
+    pub right: Option<f32>,
+    pub bottom: Option<f32>,
+    pub width: f32,
+    pub height: f32,
 }
 
 /// Where an outline entry points, or why it points nowhere.
@@ -139,7 +150,13 @@ pub enum Target {
     /// A page in this document, and how far down it, in points from the page's
     /// top edge. `top_pt` is absent for destinations like `/Fit` that name no
     /// coordinate.
-    Page { page: u32, top_pt: Option<f32> },
+    Page {
+        page: u32,
+        top_pt: Option<f32>,
+        /// Additional coordinates for navigation under a live crop or turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        other_edges: Option<DestinationEdges>,
+    },
     /// A destination that resolves to no page this document has.
     Broken,
     /// A web address tpdf will open, once the reader has confirmed it.
@@ -183,6 +200,66 @@ pub enum Target {
     /// second parse this module exists to avoid, for one word of explanation on
     /// a row that is non-navigable either way.
     None,
+}
+
+/// The extent a destination names on each axis of the unrotated PDF page.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Destination {
+    pub x: Option<[f32; 2]>,
+    pub y: Option<[f32; 2]>,
+}
+
+impl Destination {
+    pub(crate) fn point(x: Option<f32>, y: Option<f32>) -> Self {
+        Self {
+            x: x.map(|v| [v, v]),
+            y: y.map(|v| [v, v]),
+        }
+    }
+
+    /// Transform the entire rectangle before selecting its displayed top.
+    /// A fit naming just one axis retains that coordinate across further turns.
+    pub(crate) fn place(
+        self,
+        page: u32,
+        turns: u8,
+        width: f32,
+        height: f32,
+        origin: (f32, f32),
+    ) -> Target {
+        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+            return Target::Page {
+                page,
+                top_pt: None,
+                other_edges: None,
+            };
+        }
+        let x = self.x.filter(|s| s.iter().all(|n| n.is_finite()));
+        let y = self.y.filter(|s| s.iter().all(|n| n.is_finite()));
+        let [x0, x1] = x.unwrap_or_default();
+        let [y0, y1] = y.unwrap_or_default();
+        let rect = [
+            f64::from(x0.min(x1)) - f64::from(origin.0),
+            f64::from(y0.min(y1)) - f64::from(origin.1),
+            f64::from(x0.max(x1)) - f64::from(origin.0),
+            f64::from(y0.max(y1)) - f64::from(origin.1),
+        ];
+        let [left, top, right, bottom] = crate::text::to_device(turns, width, height, rect);
+        let (across, down) = if turns % 2 == 0 { (x, y) } else { (y, x) };
+        let top_pt = down.map(|_| top.clamp(0.0, height));
+        let other_edges = (across.is_some() || down.is_some()).then(|| DestinationEdges {
+            left: across.map(|_| left.clamp(0.0, width)),
+            right: across.map(|_| right.clamp(0.0, width)),
+            bottom: down.map(|_| bottom.clamp(0.0, height)),
+            width,
+            height,
+        });
+        Target::Page {
+            page,
+            top_pt,
+            other_edges,
+        }
+    }
 }
 
 /// One entry, and everything under it.
@@ -587,37 +664,18 @@ impl Walk<'_> {
         }
         let page = index as u32;
 
-        Target::Page {
+        self.place_destination(dest, page).unwrap_or(Target::Page {
             page,
-            top_pt: self.top_of(dest, page),
-        }
+            top_pt: None,
+            other_edges: None,
+        })
     }
 
-    /// The `/XYZ` y coordinate of a destination, flipped into device space.
-    ///
-    /// PDFium reports it in page space --- y upwards from the bottom-left ---
-    /// and every consumer downstream works from the page's top edge. Getting it
-    /// backwards does not look like a bug: it still scrolls to the right *page*,
-    /// just to the mirror image of the right place on it.
-    ///
-    /// It is the same conversion `text.rs` does for character boxes and it goes
-    /// through the same function, which is the point: a destination on a page
-    /// carrying `/Rotate 90` is reported in the page's own **unrotated** space
-    /// while `FPDF_GetPageSizeByIndexF` reports the **displayed** size --- so the
-    /// naive flip is wrong there in exactly the way it was wrong for character
-    /// boxes, and a second implementation of the turn would be a second place to
-    /// get it wrong.
-    ///
-    /// Note what that costs: for a quarter or three-quarter turn the display's
-    /// vertical axis is the page's *horizontal* one, so a destination that names
-    /// no x cannot be placed at all and this returns `None` --- the page's top,
-    /// which is what a destination with no coordinate means anyway.
-    fn top_of(&mut self, dest: FPDF_DEST, page: u32) -> Option<f32> {
+    fn place_destination(&mut self, dest: FPDF_DEST, page: u32) -> Option<Target> {
         let (mut has_x, mut has_y, mut has_zoom) = (0, 0, 0);
         let (mut x, mut y, mut zoom) = (0f32, 0f32, 0f32);
-
-        // SAFETY: six writable out-parameters, all live for the call.
-        let ok = unsafe {
+        // SAFETY: the destination is live and all six outputs are writable.
+        let xyz = unsafe {
             self.bindings.FPDFDest_GetLocationInPage(
                 dest,
                 &mut has_x,
@@ -628,85 +686,30 @@ impl Walk<'_> {
                 &mut zoom,
             )
         };
-        if ok == 0 {
-            // **`FPDFDest_GetLocationInPage` only answers for `/XYZ`.** PDFium
-            // implements it over `CPDF_Dest::GetXYZ`, which returns false for
-            // every other fit --- so a `/FitH top` destination, which names a
-            // vertical coordinate as plainly as `/XYZ` does, came back here with
-            // nothing and landed the reader at the top of the page instead of at
-            // the heading. It scrolls to the right *page*, which is why nothing
-            // caught it: `outline-simple.pdf` has `/XYZ` and `/Fit` entries and
-            // no `/FitH` one, so the gap was not in the corpus either.
-            //
-            // Found by `links-probe --mode agree`, which is the whole reason
-            // that mode exists: `links.rs` reads the destination array itself
-            // and disagreed. Neither module's own tests could have found it ---
-            // each was consistent with itself.
-            return self.top_from_view(dest, page);
-        }
-
-        let turns = self.turns_of(page);
-        if (turns % 2 == 1 && has_x == 0) || (turns % 2 == 0 && has_y == 0) {
-            return None;
-        }
-
-        self.display_top(page, turns, x, y)
-    }
-
-    /// The vertical coordinate of a fit that is not `/XYZ`.
-    ///
-    /// `FPDFDest_GetView` reports the fit type and the destination array's
-    /// elements *after* the fit name, so the index of the top here is two less
-    /// than its index in the array --- which is why this table looks different
-    /// from the one in `links.rs` while saying the same thing. §12.3.2.2:
-    /// `/FitH top` and `/FitBH top` name one number, `/FitR left bottom right
-    /// top` names four and the top is the last, and `/Fit`, `/FitB`, `/FitV` and
-    /// `/FitBV` name no vertical coordinate at all.
-    ///
-    /// A quarter turn returns `None` for the same reason the `/XYZ` path does:
-    /// the display's vertical axis is the page's horizontal one, and these fits
-    /// name no x to place it with.
-    fn top_from_view(&mut self, dest: FPDF_DEST, page: u32) -> Option<f32> {
-        let mut count: c_ulong = 0;
-        // Four, which is what the header specifies as the most a view can carry.
-        let mut params = [0f32; 4];
-
-        // SAFETY: `dest` is live, and the buffer is the four floats the API
-        // documents as the minimum. `count` is written before the params are
-        // read below.
-        let view = unsafe {
-            self.bindings
-                .FPDFDest_GetView(dest, &mut count, params.as_mut_ptr())
+        let bounds = if xyz != 0 {
+            Destination::point((has_x != 0).then_some(x), (has_y != 0).then_some(y))
+        } else {
+            let mut count = 0;
+            let mut params = [0f32; 4];
+            // SAFETY: the buffer has room for all four documented parameters.
+            let view = unsafe {
+                self.bindings
+                    .FPDFDest_GetView(dest, &mut count, params.as_mut_ptr())
+            };
+            match view {
+                view::FITH | view::FITBH if count >= 1 => Destination::point(None, Some(params[0])),
+                view::FITV | view::FITBV if count >= 1 => Destination::point(Some(params[0]), None),
+                view::FITR if count == 4 => Destination {
+                    x: Some([params[0], params[2]]),
+                    y: Some([params[1], params[3]]),
+                },
+                _ => return None,
+            }
         };
-
-        let index = match view {
-            view::FITH | view::FITBH => 0usize,
-            view::FITR => 3,
-            // `/XYZ` never reaches here --- the caller handled it --- and the
-            // remaining fits name no vertical coordinate.
-            _ => return None,
-        };
-        if index >= count as usize {
-            // A fit whose parameters the file did not write. Broken rather than
-            // zero: a missing coordinate read as 0 is the bottom of the page,
-            // which is a place the destination emphatically did not name.
+        if bounds.x.is_none() && bounds.y.is_none() {
             return None;
         }
-        let raw = params[index];
-        if !raw.is_finite() {
-            return None;
-        }
-
         let turns = self.turns_of(page);
-        if turns % 2 == 1 {
-            return None;
-        }
-        self.display_top(page, turns, 0.0, raw)
-    }
-
-    /// A PDF destination is absolute in page space. The displayed dimensions
-    /// and the transform start at the visible box's lower-left corner.
-    fn display_top(&mut self, page: u32, turns: u8, x: f32, y: f32) -> Option<f32> {
         let (width, height) = self.size_of(page)?;
         let origin = self
             ._borrow
@@ -714,12 +717,7 @@ impl Walk<'_> {
             .sheet(page, self.page_count as usize)
             .map(|[left, bottom, _, _]| (left, bottom))
             .or_else(|| self._borrow.page(page).ok().map(|page| page.origin_pt()))?;
-        let (x, y) = (
-            f64::from(x) - f64::from(origin.0),
-            f64::from(y) - f64::from(origin.1),
-        );
-        let placed = crate::text::to_device(turns, width, height, [x, y, x, y]);
-        Some(placed[1].clamp(0.0, height))
+        Some(bounds.place(page, turns, width, height, origin))
     }
 
     /// Quarter-turns a page is displayed rotated by, cached.
@@ -887,7 +885,11 @@ mod tests {
         let leaf = |page: u32, children: Vec<OutlineItem>| OutlineItem {
             title: String::new(),
             open: true,
-            target: Target::Page { page, top_pt: None },
+            target: Target::Page {
+                page,
+                top_pt: None,
+                other_edges: None,
+            },
             children,
         };
         let mut items = vec![
@@ -1088,9 +1090,29 @@ mod tests {
         /// Every *string* field of every variant, as the frontend receives it.
         fn fields(target: &Target) -> Vec<String> {
             match target {
-                // Numbers. A page index and an offset cannot be a URL.
-                Target::Page { page, top_pt } => {
-                    vec![page.to_string(), format!("{top_pt:?}")]
+                Target::Page {
+                    page,
+                    top_pt,
+                    other_edges,
+                } => {
+                    let mut fields = vec![page.to_string(), format!("{top_pt:?}")];
+                    if let Some(DestinationEdges {
+                        left,
+                        right,
+                        bottom,
+                        width,
+                        height,
+                    }) = other_edges
+                    {
+                        fields.extend([
+                            format!("{left:?}"),
+                            format!("{right:?}"),
+                            format!("{bottom:?}"),
+                            width.to_string(),
+                            height.to_string(),
+                        ]);
+                    }
+                    fields
                 }
                 // Unit variants carry nothing at all.
                 Target::Broken | Target::None => vec![],
@@ -1161,6 +1183,7 @@ mod tests {
         // And no target carries a whole address in any field.
         for target in [
             Target::Page {
+                other_edges: None,
                 page: 3,
                 top_pt: Some(1.0),
             },

@@ -52,8 +52,10 @@ describe("Sidebar keyboard activation", () => {
     navigated: number[],
     tabs: string[] = [],
     webbed: WebTarget[] = [],
+    destinationTop?: (page: number, top: number | null) => number | null,
   ): Sidebar {
     const bar = new Sidebar(dom.root as unknown as HTMLElement, {
+      ...(destinationTop ? { destinationTop } : {}),
       onNavigate: (page: number) => navigated.push(page),
       onWebLink: (target: WebTarget) => webbed.push(target),
       results: { onPick: () => {} },
@@ -236,6 +238,20 @@ describe("Sidebar keyboard activation", () => {
     expect(bar.elementFor("0.0")).toBeNull();
     bar.setOutline(nested(2));
     expect(bar.elementFor("0.0")).not.toBeNull();
+    bar.destroy();
+  });
+
+  it("updates the current chapter when a new crop changes its displayed offset", () => {
+    let crop = 0;
+    const bar = tree([], [], [], (_page, top) => top === null ? null : top - crop);
+    const doc = outline(1);
+    doc.items[0]!.target = { kind: "page", page: 0, top_pt: 300 };
+    bar.setOutline(doc);
+    bar.setPosition(0, 144, 0);
+    expect(bar.currentRow).toBe("");
+    crop = 150;
+    bar.setPosition(0, 144, 1);
+    expect(bar.currentRow).toBe("0");
     bar.destroy();
   });
 

@@ -14,14 +14,13 @@
  * is to have skipped a reply.
  */
 
-import { call } from "./ipc";
+import { call, physicalPageUnit } from "./ipc";
 import {
   PageMap,
   unedited,
   type MarkKind,
   type MarkView,
   type PageId,
-  type FilePage,
   type Discarded,
   type NoteEdited,
   type PageView,
@@ -357,12 +356,6 @@ export class Edits {
     );
   }
 
-  private async physicalUnit(doc: number, page: FilePage): Promise<number> {
-    const [unit] = await call("page_units", { doc, pages: [page] });
-    if (unit === undefined || !Number.isFinite(unit) || unit <= 0) throw new Error("the page has an invalid user unit");
-    return unit;
-  }
-
   /** A matching blank has the source page's physical size, including its current crop. */
   async insertMatchingPage(slot: number): Promise<EditState> {
     const page = this.pageMap.at(slot);
@@ -375,10 +368,11 @@ export class Edits {
       if (!source) throw new Error("The page is no longer available");
       const [geometry, unit] = await Promise.all([
         call("page_geometry", { ...source, crop: page.crop ?? null }),
-        this.physicalUnit(source.doc, source.page),
+        physicalPageUnit(source.doc, source.page),
       ]);
       size = [geometry.width_pt * unit, geometry.height_pt * unit];
     }
+    if (page.turns % 2 !== 0) size = [size[1], size[0]];
     const at = this.pageMap.slotOfId(page.id);
     return at === undefined ? this.current : this.insertPage(at, size);
   }
@@ -653,7 +647,7 @@ export class Edits {
     const slot = field && this.pageMap.slotOfId(field.page);
     const source = slot === undefined ? null : this.pageMap.addressOf(slot, this.doc);
     const hasDefault = props.default_value ?? field?.field?.default_value;
-    const unit = hasDefault && source ? await this.physicalUnit(source.doc, source.page) : 1;
+    const unit = hasDefault && source ? await physicalPageUnit(source.doc, source.page) : 1;
     return this.adopt(await call("annot_field_props", { doc: this.doc, mark, props, unit }));
   }
 

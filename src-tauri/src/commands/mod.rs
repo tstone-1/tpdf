@@ -102,3 +102,18 @@ pub(crate) fn answered<T: Send + 'static, E: Send + 'static + From<String>>(
         }
     }
 }
+
+/// Fetch one physical scale per requested source slot, preserving request order.
+fn reading_units(
+    service: &render::RenderService,
+    doc: u32,
+    slots: Vec<u32>,
+    doing: &str,
+) -> Result<Vec<f32>, String> {
+    let count = slots.len();
+    let units = answered(doing, |reply| service.page_units(doc, slots, reply))?;
+    if units.len() != count || units.iter().any(|u| !u.is_finite() || *u <= 0.0) {
+        return Err(said!("the page has an invalid user unit"));
+    }
+    Ok(units)
+}

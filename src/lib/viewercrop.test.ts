@@ -349,6 +349,31 @@ describe("a cropped page", () => {
     viewer.destroy();
   });
 
+  it("lands a file destination against the current crop and the displayed rectangle edge", async () => {
+    const viewer = build();
+    const edges = { left: 170, right: 220, bottom: 330, width: 600, height: 800 };
+    await settle();
+    viewer.goToFileDestination(0, 300, edges);
+    expect(viewer.position.top).toBeCloseTo(294);
+    viewer.setPages(pages(true));
+    await settle();
+    viewer.goToFileDestination(0, 300, edges);
+    expect(viewer.position.top).toBeCloseTo(144);
+
+    // The rectangle in crop space is [70,150,120,180] on a 400 by 500 page.
+    for (const [turns, top] of [[1, 70], [2, 320], [3, 280]] as const) {
+      viewer.setPageTurns(0, turns);
+      expect(viewer.fileDestinationTop(0, 300, edges)).toBe(top);
+      viewer.goToFileDestination(0, 300, edges);
+      const actual = viewer.offset;
+      viewer.goToPage(0);
+      expect((actual - viewer.offset) / viewer.currentZoom).toBeCloseTo(top - 6);
+    }
+    // No x coordinate to turn into a vertical position.
+    expect(viewer.fileDestinationTop(0, 300)).toBeNull();
+    viewer.destroy();
+  });
+
   it("scrolls a form field to where it is on the cropped page, as a region is", async () => {
     // A field's rectangle is the file's displayed one. Its raw top is the
     // crop's own top further down than the field is on the cropped page.

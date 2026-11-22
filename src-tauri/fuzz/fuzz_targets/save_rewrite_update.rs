@@ -323,6 +323,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
             .marks
             .into_iter()
             .map(|mark| PlannedMark {
+                text_size: None,
                 kind: kind_of(mark.kind),
                 image: mark.image.map(|image| std::sync::Arc::new(image_of(image))),
                 at: u32::from(mark.at),

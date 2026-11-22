@@ -2015,7 +2015,8 @@ document.
 
 **A smaller copy.** `tpdf compress report.pdf -o smaller.pdf` writes a copy that is
 smaller and looks exactly the same: streams stored loosely are compressed and the file is
-written with object streams. On ordinary documents that saves a few percent, because
+normally written with object streams. Files declaring PDF/A-1 keep a classic cross-reference
+table and their original PDF version. On ordinary documents compression saves a few percent, because
 pictures are most of a PDF's size and this does not touch them.
 
 `--pictures screen`, `balanced` or `print` targets 110, 150 or 300 pixels an inch.

@@ -33,6 +33,11 @@ have the binary.)
 
 ### Fixed
 
+- Compression preserves shared image resolution across inherited resources and print alternates, keeps classic cross-reference tables for PDF/A-1, and shows thin image changes in the preview. Supported single-filter predictor arrays now compress like their dictionary equivalents.
+- Text boxes, visible CLI signatures, OCR, hidden-text reports and the ruler honor the physical scale of each page. Inserting a matching blank includes pending rotations.
+- Stopping OCR during verification preserves the destination. OCR names oversized pages in mixed results, ignores repeated observations when checking for existing text, and can recover searchable text when native extraction fails.
+- Redaction previews include selected header and footer text. Bookmarks and links follow rotations and pending crops, sideways text keeps its reading order, and Extract omits ambiguous printed-label hints.
+
 - Queued page edits keep their original page and destination across a reorder. Completing one redaction drag preserves the next selection.
 - Saving keeps the same page visible in the second view and clears cached mark text for the replaced document. Returning to an earlier tab just before quitting keeps it first in the recent list.
 - Text reflow accounts for mitered stroke tips and ignores unpainted movetos. A clip that hides all of a run's ink also removes its edit target.

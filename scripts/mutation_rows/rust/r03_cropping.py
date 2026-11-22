@@ -195,8 +195,8 @@ ROWS += [
         # link lands at the page's top and looks like it works.
         "links: read every fit's top from XYZ's position",
         "src/links.rs",
-        '        b"XYZ" => 3,\n        b"FitH" | b"FitBH" => 2,\n        b"FitR" => 5,',
-        '        b"XYZ" | b"FitH" | b"FitBH" | b"FitR" => 3,',
+        '        Some(b"FitH" | b"FitBH") => Destination::point(None, number(2)),',
+        '        Some(b"FitH" | b"FitBH") => Destination::point(None, number(3)),',
         "each_fit_takes_its_top_from_its_own_position",
     ),
     Mutation(
@@ -205,8 +205,8 @@ ROWS += [
         # which is every fixture here but the one written for it.
         "links: flip the offset against the wrong page",
         "src/links.rs",
-        "    let shown = *geometry.get(page as usize)?;",
-        "    let shown = *geometry.first()?;",
+        "    let shown = geometry[page as usize];",
+        "    let shown = geometry[0];",
         "the_offset_is_flipped_against_the_page_it_lands_on",
     ),
     Mutation(
@@ -1147,8 +1147,8 @@ ROWS += [
         # Wrap to the page's width again, which is what shipped.
         "turned marks: a text box wraps to the page's width",
         "src/save/marks.rs",
-        "        let width = seen.width - textbox::INSET * 2.0;",
-        "        let width = (quad[2] - quad[0]) - textbox::INSET * 2.0;",
+        "        let width = seen.width - inset * 2.0;",
+        "        let width = (quad[2] - quad[0]) - inset * 2.0;",
         "a_text_box_wraps_to_the_width_the_reader_dragged_however_the_page_is_turned",
     ),
     Mutation(

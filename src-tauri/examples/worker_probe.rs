@@ -126,6 +126,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         compress: Default::default(),
         new_fields: Vec::new(),
         marks: vec![PlannedMark {
+            text_size: None,
             kind: MarkKind::Highlight,
             stamp: None,
             field: None,

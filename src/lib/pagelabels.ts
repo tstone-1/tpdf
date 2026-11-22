@@ -143,6 +143,9 @@ export function positionsFor(
   const parts = raw.split(",").map((part) => part.trim());
   let candidates = [""];
   for (const part of parts) {
+    // A repeated literal still names multiple pages when it can also be
+    // split as a range. Discarding the literal would make that range appear unique.
+    if ((slotsOf.get(part)?.length ?? 0) > 1) return null;
     const choices = new Set<string>();
     const whole = one(part);
     if (whole !== null) choices.add(whole);

@@ -167,6 +167,20 @@ export class Measurements {
   private lines: MeasureLine[] = [];
   private readonly scales = new Map<PageId, PageScale>();
   private nextId = 1;
+  private readonly units = new Map<PageId, number | null>();
+  private readonly loading = new Map<PageId, Promise<void>>();
+
+  /** Read the physical scale once per measured page, including across its views. */
+  prepareUnit(page: PageId, load: () => Promise<number>): Promise<void> {
+    if (this.units.get(page) != null) return Promise.resolve();
+    const pending = this.loading.get(page);
+    if (pending) return pending;
+    this.units.set(page, null);
+    const ready = load().then(unit => { this.units.set(page, unit); })
+      .finally(() => this.loading.delete(page));
+    this.loading.set(page, ready);
+    return ready;
+  }
 
   /** How many lines there are. */
   get count(): number {
@@ -227,9 +241,9 @@ export class Measurements {
    */
   lengthLabel(page: PageId, points: number, locale: UiLocale = UI_LOCALE): string {
     const scale = this.scales.get(page);
-    return scale
-      ? formatLength(points * scale.unitsPerPoint, scale.unit, scale.decimals, locale)
-      : formatLength(points, "pt", 1, locale);
+    if (scale) return formatLength(points * scale.unitsPerPoint, scale.unit, scale.decimals, locale);
+    const unit = this.units.get(page);
+    return unit === null ? "" : formatLength(points * (unit ?? 1), "pt", 1, locale);
   }
 
   /** What a line reads, with the reference named as the scale. */

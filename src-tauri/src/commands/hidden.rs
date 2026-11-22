@@ -192,18 +192,25 @@ impl Pages for Held<'_> {
 /// of each page and `progress` told which one is next.
 fn walk<P: Pages<Error = String>>(
     pages: &mut P,
-    count: u32,
+    units: &[f32],
     cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(Progress),
 ) -> Result<Survey, String> {
-    let selection: Vec<u32> = (1..=count).collect();
-    survey::survey(pages, &selection, &mut |_, page| {
+    let count = units.len() as u32;
+    let selection: Vec<_> = (1..=count).zip(units.iter().copied()).collect();
+    let mut survey = survey::survey(pages, &selection, &mut |_, page| {
         if cancelled() {
             return Err(cancelled_reply());
         }
         progress(Progress { page, of: count });
         Ok(())
-    })
+    })?;
+    // The CLI reports physical points. The viewer rings the result in native display coordinates.
+    for passage in &mut survey.found {
+        let unit = units[(passage.page - 1) as usize];
+        passage.rect = passage.rect.map(|edge| edge / unit);
+    }
+    Ok(survey)
 }
 
 /// The window's check, without the window: every page of `doc` as the render
@@ -223,7 +230,16 @@ pub fn hidden_text_asked(
     cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(Progress),
 ) -> Result<Survey, String> {
-    walk(&mut Held { service, doc }, pages, cancelled, progress)
+    if cancelled() {
+        return Err(cancelled_reply());
+    }
+    let units = super::reading_units(
+        service,
+        doc,
+        (0..pages).collect(),
+        &said!("comparing text with the pages"),
+    )?;
+    walk(&mut Held { service, doc }, &units, cancelled, progress)
 }
 
 /// Lists the text of the open document that its pages do not show.
@@ -380,8 +396,10 @@ mod tests {
     fn every_page_is_walked_and_reported_before_it_is_read() {
         let mut pages = Blank::default();
         let seen = std::cell::RefCell::new(Vec::new());
-        let all = walk(&mut pages, 3, &|| false, &|at| seen.borrow_mut().push(at))
-            .expect("the walk ends");
+        let all = walk(&mut pages, &[1.0; 3], &|| false, &|at| {
+            seen.borrow_mut().push(at)
+        })
+        .expect("the walk ends");
         assert_eq!(pages.0, [0, 1, 2]);
         assert_eq!(all.without_text, [1, 2, 3]);
         assert_eq!(
@@ -395,14 +413,16 @@ mod tests {
         // Asked to stop from the start: no page is read or reported.
         let mut pages = Blank::default();
         let seen = std::cell::Cell::new(0);
-        let stopped = walk(&mut pages, 3, &|| true, &|_| seen.set(seen.get() + 1));
+        let stopped = walk(&mut pages, &[1.0; 3], &|| true, &|_| {
+            seen.set(seen.get() + 1)
+        });
         assert_eq!(stopped, Err(CANCELLED.to_string()));
         assert_eq!((pages.0.len(), seen.get()), (0, 0));
 
         // Asked to stop while the second page is being read.
         let mut pages = Blank::default();
         let seen = std::cell::Cell::new(0);
-        let stopped = walk(&mut pages, 3, &|| seen.get() == 2, &|_| {
+        let stopped = walk(&mut pages, &[1.0; 3], &|| seen.get() == 2, &|_| {
             seen.set(seen.get() + 1);
         });
         assert_eq!(stopped, Err(CANCELLED.to_string()));

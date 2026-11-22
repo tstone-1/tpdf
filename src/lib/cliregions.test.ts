@@ -22,6 +22,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import reading from "../../src-tauri/testdata/cli/reading.json";
 import regions from "../../src-tauri/testdata/cli/regions.json";
 import { MAX_MATCHES_TO_MARK, matchHalves, type Match } from "./search";
 import { MIN_REDACTION_SIDE, areasFrom } from "./selection";
@@ -49,7 +50,11 @@ function narrowed(areas: readonly (readonly number[])[]): number[][] {
 
 describe("the command-line tool's regions", () => {
   it("asks about every reading case four ways, and some of them mark something", () => {
-    expect(runs.length).toBe(19 * 4);
+    // Split-line cases exercise reading order. Region selection uses character indices.
+    const names = reading.cases.filter(({ name }) => !name.startsWith("split-line"))
+      .flatMap(({ name }) => Array<string>(4).fill(name));
+    expect(names.length).toBeGreaterThan(0);
+    expect(runs.map(({ name }) => name)).toEqual(names);
     expect(runs.filter((c) => c.areas.length > 0).length).toBeGreaterThan(30);
     expect(runs.some((c) => c.to === null)).toBe(true);
     expect(rawAreas.length).toBe(6);

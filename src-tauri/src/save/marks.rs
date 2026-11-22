@@ -262,6 +262,12 @@ pub(super) fn write_marks(
         {
             return Err(said!("Invalid signature or picture raster in save plan"));
         }
+        if mark
+            .text_size
+            .is_some_and(|size| !size.is_finite() || size <= 0.0)
+        {
+            return Err(said!("Invalid text size in save plan"));
+        }
         let MarkSite {
             page,
             shown,
@@ -625,7 +631,7 @@ fn mark_dictionary(
             "DA",
             Object::string_literal(format!(
                 "/{TEXT_FONT} {size} Tf {r} {g} {b} rg",
-                size = textbox::SIZE
+                size = mark.text_size.unwrap_or(textbox::SIZE)
             )),
         );
     }
@@ -1598,7 +1604,7 @@ fn appearance_stream(
         Paint::Wash => draw_wash(&mut content, quads),
         Paint::Line => draw_line(&mut content, quads, mark.kind, turns),
         Paint::Outline => draw_outline(&mut content, quads),
-        Paint::Text => draw_text(&mut content, quads, &mark.note, turns),
+        Paint::Text => draw_text(&mut content, quads, mark, turns),
         Paint::Stamp => draw_stamp(&mut content, quads, mark.stamp, turns),
         Paint::Image => {
             if let Some(image) = &mark.image {
@@ -1688,28 +1694,28 @@ fn draw_outline(out: &mut String, quads: &[[f64; 4]]) {
 /// stream disagree with what the overlay shows. The rule is
 /// `viewer.ts`'s exactly --- a line is drawn while its baseline is still
 /// inside the box --- so the two renderers stop at the same line.
-fn draw_text(out: &mut String, quads: &[[f64; 4]], note: &str, turns: u8) {
+fn draw_text(out: &mut String, quads: &[[f64; 4]], mark: &PlannedMark, turns: u8) {
+    let size = mark.text_size.unwrap_or(textbox::SIZE);
+    let native_per_point = size / textbox::SIZE;
+    let inset = textbox::INSET * native_per_point;
     for quad in quads {
         let seen = Upright::of(turns, *quad);
-        let width = seen.width - textbox::INSET * 2.0;
-        let lines = textbox::wrap(note, textbox::SIZE, width.max(1.0));
+        let width = seen.width - inset * 2.0;
+        let lines = textbox::wrap(&mark.note, size, width.max(native_per_point));
         if lines.is_empty() {
             continue;
         }
-        let leading = textbox::SIZE * textbox::LEADING;
-        out.push_str(&format!(
-            "BT /{TEXT_FONT} {size} Tf\n",
-            size = textbox::SIZE
-        ));
+        let leading = size * textbox::LEADING;
+        out.push_str(&format!("BT /{TEXT_FONT} {size} Tf\n"));
         for (index, line) in lines.iter().enumerate() {
             // The baseline sits one ascent below the top inset, not at
             // it: a line placed *at* the top edge hangs its whole body
             // above the box.
-            let down = textbox::INSET + textbox::SIZE + leading * (index as f64);
+            let down = inset + size + leading * (index as f64);
             if down > seen.height {
                 break;
             }
-            out.push_str(&format!("{}\n", seen.text_matrix(textbox::INSET, down)));
+            out.push_str(&format!("{}\n", seen.text_matrix(inset, down)));
             out.push_str(&format!("<{}> Tj\n", winansi_hex(line)));
         }
         out.push_str("ET\n");

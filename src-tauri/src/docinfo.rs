@@ -1056,7 +1056,7 @@ fn permissions(revision: i64, p: i64) -> Vec<Permission> {
 /// A stream that will not decode is reported as an unread packet rather than as
 /// an absent one, which is the same distinction [`crate::xmp::Xmp::unread`]
 /// exists for one level down.
-fn read_xmp(document: &Document, catalog: &Dictionary) -> Option<crate::xmp::Xmp> {
+pub(crate) fn read_xmp(document: &Document, catalog: &Dictionary) -> Option<crate::xmp::Xmp> {
     let object = catalog.get(b"Metadata").ok()?;
     let stream = resolve(document, object).as_stream().ok()?;
     // `decompressed_content_with_limit` fails on a stream with no filter, which

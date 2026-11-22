@@ -409,6 +409,7 @@ fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
         compress: Default::default(),
         new_fields: Vec::new(),
         marks: vec![PlannedMark {
+            text_size: None,
             kind: MarkKind::Highlight,
             stamp: None,
             field: None,

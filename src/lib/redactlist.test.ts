@@ -887,6 +887,30 @@ describe("RedactList", () => {
 });
 
 describe("the redaction walk, when the page order changes while it waits", () => {
+  it("describes a visible footer marked as an artifact and distinguishes an empty region", async () => {
+    const pages = unedited(1);
+    const regions = [
+      region({ id: 7, page: pageId(1), area: [10, 70, 18, 80] }),
+      region({ id: 8, page: pageId(1), area: [40, 30, 50, 40] }),
+    ];
+    const words = new Map<number, string | null>();
+    await fillRedactionRegions({
+      current: () => true,
+      regions: () => regions,
+      slotOf: (page) => pages.slotOfId(page),
+      sourceOf: (slot) => pages.sourceOf(slot),
+      text: async () => ({
+        width_pt: 100, height_pt: 100, extract_ms: 0, quarter_turns: 0,
+        codes: [65, 90], boxes: [10, 10, 18, 20, 10, 70, 18, 80],
+        runs: [{ tag: "P", path: ["P"], start: 0, end: 1 }], artifacts: [[1, 2]],
+      }),
+      plans: async () => [],
+      words, planned: new Map(), answered: () => {}, failed: (error) => { throw error; },
+    });
+    expect(rowLineFor(words.get(7)).text).toBe("Z");
+    expect(rowLineFor(words.get(8)).text).toBe("No text in this region");
+  });
+
   /** A plan whose only field that matters is which file page it was asked for. */
   function planFor(page: FilePage): RegionPlan {
     return { taking: `file page ${page}` } as unknown as RegionPlan;

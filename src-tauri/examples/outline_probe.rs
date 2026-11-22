@@ -170,7 +170,7 @@ fn flatten(items: &[OutlineItem], depth: usize, out: &mut Vec<Flat>) {
 
 fn describe(target: &Target) -> String {
     match target {
-        Target::Page { page, top_pt } => match top_pt {
+        Target::Page { page, top_pt, .. } => match top_pt {
             Some(top) => format!("page {} at {top:.0}pt", page + 1),
             None => format!("page {}", page + 1),
         },
@@ -451,9 +451,12 @@ fn check_entries(
         );
 
         let target_ok = match (&got.target, page) {
-            (Target::Page { page: p, top_pt }, Some(want)) => {
-                *p == want && top_pt.is_some() == has_top
-            }
+            (
+                Target::Page {
+                    page: p, top_pt, ..
+                },
+                Some(want),
+            ) => *p == want && top_pt.is_some() == has_top,
             (Target::None, None) => true,
             _ => false,
         };

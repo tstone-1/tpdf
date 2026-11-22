@@ -584,12 +584,12 @@ pub fn check(visible: &Visible) -> Result<(), String> {
 ///
 /// A coordinate is not a finite number, the rectangle is not on its page, or a
 /// side is shorter than [`MIN_SIDE`].
-pub fn place(visible: &Visible, shown: DisplayedPage) -> Result<[f64; 4], String> {
+pub fn place(visible: &Visible, shown: DisplayedPage, unit: f64) -> Result<[f64; 4], String> {
     let [left, top, right, bottom] = visible.rect;
     let (width, height) = (f64::from(shown.width), f64::from(shown.height));
     // Half a point of slack, for a drag clamped to the page in display pixels
     // and converted to points with a rounding either way.
-    let slack = 0.5;
+    let slack = 0.5 / unit;
     let on_page = visible.rect.iter().all(|v| v.is_finite())
         && f64::from(left) >= -slack
         && f64::from(top) >= -slack
@@ -600,7 +600,7 @@ pub fn place(visible: &Visible, shown: DisplayedPage) -> Result<[f64; 4], String
             "the rectangle chosen for the signature is not on its page"
         ));
     }
-    if f64::from(right - left) < MIN_SIDE || f64::from(bottom - top) < MIN_SIDE {
+    if f64::from(right - left) * unit < MIN_SIDE || f64::from(bottom - top) * unit < MIN_SIDE {
         return Err(said!(
             "the rectangle chosen for the signature is smaller than {MIN_SIDE} points a side, \
              too small to read --- sign again and drag a larger one"

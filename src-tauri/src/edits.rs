@@ -2747,6 +2747,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
             working.marks_on(id).iter().map(move |mark| {
                 let body = model.mark(*mark).expect("a live mark has a body");
                 PlannedMark {
+                    text_size: None,
                     kind: body.kind,
                     at,
                     // `snapshot`'s reason, and the consequence here is the
@@ -3282,6 +3283,10 @@ pub struct PlannedRedaction {
 /// the page tree has. A `MarkView`'s page id means nothing to `lopdf`.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct PlannedMark {
+    /// Native font size for a physically sized CLI text box. Window marks and older plans
+    /// use the same native metrics as their on-screen editor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<f64>,
     pub kind: MarkKind,
     /// Which page of the **plan** this goes on, zero-based --- a position in
     /// [`Plan::pages`], not a page of the file.

@@ -281,6 +281,7 @@ export default {
   "this document has no page to put a signature on": "dieses Dokument hat keine Seite, auf die eine Signatur kommen könnte",
   "the field is {width} by {height} points, smaller than the {least} a side a visible signature is drawn in --- sign it without an appearance":
     "das Feld ist {width} mal {height} Punkt groß, kleiner als die {least} Punkt Seitenlänge, in denen eine sichtbare Signatur gezeichnet wird - signiere es ohne Erscheinungsbild",
+  "the signature page has an invalid physical scale": "Die Seite für die Signatur hat einen ungültigen Maßstab.",
   "the page chosen for the signature is not in this document":
     "die für die Signatur gewählte Seite ist nicht in diesem Dokument",
   "this document's catalog is not an object of its own": "der Katalog dieses Dokuments ist kein eigenes Objekt",

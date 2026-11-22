@@ -2,6 +2,7 @@
 //! text that is absent or there twice ends the run before the store is asked.
 use super::sign_image::Counting;
 use super::{certificate, now, scratch, signs, strings, Report, SUBJECT};
+use lopdf::Document;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -9,7 +10,7 @@ use std::rc::Rc;
 /// twice on one line, at x 60 and x 200, all in 12-point Helvetica. PDF space:
 /// the baselines are 100 and 200 points down from the top.
 fn worded_pdf() -> Vec<u8> {
-    use lopdf::{dictionary, Document, Object, Stream};
+    use lopdf::{dictionary, Object, Stream};
     let mut doc = Document::with_version("1.7");
     let pages = doc.new_object_id();
     let font = doc.add_object(dictionary! {
@@ -148,6 +149,85 @@ pub fn places_beside_text(report: &mut Report) {
             &format!("--anchor-match {nth}: the rectangle starts at that match"),
             code == 0 && rect.len() == 4 && (rect[0] - x).abs() < 1.5 && top_of(200.0, rect[1]),
             &format!("exit {code}, {rect:?}: {stderr}"),
+        );
+    }
+
+    // The two-inch anchor offset and the widget rectangle use physical points even
+    // when the page dictionary uses two points per native unit.
+    let scaled = dir.join("scaled.pdf");
+    let mut doc = Document::load(&worded).expect("worded page");
+    let page = doc.get_pages()[&1];
+    doc.get_dictionary_mut(page).unwrap().set("UserUnit", 2);
+    doc.save(&scaled).unwrap();
+    for (name, placement) in [
+        ("explicit", vec!["--rect", "600,80,120,40"]),
+        (
+            "anchored",
+            vec![
+                "--anchor",
+                "Signature:",
+                "--size",
+                "120,40",
+                "--offset",
+                "144,10",
+            ],
+        ),
+    ] {
+        let out = dir.join(format!("{name}-scaled.pdf"));
+        let mut args = strings(&[
+            "sign",
+            &s(&scaled),
+            "-o",
+            &s(&out),
+            "--identity",
+            SUBJECT,
+            "--visible",
+            "--json",
+        ]);
+        args.extend(strings(&placement));
+        let (code, stdout, stderr) = signs(&args, &store(), now);
+        let physical = rect_of(&stdout);
+        let saved = Document::load(&out).ok().and_then(|doc| {
+            let annots = doc
+                .get_dictionary(doc.get_pages()[&1])
+                .ok()?
+                .get(b"Annots")
+                .ok()?;
+            let annot = doc.dereference(annots).ok()?.1.as_array().ok()?.last()?;
+            let widget = doc.dereference(annot).ok()?.1.as_dict().ok()?;
+            let numbers = |value: &lopdf::Object| {
+                value
+                    .as_array()
+                    .ok()?
+                    .iter()
+                    .map(|n| n.as_float().ok().map(f64::from))
+                    .collect::<Option<Vec<_>>>()
+            };
+            let rect = numbers(widget.get(b"Rect").ok()?)?;
+            let ap = widget.get(b"AP").ok()?.as_dict().ok()?.get(b"N").ok()?;
+            let stream = doc.dereference(ap).ok()?.1.as_stream().ok()?;
+            let bbox = numbers(stream.dict.get(b"BBox").ok()?)?;
+            Some((rect, bbox))
+        });
+        report.check(
+            &format!("scaled {name} signature at the requested physical location"),
+            code == 0
+                && saved.as_ref().is_some_and(|(r, bbox)| {
+                    *bbox == [0., 0., 120., 40.]
+                        && r.len() == 4
+                        && physical.len() == 4
+                        && (physical[0] - r[0] * 2.).abs() < 0.01
+                        && (physical[1] - (300. - r[3]) * 2.).abs() < 0.01
+                        && (r[2] - r[0] - 60.).abs() < 0.01
+                        && (r[3] - r[1] - 20.).abs() < 0.01
+                        && if name == "explicit" {
+                            physical[..2] == [600., 80.]
+                        } else {
+                            (physical[0] - (unmoved[0] * 2. + 144.)).abs() < 0.01
+                                && (physical[1] - (unmoved[1] * 2. + 10.)).abs() < 0.01
+                        }
+                }),
+            &format!("{saved:?}, {physical:?}, {stderr}"),
         );
     }
 

@@ -9,13 +9,13 @@
 use std::path::Path;
 use std::process::Command;
 
-use lopdf::{dictionary, Dictionary, Document, Object, Stream};
+use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 
 use super::{fixture, scratch, tool, Report};
 
 /// One page: a line of text, and a 600 by 600 photograph two inches square,
 /// stored without a filter so the file starts large.
-fn photo_pdf() -> Vec<u8> {
+fn photo_document() -> (Document, ObjectId) {
     let mut state = 0x2545_f491u32;
     let pixels: Vec<u8> = (0..600 * 600 * 3)
         .map(|_| {
@@ -61,9 +61,7 @@ fn photo_pdf() -> Vec<u8> {
     );
     let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
     doc.trailer.set("Root", catalog);
-    let mut bytes = Vec::new();
-    doc.save_to(&mut bytes).expect("serialises");
-    bytes
+    (doc, picture)
 }
 
 /// The picture in `path`: its width in pixels and its filter.
@@ -102,11 +100,104 @@ fn parsed(json: &str) -> serde_json::Value {
     serde_json::from_str(json).unwrap_or_default()
 }
 
+/// The same photo is a one-inch thumbnail and the source of a five-inch print.
+fn shared_photo_sizes(report: &mut Report, dir: &Path, doc: &Document, photo: ObjectId) {
+    for (kind, preset) in [("inherited", "screen"), ("alternate", "print")] {
+        let mut doc = doc.clone();
+        let page = doc.get_pages()[&1];
+        let pages = doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Parent")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let thumbnail = doc.add_object(Stream::new(
+            dictionary! {},
+            b"q 72 0 0 72 0 0 cm /Im Do Q".to_vec(),
+        ));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", thumbnail);
+        let full = doc.add_object(Stream::new(
+            dictionary! {},
+            b"q 360 0 0 360 0 0 cm /Full Do Q".to_vec(),
+        ));
+        let full_image = if kind == "alternate" {
+            let base = Stream::new(
+                dictionary! {
+                    "Type" => "XObject", "Subtype" => "Image", "Width" => 1, "Height" => 1,
+                    "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8,
+                    "Alternates" => vec![Object::Dictionary(dictionary! {
+                        "Image" => photo, "DefaultForPrinting" => true
+                    })],
+                },
+                vec![123],
+            );
+            doc.add_object(base)
+        } else {
+            photo
+        };
+        let resources = dictionary! { "XObject" => dictionary! { "Full" => full_image } };
+        let mut second = dictionary! {
+            "Type" => "Page", "Parent" => pages, "Contents" => full,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        };
+        if kind == "inherited" {
+            doc.get_dictionary_mut(pages)
+                .unwrap()
+                .set("Resources", resources);
+        } else {
+            second.set("Resources", resources);
+        }
+        let second = doc.add_object(second);
+        let tree = doc.get_dictionary_mut(pages).unwrap();
+        tree.set(
+            "Kids",
+            vec![Object::Reference(page), Object::Reference(second)],
+        );
+        tree.set("Count", 2);
+        let input = dir.join(format!("{kind}.pdf"));
+        let output = dir.join(format!("{kind}-smaller.pdf"));
+        doc.save(&input).unwrap();
+        let (code, _, stderr) = tool(
+            &[
+                "compress",
+                input.to_str().unwrap(),
+                "-o",
+                output.to_str().unwrap(),
+                "--pictures",
+                preset,
+            ],
+            &[],
+        );
+        let width = Document::load(&output).ok().and_then(|written| {
+            written
+                .get_object(photo)
+                .ok()?
+                .as_stream()
+                .ok()?
+                .dict
+                .get(b"Width")
+                .ok()?
+                .as_i64()
+                .ok()
+        });
+        report.check(
+            &format!("the five-inch {kind} image keeps its full resolution"),
+            code == 0 && width == Some(600),
+            &format!("width {width:?}, exit {code}: {stderr}"),
+        );
+    }
+}
+
 pub(super) fn writes_a_smaller_copy(report: &mut Report) {
     let dir = scratch("compress");
     let at = |name: &str| dir.join(name).display().to_string();
     let source = at("photo.pdf");
-    std::fs::write(&source, photo_pdf()).expect("the input");
+    let (mut doc, photo) = photo_document();
+    doc.save(&source).expect("the input");
+    shared_photo_sizes(report, &dir, &doc, photo);
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;

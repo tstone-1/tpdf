@@ -623,6 +623,13 @@ fn samples() -> BTreeMap<&'static str, String> {
                     target: outline::Target::Page {
                         page: 2,
                         top_pt: Some(700.0),
+                        other_edges: Some(outline::DestinationEdges {
+                            left: Some(10.0),
+                            right: Some(80.0),
+                            bottom: Some(730.0),
+                            width: 612.0,
+                            height: 792.0,
+                        }),
                     },
                 },
                 links::Link {
@@ -683,6 +690,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 title: "Chapter one".into(),
                 open: true,
                 target: outline::Target::Page {
+                    other_edges: None,
                     page: 0,
                     top_pt: None,
                 },

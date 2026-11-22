@@ -3963,6 +3963,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         compress: Default::default(),
         new_fields: Vec::new(),
         marks: vec![PlannedMark {
+            text_size: None,
             kind,
             // The biconditional the model enforces, restated here because
             // this builds a plan directly: a stamp with no name draws an
@@ -4990,6 +4991,7 @@ fn a_mark_on_a_page_tpdf_made_is_written_onto_that_page() {
         crop: None,
     });
     plan.marks = vec![PlannedMark {
+        text_size: None,
         kind: MarkKind::Highlight,
         stamp: None,
         field: None,
@@ -5146,6 +5148,7 @@ fn a_reply_is_written_as_one_and_reads_back_as_one() {
 
     let mut plan = plan_of(&[0, 0]);
     plan.marks = vec![PlannedMark {
+        text_size: None,
         kind: MarkKind::Note,
         at: 1,
         quads: vec![crate::docmodel::Quad {
@@ -5230,6 +5233,7 @@ fn a_comment_that_answers_nothing_is_threaded_under_nobody() {
 
     let mut plan = plan_of(&[0, 0]);
     plan.marks = vec![PlannedMark {
+        text_size: None,
         kind: MarkKind::Note,
         at: 1,
         quads: vec![crate::docmodel::Quad {
@@ -5282,6 +5286,7 @@ fn a_reply_naming_something_that_is_not_an_annotation_is_refused_on_both_paths()
         .1;
 
     let reply_naming = |object: lopdf::ObjectId| PlannedMark {
+        text_size: None,
         kind: MarkKind::Note,
         at: 1,
         quads: vec![crate::docmodel::Quad {
@@ -5428,6 +5433,7 @@ fn appendable_with(
     };
     let mut plan = plan_opened_as(&vec![0u8; count], &at);
     plan.marks = vec![PlannedMark {
+        text_size: None,
         kind: MarkKind::Highlight,
         stamp: None,
         field: None,
@@ -6603,6 +6609,35 @@ fn a_checked_copy_is_shown_the_staged_file_before_it_has_its_name() {
     assert_ne!(staged, out, "and not under the reader's name");
     assert!(!named, "which does not exist until the check has passed");
     assert_eq!(std::fs::read(&out).expect("published"), b"SYNTHETIC OUTPUT");
+    assert!(leftovers_beside(&out).is_empty());
+}
+
+#[test]
+fn cancellation_after_staged_validation_preserves_the_old_destination() {
+    let scratch = Scratch::new("cancel-before-publish");
+    let (source, plan) = staging_subject(&scratch, "source.pdf").unwrap();
+    let out = scratch.join("copy.pdf");
+    std::fs::write(&out, b"previous output").unwrap();
+    let writer = FakeWriter::writing(Ok(b"new output".to_vec()));
+    let checked = std::cell::Cell::new(false);
+    let result = write_checked_copy_until(
+        &source,
+        &plan,
+        &out,
+        None,
+        &writer,
+        &|staged| {
+            assert_eq!(std::fs::read(staged).unwrap(), b"new output");
+            checked.set(true);
+            Ok(())
+        },
+        &|| {
+            assert!(checked.get());
+            Err(Refusal::from("stopped"))
+        },
+    );
+    assert_eq!(result.unwrap_err().message, "stopped");
+    assert_eq!(std::fs::read(&out).unwrap(), b"previous output");
     assert!(leftovers_beside(&out).is_empty());
 }
 
@@ -8251,6 +8286,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         compress: Default::default(),
         new_fields: Vec::new(),
         marks: vec![PlannedMark {
+            text_size: None,
             kind: MarkKind::Highlight,
             stamp: None,
             field: None,
@@ -8316,6 +8352,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         compress: Default::default(),
         new_fields: Vec::new(),
         marks: vec![PlannedMark {
+            text_size: None,
             kind: MarkKind::Highlight,
             stamp: None,
             field: None,
@@ -11196,6 +11233,7 @@ fn appearance_over(source_bytes: Vec<u8>, plan: &Plan, scratch: &Scratch) -> Str
 fn one_mark_over(pages: usize, kind: MarkKind, quad: crate::docmodel::Quad) -> Plan {
     let mut plan = plan_of(&vec![0u8; pages]);
     plan.marks.push(PlannedMark {
+        text_size: None,
         kind,
         stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
         field: None,
