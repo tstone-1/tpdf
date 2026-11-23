@@ -1884,10 +1884,10 @@ fn coded_pdf(payload: &str, how: Coded) -> (Vec<u8>, [f32; 4]) {
     let (left, bottom) = (300.0_f32, 400.0_f32);
     #[allow(clippy::cast_precision_loss)]
     let side = matrix.getHeight() as f32 * module;
-    // Keep a smaller invoice label as the OCR control. Windows OCR read
-    // "Reference" in isolation, but missed "seven" at the payee's font size.
+    // The OCR control must work with both the short payee region and the
+    // tall QR region. Windows read a control from this label in both images.
     let payee = "BT /F1 12 Tf 72 700 Td (Pay to Jane Doe) Tj ET\n\
-                 BT /F1 10 Tf 72 650 Td (Reference total) Tj ET\n";
+                 BT /F1 10 Tf 72 650 Td (Account balance) Tj ET\n";
     let mut body = String::new();
     for y in 0..matrix.getHeight() {
         for x in 0..matrix.getWidth() {
