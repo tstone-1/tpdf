@@ -22,7 +22,7 @@ use super::pages::{check_target, copy_of, publish_copy, read_input, same_sizes};
 use super::report::{self, SCHEMA};
 use super::text::{declined, page_list, password, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
-use crate::ocr::Pixels;
+use crate::ocr::{Pixels, RecogniseError};
 use crate::ocr_layer::{self, Outcome};
 use crate::ocr_worker::{OcrWorker, PIXELS_CAPACITY};
 use crate::render::{PageSize, TileFormat, TileRequest};
@@ -254,7 +254,11 @@ impl Ocr {
                 ocr_layer::native_items(items, unit)
             });
             let outcome = ocr_layer::outcome_of(page, answer, &text).map_err(|why| {
-                Failure::new(Exit::Internal, format!("page {n} could not be read: {why}"))
+                let exit = match why {
+                    RecogniseError::Unavailable(_) => Exit::Refused,
+                    _ => Exit::Internal,
+                };
+                Failure::new(exit, format!("page {n} could not be read: {why}"))
             })?;
             match outcome {
                 Outcome::Layer(layer) => {

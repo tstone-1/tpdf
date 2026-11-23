@@ -150,21 +150,46 @@ pub fn keep_for(doc: &mut Document, doomed: &HashSet<ObjectId>) -> Result<Kept, 
         &removed,
         &under,
     );
-    chain(doc, root, &top);
-    for &id in order.iter().filter(|id| !removed.contains(id)) {
-        chain(doc, id, under.get(&id).map_or(&[][..], Vec::as_slice));
+    // This tree has already passed the item budget and cycle checks. Rebuild
+    // it bottom-up so even a deep surviving branch keeps every expansion count.
+    let mut visible = HashMap::new();
+    for &id in order.iter().rev().filter(|id| !removed.contains(id)) {
+        let entries = &under[&id];
+        chain(doc, id, entries);
+        let open = doc
+            .get_dictionary(id)
+            .and_then(|item| item.get_deref(b"Count", doc))
+            .and_then(Object::as_i64)
+            .ok()
+            .is_none_or(|count| count > 0);
+        let count = count_visible(entries, &visible);
+        let item = doc.get_dictionary_mut(id).map_err(|e| e.to_string())?;
+        if count == 0 {
+            item.remove(b"Count");
+        } else {
+            item.set("Count", if open { count } else { -count });
+        }
+        visible.insert(id, if open { count } else { 0 });
     }
+    chain(doc, root, &top);
     pagetree::forget(doc, &removed)?;
     if top.is_empty() {
         // A root with nothing under it is legal and draws an empty panel.
         pagetree::drop_outline(doc)?;
     } else {
-        redact::recount(doc, root, 0);
+        doc.get_dictionary_mut(root)
+            .map_err(|e| e.to_string())?
+            .set("Count", count_visible(&top, &visible));
     }
     Ok(Kept {
         removed: removed.len(),
         whole: false,
     })
+}
+
+/// Each child is visible, plus the descendants it exposes when open.
+fn count_visible(entries: &[ObjectId], visible: &HashMap<ObjectId, i64>) -> i64 {
+    entries.iter().map(|id| 1 + visible[id]).sum()
 }
 
 /// Drops the outline whole and says so.
@@ -199,7 +224,7 @@ fn lifted(
 /// Every link is written rather than patched. A splice has to get four
 /// neighbours right for each entry that goes, and an entry that moves up a
 /// level changes its parent as well; writing the chain from the list is one
-/// rule with no cases. `/Count` is left to [`redact::recount`].
+/// rule with no cases.
 fn chain(doc: &mut Document, parent: ObjectId, entries: &[ObjectId]) {
     if let Ok(Object::Dictionary(node)) = doc.get_object_mut(parent) {
         match (entries.first(), entries.last()) {
@@ -552,6 +577,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_saved_deep_branch_keeps_each_visible_count_and_its_sign() {
+        for closed_at in [None, Some(33)] {
+            let (mut doc, kids) = pages(2);
+            let mut branch = entry("leaf", to(kids[0]), vec![]);
+            for _ in 1..36 {
+                branch = entry("branch", to(kids[0]), vec![branch]);
+            }
+            let root = outline(
+                &mut doc,
+                vec![branch, entry("discard", to(kids[1]), vec![])],
+            );
+            // Initialise the producer's counts independently of the writer.
+            let mut at = root;
+            for depth in 0..36 {
+                let count = if closed_at == Some(depth) {
+                    -(36 - depth)
+                } else if let Some(closed) = closed_at.filter(|closed| depth < *closed) {
+                    closed - depth
+                } else {
+                    36 - depth
+                };
+                doc.get_dictionary_mut(at)
+                    .unwrap()
+                    .set("Count", count + i64::from(depth == 0));
+                at = redact::first_child(&doc, at).unwrap();
+            }
+            pagetree::materialise(&mut doc, &[2], None, [Some(0)]).unwrap();
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).unwrap();
+            let saved = Document::load_mem(&bytes).unwrap();
+            let mut at = redact::outline_root(&saved).unwrap();
+            for depth in 0..=36 {
+                let expected = match closed_at {
+                    _ if depth == 36 => None,
+                    Some(closed) if depth < closed => Some(closed - depth),
+                    Some(closed) if depth == closed => Some(depth - 36),
+                    _ => Some(36 - depth),
+                };
+                let item = saved.get_dictionary(at).unwrap();
+                assert_eq!(
+                    item.get(b"Count").and_then(Object::as_i64).ok(),
+                    expected,
+                    "depth {depth}, closed at {closed_at:?}"
+                );
+                if depth < 36 {
+                    at = redact::first_child(&saved, at).unwrap();
+                }
+            }
+        }
+    }
+
     /// The control for the test above: with a page deleted that nothing leads
     /// to, the outline is the one that went in. Without it, a repair that
     /// removed entries at random would pass.
@@ -649,7 +726,7 @@ mod tests {
                 target: crate::outline::Target::Broken,
                 children: vec![],
             }];
-            links::correct_named_outline(&reopened, &mut displayed, 1);
+            links::correct_outline_destinations(&reopened, &mut displayed, 1);
             assert!(matches!(
                 displayed[0].target,
                 crate::outline::Target::Page { page: 0, .. }

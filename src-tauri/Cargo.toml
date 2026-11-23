@@ -116,6 +116,8 @@ anyhow = "1"
 # still spike 0.1 is the *comparison*: the scroller and the thumbnail strip both
 # ask for `raw`, and `autobench` is what measures the two against each other.
 png = "0.18"
+# Convert calibrated PNG samples to the sRGB pixels used for picture placement.
+moxcms = "0.8.1"
 
 # getrusage, for peak RSS in the tile bench. Pdfium allocates natively, so a
 # Rust allocator hook would report almost nothing.

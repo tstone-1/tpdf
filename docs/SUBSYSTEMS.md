@@ -671,6 +671,11 @@ carries the words as `Plan::text_layers`, by baseline page, and `save::rewrite` 
 before any page is moved or dropped. A plan carrying a layer is never an append and never the
 identity.
 
+Installing the OCR font copies the page's effective resources. If a page inherits
+its scan from an ancestor beyond the supported lookup depth, or its font dictionary
+cannot be resolved, the writer must refuse the copy. Installing an empty dictionary
+at the leaf would hide the scan even though the new text reads back correctly.
+
 Four choices in the writer are measurements rather than preferences, and each has an entry in
 `docs/TRAPS.md`: the font's one glyph is a **box**, because PDFium takes a character's place
 from its outline; the unit is a **word**, because a line's characters spread evenly land up to
@@ -804,6 +809,11 @@ area average are shared, under `PICTURE`'s limits rather than `SIGNATURE`'s
 `placed_size`. The pixels go back through the worker's tile mapping, not in the reply. So a
 change to the grammar reaches the chooser, `sign --image` and pictures; only the first two
 share `headers.json`.
+
+The placement worker returns sRGB pixels. For a calibrated PNG it converts the
+colour channels before scaling, using the embedded ICC profile when present and
+the same gamma and chromaticity interpretation as the new-document writer otherwise.
+Alpha is coverage and stays outside the colour transform.
 
 `sign --hide reason,location` sets `Options::hide_reason` and `hide_location`: the text is
 written to `/Reason` and `/Location` and left out of the appearance's lines

@@ -2988,6 +2988,34 @@ fn text_agrees(report: &mut Report) {
             code == 0 && !theirs.is_empty() && theirs == ours,
             &format!("exit {code} {stderr}\n       tool {theirs:?}\n       here {ours:?}"),
         );
+        if name == "encodings.pdf" {
+            for (selected, guessed) in [("1", vec![1]), ("3", vec![])] {
+                let (status, stdout, stderr) = tool(
+                    &[
+                        "search",
+                        &at,
+                        "--text",
+                        "Encoding probe ABC",
+                        "--pages",
+                        selected,
+                        "--json",
+                    ],
+                    &[],
+                );
+                let result: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+                let file = &result["files"][0];
+                report.check(
+                    &format!("search distinguishes a guessed page {selected} from a reliable miss"),
+                    status == 1
+                        && file["matches"] == serde_json::json!([])
+                        && file["pages_without_text"] == serde_json::json!([])
+                        && file["pages_with_guessed_encoding"] == serde_json::json!(guessed)
+                        && file["pages_with_unknown_encoding"] == serde_json::json!([])
+                        && stderr.contains("matches may be missing") != guessed.is_empty(),
+                    &format!("{stdout} {stderr}"),
+                );
+            }
+        }
         for (page, lines) in manifest_lines(name) {
             manifest_pages += 1;
             let got: Vec<String> = theirs

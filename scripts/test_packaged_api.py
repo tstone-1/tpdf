@@ -1,4 +1,6 @@
 """Failure controls for the release-only API test runner and its wiring."""
+import base64
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -162,8 +164,25 @@ class PackageGateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'not finished'):
             require_audited([dict(green, status='in_progress')], 'abc')
 
+    def test_download_checks_the_bytes_against_the_asset_digest(self):
+        payload = b'package bytes'
+        asset = dict(id=12, digest='sha256:' + hashlib.sha256(payload).hexdigest())
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'package'
+            for received in (payload, payload + b'x'):
+                with self.subTest(received=received), patch.object(subprocess, 'run') as run:
+                    run.side_effect = lambda args, *, stdout, **kwargs: stdout.write(received)
+                    if received == payload:
+                        publish_release.download_asset(asset, output)
+                        self.assertEqual(output.read_bytes(), payload)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'differs from its listed digest'):
+                            publish_release.download_asset(asset, output)
+
     def test_publish_entry_point_calls_the_guard_before_mutating(self):
-        for mode in ['passed', 'failed', 'moved', 'dry-run', 'unaudited', 'audit-red', 'mismatch', 'rc-check', 'rc-publish', 'unsigned', 'missing-sig', 'substituted', 'stale']:
+        for mode in ['passed', 'failed', 'moved', 'dry-run', 'unaudited', 'audit-red', 'mismatch', 'rc-check', 'rc-publish', 'unsigned', 'missing-sig', 'substituted', 'stale',
+                     'empty-manifest', 'half-manifest', 'wrong-version', 'wrong-url',
+                     'wrong-sidecar', 'invalid-signature', 'wrong-signed-version']:
             tag = 'v26.9.22-rc1' if mode.startswith('rc-') else 'v26.9.22'
             packages = ['tpdf.app.tar.gz', 'tpdf_26.9.22_aarch64.dmg', 'tpdf_26.9.22_x64-setup.exe',
                         'tpdf_26.9.22_amd64.deb', 'tpdf_26.9.22_amd64.AppImage']
@@ -181,6 +200,9 @@ class PackageGateTests(unittest.TestCase):
                             'repos/tstone-1/tpdf/contents/package.json?ref=abc'):
                     version = '26.9.21' if mode == 'mismatch' else '26.9.22'
                     return dict(version=version)
+                if args == ('api', '-H', 'Accept: application/vnd.github.raw+json',
+                            'repos/tstone-1/tpdf/contents/src-tauri/tauri.conf.json?ref=abc'):
+                    return {'plugins': {'updater': {'pubkey': base64.b64encode(b'fixture-key').decode()}}}
                 if args[:2] == ('run', 'list') and 'audit.yml' in args:
                     if mode == 'unaudited':
                         return []
@@ -220,17 +242,56 @@ class PackageGateTests(unittest.TestCase):
                 if args[:3] == ('api', '--method', 'PATCH'):
                     return dict(draft=False)
                 raise AssertionError(args)
+            installer, updater = packages[2], 'tpdf_aarch64.app.tar.gz'
+            def encoded(name):
+                return base64.b64encode(('signature of ' + name).encode()).decode()
+            def download(asset, path):
+                name = asset['name']
+                if name.endswith('.sig'):
+                    payload = encoded('other' if mode == 'wrong-sidecar' else name[:-4])
+                elif name == 'latest.json':
+                    platforms = {}
+                    for platform, package in [('darwin-aarch64', updater), ('darwin-aarch64-app', updater),
+                                              ('windows-x86_64', installer), ('windows-x86_64-nsis', installer)]:
+                        platforms[platform] = dict(url=f'https://github.com/tstone-1/tpdf/releases/latest/download/{package}',
+                                                   signature=encoded(package))
+                    if mode == 'half-manifest':
+                        del platforms['windows-x86_64']
+                    if mode == 'wrong-url':
+                        platforms['windows-x86_64']['url'] += '.old'
+                    payload = json.dumps(dict(platforms=platforms, version='1' if mode == 'wrong-version' else '26.9.22'))
+                    if mode == 'empty-manifest':
+                        payload = ''
+                else:
+                    payload = name
+                path.write_text(payload, encoding='ascii')
+
+            def verify(args, **kwargs):
+                self.assertEqual(args[:3], ['minisign', '-V', '-Q'])
+                self.assertEqual(Path(args[args.index('-p') + 1]).read_bytes(), b'fixture-key')
+                package = Path(args[args.index('-m') + 1]).read_text(encoding='ascii')
+                self.assertEqual(Path(args[args.index('-x') + 1]).read_text(encoding='ascii'), 'signature of ' + package)
+                version = '1' if mode == 'wrong-signed-version' else '26.9.22'
+                return subprocess.CompletedProcess(args, int(mode == 'invalid-signature'),
+                                                   stdout='timestamp:123\tversion:' + version, stderr='')
             argv = ['publish_release.py', tag]
             if mode not in ['dry-run', 'rc-check']:
                 argv.append('--publish')
             with self.subTest(mode=mode), patch.object(publish_release, 'gh', fake_gh), \
                     patch.object(publish_release, 'tested_packages', return_value=evidence) as reports, \
+                    patch.object(publish_release, 'download_asset', download), \
+                    patch.object(subprocess, 'run', verify), \
                     patch.object(sys, 'argv', argv), patch('builtins.print'):
                 if mode == 'rc-publish':
                     with patch('sys.stderr'), self.assertRaises(SystemExit):
                         publish_release.main()
                     self.assertEqual(calls, [])
-                elif mode in ['failed', 'moved', 'unaudited', 'audit-red', 'mismatch', 'unsigned', 'missing-sig', 'substituted', 'stale']:
+                elif mode == 'empty-manifest':
+                    with self.assertRaisesRegex(RuntimeError, 'latest.json is unreadable'):
+                        publish_release.main()
+                elif mode in ['failed', 'moved', 'unaudited', 'audit-red', 'mismatch', 'unsigned', 'missing-sig', 'substituted', 'stale',
+                              'half-manifest', 'wrong-version', 'wrong-url', 'wrong-sidecar', 'invalid-signature',
+                              'wrong-signed-version']:
                     with self.assertRaises(RuntimeError):
                         publish_release.main()
                 else:

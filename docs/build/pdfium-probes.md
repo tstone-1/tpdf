@@ -318,6 +318,8 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -
 cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
     testdata/links-rotated.pdf --mode check
 cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
+    testdata/links-fit-operands.pdf --mode agree
+cargo run --release --manifest-path src-tauri/Cargo.toml --example links-probe -- \
     testdata/text-base14.pdf --mode clean
 
 # A locked document: can a reader actually open one?

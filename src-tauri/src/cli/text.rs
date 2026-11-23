@@ -200,14 +200,7 @@ impl Subcommand for Text {
         }
         let password = password(self.password_env.as_deref())?;
         let report = read_text(env, self, password.as_deref())?;
-        let written = if self.json {
-            let mut text = super::ascii_json(&report)
-                .map_err(|e| Failure::new(Exit::Internal, format!("could not encode: {e}")))?;
-            text.push('\n');
-            text
-        } else {
-            plain(&report)
-        };
+        let written = format_output(&report, self.json, MAX_TEXT_BYTES)?;
         match &self.output {
             None => {
                 // A failed write is kept by `cli::run`, which ends the run 3.
@@ -309,18 +302,7 @@ fn read_text(
     };
     let pages = selected(command.pages.as_deref(), count)
         .map_err(|why| Failure::new(Exit::Refused, format!("{shown}: {why}")))?;
-    let mapping = match session
-        .ask(Request::Mapping)
-        .map_err(|why| declined(&shown, why, password.is_some()))?
-    {
-        Reply::Mapping(mapping) => mapping,
-        other => {
-            return Err(Failure::new(
-                Exit::Internal,
-                format!("the worker answered a mapping request with {other:?}"),
-            ))
-        }
-    };
+    let mapping = mapping(&mut session).map_err(|why| declined(&shown, why, password.is_some()))?;
     let mut out = Vec::with_capacity(pages.len());
     let mut total = 0usize;
     for page in pages {
@@ -385,6 +367,27 @@ fn page_text(
     Ok(ordered(page, &text, mapping))
 }
 
+/// Read the font mapping verdicts in document order.
+pub(super) fn mapping(
+    session: &mut Session,
+) -> Result<Vec<crate::encoding::PageMapping>, Declined> {
+    match session.ask(Request::Mapping)? {
+        Reply::Mapping(mapping) => Ok(mapping),
+        other => Err(Declined::Failed(format!(
+            "the worker answered a mapping request with {}",
+            other.described()
+        ))),
+    }
+}
+
+pub(super) fn page_encoding(mapping: Option<&crate::encoding::PageMapping>) -> Encoding {
+    match mapping {
+        Some(m) if m.unreadable() => Encoding::Guessed,
+        Some(m) if m.certain() => Encoding::Stated,
+        _ => Encoding::Unknown,
+    }
+}
+
 /// A page's text as `text` reports it.
 #[must_use]
 pub fn ordered(
@@ -401,15 +404,10 @@ pub fn ordered(
             reading::Route::Geometric => Order::Geometric,
         }
     };
-    let encoding = match mapping {
-        Some(m) if m.unreadable() => Encoding::Guessed,
-        Some(m) if m.certain() => Encoding::Stated,
-        _ => Encoding::Unknown,
-    };
     report::PageText {
         page,
         order,
-        encoding,
+        encoding: page_encoding(mapping),
         text: lines(text, &reading.lines).join("\n"),
     }
 }
@@ -451,13 +449,53 @@ pub fn lines(text: &crate::text::PageText, lines: &[Vec<reading::Range>]) -> Vec
 /// The form feed is this function's own and is added after.
 #[must_use]
 pub fn plain(report: &report::Text) -> String {
+    plain_with_limit(report, usize::MAX).expect("a String fits in usize")
+}
+
+fn plain_with_limit(report: &report::Text, limit: usize) -> Option<String> {
     let mut out = String::new();
     for page in &report.pages {
-        out.push_str(&super::printable(&page.text));
-        if !page.text.is_empty() {
+        let text = super::printable(&page.text);
+        let separators = 1 + usize::from(!text.is_empty());
+        if text.len().checked_add(separators)? > limit - out.len() {
+            return None;
+        }
+        out.push_str(&text);
+        if !text.is_empty() {
             out.push('\n');
         }
         out.push('\u{000C}');
     }
-    out
+    Some(out)
+}
+
+/// Refuse before writing any bytes to stdout or publishing a destination. The bound
+/// includes every separator, JSON escape and the final newline.
+pub(super) fn format_output(
+    report: &report::Text,
+    json: bool,
+    limit: usize,
+) -> Result<String, Failure> {
+    let too_large = || {
+        Failure::new(
+            Exit::Refused,
+            format!(
+                "{}: text output exceeds {limit} bytes; ask for fewer pages with --pages",
+                report.path
+            ),
+        )
+    };
+    if !json {
+        return plain_with_limit(report, limit).ok_or_else(too_large);
+    }
+    let body_limit = limit.checked_sub(1).ok_or_else(too_large)?;
+    let mut body = super::ascii_json_with_limit(report, body_limit).map_err(|e| {
+        if e.io_error_kind() == Some(std::io::ErrorKind::FileTooLarge) {
+            too_large()
+        } else {
+            Failure::new(Exit::Internal, format!("could not encode: {e}"))
+        }
+    })?;
+    body.push('\n');
+    Ok(body)
 }

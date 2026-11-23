@@ -3578,6 +3578,29 @@ fn a_line_break_pdfium_put_inside_a_line_is_not_kept() {
 }
 
 #[test]
+fn text_output_budget_counts_the_encoded_report_and_separators() {
+    let mut report = text_sample();
+    report.pages.truncate(1);
+    report.pages[0].text = "é😀\u{1b}".into();
+    let plain = "é😀\u{fffd}\n\u{c}".to_string();
+    let json = format!("{}\n", super::ascii_json(&report).unwrap());
+    assert!(json.contains(r"\u00e9\ud83d\ude00\u001b"));
+    for (structured, expected) in [(false, plain), (true, json)] {
+        let limit = expected.len();
+        assert_eq!(
+            super::text::format_output(&report, structured, limit).unwrap(),
+            expected
+        );
+        assert_eq!(
+            super::text::format_output(&report, structured, limit - 1)
+                .unwrap_err()
+                .exit,
+            Exit::Refused
+        );
+    }
+}
+
+#[test]
 fn plain_text_ends_every_page_with_a_form_feed() {
     assert_eq!(
         super::text::plain(&text_sample()),
@@ -4272,6 +4295,8 @@ fn search_sample() -> report::Searched {
                 error: None,
                 pages_searched: 3,
                 pages_without_text: vec![3],
+                pages_with_guessed_encoding: vec![1],
+                pages_with_unknown_encoding: vec![2],
                 matches: vec![
                     hit(
                         1,
@@ -4309,6 +4334,8 @@ fn search_sample() -> report::Searched {
                 }),
                 pages_searched: 0,
                 pages_without_text: Vec::new(),
+                pages_with_guessed_encoding: Vec::new(),
+                pages_with_unknown_encoding: Vec::new(),
                 matches: Vec::new(),
             },
         ],
@@ -4604,6 +4631,25 @@ fn search_prints_one_line_per_match_and_names_the_document_only_among_several() 
     one.files[0].matches.clear();
     assert_eq!(search_exit(&one), Exit::Strict);
     assert_eq!(plain(&one), "");
+}
+
+#[test]
+fn plain_search_keeps_wrapped_matches_and_filenames_on_one_line() {
+    let mut sample = search_sample();
+    let file = &mut sample.files[0];
+    file.matches.truncate(1);
+    file.path = "two\nlines.pdf".into();
+    let hit = &mut file.matches[0];
+    hit.before = "before\r".into();
+    hit.hit = "wrapped\r\nphrase".into();
+    hit.after = "\u{2028}after".into();
+    assert_eq!(
+        super::search::plain(&sample),
+        "two lines.pdf:1: before wrapped phrase after\n"
+    );
+    let json = serde_json::to_value(&sample).unwrap();
+    assert_eq!(json["files"][0]["matches"][0]["hit"], "wrapped\r\nphrase");
+    assert_eq!(json["files"][0]["path"], "two\nlines.pdf");
 }
 
 #[test]

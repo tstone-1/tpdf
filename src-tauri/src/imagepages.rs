@@ -380,8 +380,17 @@ fn validate_profile(profile: Option<&[u8]>, gray: bool, format: &str) -> Result<
     Ok(())
 }
 
-/// PDF calibrated spaces use linear XYZ primaries and the decoding exponent.
-fn png_calibration(info: &png::Info<'_>, gray: bool) -> Result<Option<Object>, String> {
+/// PNG white point, decoding exponent, and linear XYZ columns (RGB only).
+pub(crate) struct PngCalibration {
+    pub(crate) white: [f64; 3],
+    pub(crate) gamma: f32,
+    pub(crate) primaries: Option<[[f64; 3]; 3]>,
+}
+
+pub(crate) fn png_calibration(
+    info: &png::Info<'_>,
+    gray: bool,
+) -> Result<Option<PngCalibration>, String> {
     if info.icc_profile.is_some()
         || info.srgb.is_some()
         || (info.gama_chunk.is_none() && info.chrm_chunk.is_none())
@@ -407,11 +416,8 @@ fn png_calibration(info: &png::Info<'_>, gray: bool) -> Result<Option<Object>, S
     if white[0] <= 0.0 || white[2] <= 0.0 {
         return Err(invalid());
     }
-    let array = |v: &[f64]| Object::Array(v.iter().map(|x| Object::Real(*x as f32)).collect());
-    let mut params = dictionary! { "WhitePoint" => array(&white) };
-    let name = if gray {
-        params.set("Gamma", gamma);
-        "CalGray"
+    let primaries = if gray {
+        None
     } else {
         let r = xyz(colours.red)?;
         let g = xyz(colours.green)?;
@@ -425,23 +431,40 @@ fn png_calibration(info: &png::Info<'_>, gray: bool) -> Result<Option<Object>, S
         if divisor.abs() < f64::EPSILON {
             return Err(invalid());
         }
-        let mut matrix = Vec::with_capacity(9);
-        for (primary, numerator) in [
-            (r, det(white, g, b)),
-            (g, det(r, white, b)),
-            (b, det(r, g, white)),
-        ] {
+        let scaled = |primary: [f64; 3], numerator: f64| {
             let scale = numerator / divisor;
             if scale <= 0.0 {
                 return Err(invalid());
             }
-            matrix.extend(primary.map(|x| x * scale));
-        }
-        params.set("Matrix", array(&matrix));
-        params.set("Gamma", vec![Object::Real(gamma); 3]);
-        "CalRGB"
+            Ok(primary.map(|v| v * scale))
+        };
+        Some([
+            scaled(r, det(white, g, b))?,
+            scaled(g, det(r, white, b))?,
+            scaled(b, det(r, g, white))?,
+        ])
     };
-    Ok(Some(Object::Array(vec![name.into(), params.into()])))
+    Ok(Some(PngCalibration {
+        gamma,
+        white,
+        primaries,
+    }))
+}
+
+impl PngCalibration {
+    fn pdf_space(&self) -> Object {
+        let array = |v: &[f64]| Object::Array(v.iter().map(|x| Object::Real(*x as f32)).collect());
+        let mut params = dictionary! { "WhitePoint" => array(&self.white) };
+        let name = if let Some(primaries) = self.primaries {
+            params.set("Matrix", array(primaries.as_flattened()));
+            params.set("Gamma", vec![Object::Real(self.gamma); 3]);
+            "CalRGB"
+        } else {
+            params.set("Gamma", self.gamma);
+            "CalGray"
+        };
+        Object::Array(vec![name.into(), params.into()])
+    }
 }
 
 pub(crate) fn png_orientation(info: &png::Info<'_>) -> u8 {
@@ -527,7 +550,7 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
         height,
         gray,
         jpeg: false,
-        calibration: png_calibration(reader.info(), gray)?,
+        calibration: png_calibration(reader.info(), gray)?.map(|cal| cal.pdf_space()),
         profile: profile.map(<[u8]>::to_vec),
         data: deflated(&data)?,
         mask: mask.as_deref().map(deflated).transpose()?,

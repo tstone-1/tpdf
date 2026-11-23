@@ -147,6 +147,10 @@ NOT_WINDOW: list[tuple[str, str]] = [
         "sheets meet none of the sample points the viewer checks pin",
     ),
     (
+        "links-fit-operands",
+        "links-probe compares the bookmark and annotation destinations on upright and rotated pages",
+    ),
+    (
         "links-rotated",
         "mixes page sizes, which reddens two rotation checks that derive what "
         "they expect from page 1's aspect ratio --- the same split, for the same "

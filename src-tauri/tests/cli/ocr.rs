@@ -427,9 +427,12 @@ fn window_path(report: &mut Report, source: &str, scanned: &str, out: &str, refu
             .display()
             .to_string()
     };
-    if offered.iter().any(|tag| tag == "en-US") {
+    if let Some(english) = ["en-US", "en"]
+        .into_iter()
+        .find(|tag| offered.iter().any(|offered| offered == tag))
+    {
         let chosen = beside("chosen.pdf");
-        let (answer, _) = app_path(Path::new(scanned), Path::new(&chosen), Ask::In("en-us"));
+        let (answer, _) = app_path(Path::new(scanned), Path::new(&chosen), Ask::In(english));
         let shared = overlap(&want, &words(&text_of(&chosen)));
         report.check(
             "the window's path reads the page in a language the machine offers",
@@ -440,7 +443,7 @@ fn window_path(report: &mut Report, source: &str, scanned: &str, out: &str, refu
             &format!("{answer:?}; {shared:.2}"),
         );
     } else {
-        report.skip("ocr", "this machine's recogniser does not offer en-US");
+        report.skip("ocr", "this machine's recogniser does not offer English");
     }
     let stale = beside("stale.pdf");
     let (answer, _) = app_path(Path::new(scanned), Path::new(&stale), Ask::In(NOT_OFFERED));
@@ -998,6 +1001,49 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
         );
     }
 
+    // Move the scan's image resources above the writer's bounded inheritance walk.
+    // Both inputs paint the same image, and a failed write must preserve the destination.
+    let mut deep = Document::load(&scanned).unwrap();
+    let page = deep.get_pages()[&1];
+    let tree = deep
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Parent")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let resources = deep
+        .get_dictionary_mut(page)
+        .unwrap()
+        .remove(b"Resources")
+        .unwrap();
+    deep.get_dictionary_mut(tree)
+        .unwrap()
+        .set("Resources", resources);
+    let mut parent = tree;
+    for _ in 0..66 {
+        let child = deep.add_object(dictionary! {
+            "Type" => "Pages", "Count" => 1, "Parent" => parent, "Kids" => vec![page.into()],
+        });
+        deep.get_dictionary_mut(parent)
+            .unwrap()
+            .set("Kids", vec![child.into()]);
+        parent = child;
+    }
+    deep.get_dictionary_mut(page).unwrap().set("Parent", parent);
+    let deep_path = at("deep.pdf");
+    deep.save(&deep_path).unwrap();
+    let protected = at("preserved.pdf");
+    std::fs::write(&protected, b"previous destination").unwrap();
+    let (status, _, refusal) = tool(&["ocr", &deep_path, "-o", &protected, "--force"], &[]);
+    report.check(
+        "OCR refuses unresolved inherited resources without replacing the destination",
+        status != 0
+            && refusal.contains("page resources could not be read")
+            && std::fs::read(&protected).unwrap() == b"previous destination",
+        &format!("exit {status}; {refusal}"),
+    );
+
     window_path(
         report,
         &source,
@@ -1061,6 +1107,20 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
             "a refused ocr writes nothing and leaves an existing file alone",
             code == status && std::fs::read(&out).unwrap() == kept && !Path::new(&again).exists(),
             &format!("{args:?}: exit {code}; {stderr}"),
+        );
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let (code, _, stderr) = tool(
+            &["ocr", &scanned, "-o", &out, "--force", "--language", "fr"],
+            &[],
+        );
+        report.check(
+            "a missing Linux OCR model is a refusal and preserves the destination",
+            code == 3
+                && stderr.contains("no text-recognition data for fr")
+                && std::fs::read(&out).unwrap() == kept,
+            &format!("exit {code}; {stderr}"),
         );
     }
     report.check(

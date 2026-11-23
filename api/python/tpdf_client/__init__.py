@@ -323,7 +323,8 @@ class Tpdf:
 
         Returns one entry per document in report['files'], each with its matches
         (page, before, hit, after) and pages_without_text: a scanned page has
-        nothing to search, which is not the same as holding no match.
+        nothing to search. pages_with_guessed_encoding and pages_with_unknown_encoding
+        identify pages on which visible words may be missed. Older CLIs omit these lists.
 
         Finding nothing is an answer, not an error: the CLI's exit 1 is returned
         as a report whose files have empty matches. A document that could not be
@@ -686,6 +687,8 @@ class Tpdf:
     ) -> reports.VerifyReport:
         """Inspect signatures. With strict=True, unsigned/untrusted files raise CommandError.
 
+        Older schema-1 CLIs omit signatures_complete. Use file.get('signatures_complete')
+        to distinguish unknown completeness (None) from True or False.
         The exception retains the full verification report and exit code. Use
         run('verify', '--strict', '--', *paths, check=False) for a Result instead.
         fetch_roots=True lets Windows fetch a missing root first, which contacts Microsoft.

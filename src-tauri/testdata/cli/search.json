@@ -19,6 +19,12 @@
       "pages_without_text": [
         3
       ],
+      "pages_with_guessed_encoding": [
+        1
+      ],
+      "pages_with_unknown_encoding": [
+        2
+      ],
       "matches": [
         {
           "page": 1,
@@ -96,6 +102,8 @@
       },
       "pages_searched": 0,
       "pages_without_text": [],
+      "pages_with_guessed_encoding": [],
+      "pages_with_unknown_encoding": [],
       "matches": []
     }
   ]

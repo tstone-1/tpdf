@@ -1253,6 +1253,12 @@ pub struct SearchedFile {
     /// The pages, counted from 1, that held no text at all: a scan has
     /// nothing to search, which is not the same as holding no match.
     pub pages_without_text: Vec<u32>,
+    /// Nonempty selected pages on which a font left the text extractor guessing.
+    #[serde(default)]
+    pub pages_with_guessed_encoding: Vec<u32>,
+    /// Nonempty selected pages whose font mappings could not be fully examined.
+    #[serde(default)]
+    pub pages_with_unknown_encoding: Vec<u32>,
     /// Every match, by page and then by where on the page it starts.
     pub matches: Vec<Hit>,
 }

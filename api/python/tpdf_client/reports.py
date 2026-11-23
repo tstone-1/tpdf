@@ -948,7 +948,12 @@ class Signature(TypedDict):
     pades: str | None
 
 
-class VerifiedFile(TypedDict):
+class _SignatureCoverage(TypedDict, total=False):
+    # Older schema-1 CLIs omit this field; absence leaves completeness unknown.
+    signatures_complete: bool
+
+
+class VerifiedFile(_SignatureCoverage):
     """One document `verify` was given."""
 
     # The path as given on the command line.
@@ -957,9 +962,6 @@ class VerifiedFile(TypedDict):
     error: FileError | None
     # Every signed signature field, in the document's order.
     signatures: list[Signature]
-    # False when not every signature field could be read, so the list may be
-    # missing one (and `--strict` fails), and when the document was not read.
-    signatures_complete: bool
 
 
 class VerifyReport(TypedDict):
@@ -1428,7 +1430,13 @@ class SearchHit(_SearchGeometry):
     rects: list[HitRect]
 
 
-class SearchedFile(TypedDict):
+class _SearchEncoding(TypedDict, total=False):
+    # Older schema-1 CLIs omit both lists. Page numbers start at one.
+    pages_with_guessed_encoding: list[int]
+    pages_with_unknown_encoding: list[int]
+
+
+class SearchedFile(_SearchEncoding):
     """One document `search` was given."""
 
     # The path as given on the command line.

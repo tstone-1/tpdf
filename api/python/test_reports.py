@@ -179,6 +179,17 @@ class ReportsMatchSamples(unittest.TestCase):
         )
         self.assertEqual(unseen, [])
 
+    def test_verify_coverage_is_unknown_when_an_older_cli_omits_it(self) -> None:
+        # The unmodified schema-1 report shipped with v26.11.9.
+        previous = json.loads((Path(__file__).parent / "testdata" / "v26.11.9-verify.json").read_text(encoding="utf-8"))
+        current = json.loads((SAMPLES / "verify.json").read_text(encoding="utf-8"))
+        for sample in (previous, current):
+            walk = Walk()
+            walk.check(sample, reports.VerifyReport, "verify")
+            self.assertEqual(walk.errors, [])
+        self.assertNotIn("signatures_complete", previous["files"][0])
+        self.assertIs(current["files"][0]["signatures_complete"], True)
+
     def test_the_verify_sample_holds_an_appendix_and_a_signature_without_one(self) -> None:
         # A key that may be null is checked as an object only where a sample
         # has it as one; `appendix` is null exactly when nothing was appended.

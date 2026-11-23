@@ -144,6 +144,29 @@ def link(rect, body: bytes) -> bytes:
     ) + body + b" >>"
 
 
+def add_outline(pdf: Pdf, shared: list) -> int:
+    """Write the bookmark chain for the supplied titles and destinations."""
+    outline_root = pdf.reserve()
+    entries = [pdf.reserve() for _ in shared]
+    for index, ((title, body), number) in enumerate(zip(shared, entries)):
+        links_to = b"<< /Title (%s) /Parent %d 0 R %s" % (
+            title.encode("latin-1"),
+            outline_root,
+            body,
+        )
+        if index > 0:
+            links_to += b" /Prev %d 0 R" % entries[index - 1]
+        if index + 1 < len(entries):
+            links_to += b" /Next %d 0 R" % entries[index + 1]
+        pdf.put(number, links_to + b" >>")
+    pdf.put(
+        outline_root,
+        b"<< /Type /Outlines /First %d 0 R /Last %d 0 R /Count %d >>"
+        % (entries[0], entries[-1], len(entries)),
+    )
+    return outline_root
+
+
 def build_links(path: str) -> dict:
     """Eight pages, every link shape, and an outline aimed at the same places."""
     pdf = Pdf()
@@ -425,24 +448,7 @@ def build_links(path: str) -> dict:
             b"/A << /S /URI /URI (https://example.invalid/tracker?doc=42) >>",
         ),
     ]
-    outline_root = pdf.reserve()
-    entries = [pdf.reserve() for _ in shared]
-    for index, ((title, body), number) in enumerate(zip(shared, entries)):
-        links_to = b"<< /Title (%s) /Parent %d 0 R %s" % (
-            title.encode("latin-1"),
-            outline_root,
-            body,
-        )
-        if index > 0:
-            links_to += b" /Prev %d 0 R" % entries[index - 1]
-        if index + 1 < len(entries):
-            links_to += b" /Next %d 0 R" % entries[index + 1]
-        pdf.put(number, links_to + b" >>")
-    pdf.put(
-        outline_root,
-        b"<< /Type /Outlines /First %d 0 R /Last %d 0 R /Count %d >>"
-        % (entries[0], entries[-1], len(entries)),
-    )
+    outline_root = add_outline(pdf, shared)
 
     catalog = pdf.add(
         b"<< /Type /Catalog /Pages %d 0 R /Dests %d 0 R /Names %d 0 R"
@@ -630,6 +636,49 @@ def build_cropped(path: str) -> dict:
     }
 
 
+def build_fit_operands(path: str) -> dict:
+    """Compare both readers on single-axis fits and shared URI action objects."""
+    pdf = Pdf()
+    pages, page, annots = build_pages(pdf, 2, rotate=[0, 90])
+    missing = pdf.add(b"null")
+    rotated_null = pdf.add(b"[%d 0 R /FitBV %d 0 R]" % (page[1], missing))
+    tree = pdf.add(b"<< /Names [(rotated) << /D %d 0 R >>] >>" % rotated_null)
+    # One object per encoding; the annotation and bookmark reference that same action.
+    ascii_action = pdf.add(b"<< /S /URI /URI (https://example.invalid/ascii) >>")
+    utf16 = ("\ufeffhttps://example.invalid/utf16").encode("utf-16-be").hex().encode("ascii")
+    utf16_action = pdf.add(b"<< /S /URI /URI <" + utf16 + b"> >>")
+    cases = [
+        ("FitH null", b"/Dest [%d 0 R /FitH null]" % page[0],
+         {"kind": "page", "page": 0, "top_pt": None}),
+        ("FitH zero", b"/Dest [%d 0 R /FitH 0]" % page[0],
+         {"kind": "page", "page": 0, "top_pt": HEIGHT}),
+        ("Rotated FitBV null", b"/A << /S /GoTo /D (rotated) >>",
+         {"kind": "page", "page": 1, "top_pt": None}),
+        ("Rotated FitBV zero", b"/Dest [%d 0 R /FitBV 0]" % page[1],
+         {"kind": "page", "page": 1, "top_pt": 0}),
+        ("ASCII URI", b"/A %d 0 R" % ascii_action,
+         {"kind": "web", "host": "example.invalid", "rest": "/ascii"}),
+        ("UTF-16BE URI", b"/A %d 0 R" % utf16_action,
+         {"kind": "web", "host": "example.invalid", "rest": "/utf16"}),
+    ]
+    bookmarks = add_outline(pdf, [(title, body) for title, body, _ in cases])
+    links = [pdf.add(link([20, 20 + 25 * i, 80, 40 + 25 * i], body))
+             for i, (_, body, _) in enumerate(cases)]
+    pdf.put(annots[0], b"[" + b" ".join(b"%d 0 R" % n for n in links) + b"]")
+    pdf.put(annots[1], b"[]")
+    catalog = pdf.add(b"<< /Type /Catalog /Pages %d 0 R /Outlines %d 0 R"
+                      b" /Names << /Dests %d 0 R >> >>" % (pages, bookmarks, tree))
+    with open(path, "wb") as handle:
+        handle.write(pdf.serialize(catalog))
+    return {
+        "pages": 2,
+        "total": len(cases),
+        "limits": {},
+        "expected": [{"page": 0, "target": target, "note": title} for title, _, target in cases],
+        "shared_targets": [{"title": title, "target": target} for title, _, target in cases],
+    }
+
+
 def main() -> int:
     """Writes both fixtures and the manifest that describes them."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -650,6 +699,10 @@ def main() -> int:
     rotated_path = os.path.join(args.outdir, "links-rotated.pdf")
     manifest["links-rotated.pdf"] = build_rotated(rotated_path)
     print("[OK] wrote %s" % rotated_path)
+
+    operands_path = os.path.join(args.outdir, "links-fit-operands.pdf")
+    manifest["links-fit-operands.pdf"] = build_fit_operands(operands_path)
+    print("[OK] wrote %s" % operands_path)
 
     cropped_path = os.path.join(args.outdir, "links-cropped.pdf")
     manifest["links-cropped.pdf"] = build_cropped(cropped_path)

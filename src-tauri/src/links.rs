@@ -441,7 +441,9 @@ fn destination(
     match resolve(document, dest) {
         Object::Array(array) => place(array, document, numbers, geometry),
         named @ (Object::Name(_) | Object::String(_, _)) => match names.lookup(named) {
-            Ok(Some(found)) => follow(found, document, numbers, geometry),
+            Ok(Some(found)) => named_array(document, found).map_or(Target::Broken, |array| {
+                place(array, document, numbers, geometry)
+            }),
             Ok(None) => Target::Broken,
             Err(GaveUp) => {
                 limits.unresolved_names += 1;
@@ -611,23 +613,13 @@ fn gather<'a>(
 
 /// A named destination's value, which is either the array or a dictionary
 /// holding it under `/D`.
-fn follow(
-    value: &Object,
-    document: &Document,
-    numbers: &HashMap<ObjectId, u32>,
-    geometry: &[PageBox],
-) -> Target {
-    match resolve(document, value) {
-        Object::Array(array) => place(array, document, numbers, geometry),
-        Object::Dictionary(dict) => match dict.get(b"D") {
-            Ok(inner) => match resolve(document, inner) {
-                Object::Array(array) => place(array, document, numbers, geometry),
-                _ => Target::Broken,
-            },
-            Err(_) => Target::Broken,
-        },
-        _ => Target::Broken,
-    }
+fn named_array<'a>(document: &'a Document, value: &'a Object) -> Option<&'a [Object]> {
+    let value = resolve(document, value);
+    let array = match value {
+        Object::Dictionary(dict) => resolve(document, dict.get(b"D").ok()?),
+        _ => value,
+    };
+    array.as_array().ok().map(Vec::as_slice)
 }
 
 /// Turns a destination array into a page and an offset down it.
@@ -787,10 +779,10 @@ fn outline_page_geometry(
     (numbers, geometry)
 }
 
-/// PDFium looks up both PDF names and strings in the name tree first. When a
-/// legacy destination dictionary exists, resolve local named targets by type.
+/// Correct information PDFium loses: it looks up PDF names and strings in the
+/// same order, and reports a null single-axis fit operand as the number zero.
 /// Follow the displayed tree by sibling and child, retaining its traversal limits.
-pub(crate) fn correct_named_outline(
+pub(crate) fn correct_outline_destinations(
     document: &Document,
     items: &mut [crate::outline::OutlineItem],
     page_count: usize,
@@ -798,9 +790,6 @@ pub(crate) fn correct_named_outline(
     let Ok(catalog) = document.catalog() else {
         return;
     };
-    if !catalog.has(b"Dests") {
-        return;
-    }
     let Some(root) = catalog
         .get_deref(b"Outlines", document)
         .ok()
@@ -814,7 +803,7 @@ pub(crate) fn correct_named_outline(
         document: &'a Document,
         parent: &'a Dictionary,
         items: &mut [crate::outline::OutlineItem],
-        resolve_target: &mut impl FnMut(&Object) -> Target,
+        correct: &mut impl FnMut(&Object, &mut Target),
     ) {
         let mut next = parent.get(b"First");
         for item in items {
@@ -850,27 +839,55 @@ pub(crate) fn correct_named_outline(
             } else {
                 dict.get_deref(b"Dest", document).ok()
             };
-            if let Some(key @ (Object::Name(_) | Object::String(_, _))) = dest {
-                if matches!(
-                    item.target,
-                    Target::Page { .. } | Target::None | Target::Broken
-                ) {
-                    item.target = resolve_target(key);
-                }
+            if let Some(dest) = dest {
+                correct(dest, &mut item.target);
             }
-            siblings(document, dict, &mut item.children, resolve_target);
+            siblings(document, dict, &mut item.children, correct);
         }
     }
-    siblings(document, root, items, &mut |key| {
-        let (numbers, geometry) = pages.get_or_init(|| outline_page_geometry(document, page_count));
-        destination(
-            key,
-            document,
-            numbers,
-            geometry,
-            &mut Limits::default(),
-            &names,
-        )
+    siblings(document, root, items, &mut |dest, target| {
+        let array = match dest {
+            named @ (Object::Name(_) | Object::String(_, _)) if catalog.has(b"Dests") => {
+                if matches!(target, Target::Page { .. } | Target::None | Target::Broken) {
+                    let (numbers, geometry) =
+                        pages.get_or_init(|| outline_page_geometry(document, page_count));
+                    *target = destination(
+                        named,
+                        document,
+                        numbers,
+                        geometry,
+                        &mut Limits::default(),
+                        &names,
+                    );
+                }
+                return;
+            }
+            named @ (Object::Name(_) | Object::String(_, _)) => names
+                .lookup(named)
+                .ok()
+                .flatten()
+                .and_then(|value| named_array(document, value)),
+            Object::Array(array) => Some(array.as_slice()),
+            _ => None,
+        };
+        if let (
+            Some([_, fit, coordinate, ..]),
+            Target::Page {
+                top_pt,
+                other_edges,
+                ..
+            },
+        ) = (array, target)
+        {
+            if matches!(
+                resolve(document, fit).as_name(),
+                Ok(b"FitH" | b"FitBH" | b"FitV" | b"FitBV")
+            ) && matches!(resolve(document, coordinate), Object::Null)
+            {
+                *top_pt = None;
+                *other_edges = None;
+            }
+        }
     });
 }
 

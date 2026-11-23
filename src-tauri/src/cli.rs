@@ -714,19 +714,61 @@ fn json(to: &mut dyn Write, value: &impl serde::Serialize) {
 ///
 /// Whatever `serde_json` cannot encode.
 pub(crate) fn ascii_json(value: &impl serde::Serialize) -> serde_json::Result<String> {
-    let text = serde_json::to_string_pretty(value)?;
-    let mut ascii = String::with_capacity(text.len());
-    for c in text.chars() {
-        if c.is_ascii() {
-            ascii.push(c);
-        } else {
-            let mut units = [0u16; 2];
-            for unit in c.encode_utf16(&mut units) {
-                ascii.push_str(&format!("\\u{unit:04x}"));
+    ascii_json_with_limit(value, usize::MAX)
+}
+
+/// Encode directly into the final buffer. The pretty serializer writes ASCII syntax and
+/// complete UTF-8 string fragments; escaping here avoids building a second full report.
+pub(super) fn ascii_json_with_limit(
+    value: &impl serde::Serialize,
+    limit: usize,
+) -> serde_json::Result<String> {
+    struct Ascii {
+        text: String,
+        limit: usize,
+    }
+    impl Write for Ascii {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let fragment = std::str::from_utf8(buf).map_err(std::io::Error::other)?;
+            let ascii = fragment.is_ascii();
+            let bytes = if ascii {
+                buf.len()
+            } else {
+                fragment
+                    .chars()
+                    .map(|c| if c.is_ascii() { 1 } else { 6 * c.len_utf16() })
+                    .sum()
+            };
+            if bytes > self.limit - self.text.len() {
+                return Err(std::io::ErrorKind::FileTooLarge.into());
             }
+            if ascii {
+                self.text.push_str(fragment);
+            } else {
+                use std::fmt::Write as _;
+                for c in fragment.chars() {
+                    if c.is_ascii() {
+                        self.text.push(c);
+                    } else {
+                        for unit in c.encode_utf16(&mut [0; 2]) {
+                            write!(self.text, "\\u{unit:04x}").expect("writing into a String");
+                        }
+                    }
+                }
+            }
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
         }
     }
-    Ok(ascii)
+    let mut out = Ascii {
+        text: String::new(),
+        limit,
+    };
+    serde_json::to_writer_pretty(&mut out, value)?;
+    Ok(out.text)
 }
 
 /// The usage text, from [`COMMANDS`].

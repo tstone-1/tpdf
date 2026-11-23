@@ -231,6 +231,8 @@ interface Mounted {
   accepted: FormValue;
   /** The DOM may normalize a PDF string when displaying it (for example CRLF). */
   displayed: string;
+  /** The index selected in an editable picker survives a rejected write, even for equal labels. */
+  picked?: number[];
   pending: number;
   /** A list's choices as the control offers them, and the element that holds them. */
   choices: ShownChoice[];
@@ -425,11 +427,15 @@ export class FormLayer {
         });
       }
       input.addEventListener("input", () => {
+        delete control.picked;
         if (sameAnswer(this.read(control), control.accepted)) this.drafts.delete(control);
         else this.drafts.add(control);
       });
       input.addEventListener("blur", () => { if (!this.disposed) this.commitOne(control, false); });
-      input.addEventListener("change", () => { if (kind.kind !== "text") this.commitOne(control, false); });
+      input.addEventListener("change", () => {
+        delete control.picked;
+        if (kind.kind !== "text") this.commitOne(control, false);
+      });
       if (list && list !== input) {
         const picker = list;
         picker.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -437,14 +443,16 @@ export class FormLayer {
         picker.addEventListener("change", () => {
           if (picker.value === "") {
             input.value = "";
-            this.commitOne(control, false, []);
+            control.picked = [];
+            this.commitOne(control, false);
             return;
           }
           const index = Number(picker.value);
           const choice = control.choices.find((item) => item.index === index);
           if (!choice) return;
           input.value = choice.label;
-          this.commitOne(control, false, [index]);
+          control.picked = [index];
+          this.commitOne(control, false);
         });
       }
     }
@@ -496,6 +504,7 @@ export class FormLayer {
   }
 
   private read(control: Mounted): FormValue {
+    if (control.picked) return control.picked;
     const kind = control.widget.control;
     if (kind.kind === "radio") {
       if (!(control.input as HTMLInputElement).checked) return control.accepted;
@@ -518,6 +527,7 @@ export class FormLayer {
   }
 
   private put(control: Mounted, value: FormValue): void {
+    delete control.picked;
     const kind = control.widget.control;
     if (kind.kind === "radio" && Array.isArray(value)) {
       (control.input as HTMLInputElement).checked = value.some((i) => i === kind.index || (kind.unison && sameAnswer(kind.states[i]!, kind.states[kind.index]!)));

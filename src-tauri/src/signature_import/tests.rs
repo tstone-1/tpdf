@@ -427,3 +427,47 @@ fn a_photograph_stored_on_its_side_is_turned_upright() {
     // The control: a fixture the turn leaves unchanged could not show it.
     assert_ne!(oriented(upright.clone(), 6), upright);
 }
+
+#[test]
+fn placed_png_converts_calibrated_samples_to_srgb_and_preserves_alpha() {
+    fn place(info: png::Info<'_>, samples: &[u8]) -> [u8; 4] {
+        let mut bytes = Vec::new();
+        png::Encoder::with_info(&mut bytes, info)
+            .unwrap()
+            .write_header()
+            .unwrap()
+            .write_image_data(samples)
+            .unwrap();
+        decode_picture(&bytes).unwrap().rgba.try_into().unwrap()
+    }
+    let mut info = png::Info::with_size(1, 1);
+    info.color_type = png::ColorType::GrayscaleAlpha;
+    info.source_gamma = Some(png::ScaledFloat::new(1.0));
+    let gray = place(info.clone(), &[128, 91]);
+    assert!(gray[..3].iter().all(|v| v.abs_diff(188) <= 1), "{gray:?}");
+    assert_eq!(gray[3], 91);
+
+    info.color_type = png::ColorType::Rgba;
+    info.source_chromaticities = Some(png::SourceChromaticities::new(
+        (0.3127, 0.3290),
+        (0.15, 0.06),
+        (0.30, 0.60),
+        (0.64, 0.33),
+    ));
+    let blue = place(info.clone(), &[128, 0, 0, 91]);
+    assert!(
+        blue[0] <= 1 && blue[1] <= 1 && blue[2].abs_diff(188) <= 1,
+        "{blue:?}"
+    );
+    assert_eq!(blue[3], 91);
+
+    // The same samples tagged with an sRGB ICC profile keep their red,
+    // despite both fallback chunks specifying linear samples and swapped primaries.
+    info.icc_profile = Some(moxcms::ColorProfile::new_srgb().encode().unwrap().into());
+    let srgb = place(info, &[128, 0, 0, 91]);
+    assert!(
+        srgb[0].abs_diff(128) <= 1 && srgb[1] <= 1 && srgb[2] <= 1,
+        "{srgb:?}"
+    );
+    assert_eq!(srgb[3], 91);
+}

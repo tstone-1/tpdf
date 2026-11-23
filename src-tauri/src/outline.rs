@@ -432,7 +432,7 @@ pub fn read(document: &OpenDocument) -> Outline {
     let mut items = walk.siblings(first, 0);
     if !items.is_empty() {
         if let Ok(graph) = document.graph().parsed() {
-            crate::links::correct_named_outline(graph, &mut items, walk.page_count as usize);
+            crate::links::correct_outline_destinations(graph, &mut items, walk.page_count as usize);
         }
     }
     let page_labels = page_labels(walk.bindings, walk.document, walk.page_count);
@@ -558,10 +558,9 @@ impl Walk<'_> {
     /// resolvers already have.
     ///
     /// `FPDFAction_GetURIPath` hands back a **byte** string, not the UTF-16 a
-    /// title arrives as: §12.6.4.7 defines `/URI` as ASCII, and PDFium passes it
-    /// through unchanged. Reading it as UTF-16 would produce plausible garbage
-    /// rather than an error, which is the failure shape this module's own header
-    /// warns about for titles.
+    /// title arrives as. §12.6.4.7 defines `/URI` as ASCII, but some producers
+    /// write a BOM-marked PDF text string. Decode that form as the annotation
+    /// reader does before applying the shared URL policy.
     fn web(&mut self, action: FPDF_ACTION) -> Target {
         // SAFETY: the documented two-call form --- a null buffer asks for the
         // length in bytes, including the terminating NUL.
@@ -569,10 +568,9 @@ impl Walk<'_> {
             self.bindings
                 .FPDFAction_GetURIPath(self.document, action, std::ptr::null_mut(), 0)
         } as usize;
-        // One byte is the NUL alone, i.e. an empty URI; and the bound is
-        // `weburl`'s, so a length this refuses is one `Web::parse` would refuse
-        // anyway --- checked here only to keep the allocation off the file.
-        if needed <= 1 || needed > crate::weburl::MAX_URL_BYTES {
+        // Include space for a UTF-16 BOM, two bytes per ASCII URL byte and
+        // PDFium's terminating NUL. Web::parse checks the decoded byte length.
+        if needed <= 1 || needed > 2 * crate::weburl::MAX_URL_BYTES + 3 {
             return refused("uri");
         }
 
@@ -587,17 +585,14 @@ impl Walk<'_> {
                 needed as c_ulong,
             )
         } as usize;
-        buffer.truncate(written.min(needed));
-        // The trailing NUL is PDFium's, not the URI's. Trimming every trailing
-        // NUL rather than exactly one: a buffer PDFium wrote less into than it
-        // asked for ends in more than one, and a NUL reaching `Web::parse` is a
-        // control character it would refuse --- which would read as a rejected
-        // link rather than as a short write.
-        while buffer.last() == Some(&0) {
-            buffer.pop();
+        if written != needed || buffer.pop() != Some(0) {
+            return refused("uri");
         }
-
-        let Ok(text) = String::from_utf8(buffer) else {
+        let text = if buffer.starts_with(&[0xfe, 0xff]) || buffer.starts_with(&[0xef, 0xbb, 0xbf]) {
+            crate::annots::decode_text_string(&buffer)
+        } else if let Ok(text) = String::from_utf8(buffer) {
+            text
+        } else {
             return refused("uri");
         };
         let Some(web) = crate::weburl::Web::parse(&text) else {

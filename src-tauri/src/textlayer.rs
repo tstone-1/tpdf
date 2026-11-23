@@ -257,13 +257,18 @@ fn attach(
 ) -> Result<(), String> {
     // The effective resources, which a page may inherit. They are copied onto
     // the page so that adding a font to them changes this page and no other.
-    let mut resources = match pagetree::inherited(doc, page, b"Resources") {
-        Some(found) => dictionary_of(doc, &found),
-        None => Dictionary::new(),
-    };
-    let mut fonts = match resources.get(b"Font") {
-        Ok(found) => dictionary_of(doc, found),
-        Err(_) => Dictionary::new(),
+    let mut resources = pagetree::resources(doc, page)
+        .map_err(|e| said!("the OCR page resources could not be read: {e}"))?
+        .cloned()
+        .unwrap_or_default();
+    let mut fonts = if resources.has(b"Font") {
+        resources
+            .get_deref(b"Font", doc)
+            .and_then(Object::as_dict)
+            .map_err(|e| said!("the OCR page font resources could not be read: {e}"))?
+            .clone()
+    } else {
+        Dictionary::new()
     };
     let mut name = FONT_NAME.to_string();
     let mut suffix = 0_u32;
@@ -310,18 +315,6 @@ fn attach(
     dict.set("Contents", Object::Array(contents));
     dict.set("Resources", Object::Dictionary(resources));
     Ok(())
-}
-
-/// A dictionary, read through one reference, or an empty one.
-fn dictionary_of(doc: &Document, object: &Object) -> Dictionary {
-    let direct = match object {
-        Object::Reference(id) => doc.get_object(*id).ok(),
-        other => Some(other),
-    };
-    direct
-        .and_then(|found| found.as_dict().ok())
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// Adds the font's four objects and returns the Type 0 font.
@@ -689,6 +682,25 @@ mod tests {
             .and_then(Object::as_reference)
             .is_ok());
         assert!(layer_text(&doc, page).contains("/TpdfOcr1 "));
+    }
+
+    #[test]
+    fn an_unresolved_font_dictionary_does_not_get_replaced() {
+        let (mut doc, page) = document(0);
+        let missing = doc.new_object_id();
+        doc.get_dictionary_mut(page).unwrap().set(
+            "Resources",
+            dictionary! { "Font" => Object::Reference(missing) },
+        );
+        let err = write(
+            &mut doc,
+            &[Layer {
+                page: 0,
+                words: vec![word("hi", [0., 0., 10., 10.])],
+            }],
+        )
+        .unwrap_err();
+        assert!(err.contains("font resources could not be read"), "{err}");
     }
 
     #[test]

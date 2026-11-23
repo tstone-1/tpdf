@@ -1249,7 +1249,8 @@ window's find bar finds and what `redact` would remove, and takes the same `--te
 run with `redact`; `--whole-word` is the find bar's whole-word switch. A phrase that runs
 over a page break is found and listed on the page it starts on. A page with no text at all —
 a scan — is named on stderr, because nothing can match there and silence would read as
-"not in the document". It exits 1 when nothing matched, so `tpdf search … && …` works in a
+"not in the document". Search also names pages where the extractor guessed characters or could not
+check every font mapping. A visible word on those pages may be missed. It exits 1 when nothing matched, so `tpdf search … && …` works in a
 shell, and stops with a refusal past 10,000 matches in one document.
 
 `tpdf compare <old.pdf> <new.pdf>` prints what changed in the words from the first document
@@ -2143,7 +2144,8 @@ and `message` explains it. Branch on the code or kind, not the message text.
 Two refusals come before the command line is read and so carry no JSON: an argument
 that is not valid Unicode (2), and a tool that cannot work out where it is installed (4).
 On success, `text --json -o out.json` writes its report to the named file instead
-of stdout; other JSON reports go to stdout. `help --json` supports discovery;
+of stdout. The 64 MiB text-output limit includes JSON escapes, formatting and page separators;
+use `--pages` to extract a smaller range. Other JSON reports go to stdout. `help --json` supports discovery;
 `--version` remains plain text. Every document has `schema` (now `1`;
 a key may be added without changing it, and one renamed or removed changes it) and
 `command`. Enumerations use the same words as the application's own data. The JSON is plain
@@ -2191,6 +2193,7 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   object with `kind` (`unreadable`, `refused`, `locked` for an encrypted document, `failed`)
   and `message` — `signatures`, and `signatures_complete` (`false` when not every signature
   field could be read, so the list may be missing one, and when the document was not read).
+  Older schema-1 CLIs omit this field. Its absence leaves completeness unknown.
 - `info`: `files`, one per document in the order given, each with `path`, `error` (as for
   `verify`; `locked` exits 0 here) and `document` — `null` exactly when `error` is not, and
   otherwise: `version` (`1.7`); `bytes`; `pages`; `page_sizes`, each distinct size as
@@ -2212,7 +2215,10 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
 - `search`: `queries`, every `--text` and then every `--pattern`, each with `kind` (`text`
   or `pattern`) and `query`; and `files`, one per document in argument order, each with
   `path`, `error` (null, or the error object `info` uses), `pages_searched`,
-  `pages_without_text` (pages counted from 1 that hold no text to search) and `matches`.
+  `pages_without_text` (pages counted from 1 that hold no text to search),
+  `pages_with_guessed_encoding` and `pages_with_unknown_encoding` (nonempty pages on which
+  a font left the extractor guessing or its mapping could not be fully checked), and `matches`.
+  Older schema-1 reports omit the two encoding lists.
   Each match has `page` (counted from 1), `end_page` (the page it ends on when it runs over
   a page break, else null), `query` (which of `queries` found it, counted from 0), and
   `before`, `hit` and `after`: the matched text as the page spells it and the words either

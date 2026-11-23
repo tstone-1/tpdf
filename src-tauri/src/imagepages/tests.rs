@@ -178,7 +178,7 @@ fn png_profile_and_orientation_are_kept_with_the_image_samples() {
 fn calibrated_png_samples_keep_their_transfer_curve_and_primaries() {
     let mut info = png::Info::with_size(2, 1);
     info.gama_chunk = Some(png::ScaledFloat::new(1.0));
-    let space = png_calibration(&info, false).unwrap().unwrap();
+    let space = png_calibration(&info, false).unwrap().unwrap().pdf_space();
     let items = space.as_array().unwrap();
     assert_eq!(items[0].as_name().unwrap(), b"CalRGB");
     let params = items[1].as_dict().unwrap();

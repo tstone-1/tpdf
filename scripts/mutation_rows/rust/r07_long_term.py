@@ -2292,8 +2292,8 @@ ROWS += [
     Mutation(
         'bookmarks: do not recount what is left',
         'src/outline_repair.rs',
-        '        redact::recount(doc, root, 0);\n',
-        '        let _ = root;\n',
+        '.set("Count", count_visible(&top, &visible));',
+        '.set("Count", 0_i64);',
         'deleting_a_page_removes_only_the_entries_that_led_to_it',
     ),
     Mutation(

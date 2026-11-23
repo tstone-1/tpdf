@@ -12,6 +12,8 @@ can bypass this helper; the normal release procedure uses it instead of an
 unconditional `gh release edit --draft=false`.
 """
 import argparse
+import base64
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -94,7 +96,52 @@ def tested_packages(run_id):
     return [package for report in reports for package in report['packages']]
 
 
-def require_assets(draft, version, packages):
+def download_asset(asset, destination):
+    """Read the selected draft asset by ID, including before its public URL exists."""
+    with destination.open('wb') as output:
+        subprocess.run(['gh', 'api', '-H', 'Accept: application/octet-stream',
+                        f'repos/{REPO}/releases/assets/{asset["id"]}'],
+                       stdout=output, check=True, timeout=300)
+    with destination.open('rb') as received:
+        if 'sha256:' + hashlib.file_digest(received, 'sha256').hexdigest() != asset['digest']:
+            raise RuntimeError(f'{destination.name} differs from its listed digest')
+
+
+def check_updater(folder, version, platforms, public_key):
+    try:
+        manifest = json.loads((folder / 'latest.json').read_bytes())
+    except ValueError as error:
+        raise RuntimeError('draft latest.json is unreadable') from error
+    offers = manifest.get('platforms') if isinstance(manifest, dict) else None
+    if (not isinstance(offers, dict) or manifest.get('version') != version
+            or offers.keys() != platforms.keys()):
+        raise RuntimeError('draft updater manifest has the wrong version or platforms')
+    keyfile = folder / 'updater.pub'
+    keyfile.write_bytes(base64.b64decode(public_key, validate=True))
+    for name in sorted(set(platforms.values())):
+        signature = (folder / (name + '.sig')).read_text(encoding='ascii').strip()
+        url = f'https://github.com/{REPO}/releases/latest/download/{name}'
+        for platform, package in platforms.items():
+            if package != name:
+                continue
+            offer = offers[platform]
+            if (not isinstance(offer, dict) or offer.get('url') != url
+                    or not signature or offer.get('signature') != signature):
+                raise RuntimeError(f'{platform}: updater URL or signature differs from {name}')
+        sigfile = folder / (name + '.minisig')
+        sigfile.write_bytes(base64.b64decode(signature, validate=True))
+        # -Q prints only the authenticated trusted comment after verifying the package.
+        verified = subprocess.run(['minisign', '-V', '-Q', '-p', str(keyfile), '-x', str(sigfile),
+                                   '-m', str(folder / name)], capture_output=True, text=True, timeout=120)
+        if verified.returncode:
+            raise RuntimeError(f'invalid updater signature for {name}: {verified.stderr.strip()}')
+        versions = [field[8:] for field in verified.stdout.rstrip('\r\n').split('\t')
+                    if field.startswith('version:')]
+        if versions != [version]:
+            raise RuntimeError(f'{name} was not signed for updater version {version}')
+
+
+def require_assets(draft, version, packages, sha):
     installer = f'tpdf_{version}_x64-setup.exe'
     updater = 'tpdf_aarch64.app.tar.gz'
     expected = {'latest.json', installer, installer + '.sig', updater, updater + '.sig',
@@ -125,6 +172,18 @@ def require_assets(draft, version, packages):
     if (len(stored) != len(expected) or {a['name'] for a in stored} != expected
             or any(a.get('digest') != digests[a['name']] for a in stored if a['name'] in tested)):
         raise RuntimeError('draft assets differ from the tested release packages')
+
+    platforms = {'darwin-aarch64': updater, 'darwin-aarch64-app': updater,
+                 'windows-x86_64': installer, 'windows-x86_64-nsis': installer}
+    config = gh('api', '-H', 'Accept: application/vnd.github.raw+json',
+                f'repos/{REPO}/contents/src-tauri/tauri.conf.json?ref={sha}')
+    with tempfile.TemporaryDirectory() as temp:
+        folder = Path(temp)
+        for asset in stored:
+            name = asset['name']
+            if name in (updater, installer, 'latest.json') or name.endswith('.sig'):
+                download_asset(asset, folder / name)
+        check_updater(folder, version, platforms, config['plugins']['updater']['pubkey'])
 
 
 def main():
@@ -170,7 +229,7 @@ def main():
     if len(drafts) != 1 or not drafts[0]['isDraft']:
         raise RuntimeError('expected exactly one unpublished draft for this tag')
     if not rehearsal:
-        require_assets(drafts[0], version, tested_packages(latest['databaseId']))
+        require_assets(drafts[0], version, tested_packages(latest['databaseId']), sha)
     print(f'[PASS] {args.tag} at {sha}: all {len(PLATFORMS)} packaged API checks passed in run {latest["databaseId"]}, '
           f'audit run {audit["databaseId"]} passed')
     if args.publish:

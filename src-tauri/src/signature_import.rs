@@ -200,6 +200,97 @@ pub fn dimensions_within(bytes: &[u8], limits: &Limits) -> Result<(u32, u32), St
     Err(invalid())
 }
 
+/// An embedded ICC profile takes precedence over PNG's fallback calibration.
+fn png_profile(info: &png::Info<'_>, gray: bool) -> Result<Option<moxcms::ColorProfile>, String> {
+    use moxcms::{ColorProfile, DataColorSpace, ToneReprCurve, XyY, Xyzd};
+    if let Some(bytes) = info.icc_profile.as_deref() {
+        let profile = ColorProfile::new_from_slice(bytes)
+            .map_err(|e| said!("the PNG colour profile could not be read: {e}"))?;
+        if profile.color_space
+            != if gray {
+                DataColorSpace::Gray
+            } else {
+                DataColorSpace::Rgb
+            }
+        {
+            return Err(said!(
+                "the {format} colour profile does not match its samples",
+                format = "PNG"
+            ));
+        }
+        return Ok(Some(profile));
+    }
+    let Some(cal) = crate::imagepages::png_calibration(info, gray)? else {
+        return Ok(None);
+    };
+    let [x, y, z] = cal.white;
+    let white = Xyzd::new(x, y, z);
+    let curve = ToneReprCurve::Parametric(vec![cal.gamma]);
+    let mut profile = if let Some(primaries) = cal.primaries {
+        let [red, green, blue] = primaries.map(|[a, b, c]| Xyzd::new(a, b, c));
+        let mut profile = ColorProfile::new_srgb();
+        let xy = XyY::new(x / (x + y + z), y / (x + y + z), y);
+        profile.update_rgb_colorimetry_triplet(xy, red, green, blue);
+        profile.red_trc = Some(curve.clone());
+        profile.green_trc = Some(curve.clone());
+        profile.blue_trc = Some(curve);
+        profile
+    } else {
+        let mut profile = ColorProfile::new_gray_with_gamma(cal.gamma);
+        profile.gray_trc = Some(curve);
+        profile
+    };
+    profile.media_white_point = Some(white);
+    Ok(Some(profile))
+}
+
+/// Expand and convert one row at a time. Walking backwards keeps unread gray
+/// samples intact as their two-byte pixels are expanded into four bytes.
+fn png_rgba(
+    mut data: Vec<u8>,
+    width: usize,
+    gray: bool,
+    profile: Option<&moxcms::ColorProfile>,
+) -> Result<Vec<u8>, String> {
+    use moxcms::{ColorProfile, Layout};
+    if !gray && profile.is_none() {
+        return Ok(data);
+    }
+    let error = |e: moxcms::CmsError| said!("the PNG colour profile could not be applied: {e}");
+    let layout = if gray {
+        Layout::GrayAlpha
+    } else {
+        Layout::Rgba
+    };
+    let transform = profile
+        .map(|source| {
+            source.create_transform_8bit(
+                layout,
+                &ColorProfile::new_srgb(),
+                Layout::Rgba,
+                Default::default(),
+            )
+        })
+        .transpose()
+        .map_err(error)?;
+    let stride = width * layout.channels();
+    let height = data.len() / stride;
+    data.resize(height * width * 4, 0);
+    let mut row = vec![0; stride];
+    for y in (0..height).rev() {
+        row.copy_from_slice(&data[y * stride..(y + 1) * stride]);
+        let dest = &mut data[y * width * 4..(y + 1) * width * 4];
+        if let Some(transform) = &transform {
+            transform.transform(&row, dest).map_err(error)?;
+        } else {
+            for (source, pixel) in row.chunks_exact(2).zip(dest.chunks_exact_mut(4)) {
+                pixel.copy_from_slice(&[source[0], source[0], source[0], source[1]]);
+            }
+        }
+    }
+    Ok(data)
+}
+
 fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec<u8>, u8), String> {
     let invalid = |_| refusal.to_string();
     let pixels = width as usize * height as usize;
@@ -224,14 +315,13 @@ fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec<
     }
     reader.finish().map_err(invalid)?;
     let orientation = crate::imagepages::png_orientation(reader.info());
-    let rgba = match frame.color_type {
-        png::ColorType::Rgba if size == pixels * 4 => decoded,
-        png::ColorType::GrayscaleAlpha if size == pixels * 2 => decoded
-            .chunks_exact(2)
-            .flat_map(|p| [p[0], p[0], p[0], p[1]])
-            .collect(),
+    let gray = match frame.color_type {
+        png::ColorType::Rgba if size == pixels * 4 => false,
+        png::ColorType::GrayscaleAlpha if size == pixels * 2 => true,
         _ => return Err(refusal.into()),
     };
+    let profile = png_profile(reader.info(), gray)?;
+    let rgba = png_rgba(decoded, width as usize, gray, profile.as_ref())?;
     Ok((rgba, orientation))
 }
 

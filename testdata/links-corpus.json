@@ -395,6 +395,117 @@
       "unresolved_names": 0
     }
   },
+  "links-fit-operands.pdf": {
+    "pages": 2,
+    "total": 6,
+    "limits": {},
+    "expected": [
+      {
+        "page": 0,
+        "target": {
+          "kind": "page",
+          "page": 0,
+          "top_pt": null
+        },
+        "note": "FitH null"
+      },
+      {
+        "page": 0,
+        "target": {
+          "kind": "page",
+          "page": 0,
+          "top_pt": 842
+        },
+        "note": "FitH zero"
+      },
+      {
+        "page": 0,
+        "target": {
+          "kind": "page",
+          "page": 1,
+          "top_pt": null
+        },
+        "note": "Rotated FitBV null"
+      },
+      {
+        "page": 0,
+        "target": {
+          "kind": "page",
+          "page": 1,
+          "top_pt": 0
+        },
+        "note": "Rotated FitBV zero"
+      },
+      {
+        "page": 0,
+        "target": {
+          "kind": "web",
+          "host": "example.invalid",
+          "rest": "/ascii"
+        },
+        "note": "ASCII URI"
+      },
+      {
+        "page": 0,
+        "target": {
+          "kind": "web",
+          "host": "example.invalid",
+          "rest": "/utf16"
+        },
+        "note": "UTF-16BE URI"
+      }
+    ],
+    "shared_targets": [
+      {
+        "title": "FitH null",
+        "target": {
+          "kind": "page",
+          "page": 0,
+          "top_pt": null
+        }
+      },
+      {
+        "title": "FitH zero",
+        "target": {
+          "kind": "page",
+          "page": 0,
+          "top_pt": 842
+        }
+      },
+      {
+        "title": "Rotated FitBV null",
+        "target": {
+          "kind": "page",
+          "page": 1,
+          "top_pt": null
+        }
+      },
+      {
+        "title": "Rotated FitBV zero",
+        "target": {
+          "kind": "page",
+          "page": 1,
+          "top_pt": 0
+        }
+      },
+      {
+        "title": "ASCII URI",
+        "target": {
+          "kind": "web",
+          "host": "example.invalid",
+          "rest": "/ascii"
+        }
+      },
+      {
+        "title": "UTF-16BE URI",
+        "target": {
+          "kind": "web",
+          "host": "example.invalid",
+          "rest": "/utf16"
+        }
+      }
+    ]
+  },
   "links-cropped.pdf": {
     "pages": 1,
     "crop_box": [

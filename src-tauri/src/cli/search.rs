@@ -374,6 +374,33 @@ impl Subcommand for Search {
             if let Some(error) = &file.error {
                 say(err, &format!("{}: {}", env.program, error.message));
             }
+            for (pages, reason) in [
+                (
+                    &file.pages_with_guessed_encoding,
+                    "some characters have a guessed encoding",
+                ),
+                (
+                    &file.pages_with_unknown_encoding,
+                    "the character encoding could not be fully checked",
+                ),
+            ] {
+                if !pages.is_empty() {
+                    let shown = pages
+                        .iter()
+                        .take(10)
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let more = if pages.len() > 10 { ", ..." } else { "" };
+                    say(
+                        err,
+                        &format!(
+                            "{}: {}: pages {shown}{more}: {reason}; matches may be missing",
+                            env.program, file.path
+                        ),
+                    );
+                }
+            }
             if let Some(note) = textless(file) {
                 say(err, &format!("{}: {note}", env.program));
             }
@@ -489,14 +516,22 @@ pub fn plain(report: &report::Searched) -> String {
     let mut out = String::new();
     for file in &report.files {
         for hit in &file.matches {
+            let mut record = String::new();
             if named {
-                out.push_str(&file.path);
-                out.push(':');
+                record.push_str(&file.path);
+                record.push(':');
             }
-            out.push_str(&format!(
-                "{}: {}{}{}\n",
+            record.push_str(&format!(
+                "{}: {}{}{}",
                 hit.page, hit.before, hit.hit, hit.after
             ));
+            out.push_str(&record.replace("\r\n", " ").replace(
+                [
+                    '\r', '\n', '\u{b}', '\u{c}', '\u{85}', '\u{2028}', '\u{2029}',
+                ],
+                " ",
+            ));
+            out.push('\n');
         }
     }
     out
@@ -545,6 +580,8 @@ pub(super) fn searched_for(
         error: None,
         pages_searched: u32::try_from(pages).unwrap_or(u32::MAX),
         pages_without_text: empty,
+        pages_with_guessed_encoding: Vec::new(),
+        pages_with_unknown_encoding: Vec::new(),
         matches: hits.into_iter().map(|(_, _, hit)| hit).collect(),
     })
 }
@@ -596,6 +633,8 @@ fn failed_file(path: &str, kind: ErrorKind, message: String) -> report::Searched
         error: Some(FileError { kind, message }),
         pages_searched: 0,
         pages_without_text: Vec::new(),
+        pages_with_guessed_encoding: Vec::new(),
+        pages_with_unknown_encoding: Vec::new(),
         matches: Vec::new(),
     }
 }
@@ -689,7 +728,24 @@ fn search_one(
                     }
                 }
             }
-            searched_for(&shown, pages.len(), empty, &found, command.annotate)
+            let mut file = searched_for(&shown, pages.len(), empty, &found, command.annotate)?;
+            if file.pages_without_text.len() < pages.len() {
+                let mapping = match super::text::mapping(&mut session) {
+                    Ok(mapping) => mapping,
+                    Err(why) => return declined(why),
+                };
+                for page in pages {
+                    if file.pages_without_text.binary_search(&page).is_ok() {
+                        continue;
+                    }
+                    match super::text::page_encoding(mapping.get((page - 1) as usize)) {
+                        report::Encoding::Guessed => file.pages_with_guessed_encoding.push(page),
+                        report::Encoding::Unknown => file.pages_with_unknown_encoding.push(page),
+                        report::Encoding::Stated => {}
+                    }
+                }
+            }
+            Ok(file)
         }
     }
 }

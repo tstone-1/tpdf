@@ -71,8 +71,24 @@ impl Image {
         let mut mask = Stream::new(mask, alpha);
         let _ = mask.compress();
         let mask = doc.add_object(mask);
+        // Placement and canvas import produce sRGB pixels. DeviceRGB would
+        // leave their interpretation to the printer or viewer.
+        static SRGB: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
+            moxcms::ColorProfile::new_srgb()
+                .encode()
+                .expect("the built-in sRGB profile can be encoded")
+        });
+        let mut profile = Stream::new(
+            dictionary! { "N" => 3, "Alternate" => "DeviceRGB" },
+            SRGB.clone(),
+        );
+        let _ = profile.compress();
+        let profile = doc.add_object(profile);
         let mut image = base;
-        image.set("ColorSpace", "DeviceRGB");
+        image.set(
+            "ColorSpace",
+            vec![lopdf::Object::Name(b"ICCBased".to_vec()), profile.into()],
+        );
         image.set("SMask", mask);
         let mut image = Stream::new(image, rgb);
         let _ = image.compress();
@@ -84,6 +100,44 @@ mod tests {
     use super::*;
     use crate::docmodel::{Command, Doc, Mark, MarkKind, Quad};
     use std::sync::Arc;
+
+    #[test]
+    fn placed_pixels_declare_their_srgb_profile_and_use_a_gray_soft_mask() {
+        let image = Image {
+            width: 1,
+            height: 1,
+            rgba: vec![188, 0, 0, 91],
+        };
+        let mut doc = lopdf::Document::new();
+        let id = image.xobject(&mut doc);
+        let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+        let cs = stream.dict.get(b"ColorSpace").unwrap().as_array().unwrap();
+        assert_eq!(cs[0].as_name().unwrap(), b"ICCBased");
+        let profile = doc
+            .get_object(cs[1].as_reference().unwrap())
+            .unwrap()
+            .as_stream()
+            .unwrap();
+        assert_eq!(profile.dict.get(b"N").unwrap().as_i64().unwrap(), 3);
+        let bytes = profile
+            .decompressed_content_with_limit(64 * 1024)
+            .unwrap_or_else(|_| profile.content.clone());
+        let expected = moxcms::ColorProfile::new_srgb().encode().unwrap();
+        // The ICC encoder sets the 12-byte creation timestamp at offsets 24..36.
+        assert_eq!(bytes[..24], expected[..24]);
+        assert_eq!(bytes[36..], expected[36..]);
+        let mask = stream
+            .dict
+            .get_deref(b"SMask", &doc)
+            .unwrap()
+            .as_stream()
+            .unwrap();
+        assert_eq!(
+            mask.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
+            b"DeviceGray"
+        );
+        assert_eq!(mask.content.as_slice(), &[91]);
+    }
 
     #[test]
     fn signature_rasters_reject_bad_lengths_limits_and_invisible_pixels() {

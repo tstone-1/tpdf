@@ -295,6 +295,49 @@ describe("Tab in the form's controls", () => {
     expect(writes.at(-1)).toBe("free text");
   });
 
+  it("retries a refused option by index when two labels look identical", async () => {
+    const combo: FormWidget = { ...text, value: [0], control: {
+      kind: "choice", combo: true, editable: true, multiple: false,
+      options: [{ label: "Same", export: "first" }, { label: "Same", export: "second" }] } };
+    let allow = false;
+    const writes: unknown[] = [];
+    const layer = new FormLayer(dom.root as unknown as HTMLElement, { widgets: [combo] }, () => null,
+      async (object, value) => {
+        writes.push(value);
+        if (allow) layer.update({ forms: [{ object, value }], fields: [] });
+      }, () => {}, () => {});
+    const [entry, picker] = dom.root.children[0]!.children[0]!.children;
+    picker!.value = "1";
+    picker!.dispatch("change", {});
+    await expect(layer.settle()).rejects.toThrow();
+    layer.commit();
+    await expect(layer.settle()).rejects.toThrow();
+    expect(layer.hasDraft).toBe(true);
+    allow = true;
+    layer.commit();
+    await layer.settle();
+    expect(writes).toEqual([[1], [1], [1]]);
+    expect(layer.hasDraft).toBe(false);
+    layer.update({ forms: [], fields: [] });
+    expect(picker!.value).toBe("0");
+    allow = false;
+    picker!.value = "1";
+    picker!.dispatch("change", {});
+    await expect(layer.settle()).rejects.toThrow();
+    picker!.value = "0";
+    picker!.dispatch("change", {});
+    layer.commit();
+    await layer.settle();
+    expect(layer.hasDraft).toBe(false);
+    entry!.value = "typed";
+    entry!.dispatch("input", {});
+    allow = true;
+    layer.commit();
+    await layer.settle();
+    expect(writes.at(-1)).toBe("typed");
+    layer.destroy();
+  });
+
   it("withholds the visible sibling of an unfillable widget and permits an unrelated answer", () => {
     new FormLayer(dom.root as unknown as HTMLElement, { widgets: [text, { ...text, reason: "This field is hidden" },
       { ...text, object: [66, 0], name: "Other" }] }, () => null, async () => {}, () => {}, () => {});

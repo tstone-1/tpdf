@@ -123,6 +123,7 @@ FIXTURES: list[tuple[str, list[str]]] = [
     # Written by the same run as the line above; listed so a check for its
     # presence is a check for the file rather than for its sibling.
     ("testdata/links-rotated.pdf", ["testdata/make_links_pdf.py", "testdata"]),
+    ("testdata/links-fit-operands.pdf", ["testdata/make_links_pdf.py", "testdata"]),
     ("testdata/links-cropped.pdf", ["testdata/make_links_pdf.py", "testdata"]),
     (
         "testdata/vector-multi.pdf",

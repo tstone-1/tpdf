@@ -19,6 +19,18 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- OCR preserves inherited page resources and refuses to save if it cannot read them.
+  Linux OCR reports an unavailable language as a refused request. Placing a calibrated
+  PNG on a page preserves its colour and transparency.
+- Editable dropdowns retry a refused choice even when two options have the same label.
+  Bookmarks preserve omitted scroll coordinates, accept Unicode web addresses, and
+  retain the counts of deeply nested outlines after page edits.
+- CLI search flags pages with unreliable character mappings and prints one line per match.
+  The text command enforces its limit on the final output in both formats. The Python
+  client accepts verification reports from older schema-1 releases.
+- Release publication verifies that the updater manifest points to the tested packages
+  and that both packages match their updater signatures.
+
 - Saving a form preserves untouched multiline answers and empty dropdown labels. Editable
   dropdowns distinguish options with the same label, and optional radio buttons can be cleared.
   The CLI lists and fills fields with indirectly stored names.
