@@ -1014,10 +1014,12 @@ fn soft_mask(doc: &Document, id: ObjectId) -> Option<ObjectId> {
         .ok()
 }
 
-/// Shrinks the pictures the pages draw. Returns how many there are, how many
-/// were stored smaller and how many are drawn at a size that is not known.
-fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize, usize) {
-    let shown = drawn(doc);
+/// Shrinks the drawn pictures. Returns how many changed and how many have unknown size.
+fn pictures(
+    doc: &mut Document,
+    how: Pictures,
+    shown: &BTreeMap<ObjectId, Shown>,
+) -> (usize, usize) {
     let unknown = shown
         .values()
         .filter(|shown| !shown.width.is_finite() || !shown.height.is_finite())
@@ -1026,7 +1028,7 @@ fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize, usize) {
     // A mask is scaled once, for the largest any of its pictures is shown.
     let mut masks: BTreeMap<ObjectId, Shown> = BTreeMap::new();
 
-    for (id, shown) in &shown {
+    for (id, shown) in shown {
         // A parent with an unsupported colour space can still depend on a shared mask.
         if let Some(mask) = soft_mask(doc, *id) {
             let entry = masks.entry(mask).or_default();
@@ -1034,7 +1036,7 @@ fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize, usize) {
             entry.height = entry.height.max(shown.height);
         }
     }
-    for (id, shown) in &shown {
+    for (id, shown) in shown {
         if let Some(mask) = masks.get_mut(id) {
             mask.width = mask.width.max(shown.width);
             mask.height = mask.height.max(shown.height);
@@ -1056,7 +1058,7 @@ fn pictures(doc: &mut Document, how: Pictures) -> (usize, usize, usize) {
                 || soft_mask(doc, **id).is_some_and(|mask| changed.contains(&mask))
         })
         .count();
-    (shown.len(), affected, unknown)
+    (affected, unknown)
 }
 
 /// Deflates every stream stored without a filter. Returns how many.
@@ -1120,12 +1122,27 @@ fn redeflate(stream: &mut lopdf::Stream) {
 /// Makes `doc` smaller as `compress` says, before it is encrypted and written.
 #[must_use]
 pub fn apply(doc: &mut Document, compress: Compress) -> Done {
-    let mut done = Done::default();
+    let shown = match compress {
+        Compress::Pictures(_) => drawn(doc),
+        _ => BTreeMap::new(),
+    };
+    apply_with_drawings(doc, compress, &shown)
+}
+
+fn apply_with_drawings(
+    doc: &mut Document,
+    compress: Compress,
+    shown: &BTreeMap<ObjectId, Shown>,
+) -> Done {
+    let mut done = Done {
+        pictures: shown.len(),
+        ..Done::default()
+    };
     match compress {
         Compress::No => return done,
         Compress::Lossless => {}
         Compress::Pictures(how) => {
-            (done.pictures, done.pictures_changed, done.pictures_unsized) = pictures(doc, how);
+            (done.pictures_changed, done.pictures_unsized) = pictures(doc, how, shown);
         }
     }
     done.streams_deflated = deflate_streams(doc);
@@ -1427,12 +1444,12 @@ pub struct Estimated {
 /// The copy would not serialise, in `save::serialise`'s words.
 pub fn estimate(doc: &Document, compress: Compress) -> Result<Estimated, String> {
     let mut copy = doc.clone();
-    let shown = match compress {
-        Compress::Pictures(_) => drawn(doc),
-        _ => BTreeMap::new(),
+    let shown = drawn(doc);
+    let done = apply_with_drawings(&mut copy, compress, &shown);
+    let focus = match compress {
+        Compress::Pictures(_) => focus(doc, &copy, &shown),
+        _ => None,
     };
-    let done = apply(&mut copy, compress);
-    let focus = focus(doc, &copy, &shown);
     let bytes = crate::save::serialise_packed(&mut copy, &said!("the smaller copy"))?;
     Ok(Estimated {
         estimate: Estimate {

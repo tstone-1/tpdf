@@ -1082,8 +1082,8 @@ ROWS += [
         # is not what copying the same rectangle gives.
         "reading: list a mark's covered words in the file's order",
         "src/lib/reading.ts",
-        "  const order = readingOrder(page).filter((index) => wanted.has(index));",
-        "  const order = [...wanted].sort((a, b) => a - b);",
+        "  let order = readingOrder(text).filter((i) => wanted.has(i));",
+        "  let order = [...wanted].sort((a, b) => a - b);",
         "reads a highlight across a gutter column by column, not line by line",
     ),
     Mutation(
@@ -1395,15 +1395,15 @@ ROWS += [
         # mark what they selected.
         "viewer: mark a selection made with no tool armed",
         "src/lib/viewer.ts",
-        "    if (this.tool.kind === \"redact\" && this.hasSelection) this.opts.onRedactSelection?.();",
-        "    if (this.hasSelection) this.opts.onRedactSelection?.();",
+        "    if (this.tool.kind === \"redact\" && this.selectedCount() > 0) this.opts.onRedactSelection?.();",
+        "    if (this.selectedCount() > 0) this.opts.onRedactSelection?.();",
         "selects without marking when the tool is not armed",
     ),
     Mutation(
         # Ask for an empty selection to be marked, which is what a click is.
         "viewer: mark the nothing a click selects",
         "src/lib/viewer.ts",
-        "    if (this.tool.kind === \"redact\" && this.hasSelection) this.opts.onRedactSelection?.();",
+        "    if (this.tool.kind === \"redact\" && this.selectedCount() > 0) this.opts.onRedactSelection?.();",
         "    if (this.tool.kind === \"redact\") this.opts.onRedactSelection?.();",
         "marks nothing for a click that selects nothing",
     ),

@@ -38,7 +38,7 @@ describe("what an attachment's name claims", () => {
     expect(saved({ name, description: "", size: null }, 1, name)).toContain("program or script");
   });
 
-  it.each(["docm", "dotm", "xlsm", "xltm", "xlam", "pptm", "potm", "ppsm", "ppam", "sldm"])(
+  it.each(["doc", "dot", "docm", "dotm", "xls", "xlsb", "xlt", "xla", "xlsm", "xltm", "xlam", "ppt", "pot", "pps", "ppa", "pptm", "potm", "ppsm", "ppam", "sldm"])(
     "names a .%s by its program and warns that it can hold macros",
     (end) => {
       // Mutation: drop any one from MACROS, or the macro warning -> red.

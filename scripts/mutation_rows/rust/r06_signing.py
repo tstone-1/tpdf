@@ -1041,15 +1041,15 @@ ROWS += [
     Mutation(
         "cli tool: show the verbatim path",
         "src/clitool.rs",
-        'path.strip_prefix(r"\\\\?\\").unwrap_or(path).to_owned()',
-        "path.to_owned()",
+        '("", verbatim.len())',
+        '("", 0)',
         "a_shown_path_drops_the_verbatim_prefix_and_nothing_else",
     ),
     Mutation(
         "cli tool: show a share as a drive-less path",
         "src/clitool.rs",
-        'format!(r"\\\\{share}")',
-        "share.to_owned()",
+        '(r"\\\\", unc.len())',
+        '("", unc.len())',
         "a_shown_path_drops_the_verbatim_prefix_and_nothing_else",
     ),
     Mutation(

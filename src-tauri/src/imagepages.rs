@@ -196,17 +196,17 @@ fn exif_properties(tiff: &[u8]) -> Option<Exif> {
 }
 
 /// What a JPEG's header says, read without decoding anything.
-struct JpegFacts<'a> {
+pub(crate) struct JpegFacts<'a> {
     // APP2 segment numbers run from 1 to 255. Keep slices until the raster is validated.
     profile_parts: Vec<&'a [u8]>,
     width: u32,
     height: u32,
-    components: u8,
-    orientation: u8,
+    pub(crate) components: u8,
+    pub(crate) orientation: u8,
     dpi: Option<(f64, f64)>,
 }
 
-fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts<'_>, String> {
+pub(crate) fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts<'_>, String> {
     let broken = || said!("it is not a complete JPEG image");
     let mut facts = JpegFacts {
         profile_parts: Vec::new(),
@@ -296,11 +296,13 @@ fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts<'_>, String> {
     }
 }
 
-/// A JPEG's EXIF orientation, 1 to 8, or 1 when its header states none or
-/// does not read. For `signature_import::decode_picture`, which turns the
-/// pixels where this module turns the content matrix.
-pub(crate) fn jpeg_orientation(bytes: &[u8]) -> u8 {
-    jpeg_facts(bytes).map_or(1, |facts| facts.orientation)
+impl JpegFacts<'_> {
+    pub(crate) fn profile(&self) -> Result<Option<Vec<u8>>, String> {
+        if self.profile_parts.iter().any(|part| part.is_empty()) {
+            return Err(said!("the JPEG colour profile is incomplete"));
+        }
+        Ok((!self.profile_parts.is_empty()).then(|| self.profile_parts.concat()))
+    }
 }
 
 fn jpeg(bytes: &[u8]) -> Result<Picture, String> {
@@ -342,10 +344,7 @@ fn jpeg(bytes: &[u8]) -> Result<Picture, String> {
     let mut decoded = vec![0; wanted];
     decoder.decode_into(&mut decoded).map_err(undecodable)?;
     drop(decoded);
-    if facts.profile_parts.iter().any(|part| part.is_empty()) {
-        return Err(said!("the JPEG colour profile is incomplete"));
-    }
-    let profile = (!facts.profile_parts.is_empty()).then(|| facts.profile_parts.concat());
+    let profile = facts.profile()?;
     validate_profile(profile.as_deref(), gray, "JPEG")?;
     Ok(Picture {
         width: facts.width,

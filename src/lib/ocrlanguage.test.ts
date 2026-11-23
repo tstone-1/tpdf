@@ -247,7 +247,7 @@ describe("the language's wiring in App.svelte", () => {
   it("takes the choice from the session at launch, and has the session keep a new one", () => {
     expect(missingFrom(app, [
       "recognitionLanguage.restore(session.ocr_language);",
-      'void call("session_set_ocr_language", { language: recognitionLanguage.language })',
+      'sessionWrites.run(() => call("session_set_ocr_language", { language }))',
     ])).toEqual([]);
   });
 

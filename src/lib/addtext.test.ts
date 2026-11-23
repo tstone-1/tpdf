@@ -88,6 +88,13 @@ describe("judge", () => {
     expect(judge("numbers", typed({ extra: "7" }), 1)).toMatchObject({ first_number: 7 });
   });
 
+  it("explains both numbering bounds and identifies discretionary hyphens before saving", () => {
+    expect(judge("numbers", typed({ extra: "1000001" }), 1)).toContain("0 to 1,000,000");
+    expect(judge("numbers", typed({ extra: "1000000" }), 1)).toMatchObject({ first_number: 1_000_000 });
+    expect(judge("numbers", typed({ text: "co\u00adoperate" }), 1)).toContain("soft hyphen");
+    expect(judge("numbers", typed({ text: "co-operate" }), 1)).toMatchObject({ text: "co-operate" });
+  });
+
   it("writes German text, which Latin-1 has", () => {
     expect(judge("numbers", typed({ text: "Seite {page} von {pages} für Prüfung" }), 1)).toMatchObject({
       text: "Seite {page} von {pages} für Prüfung",

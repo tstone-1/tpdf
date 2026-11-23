@@ -32,7 +32,8 @@ const TEXT = catalog({
     unclosed: "A field opened with { is not closed.",
     notField: (field: string) => `${field} is not a field. The fields are {page} and {pages}.`,
     sizeRange: (min: number, max: number) => `The size is a number of points from ${min} to ${max}.`,
-    firstNumber: "The first number is a whole number from 0.",
+    softHyphen: "Remove the soft hyphen or use an ordinary hyphen.",
+    firstNumber: "Enter a whole number from 0 to 1,000,000.",
     opacity: "The opacity is a percentage, more than 0 and at most 100.",
     numberedName: (stem: string) => `${stem} numbered.pdf`,
     watermarkedName: (stem: string) => `${stem} watermarked.pdf`,
@@ -60,7 +61,8 @@ const TEXT = catalog({
     unclosed: "Ein mit { geöffnetes Feld ist nicht geschlossen.",
     notField: (field: string) => `${field} ist kein Feld. Die Felder sind {page} und {pages}.`,
     sizeRange: (min: number, max: number) => `Die Größe ist eine Zahl von ${min} bis ${max} Punkt.`,
-    firstNumber: "Die erste Zahl ist eine ganze Zahl ab 0.",
+    softHyphen: "Der Text enthält einen bedingten Trennstrich. Bitte entfernen oder durch einen normalen Bindestrich ersetzen.",
+    firstNumber: "Die erste Zahl muss eine ganze Zahl zwischen 0 und 1.000.000 sein.",
     opacity: "Die Deckkraft ist ein Prozentwert, größer als 0 und höchstens 100.",
     numberedName: (stem: string) => `${stem} nummeriert.pdf`,
     watermarkedName: (stem: string) => `${stem} mit Wasserzeichen.pdf`,
@@ -172,6 +174,7 @@ export function judge(kind: Kind, typed: Typed, pageCount: number): AddedText | 
   // `addedtext::check`'s first refusal. Whether a font has every character
   // is the backend's to say: it holds the fonts, and a copy of their
   // coverage here would drift from them.
+  if (text.includes("\u00ad")) return TEXT().softHyphen;
   if (/\p{Cc}/u.test(text)) return TEXT().control;
   for (const field of text.match(/\{[^}]*\}?/g) ?? []) {
     if (!field.endsWith("}")) return TEXT().unclosed;

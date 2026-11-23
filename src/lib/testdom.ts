@@ -31,6 +31,7 @@ export class FakeElement {
   readonly listeners = new Map<string, Set<(event: unknown) => void>>();
   textContent = "";
   declare value: string; // Form controls acquire a value when the layer fills them.
+  checked = false;
   required = false;
   private customError = "";
   setCustomValidity(message: string): void { this.customError = message; }

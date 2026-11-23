@@ -333,6 +333,7 @@ describe("the page's wiring in App.svelte", () => {
     expect(missingFrom(functionIn(app, "async function forgetRecent(row: StartRow, index: number) {"), [
       'behindWrites(places, () => call("session_forget", { path: row.path }));',
       "if (said) say(said);",
+      "else places.forgotten(row.path);",
       "await refreshRecents();",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "async function clearRecents() {"), [

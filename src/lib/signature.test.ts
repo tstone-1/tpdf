@@ -122,6 +122,28 @@ describe("protected signature migration", () => {
       expect(removeItem).not.toHaveBeenCalled();
     }
   });
+  it("retries a transient migration failure and shares the retry between callers", async () => {
+    const ipc = await import("./ipc");
+    const { prepareSignatureStorage } = await import("./signaturestore");
+    const call = vi.spyOn(ipc, "call").mockRejectedValueOnce(new Error("locked"))
+      .mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValueOnce(image);
+    const removeItem = vi.fn();
+    vi.stubGlobal("localStorage", { getItem: () => JSON.stringify(image), removeItem });
+    try {
+      await expect(prepareSignatureStorage()).rejects.toThrow("locked");
+      expect(removeItem).not.toHaveBeenCalled();
+      const retry = prepareSignatureStorage();
+      expect(prepareSignatureStorage()).toBe(retry);
+      await retry;
+      expect(call.mock.calls).toEqual(["load", "load", "save", "load"].map(kind => [
+        "signature_store", { action: kind === "save" ? { kind, image } : { kind } },
+      ]));
+      expect(removeItem).toHaveBeenCalledTimes(1);
+    } finally {
+      call.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
   it("does not contact protected storage when no legacy image exists", async () => {
     const store = vi.fn();
     await migrateSignature({getItem:()=>null,removeItem:vi.fn()},store);

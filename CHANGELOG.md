@@ -19,6 +19,25 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Page numbering and watermarks preserve inherited artwork and refuse unreadable page
+  resources. Blank padding no longer makes an off-page label pass the visibility check.
+  The dialog explains the first-number limit and identifies soft hyphens before saving.
+- In-place redaction keeps its verification result visible if reopening the file fails.
+  Form fields retry the visible answer after overlapping refusals.
+- Lossless compression estimates count drawn pictures. Saved signatures can be loaded
+  again after a temporary storage failure. Windows Jump List entries work for network shares.
+- Reopening a forgotten file restores its recent entry. Quit and update relaunch wait
+  for pending changes to inversion, OCR language and tab restoration.
+
+- Clearing an optional radio button survives a refused edit and can be retried. Placing
+  a JPEG on an existing page honours its embedded colour profile.
+- The Redact tool marks selected running headers and footers. Region previews preserve
+  tagged body order alongside running matter. CLI line breaks agree with the viewer at
+  decimal rounding boundaries.
+- Extract pages suppresses ambiguous hints for printed labels containing commas.
+  Attachment export accepts null optional file entries, protects hard-linked names
+  for the source document and warns about macro-capable binary Office formats.
+
 - OCR preserves inherited page resources and refuses to save if it cannot read them.
   Linux OCR reports an unavailable language as a refused request. Placing a calibrated
   PNG on a page preserves its colour and transparency.

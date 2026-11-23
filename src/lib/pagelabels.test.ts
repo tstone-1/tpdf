@@ -99,6 +99,15 @@ describe("positionsFor", () => {
     expect(of("")).toBeNull();
   });
 
+  it("declines split-only hints when a comma belongs to a printed label", () => {
+    const labels = ["A", "B", "A,B", "C"];
+    expect(of("A,B", labels)).toBeNull();
+    expect(of("C,A,B", labels)).toBeNull();
+    expect(of("A,B-C", labels)).toBeNull();
+    expect(of("AA,BB", ["AA", "BB", "A,B"])).toBe("Printed as AA, BB: type 1,2");
+    expect(of("A,B", ["A", "B"])).toBe("Printed as A, B: type 1,2");
+  });
+
   it("names nothing for a label printed on two pages, or in a document without labels", () => {
     expect(of("A-B", ["A", "A-B", "A-B", "B"])).toBeNull();
     expect(of("A-B", ["A", "B"])).toBe("Printed as A-B: type 1-2");

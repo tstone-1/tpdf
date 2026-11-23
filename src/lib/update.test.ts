@@ -766,7 +766,7 @@ describe("finishing an update", () => {
     expect(missingFrom(functionIn(app, "async function finishUpdateStep(step: FinishStep): Promise<void> {"), [
       "await places.settled();",
       "await tabRecorder.settled();",
-      "await favouriteWrites.settled();",
+      "await sessionWrites.settled();",
       'const { relaunch } = await import("@tauri-apps/plugin-process");',
     ])).toEqual([]);
   });

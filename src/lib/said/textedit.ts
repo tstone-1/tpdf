@@ -70,6 +70,9 @@ export default {
     "Die Textänderungen würden die Grenze von 32 Schriften pro Seite überschreiten",
 
   // addedtext.rs
+  "the text contains a soft hyphen. Remove it or use an ordinary hyphen": "Der Text enthält einen bedingten Trennstrich. Bitte entfernen oder durch einen normalen Bindestrich ersetzen.",
+  "the resources for added text on page {page} could not be read: {e}": "Die Ressourcen für den hinzugefügten Text auf Seite {page} konnten nicht gelesen werden: {e}",
+  "the {key} resources on page {page} could not be read: {e}": "Die Ressourcen für {key} auf Seite {page} konnten nicht gelesen werden: {e}",
   "the text to add is empty": "Der hinzuzufügende Text ist leer",
   "the text to add is longer than {MAX_CHARS} characters":
     "Der hinzuzufügende Text ist länger als {MAX_CHARS} Zeichen",

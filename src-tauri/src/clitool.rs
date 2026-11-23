@@ -423,10 +423,21 @@ fn admin_script(install: bool, paths: &[&Path]) -> String {
 /// command prompt and the PATH editor do not take.
 #[cfg(any(windows, target_os = "linux", test))]
 fn shown(path: &str) -> String {
-    if let Some(share) = path.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{share}")
+    let (prefix, skip) = shell_prefix(path.as_bytes());
+    format!("{prefix}{}", &path[skip..])
+}
+
+/// Replacement and length of the ASCII prefix, in bytes or UTF-16 code units.
+#[cfg(any(windows, target_os = "linux", test))]
+pub(crate) fn shell_prefix(path: &[u8]) -> (&'static str, usize) {
+    let unc = br"\\?\UNC\";
+    let verbatim = br"\\?\";
+    if path.starts_with(unc) {
+        (r"\\", unc.len())
+    } else if path.starts_with(verbatim) {
+        ("", verbatim.len())
     } else {
-        path.strip_prefix(r"\\?\").unwrap_or(path).to_owned()
+        ("", 0)
     }
 }
 

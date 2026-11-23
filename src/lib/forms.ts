@@ -231,7 +231,7 @@ interface Mounted {
   accepted: FormValue;
   /** The DOM may normalize a PDF string when displaying it (for example CRLF). */
   displayed: string;
-  /** The index selected in an editable picker survives a rejected write, even for equal labels. */
+  /** An explicit choice or radio clear survives refusal until accepted or replaced. */
   picked?: number[];
   pending: number;
   /** A list's choices as the control offers them, and the element that holds them. */
@@ -294,6 +294,12 @@ export function ringFrom<T>(group: readonly T[], at: number, step: 1 | -1): T[] 
   const ahead = step === 1 ? [...group.slice(at + 1), ...group.slice(0, at)]
     : [...group.slice(0, at).reverse(), ...group.slice(at + 1).reverse()];
   return [here, ...ahead];
+}
+
+function entryText(kind: FormWidget["control"], value: FormValue): string | undefined {
+  if (typeof value === "string") return value;
+  if (kind.kind === "choice" && Array.isArray(value)) return value.map(i => kind.options[i]!.label).join(", ");
+  return undefined;
 }
 
 let nextLayerId = 0;
@@ -420,20 +426,33 @@ export class FormLayer {
         input.addEventListener("click", () => {
           const selected = Array.isArray(control.accepted) && control.accepted.some((index) =>
             index === kind.index || (kind.unison && sameAnswer(kind.states[index]!, kind.states[kind.index]!)));
-          if (selected) {
+          if (selected && !control.picked) {
             (input as HTMLInputElement).checked = false;
-            this.commitOne(control, false, []);
+            control.picked = [];
+            this.commitOne(control, false);
           }
         });
       }
       input.addEventListener("input", () => {
+        if (kind.kind === "radio" && !(input as HTMLInputElement).checked) return;
         delete control.picked;
         if (sameAnswer(this.read(control), control.accepted)) this.drafts.delete(control);
         else this.drafts.add(control);
       });
       input.addEventListener("blur", () => { if (!this.disposed) this.commitOne(control, false); });
       input.addEventListener("change", () => {
+        if (kind.kind === "radio" && !(input as HTMLInputElement).checked) return;
         delete control.picked;
+        if (kind.kind === "radio") {
+          // A new selection supersedes a refused clear on the same field.
+          for (const sibling of this.controls) {
+            if (sibling !== control && sibling.picked && fieldKey(sibling.widget.object) === fieldKey(widget.object)) {
+              delete sibling.picked;
+              this.drafts.delete(sibling);
+              sibling.input.setCustomValidity("");
+            }
+          }
+        }
         if (kind.kind !== "text") this.commitOne(control, false);
       });
       if (list && list !== input) {
@@ -534,8 +553,10 @@ export class FormLayer {
     } else if (control.input instanceof HTMLSelectElement && Array.isArray(value)) {
       for (const option of control.input.options) option.selected = option.value === "" ? value.length === 0 : value.includes(Number(option.value));
     } else if (typeof value === "boolean") (control.input as HTMLInputElement).checked = value;
-    else if (Array.isArray(value) && kind.kind === "choice") control.input.value = value.map((i) => kind.options[i]!.label).join(", ");
-    else if (typeof value === "string") control.input.value = value;
+    else {
+      const text = entryText(kind, value);
+      if (text !== undefined) control.input.value = text;
+    }
     if (control.list && control.list !== control.input) {
       control.list.value = Array.isArray(value) && value.length ? String(value[0]) : "";
     }
@@ -543,8 +564,8 @@ export class FormLayer {
     control.displayed = control.input.value;
   }
 
-  private commitOne(control: Mounted, throwing: boolean, answer?: FormValue): void {
-    const value = answer ?? this.read(control);
+  private commitOne(control: Mounted, throwing: boolean): void {
+    const value = this.read(control);
     this.drafts.delete(control);
     if (sameAnswer(value, control.accepted)) { control.input.setCustomValidity(""); return; }
     const error = answerError(control.widget, value);
@@ -556,17 +577,19 @@ export class FormLayer {
       return;
     }
     control.input.setCustomValidity("");
-    const previous = control.accepted;
-    const previousDisplay = control.displayed;
     control.displayed = control.input.value;
     control.accepted = value;
     control.pending += 1;
     const task = this.change(control.widget.object, value).then(() => {
       control.pending -= 1;
       if (this.disposed) return;
-      if (!control.pending && !sameAnswer(fieldValue(control.widget, this.changes), value)) {
-        control.accepted = previous;
-        control.displayed = previousDisplay;
+      const confirmed = fieldValue(control.widget, this.changes);
+      if (!control.pending && !sameAnswer(confirmed, value)) {
+        // Earlier submissions can also have been refused. Only the journal can
+        // tell us which answer the reader is retrying against.
+        const shown = shownValue(control.widget, this.changes, this.fields, this.controls.map(c => c.widget));
+        control.accepted = shown;
+        control.displayed = entryText(control.widget.control, shown) ?? "";
         this.drafts.add(control);
         control.input.setCustomValidity(TEXT().answerRefused);
       }

@@ -7095,7 +7095,7 @@ export class Viewer {
     this.stopSelecting(event.pointerId);
     // With the redaction tool armed the selection was made to be marked. A
     // press that selected nothing is a click, and marks nothing.
-    if (this.tool.kind === "redact" && this.hasSelection) this.opts.onRedactSelection?.();
+    if (this.tool.kind === "redact" && this.selectedCount() > 0) this.opts.onRedactSelection?.();
     const press = this.press;
     this.press = null;
     if (press && isGraphicClick(press, event, this.tool.kind, this.selectUnit, this.hasSelection)) {

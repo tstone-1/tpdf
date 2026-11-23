@@ -486,7 +486,7 @@
   import { ExplorerIntegration } from "./lib/explorerstate";
   import {
     afterCopy,
-    afterRedactionCopy,
+    afterRedactionCopy, afterRedactionReopen,
     afterRasterRedaction,
     afterExtract,
     afterSplit,
@@ -1293,7 +1293,7 @@
 
   /** The reader's favourites; see `favourites.ts`. Loaded with the session. */
   let favourites = new Favourites();
-  const favouriteWrites = new Serial();
+  const sessionWrites = new Serial();
 
   /** The page being read, zero-based: the one filling the screen. */
   function readingPage(): number {
@@ -1320,7 +1320,7 @@
   function saveFavourites(): void {
     offerFavourites();
     const list = [...favourites.all];
-    void favouriteWrites.run(() => call("session_set_favourites", { favourites: list }))
+    void sessionWrites.run(() => call("session_set_favourites", { favourites: list }))
       .catch(() => say(TEXT().favouritesNotSaved));
   }
 
@@ -4302,7 +4302,8 @@
     if (said === null) return;
     // A notice and not `say`: that line is the failure's, and is set in red.
     notice = said;
-    void call("session_set_ocr_language", { language: recognitionLanguage.language }).catch(
+    const language = recognitionLanguage.language;
+    void sessionWrites.run(() => call("session_set_ocr_language", { language })).catch(
       () => {},
     );
   }
@@ -4355,12 +4356,13 @@
       const place = currentPlace(false);
       const model = edits;
       say(null);
-      let said: string;
-      let success = false;
+      const reopen = async () => {
+        await reopenAfterWrite(path, place);
+        return error;
+      };
+      let result;
       try {
-        const result = afterRedactionCopy(await model.redactDocument(path, redactionFill));
-        said = result.message;
-        success = result.success;
+        result = afterRedactionCopy(await model.redactDocument(path, redactionFill));
       } catch (e) {
         if (e instanceof SaveCancelled) return;
         const failure = refusalOf(e);
@@ -4371,13 +4373,13 @@
           say(prompt.message, prompt.offers);
           return;
         }
-        await reopenAfterWrite(path, place);
-        if (!error) say(prompt.message, prompt.offers);
+        const report = await afterRedactionReopen(prompt.message, false, reopen);
+        say(report.message, prompt.offers);
         return;
       }
       rebaseAfterSave(path, model);
-      await reopenAfterWrite(path, place);
-      if (!error) say(said, [], resultTone(success));
+      const report = await afterRedactionReopen(result.message, result.success, reopen);
+      say(report.message, [], resultTone(report.success));
     });
   }
 
@@ -5093,7 +5095,8 @@
     // place identical to the last one it sent, and inverting the page moves
     // nothing --- so routed that way, a reader who inverts and quits without
     // scrolling would find the preference forgotten.
-    void call("session_set_invert_pages", { invert: invertPages }).catch(() => {
+    const invert = invertPages;
+    void sessionWrites.run(() => call("session_set_invert_pages", { invert })).catch(() => {
       // Same posture as a failed place write: losing the preference is worth
       // less than a dialog saying so.
     });
@@ -5499,6 +5502,7 @@
   async function forgetRecent(row: StartRow, index: number) {
     const said = await behindWrites(places, () => call("session_forget", { path: row.path }));
     if (said) say(said);
+    else places.forgotten(row.path);
     await refreshRecents();
     await tick();
     focusStartRow(focusAfterRemoval(index, startRows.length));
@@ -5894,7 +5898,7 @@
               TEXT().discardChangesOnQuit(unsaved.length),
               { title: TEXT().closeTpdf, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
             )) return;
-            await Promise.all([places.settled(), tabRecorder.settled(), favouriteWrites.settled()]);
+            await Promise.all([places.settled(), tabRecorder.settled(), sessionWrites.settled()]);
             await getCurrentWindow().destroy();
           } catch (e) {
             // As `closeTab`: a draft that cannot be committed is said, and the
@@ -6200,7 +6204,7 @@
         // lands, and this is the only step in the path that can wait.
         await places.settled();
         await tabRecorder.settled();
-        await favouriteWrites.settled();
+        await sessionWrites.settled();
         const { relaunch } = await import("@tauri-apps/plugin-process");
         await relaunch();
       },
@@ -6413,7 +6417,7 @@
   function setRestoreTabs(restore: boolean): void {
     restoreTabs = restore;
     refreshMenu();
-    void call("session_set_restore_tabs", { restore }).catch(() => {
+    void sessionWrites.run(() => call("session_set_restore_tabs", { restore })).catch(() => {
       tell(TEXT().restoreNotKept);
     });
   }

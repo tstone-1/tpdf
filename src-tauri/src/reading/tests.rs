@@ -306,6 +306,22 @@ pub(crate) fn cases() -> Vec<Case> {
         ]]),
     });
 
+    // At a decimal tie, f32 Display and the JSON serializer round differently.
+    let offset = 1.0 / 32.0;
+    out.push(Case {
+        name: "f32-midpoint",
+        text: page(vec![vec![
+            (
+                u32::from('A'),
+                [1008.0 + offset, 10.0, 1012.0 + offset, 20.0],
+            ),
+            (
+                u32::from('B'),
+                [1024.0 + offset, 10.0, 1028.0 + offset, 20.0],
+            ),
+        ]]),
+    });
+
     // One line in two halves, a wide gap between them, and the right half
     // standing 0.8pt higher: ascenders beside x-height letters. The halves are
     // found top edge first, and read left to right all the same. Tagged, so
@@ -634,8 +650,10 @@ fn text_turned_a_quarter_is_read_in_its_own_direction() {
 
 #[test]
 fn a_gap_is_measured_in_the_numbers_the_viewer_holds() {
-    let text = case("f32-tie");
-    assert_eq!(text_of(&text, &read(&text).lines), ["AB"]);
+    for name in ["f32-tie", "f32-midpoint"] {
+        let text = case(name);
+        assert_eq!(text_of(&text, &read(&text).lines), ["AB"], "{name}");
+    }
 }
 
 #[test]

@@ -180,6 +180,24 @@ describe("SessionWriter", () => {
     expect(sent.map((p) => p.page)).toEqual([2, 2]);
   });
 
+  it("remembers a reopened file at the same place after its individual recent was removed", async () => {
+    const { sent, send } = recorder();
+    const writer = new SessionWriter(send, 1000);
+    const opened = place();
+    writer.note(opened);
+    await writer.settled();
+    writer.forgotten("/unrelated.pdf");
+    writer.note(opened);
+    writer.flush();
+    await writer.settled();
+    expect(sent).toEqual([opened]);
+    writer.forgotten(opened.path);
+    writer.note(opened);
+    writer.flush();
+    await writer.settled();
+    expect(sent).toEqual([opened, opened]);
+  });
+
   it("flushes an outstanding note without waiting for the interval", async () => {
     const { sent, send } = recorder();
     const writer = new SessionWriter(send, 1000);

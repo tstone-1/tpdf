@@ -403,6 +403,38 @@ fn a_picture_file_is_read_with_a_pictures_limits() {
 }
 
 #[test]
+fn placed_jpeg_converts_its_embedded_profile_and_stays_opaque() {
+    use moxcms::ColorProfile;
+    fn profiled(jpeg: &[u8], profile: ColorProfile) -> Image {
+        let bytes = profile.encode().unwrap();
+        let payload = [b"ICC_PROFILE\0\x01\x01".as_slice(), &bytes].concat();
+        let length = u16::try_from(payload.len() + 2).unwrap().to_be_bytes();
+        let jpeg = [&jpeg[..2], &[0xff, 0xe2], &length, &payload, &jpeg[2..]].concat();
+        decode_picture(&jpeg).unwrap()
+    }
+    let original = decode_picture(RGB).unwrap();
+    let srgb = profiled(RGB, ColorProfile::new_srgb());
+    let adobe = profiled(RGB, ColorProfile::new_adobe_rgb());
+    assert!(original
+        .rgba
+        .iter()
+        .zip(&srgb.rgba)
+        .all(|(a, b)| a.abs_diff(*b) <= 1));
+    assert!(original
+        .rgba
+        .iter()
+        .zip(&adobe.rgba)
+        .any(|(a, b)| a.abs_diff(*b) > 8));
+    for image in [
+        srgb,
+        adobe,
+        profiled(GRAY, ColorProfile::new_gray_with_gamma(1.0)),
+    ] {
+        assert!(image.rgba.chunks_exact(4).all(|p| p[3] == 255));
+    }
+}
+
+#[test]
 fn a_photograph_stored_on_its_side_is_turned_upright() {
     // The fixture with an EXIF segment saying "turn a quarter clockwise" (6),
     // put straight after the start marker as a camera puts it.
@@ -418,7 +450,10 @@ fn a_photograph_stored_on_its_side_is_turned_upright() {
     turned.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
     turned.extend_from_slice(&payload);
     turned.extend_from_slice(&RGB[2..]);
-    assert_eq!(crate::imagepages::jpeg_orientation(&turned), 6);
+    assert_eq!(
+        crate::imagepages::jpeg_facts(&turned).unwrap().orientation,
+        6
+    );
     let upright = decode_picture(RGB).unwrap();
     assert_eq!(
         decode_picture(&turned).unwrap(),

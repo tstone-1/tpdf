@@ -140,6 +140,19 @@ export function positionsFor(
     usedLabel = true;
     return slots.map((slot) => String(slot + 1));
   };
+  // A comma may belong to a printed label, including one used as a
+  // range endpoint or embedded in a longer list. A split-only hint could
+  // direct the reader to a different set of pages.
+  if (raw.includes(",")) {
+    for (const label of slotsOf.keys()) {
+      if (!label.includes(",")) continue;
+      for (let at = raw.indexOf(label); at >= 0; at = raw.indexOf(label, at + 1)) {
+        const before = raw.slice(0, at).trimEnd().at(-1);
+        const after = raw.slice(at + label.length).trimStart().at(0);
+        if ((!before || before === "," || before === "-") && (!after || after === "," || after === "-")) return null;
+      }
+    }
+  }
   const parts = raw.split(",").map((part) => part.trim());
   let candidates = [""];
   for (const part of parts) {

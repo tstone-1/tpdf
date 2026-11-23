@@ -898,6 +898,48 @@ class ClientTests(unittest.TestCase):
             doc = saved
         self.assertEqual(self.pdf.text_runs(doc)['runs'][0]['text'], 'Ton')
 
+    def test_numbering_retains_inherited_artwork_or_preserves_the_destination(self):
+        image = b'<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 3 >>\nstream\n\x0a\x96\x3c\nendstream'
+        paint = b'q 50 0 0 50 30 30 cm /Scan Do Q'
+        dest = self.root / 'numbered.pdf'
+        target = self.root / 'render.png'
+
+        def numbered(depth, inherited):
+            page = depth + 2
+            resources = f' /Resources << /XObject << /Scan {page + 2} 0 R >> >>'
+            objects = [b'<< /Type /Catalog /Pages 2 0 R >>']
+            for node in range(2, page):
+                parent = f' /Parent {node - 1} 0 R' if node > 2 else ''
+                own = resources if node == 2 and inherited else ''
+                objects.append(f'<< /Type /Pages /Kids [{node + 1} 0 R] /Count 1{parent}{own} >>'.encode())
+            own = '' if inherited else resources
+            objects.extend([f'<< /Type /Page /Parent {page - 1} 0 R /MediaBox [0 0 100 100] /Contents {page + 1} 0 R{own} >>'.encode(),
+                            f'<< /Length {len(paint)} >>\nstream\n'.encode() + paint + b'\nendstream', image])
+            write_pdf(self.source, objects)
+            self.pdf.run('page-numbers', self.source, '-o', dest, '--force', '--text', '1')
+            self.pdf.render(dest, target, force=True)
+            return target.read_bytes()
+
+        reference = numbered(1, False)
+        self.assertEqual(numbered(1, True), reference)
+        saved = dest.read_bytes()
+        with self.assertRaisesRegex(CommandError, 'resources.*page 1'):
+            numbered(66, True)
+        self.assertEqual(dest.read_bytes(), saved)
+
+    def test_label_padding_cannot_make_off_page_ink_visible(self):
+        small, dest = self.root / 'small.pdf', self.root / 'numbered.pdf'
+        self.pdf.crop(self.source, small, rect=[0, 0, 100, 100])
+        args = [small, '-o', dest, '--force', '--position', 'top-right', '--size', '10', '--margin', '80']
+        self.pdf.run('page-numbers', *args, '--text', 'X')
+        saved = dest.read_bytes()
+        with self.assertRaisesRegex(CommandError, 'outside the visible page'):
+            self.pdf.run('page-numbers', *args, '--text', 'X' + ' ' * 12)
+        with self.assertRaisesRegex(CommandError, 'outside the visible page'):
+            self.pdf.run('page-numbers', small, '-o', dest, '--force', '--position', 'center',
+                         '--size', '10', '--text', 'X' + ' ' * 80 + 'X')
+        self.assertEqual(dest.read_bytes(), saved)
+
     def test_off_page_header_refuses_the_entire_mixed_size_copy(self):
         small, mixed, out = [self.root / f'{name}.pdf' for name in ('small', 'mixed', 'out')]
         self.pdf.crop(self.source, small, rect=[0, 0, 100, 100])

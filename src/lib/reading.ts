@@ -1227,19 +1227,41 @@ export function touchedText(text: PageText, quads: readonly number[]): string {
 function inReadingOrder(text: PageText, indices: readonly number[]): string {
   const wanted = new Set(indices);
   if (wanted.size === 0) return "";
-  // A region describes visible ink, including running headers which the
-  // accessible reading order deliberately omits. When it covers one, order
-  // the whole selection with those glyphs present, including a header before
-  // its body or a footer after it.
-  const artifacts = text.artifacts ?? [];
-  const coversArtifact = artifacts.some(([start, end]) => {
-    for (let index = Math.max(0, start); index < Math.min(end, text.codes.length); index++) {
-      if (wanted.has(index)) return true;
+  const coveredArtifacts = new Set<number>();
+  for (const [start, end] of text.artifacts ?? []) {
+    for (let i = Math.max(0, start); i < Math.min(end, text.codes.length); i++) {
+      if (wanted.has(i)) coveredArtifacts.add(i);
     }
-    return false;
-  });
-  const page = coversArtifact ? { ...text, artifacts: [] } : text;
-  const order = readingOrder(page).filter((index) => wanted.has(index));
+  }
+  let order = readingOrder(text).filter((i) => wanted.has(i));
+  if (coveredArtifacts.size && usableRuns(text)) {
+    // Geometry puts running matter above or below the body. Fill the body
+    // positions in tagged order, even when a note sits above its paragraph.
+    const axes = axesFor(text.quarter_turns);
+    let first = Infinity;
+    let last = -Infinity;
+    for (const i of order) {
+      const box = charQuad(text, i);
+      if (!placed(box)) continue;
+      const bounds = extentsOf(box, axes);
+      first = Math.min(first, bounds.crossStart);
+      last = Math.max(last, bounds.crossEnd);
+    }
+    const body = new Set(order);
+    const leading: number[] = [], middle: number[] = [], trailing: number[] = [];
+    let next = 0;
+    for (const i of readingOrder({ ...text, runs: [] })) {
+      if (coveredArtifacts.has(i)) {
+        const bounds = extentsOf(charQuad(text, i), axes);
+        if (bounds.crossEnd <= first) leading.push(i);
+        else if (bounds.crossStart >= last) trailing.push(i);
+        else middle.push(i);
+      } else if (body.has(i)) {
+        middle.push(order[next++]!);
+      }
+    }
+    order = leading.concat(middle, order.slice(next), trailing);
+  }
   return charsOf(order.map((index) => text.codes[index] ?? 0));
 }
 

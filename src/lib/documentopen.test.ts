@@ -156,7 +156,13 @@ describe("a search confined to a selection, when the file is opened again", () =
   it("rebases the saved order only after a successful in-place write", () => {
     for (const method of ["saveDocument", "redactAnyway"]) {
       const body = functionIn(app, `async function ${method}(`);
-      expect(body).toMatch(/return;\s*}\s*rebaseAfterSave\(path, model\);\s*await reopenAfterWrite/);
+      expect(body).toMatch(/return;\s*}\s*rebaseAfterSave\(path, model\);/);
+      const afterRebase = body.slice(body.indexOf("rebaseAfterSave(path, model);"));
+      if (method === "saveDocument") expect(afterRebase).toContain("await reopenAfterWrite(");
+      else {
+        expect(afterRebase).toContain("await afterRedactionReopen(result.message, result.success, reopen)");
+        expect(afterRebase).toContain("say(report.message, [], resultTone(report.success))");
+      }
     }
     expect(functionIn(app, "function rebaseAfterSave(")).toContain("keepSavedPlaces(tabs.all, model)");
   });

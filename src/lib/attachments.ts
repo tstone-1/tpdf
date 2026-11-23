@@ -102,9 +102,9 @@ export interface Embedded {
 /** Kinds by the ending a name claims, lower case and without the dot. */
 const KINDS: Record<string, Kind> = {
   pdf: "pdf",
-  doc: "word", docx: "word", docm: "word", dotm: "word",
-  xls: "excel", xlsx: "excel", xlsm: "excel", xltm: "excel", xlam: "excel",
-  ppt: "powerPoint", pptx: "powerPoint", pptm: "powerPoint", potm: "powerPoint", ppsm: "powerPoint",
+  doc: "word", dot: "word", docx: "word", docm: "word", dotm: "word",
+  xls: "excel", xlsb: "excel", xlt: "excel", xla: "excel", xlsx: "excel", xlsm: "excel", xltm: "excel", xlam: "excel",
+  ppt: "powerPoint", pot: "powerPoint", pps: "powerPoint", ppa: "powerPoint", pptx: "powerPoint", pptm: "powerPoint", potm: "powerPoint", ppsm: "powerPoint",
   ppam: "powerPoint", sldm: "powerPoint",
   odt: "openText", ods: "openSpreadsheet", odp: "openPresentation",
   csv: "csv", txt: "text", xml: "xml", json: "json",
@@ -130,7 +130,7 @@ const PROGRAMS = new Set([
 ]);
 
 /** Office endings whose files can hold macros, which run code when a reader enables them. */
-const MACROS = new Set(["docm", "dotm", "xlsm", "xltm", "xlam", "pptm", "potm", "ppsm", "ppam", "sldm"]);
+const MACROS = new Set(["doc", "dot", "docm", "dotm", "xls", "xlsb", "xlt", "xla", "xlsm", "xltm", "xlam", "ppt", "pot", "pps", "ppa", "pptm", "potm", "ppsm", "ppam", "sldm"]);
 
 /** The ending a name claims, lower case, or "" for none. */
 function ending(name: string): string {

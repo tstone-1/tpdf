@@ -50,16 +50,20 @@ let dom: FakeDom;
 let regions: number[] = [];
 /** What was selected each time the tool asked for the selection to be marked. */
 let marked: string[] = [];
+let selectionRequests = 0;
 /** The viewer under test, for {@link at} to ask where the page is. */
 let current: Viewer | null = null;
+let pageText: PageText;
 
 beforeEach(() => {
   dom = installFakeDom();
+  pageText = TEXT;
   regions = [];
   marked = [];
+  selectionRequests = 0;
   core.invoke.mockImplementation((command: string) =>
     command === "page_text"
-      ? Promise.resolve(TEXT)
+      ? Promise.resolve(pageText)
       : command === "page_geometry"
         ? Promise.resolve({ width_pt: 600, height_pt: 800, left: 0, top: 0 })
         : Promise.resolve(null),
@@ -80,11 +84,14 @@ async function build(commit: () => Promise<void> = async () => {}): Promise<View
     pageCount: 1,
     pages: [PAGE],
     onRedacted: (page) => regions.push(page),
-    onRedactSelection: () => void viewer.redactSelected(async (selected) => {
-      marked.push(selected.map((one) => one.text).join("|"));
-      await commit();
-      return true;
-    }),
+    onRedactSelection: () => {
+      selectionRequests++;
+      void viewer.redactSelected(async (selected) => {
+        marked.push(selected.map((one) => one.text).join("|"));
+        await commit();
+        return true;
+      });
+    },
   });
   current = viewer;
   await settle();
@@ -159,6 +166,19 @@ describe("a selection drag the browser cancels", () => {
 });
 
 describe("the redaction tool pressed on text", () => {
+  it("marks a tagged running header when dragged and ignores a collapsed click", async () => {
+    pageText = { ...TEXT, runs: [{ tag: "P", path: ["P"], start: 3, end: 5 }], artifacts: [[0, 2]] };
+    const viewer = await build();
+    viewer.armRedact();
+    drag(at(60, 200), at(60, 200));
+    await settle();
+    expect(marked).toHaveLength(0);
+    drag(at(60, 200), at(240, 200));
+    await settle();
+    expect(marked).toHaveLength(1);
+    viewer.destroy();
+  });
+
   it.each(["tool", "palette"] as const)("finishing an earlier %s mark leaves the next drag intact", async (route) => {
     let release!: () => void;
     const pending = new Promise<void>((resolve) => { release = resolve; });
@@ -254,6 +274,7 @@ describe("the redaction tool pressed on text", () => {
     drag(at(100, 200), at(100, 200));
 
     await settle();
+    expect(selectionRequests).toBe(0);
     expect(marked).toEqual([]);
     expect(regions).toEqual([]);
     viewer.destroy();

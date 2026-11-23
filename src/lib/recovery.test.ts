@@ -9,6 +9,7 @@ import {
   afterExtract,
   afterMerge,
   afterRedaction,
+  afterRedactionReopen,
   afterRedactionCopy,
   afterRasterRedaction,
   afterRefusal,
@@ -238,6 +239,23 @@ describe("the offers these rules can return", () => {
         `${offer} is offered by a rule and App.svelte has no arm for it`,
       ).toBe(true);
     }
+  });
+});
+
+describe("reporting an in-place redaction after reopening", () => {
+  for (const verified of [false, true]) {
+    it.each([null, "Cannot reopen the file"])("preserves the verdict with reopen result %s, verified " + verified, async problem => {
+      const applied = { regions: 1, shows: 0, verified, changed: false, why: verified ? [] : ["unsupported graphic"] };
+      const verdict = afterRedactionCopy(applied);
+      const report = await afterRedactionReopen(verdict.message, verdict.success, async () => problem);
+      expect(report.message.split("\n")).toEqual([...verdict.message.split("\n"), ...(problem ? [problem] : [])]);
+      expect(report.success).toBe(verified && !problem);
+      if (!verified) expect(report.message).toContain("unsupported graphic");
+    });
+  }
+  it("also retains the verdict if the reopen promise rejects", async () => {
+    const report = await afterRedactionReopen("Unverified", false, async () => { throw new Error("unavailable"); });
+    expect(report).toEqual({ message: "Unverified\nunavailable", success: false });
   });
 });
 

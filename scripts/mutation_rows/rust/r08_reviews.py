@@ -2386,8 +2386,8 @@ ROWS += [
     Mutation(
         "attachments: saved over the document it comes from",
         "src/attachments.rs",
-        "    if same(source, dest) {",
-        "    if same(source, dest) && false {",
+        "    if crate::save::same_file(source, dest) {",
+        "    if crate::save::same_file(source, dest) && false {",
         "refuses_to_save_over_the_document_it_comes_from",
     ),
     Mutation(

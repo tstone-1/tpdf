@@ -89,10 +89,11 @@ pub fn webview_number(value: f32) -> f64 {
     if !value.is_finite() {
         return 0.0;
     }
-    // Rust's `Display` for `f32` is the shortest string that round-trips, the
-    // same digits `serde_json` writes; parsing it as `f64` is what JSON.parse
-    // does.
-    format!("{value}").parse().unwrap_or(0.0)
+    // Display and the wire serializer can choose opposite decimals at a tie.
+    serde_json::to_string(&value)
+        .expect("a finite coordinate serializes")
+        .parse()
+        .expect("the serialized coordinate is a number")
 }
 
 /// The page as `reading.ts` receives it.

@@ -398,6 +398,8 @@ Its fixed-length basename also accommodates a destination at the filesystem limi
 copies the source into anonymous shared memory and checks the snapshot against the
 document's opening fingerprint. The worker decodes the selected index from that snapshot.
 An external replacement during the save dialog therefore cannot supply a different attachment.
+Export checks the destination by file identity so a hard link to the open PDF is also refused.
+A null optional embedded-file entry is treated as absent when listing and extracting.
 
 On structural page saves, page labels follow the original slots. A numbering range split
 by a move retains its starting number and its prefix as a direct PDF text string.
@@ -805,12 +807,14 @@ any other refusal from that worker is the document's.
 `Request::Picture` from the window's `picture_open`). The grammar, the two decoders and the
 area average are shared, under `PICTURE`'s limits rather than `SIGNATURE`'s
 (`dimensions_within`); nothing is trimmed, a JPEG is turned upright by its EXIF orientation
-(`oriented`, the orientation read by `imagepages::jpeg_orientation`), and the size is
+(`oriented`, the orientation read by `imagepages::jpeg_facts`), and the size is
 `placed_size`. The pixels go back through the worker's tile mapping, not in the reply. So a
 change to the grammar reaches the chooser, `sign --image` and pictures; only the first two
 share `headers.json`.
 
-The placement worker returns sRGB pixels. For a calibrated PNG it converts the
+The placement worker returns sRGB pixels. For a JPEG it assembles the embedded ICC
+profile from its numbered APP2 segments and converts the decoded samples before scaling.
+For a calibrated PNG it converts the
 colour channels before scaling, using the embedded ICC profile when present and
 the same gamma and chromaticity interpretation as the new-document writer otherwise.
 Alpha is coverage and stays outside the colour transform.
@@ -859,6 +863,12 @@ both sides and marks the rows out of date. Closing either view ends it. The wind
 `tabs_check.py --phase compare`.
 
 ## Text on every page (`tpdf page-numbers`, `tpdf watermark`, the two *Save a copy with* commands)
+
+Overlay writers copy the effective resources onto each changed page. Failure to
+resolve them must abort publication, since an empty replacement hides inherited
+artwork. The in-memory document is disposable on refusal. The single-line overlay
+format rejects discretionary hyphens before writing. Spaces contribute to line
+alignment, but padding alone cannot establish that a label is visible.
 
 The window and CLI check selected pages against the expanded lines through the
 sandboxed text reader before publication. PDFium can expand a typographic ligature

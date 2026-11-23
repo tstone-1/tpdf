@@ -389,6 +389,19 @@ describe("usableRuns", () => {
     expect(readingTextOf(text, 0, text.codes.length)).toBe("bodymore");
   });
 
+  it("keeps a tagged paragraph before its margin note when the region includes running matter", () => {
+    const text: PageText = { codes: [66, 78, 72, 70], boxes: [
+      200, 100, 210, 112, 40, 90, 50, 102, 20, 10, 30, 22, 20, 720, 30, 732,
+    ], width_pt: 600, height_pt: 800, quarter_turns: 0, extract_ms: 0,
+    runs: [{ tag: "P", path: ["P"], start: 0, end: 1 }, { tag: "Note", path: ["Note"], start: 1, end: 2 }],
+    artifacts: [[2, 4]] };
+    for (const words of [coveredText, touchedText]) {
+      expect(words(text, text.boxes.slice(0, 8))).toBe("BN");
+      expect(words(text, text.boxes)).toBe("HBNF");
+    }
+    expect(readingTextOf(text, 0, 4)).toBe("BN");
+  });
+
   it("is the runs when they claim every visible character", () => {
     expect(usableRuns(marginNote(NOTE_LAST))).toHaveLength(2);
   });

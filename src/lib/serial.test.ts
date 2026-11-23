@@ -112,6 +112,24 @@ describe("Serial", () => {
     expect(started).toEqual(["doomed", "next"]);
   });
 
+  it("drains queued preference writes before a restart can read the last choice", async () => {
+    const writes = new Serial();
+    const first = deferred<void>();
+    let persisted = false;
+    void writes.run(async () => { await first.promise; persisted = true; });
+    void writes.run(async () => { persisted = false; });
+    let restarted = false;
+    const restart = writes.settled().then(() => {
+      expect(persisted).toBe(false);
+      restarted = true;
+    });
+    await settle();
+    expect(restarted).toBe(false);
+    first.resolve();
+    await restart;
+    expect(restarted).toBe(true);
+  });
+
   it("resolves with the body's own value", async () => {
     const serial = new Serial();
     await expect(serial.run(async () => 42)).resolves.toBe(42);

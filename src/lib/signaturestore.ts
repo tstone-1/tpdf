@@ -49,8 +49,17 @@ export async function migrateSignature(storage: Pick<Storage, "getItem" | "remov
 }
 
 let migration: Promise<void> | undefined;
+function trackMigration(task: Promise<void>): Promise<void> {
+  const tracked = task.catch((error: unknown) => {
+    if (migration === tracked) migration = undefined;
+    throw error;
+  });
+  migration = tracked;
+  return tracked;
+}
+
 export function prepareSignatureStorage(): Promise<void> {
-  return migration ??= migrateSignature(localStorage, protectedStore);
+  return migration ?? trackMigration(migrateSignature(localStorage, protectedStore));
 }
 export async function loadSignature(): Promise<SignatureImage | null> {
   await prepareSignatureStorage();
@@ -63,10 +72,12 @@ export async function rememberSignature(image: SignatureImage): Promise<void> {
   if (!validSignature(image)) throw new Error(TEXT().invalid);
   await protectedStore({ kind: "save", image });
 }
-export async function forgetSignature(): Promise<void> {
-  // Wait for any in-flight migration, including a failed one, before deleting.
-  await migration?.catch(() => {});
-  await protectedStore({ kind: "forget" });
-  localStorage.removeItem(SIGNATURE_KEY);
-  migration = Promise.resolve();
+export function forgetSignature(): Promise<void> {
+  // A retry requested during deletion must wait until both copies are gone.
+  const previous = migration;
+  return trackMigration((async () => {
+    await previous?.catch(() => {});
+    await protectedStore({ kind: "forget" });
+    localStorage.removeItem(SIGNATURE_KEY);
+  })());
 }

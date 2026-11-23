@@ -2037,8 +2037,8 @@ ROWS += [
         # --- which looks like the feature working, from a distance.
         "recentdocs: leave the verbatim prefix on the path the shell is given",
         "src/recentdocs.rs",
-        '    let text = text.strip_prefix(r"\\\\?\\").unwrap_or(&text);',
-        "    let text = &text[..];",
+        '    let (prefix, skip) = crate::clitool::shell_prefix(path.as_encoded_bytes());',
+        '    let (prefix, skip) = ("", 0);',
         "a_path_the_shell_is_given_is_absolute_nul_terminated_and_not_verbatim",
         only_on="windows",
     ),
@@ -2048,8 +2048,8 @@ ROWS += [
         # a garbage entry on a good day.
         "recentdocs: hand the shell a string with no terminator",
         "src/recentdocs.rs",
-        "            .chain(std::iter::once(0))",
-        "            .chain(std::iter::empty())",
+        '        .chain(path.encode_wide().skip(skip))\n        .chain([0])',
+        '        .chain(path.encode_wide().skip(skip))',
         "a_path_the_shell_is_given_is_absolute_nul_terminated_and_not_verbatim",
         only_on="windows",
     ),

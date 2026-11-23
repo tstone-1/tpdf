@@ -31,7 +31,7 @@
 
 import { basename } from "./paths";
 import { catalog } from "./i18n";
-import { spoken } from "./said";
+import { spoken, spokenError } from "./said";
 import { reviewGroups, reviewLines } from "./redactreview";
 
 const TEXT = catalog({
@@ -435,6 +435,13 @@ export function afterRedaction(applied: {
       TEXT().redactionNotVerified(removed, applied.why.map((w) => spoken(w)).join("; "));
   if (!applied.changed) return verdict;
   return `${verdict}${TEXT().redactionAlsoChanged}`;
+}
+
+/** Keep the verification verdict visible even when reopening the written file fails. */
+export async function afterRedactionReopen(message: string, success: boolean,
+  reopen: () => Promise<string | null>): Promise<{ message: string; success: boolean }> {
+  const problem = await reopen().catch(spokenError);
+  return problem ? { message: message + "\n" + problem, success: false } : { message, success };
 }
 
 /** Pending regions remain available after a copy, so an unverified copy can be retried. */

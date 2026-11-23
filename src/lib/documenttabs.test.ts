@@ -326,9 +326,12 @@ describe("a close whose drafts cannot be committed", () => {
     expect(missingFrom(functionIn(app, "async function closeTabs(ids: ViewId[]): Promise<void> {"), [
       "try { await settleDocument(); } catch (e) { say(String(e)); return false; }",
     ])).toEqual([]);
+    for (const command of ["session_set_invert_pages", "session_set_restore_tabs", "session_set_ocr_language"]) {
+      expect(withoutCommentsOf(app)).toContain(`sessionWrites.run(() => call("${command}"`);
+    }
     const close = withoutCommentsOf(app).slice(withoutCommentsOf(app).indexOf("onCloseRequested("));
     expect(close.slice(0, close.indexOf("void updates.checkOnLaunch();"))).toMatch(
-      /await settled;[\s\S]*await Promise\.all\(\[places\.settled\(\), tabRecorder\.settled\(\), favouriteWrites\.settled\(\)\]\);\s*await getCurrentWindow\(\)\.destroy\(\);[\s\S]*\} catch \(e\) \{\s*say\(String\(e\)\);\s*\} finally \{ opening = false; release\(\); \}/,
+      /await settled;[\s\S]*await Promise\.all\(\[places\.settled\(\), tabRecorder\.settled\(\), sessionWrites\.settled\(\)\]\);\s*await getCurrentWindow\(\)\.destroy\(\);[\s\S]*\} catch \(e\) \{\s*say\(String\(e\)\);\s*\} finally \{ opening = false; release\(\); \}/,
     );
   });
 });

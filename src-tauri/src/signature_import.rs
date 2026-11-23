@@ -200,25 +200,32 @@ pub fn dimensions_within(bytes: &[u8], limits: &Limits) -> Result<(u32, u32), St
     Err(invalid())
 }
 
+fn embedded_profile(
+    bytes: &[u8],
+    gray: bool,
+    format: &str,
+) -> Result<moxcms::ColorProfile, String> {
+    use moxcms::{ColorProfile, DataColorSpace};
+    let profile = ColorProfile::new_from_slice(bytes)
+        .map_err(|e| said!("the {format} colour profile could not be read: {e}"))?;
+    let expected = if gray {
+        DataColorSpace::Gray
+    } else {
+        DataColorSpace::Rgb
+    };
+    if profile.color_space != expected {
+        return Err(said!(
+            "the {format} colour profile does not match its samples"
+        ));
+    }
+    Ok(profile)
+}
+
 /// An embedded ICC profile takes precedence over PNG's fallback calibration.
 fn png_profile(info: &png::Info<'_>, gray: bool) -> Result<Option<moxcms::ColorProfile>, String> {
-    use moxcms::{ColorProfile, DataColorSpace, ToneReprCurve, XyY, Xyzd};
+    use moxcms::{ColorProfile, ToneReprCurve, XyY, Xyzd};
     if let Some(bytes) = info.icc_profile.as_deref() {
-        let profile = ColorProfile::new_from_slice(bytes)
-            .map_err(|e| said!("the PNG colour profile could not be read: {e}"))?;
-        if profile.color_space
-            != if gray {
-                DataColorSpace::Gray
-            } else {
-                DataColorSpace::Rgb
-            }
-        {
-            return Err(said!(
-                "the {format} colour profile does not match its samples",
-                format = "PNG"
-            ));
-        }
-        return Ok(Some(profile));
+        return embedded_profile(bytes, gray, "PNG").map(Some);
     }
     let Some(cal) = crate::imagepages::png_calibration(info, gray)? else {
         return Ok(None);
@@ -246,22 +253,19 @@ fn png_profile(info: &png::Info<'_>, gray: bool) -> Result<Option<moxcms::ColorP
 
 /// Expand and convert one row at a time. Walking backwards keeps unread gray
 /// samples intact as their two-byte pixels are expanded into four bytes.
-fn png_rgba(
+fn srgb_rgba(
     mut data: Vec<u8>,
     width: usize,
-    gray: bool,
+    layout: moxcms::Layout,
     profile: Option<&moxcms::ColorProfile>,
+    format: &str,
 ) -> Result<Vec<u8>, String> {
     use moxcms::{ColorProfile, Layout};
-    if !gray && profile.is_none() {
+    if layout == Layout::Rgba && profile.is_none() {
         return Ok(data);
     }
-    let error = |e: moxcms::CmsError| said!("the PNG colour profile could not be applied: {e}");
-    let layout = if gray {
-        Layout::GrayAlpha
-    } else {
-        Layout::Rgba
-    };
+    let error =
+        |e: moxcms::CmsError| said!("the {format} colour profile could not be applied: {e}");
     let transform = profile
         .map(|source| {
             source.create_transform_8bit(
@@ -283,8 +287,16 @@ fn png_rgba(
         if let Some(transform) = &transform {
             transform.transform(&row, dest).map_err(error)?;
         } else {
-            for (source, pixel) in row.chunks_exact(2).zip(dest.chunks_exact_mut(4)) {
-                pixel.copy_from_slice(&[source[0], source[0], source[0], source[1]]);
+            for (source, pixel) in row
+                .chunks_exact(layout.channels())
+                .zip(dest.chunks_exact_mut(4))
+            {
+                match source {
+                    [r, g, b] => pixel.copy_from_slice(&[*r, *g, *b, 255]),
+                    [g, a] => pixel.copy_from_slice(&[*g, *g, *g, *a]),
+                    [g] => pixel.copy_from_slice(&[*g, *g, *g, 255]),
+                    _ => unreachable!("unprofiled RGBA already returned"),
+                }
             }
         }
     }
@@ -321,18 +333,44 @@ fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec<
         _ => return Err(refusal.into()),
     };
     let profile = png_profile(reader.info(), gray)?;
-    let rgba = png_rgba(decoded, width as usize, gray, profile.as_ref())?;
+    let layout = if gray {
+        moxcms::Layout::GrayAlpha
+    } else {
+        moxcms::Layout::Rgba
+    };
+    let rgba = srgb_rgba(decoded, width as usize, layout, profile.as_ref(), "PNG")?;
     Ok((rgba, orientation))
 }
 
-fn jpeg(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<Vec<u8>, String> {
+fn jpeg(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec<u8>, u8), String> {
     let invalid = |_| refusal.to_string();
+    let facts = crate::imagepages::jpeg_facts(bytes)?;
+    let gray = facts.components == 1;
+    let profile = facts
+        .profile()?
+        .map(|bytes| embedded_profile(&bytes, gray, "JPEG"))
+        .transpose()?;
+    if facts.components != 3 && !gray && profile.is_some() {
+        return Err(said!(
+            "the {format} colour profile does not match its samples",
+            format = "JPEG"
+        ));
+    }
+    let layout = if gray {
+        moxcms::Layout::Gray
+    } else {
+        moxcms::Layout::Rgb
+    };
     let options = DecoderOptions::default()
         .set_strict_mode(true)
         .set_max_width(width as usize)
         .set_max_height(height as usize)
         .jpeg_set_max_scans(64)
-        .jpeg_set_out_colorspace(ColorSpace::RGB);
+        .jpeg_set_out_colorspace(if gray {
+            ColorSpace::Luma
+        } else {
+            ColorSpace::RGB
+        });
     let mut source = Cursor::new(bytes);
     let mut decoder = JpegDecoder::new_with_options(&mut source, options);
     decoder.decode_headers().map_err(invalid)?;
@@ -340,16 +378,14 @@ fn jpeg(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<Vec<
     let pixels = width as usize * height as usize;
     if u32::from(info.width) != width
         || u32::from(info.height) != height
-        || decoder.output_buffer_size() != Some(pixels * 3)
+        || decoder.output_buffer_size() != Some(pixels * layout.channels())
     {
         return Err(refusal.into());
     }
-    let mut rgb = vec![0; pixels * 3];
-    decoder.decode_into(&mut rgb).map_err(invalid)?;
-    Ok(rgb
-        .chunks_exact(3)
-        .flat_map(|p| [p[0], p[1], p[2], 255])
-        .collect())
+    let mut data = vec![0; pixels * layout.channels()];
+    decoder.decode_into(&mut data).map_err(invalid)?;
+    let rgba = srgb_rgba(data, width as usize, layout, profile.as_ref(), "JPEG")?;
+    Ok((rgba, facts.orientation))
 }
 
 // `trimSignature` in `signature.ts`: the box of the pixels that are not
@@ -437,7 +473,7 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
     let rgba = if bytes.starts_with(&PNG) {
         png(bytes, size, INVALID)?.0
     } else {
-        jpeg(bytes, size, INVALID)?
+        jpeg(bytes, size, INVALID)?.0
     };
     // An image with nothing visible keeps its whole box, and is refused with
     // one that scaling averaged away: `valid` wants a pixel that shows.
@@ -519,10 +555,7 @@ pub fn decode_picture(bytes: &[u8]) -> Result<Image, String> {
     let (rgba, orientation) = if bytes.starts_with(&PNG) {
         png(bytes, size, PICTURE.invalid)?
     } else {
-        (
-            jpeg(bytes, size, PICTURE.invalid)?,
-            crate::imagepages::jpeg_orientation(bytes),
-        )
+        jpeg(bytes, size, PICTURE.invalid)?
     };
     let image = averaged(
         size.0,

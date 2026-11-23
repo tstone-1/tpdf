@@ -295,6 +295,34 @@ describe("Tab in the form's controls", () => {
     expect(writes.at(-1)).toBe("free text");
   });
 
+  it.each([["B"], ["B", "C"]])("retries the first refused answer after overlapping edits (%s)", async (...answers) => {
+    const replies: Array<() => void> = [];
+    const writes: unknown[] = [];
+    let recovered = false;
+    const layer = new FormLayer(dom.root as unknown as HTMLElement, { widgets: [text] }, () => null,
+      async (object, value) => {
+        writes.push(value);
+        if (recovered) layer.update({ forms: [{ object, value }], fields: [] });
+        else await new Promise<void>(resolve => replies.push(resolve));
+      }, () => {}, () => {});
+    const input = dom.root.children[0]!.children[0]!;
+    const type = (value: string) => {
+      input.value = value;
+      input.dispatch("input", {});
+      input.dispatch("blur", {});
+    };
+    for (const answer of answers) type(answer);
+    for (const reply of replies) { reply(); await Promise.resolve(); }
+    await expect(layer.settle()).rejects.toThrow();
+    recovered = true;
+    type("B");
+    layer.commit();
+    await layer.settle();
+    expect(writes).toEqual([...answers, "B"]);
+    expect(input.value).toBe("B");
+    expect(layer.hasDraft).toBe(false);
+  });
+
   it("retries a refused option by index when two labels look identical", async () => {
     const combo: FormWidget = { ...text, value: [0], control: {
       kind: "choice", combo: true, editable: true, multiple: false,
@@ -342,6 +370,34 @@ describe("Tab in the form's controls", () => {
     new FormLayer(dom.root as unknown as HTMLElement, { widgets: [text, { ...text, reason: "This field is hidden" },
       { ...text, object: [66, 0], name: "Other" }] }, () => null, async () => {}, () => {}, () => {});
     expect(dom.root.children[0]!.children.map(input => input.getAttribute("aria-label"))).toEqual(["Other"]);
+  });
+
+  it("retries an explicitly cleared radio while an unchecked sibling stays idle", async () => {
+    const control = { kind: "radio" as const, states: [[65], [66]], unison: false, no_toggle_off: false };
+    const widgets = [0, 1].map(index => ({ ...text, value: [0], control: { ...control, index } }));
+    const writes: unknown[] = [];
+    let allow = false;
+    const layer = new FormLayer(dom.root as unknown as HTMLElement, { widgets }, () => null,
+      async (object, value) => {
+        writes.push(value);
+        if (allow) layer.update({ forms: [{ object, value }], fields: [] });
+      }, () => {}, () => {});
+    const first = dom.root.children[0]!.children[0]!;
+    first.dispatch("click", {});
+    first.dispatch("input", {});
+    first.dispatch("change", {});
+    await expect(layer.settle()).rejects.toThrow();
+    layer.commit();
+    await expect(layer.settle()).rejects.toThrow();
+    expect(layer.hasDraft).toBe(true);
+    allow = true;
+    layer.commit();
+    await layer.settle();
+    expect(writes).toEqual([[], [], []]);
+    expect(layer.hasDraft).toBe(false);
+    expect(first.checked).toBe(false);
+    layer.update({ forms: [], fields: [] });
+    expect(first.checked).toBe(true);
   });
 
   it("clears only a radio that allows toggling off, and decodes its export like the CLI", () => {

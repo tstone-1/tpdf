@@ -225,6 +225,11 @@ pub fn check(added: &AddedText) -> Result<(), String> {
             "the text to add is longer than {MAX_CHARS} characters"
         ));
     }
+    if text.contains('\u{ad}') {
+        return Err(said!(
+            "the text contains a soft hyphen. Remove it or use an ordinary hyphen"
+        ));
+    }
     if text.chars().any(char::is_control) {
         return Err(said!("the text {text:?} has a control character in it"));
     }
@@ -380,8 +385,9 @@ pub(crate) fn verify_lines(
 /// # Errors
 ///
 /// Anything [`check`] refuses, more than [`MAX_LINES`] lines, a page the
-/// document does not have, or a page that is not a dictionary. Nothing is
-/// written when any line is refused.
+/// document does not have, or unreadable page geometry or resources. The document is a
+/// working copy. Discard it on error because earlier pages and shared objects
+/// may already have been modified.
 pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
     if lines.is_empty() {
         return Ok(());
@@ -464,7 +470,33 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
         let unit = pagetree::user_unit(doc, page)
             .ok_or_else(|| said!("the page has an invalid user unit"))?;
         let open = unclosed(doc, page);
-        let (font_names, state_names) = names(doc, page, states.len());
+        let mut resources = pagetree::resources(doc, page)
+            .map_err(|e| {
+                said!(
+                    "the resources for added text on page {page} could not be read: {e}",
+                    page = slot + 1
+                )
+            })?
+            .cloned()
+            .unwrap_or_default();
+        let subdictionary = |key: &str| -> Result<Dictionary, String> {
+            if !resources.has(key.as_bytes()) {
+                return Ok(Dictionary::new());
+            }
+            resources
+                .get_deref(key.as_bytes(), doc)
+                .and_then(Object::as_dict)
+                .cloned()
+                .map_err(|e| {
+                    said!(
+                        "the {key} resources on page {page} could not be read: {e}",
+                        page = slot + 1
+                    )
+                })
+        };
+        let mut fonts = subdictionary("Font")?;
+        let mut graphics = subdictionary("ExtGState")?;
+        let (font_names, state_names) = names(&fonts, &graphics, states.len());
         let mut used = [false; 3];
         let mut body = "Q\n".repeat(open + 1);
         for (index, text) in &list {
@@ -487,14 +519,18 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
             }
             body.push_str(&drawn);
         }
-        let mut fonts: Vec<(ObjectId, &str)> = Vec::new();
         for (slot, name) in font_names.iter().enumerate() {
             if used[slot] {
                 let id = ids[slot].ok_or_else(|| said!("no font was made for a line of text"))?;
-                fonts.push((id, name.as_str()));
+                fonts.set(name.as_bytes(), Object::Reference(id));
             }
         }
-        attach(doc, page, &fonts, &states, &state_names, body)?;
+        resources.set("Font", fonts);
+        for (id, name) in states.iter().zip(&state_names) {
+            graphics.set(name.as_bytes(), Object::Reference(*id));
+        }
+        resources.set("ExtGState", graphics);
+        attach(doc, page, resources, body)?;
     }
     Ok(())
 }
@@ -571,18 +607,11 @@ impl Face<'_> {
 
 /// The resource names for each font slot and each line's graphics state,
 /// clear of any the page already uses.
-fn names(doc: &Document, page: ObjectId, states: usize) -> (Vec<String>, Vec<String>) {
-    let resources = resources_of(doc, page);
-    // Each read once: a probe that copied the dictionary would copy it once
-    // for every name tried.
-    let used = |key: &[u8]| {
-        resources
-            .get(key)
-            .ok()
-            .map(|found| dictionary_of(doc, found))
-            .unwrap_or_default()
-    };
-    let (font_names, state_names) = (used(b"Font"), used(b"ExtGState"));
+fn names(
+    font_names: &Dictionary,
+    state_names: &Dictionary,
+    states: usize,
+) -> (Vec<String>, Vec<String>) {
     let fonts = FONT_NAMES
         .iter()
         .map(|base| {
@@ -673,21 +702,36 @@ fn show(
 
     // The text's direction and its up, turned by the angle the reader sees.
     let (sin, cos) = f64::from(line.angle).to_radians().sin_cos();
-    // Intersect the rotated line box with the visible page in display space.
-    // Their own four axes suffice to separate any two disjoint rectangles.
-    let half_line = advance / 2.0;
+    // Test each word's box: a space can position the ink but cannot paint it.
     let half_height = size * (cap_height + descent) / 2.0;
-    let u = along + half_line;
     let v = below - size * cap_height + half_height;
-    let dx = x + u * cos + v * sin - width / 2.0;
-    let dy = y - u * sin + v * cos - height / 2.0;
     let c = cos.abs();
     let s = sin.abs();
-    if dx.abs() >= width / 2.0 + half_line * c + half_height * s
-        || dy.abs() >= height / 2.0 + half_line * s + half_height * c
-        || (dx * cos - dy * sin).abs() >= half_line + width / 2.0 * c + height / 2.0 * s
-        || (dx * sin + dy * cos).abs() >= half_height + width / 2.0 * s + height / 2.0 * c
-    {
+    let intersects = |start: f64, word_width: f64| {
+        let half = word_width / 2.0;
+        let u = start + half;
+        let dx = x + u * cos + v * sin - width / 2.0;
+        let dy = y - u * sin + v * cos - height / 2.0;
+        dx.abs() < width / 2.0 + half * c + half_height * s
+            && dy.abs() < height / 2.0 + half * s + half_height * c
+            && (dx * cos - dy * sin).abs() < half + width / 2.0 * c + height / 2.0 * s
+            && (dx * sin + dy * cos).abs() < half_height + width / 2.0 * s + height / 2.0 * c
+    };
+    let mut remaining = text;
+    let mut cursor = along;
+    let mut visible = false;
+    for word in text.split_whitespace() {
+        let trimmed = remaining.trim_start();
+        cursor += face.advance(&remaining[..remaining.len() - trimmed.len()], size)?;
+        let width = face.advance(word, size)?;
+        if intersects(cursor, width) {
+            visible = true;
+            break;
+        }
+        cursor += width;
+        remaining = &trimmed[word.len()..];
+    }
+    if !visible {
         return Err(said!("the line lies entirely outside the visible page"));
     }
     let along_dir = (cos * right.0 - sin * down.0, cos * right.1 - sin * down.1);
@@ -736,31 +780,9 @@ fn show(
 fn attach(
     doc: &mut Document,
     page: ObjectId,
-    used: &[(ObjectId, &str)],
-    states: &[ObjectId],
-    state_names: &[String],
+    resources: Dictionary,
     body: String,
 ) -> Result<(), String> {
-    // The effective resources, copied onto the page so that adding to them
-    // changes this page and no other --- `textlayer.rs`'s rule.
-    let mut resources = resources_of(doc, page);
-    let mut fonts = match resources.get(b"Font") {
-        Ok(found) => dictionary_of(doc, found),
-        Err(_) => Dictionary::new(),
-    };
-    for (font, name) in used {
-        fonts.set(name.as_bytes().to_vec(), Object::Reference(*font));
-    }
-    resources.set("Font", Object::Dictionary(fonts));
-    let mut graphics = match resources.get(b"ExtGState") {
-        Ok(found) => dictionary_of(doc, found),
-        Err(_) => Dictionary::new(),
-    };
-    for (id, name) in states.iter().zip(state_names) {
-        graphics.set(name.as_bytes().to_vec(), Object::Reference(*id));
-    }
-    resources.set("ExtGState", Object::Dictionary(graphics));
-
     let before = doc.add_object(Stream::new(Dictionary::new(), b"q\n".to_vec()));
     let mut stream = Stream::new(Dictionary::new(), body.into_bytes());
     let _ = stream.compress();
@@ -793,29 +815,22 @@ fn attach(
     Ok(())
 }
 
-/// The page's effective resources, which it may inherit.
-fn resources_of(doc: &Document, page: ObjectId) -> Dictionary {
-    match pagetree::inherited(doc, page, b"Resources") {
-        Some(found) => dictionary_of(doc, &found),
-        None => Dictionary::new(),
-    }
-}
-
-/// A dictionary, read through one reference, or an empty one.
-fn dictionary_of(doc: &Document, object: &Object) -> Dictionary {
-    let direct = match object {
-        Object::Reference(id) => doc.get_object(*id).ok(),
-        other => Some(other),
-    };
-    direct
-        .and_then(|found| found.as_dict().ok())
-        .cloned()
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn resources_of(doc: &Document, page: ObjectId) -> &Dictionary {
+        pagetree::resources(doc, page).unwrap().unwrap()
+    }
+
+    fn dictionary_of(doc: &Document, object: &Object) -> Dictionary {
+        doc.dereference(object)
+            .unwrap()
+            .1
+            .as_dict()
+            .unwrap()
+            .clone()
+    }
 
     /// A document of `pages` empty A4 pages, each turned `turns` quarters, its
     /// content `content`.
@@ -1177,6 +1192,7 @@ mod tests {
         refused(&|l| l.text = "עמוד {page}".into(), "has no font for");
         refused(&|l| l.text = "Page\u{7}{page}".into(), "control character");
         refused(&|l| l.text = "  ".into(), "is empty");
+        refused(&|l| l.text = "co\u{ad}operate".into(), "soft hyphen");
         refused(&|l| l.size = 1.0, "font size");
         refused(&|l| l.opacity = 0.0, "opacity");
         refused(&|l| l.color = [0.0, 1.5, 0.0], "a colour is");

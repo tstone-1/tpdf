@@ -280,8 +280,8 @@ export class SessionWriter {
    * to a place the store has dropped and be suppressed, so a reader who cleared
    * the list and quit without scrolling would not get their document back.
    */
-  forgotten(): void {
-    this.written = null;
+  forgotten(path?: string): void {
+    if (path === undefined || this.written?.path === path) this.written = null;
   }
 
   /** Stops accepting notes, and drops any scheduled write. */

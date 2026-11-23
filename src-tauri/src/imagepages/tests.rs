@@ -395,7 +395,12 @@ fn a_jpegs_orientation_is_read_in_either_byte_order() {
     // The first complete entry still applies when the IFD claims a second.
     let mut truncated = exif(6, true);
     truncated[14..16].copy_from_slice(&2u16.to_le_bytes());
-    assert_eq!(jpeg_orientation(&with_segment(RGB, 0xe1, &truncated)), 6);
+    assert_eq!(
+        jpeg_facts(&with_segment(RGB, 0xe1, &truncated))
+            .unwrap()
+            .orientation,
+        6
+    );
     // A segment that only starts like EXIF is passed over, not read past.
     let cut = with_segment(RGB, 0xe1, b"Exif\0\0II*\0\xff\xff\xff\xff");
     assert_eq!(picture(&cut).expect("a JPEG").orientation, 1);

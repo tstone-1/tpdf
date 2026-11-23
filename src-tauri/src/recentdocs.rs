@@ -164,24 +164,20 @@ pub fn note_opened(_app: &tauri::AppHandle, path: &Path) {
 /// code could not have moved one of them.
 #[cfg(windows)]
 fn shell_path(path: &Path) -> Option<Vec<u16>> {
-    use std::os::windows::ffi::OsStrExt;
-
     let absolute = resolved(path)?;
+    Some(shell_argument(absolute.as_os_str()))
+}
 
-    // `\\?\` is what `canonicalize` returns on Windows and the shell does not
-    // understand it: an entry filed under the verbatim form appears with the
-    // prefix visible in its label and does not resolve when clicked. Stripped
-    // rather than avoided, because the canonicalisation is what makes the path
-    // absolute in the first place.
-    let text = absolute.as_os_str().to_string_lossy();
-    let text = text.strip_prefix(r"\\?\").unwrap_or(&text);
-
-    Some(
-        std::ffi::OsStr::new(text)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect(),
-    )
+/// UTF-16 argument for SHAddToRecentDocs, including its terminator.
+#[cfg(windows)]
+fn shell_argument(path: &std::ffi::OsStr) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    let (prefix, skip) = crate::clitool::shell_prefix(path.as_encoded_bytes());
+    prefix
+        .encode_utf16()
+        .chain(path.encode_wide().skip(skip))
+        .chain([0])
+        .collect()
 }
 
 /// Files `path` with AppKit as a document this application just opened.
@@ -341,7 +337,7 @@ mod linux_tests {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::shell_path;
+    use super::{shell_argument, shell_path};
     use std::path::{Path, PathBuf};
 
     fn scratch(name: &str) -> PathBuf {
@@ -349,6 +345,19 @@ mod tests {
             std::env::temp_dir().join(format!("tpdf-recentdocs-{name}-{}.pdf", std::process::id()));
         std::fs::write(&path, b"%PDF-1.7\n").expect("write scratch");
         path
+    }
+
+    #[test]
+    fn shell_arguments_preserve_unc_shares_and_drive_paths() {
+        for (path, expected) in [
+            (r"\\?\UNC\server\share\a.pdf", r"\\server\share\a.pdf"),
+            (r"\\?\C:\a.pdf", r"C:\a.pdf"),
+        ] {
+            assert_eq!(
+                shell_argument(path.as_ref()),
+                expected.encode_utf16().chain([0]).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

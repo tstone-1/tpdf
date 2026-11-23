@@ -76,13 +76,7 @@ pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
         ));
     };
     let name = describe(document, key, spec).name;
-    let stream = resolve(document, spec)
-        .as_dict()
-        .ok()
-        .and_then(|spec| spec.get(b"EF").ok())
-        .and_then(|ef| resolve(document, ef).as_dict().ok())
-        .and_then(|ef| ef.get(b"UF").or_else(|_| ef.get(b"F")).ok())
-        .and_then(|file| resolve(document, file).as_stream().ok())
+    let stream = embedded_stream(document, resolve(document, spec).as_dict().ok())
         .ok_or_else(|| said!("{name} holds no file to save."))?;
     decode(document, stream, MAX_DECODE).map_err(|why| {
         said!(
@@ -90,6 +84,18 @@ pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
             mib = MAX_DECODE >> 20
         )
     })
+}
+
+fn embedded_stream<'a>(
+    document: &'a Document,
+    spec: Option<&'a lopdf::Dictionary>,
+) -> Option<&'a lopdf::Stream> {
+    let ef = resolve(document, spec?.get(b"EF").ok()?).as_dict().ok()?;
+    let preferred = ef.get(b"UF").ok().map(|value| resolve(document, value));
+    match preferred {
+        None | Some(Object::Null) => resolve(document, ef.get(b"F").ok()?).as_stream().ok(),
+        Some(value) => value.as_stream().ok(),
+    }
 }
 
 fn decode(document: &Document, stream: &lopdf::Stream, limit: usize) -> Result<Vec<u8>, String> {
@@ -101,7 +107,10 @@ fn decode(document: &Document, stream: &lopdf::Stream, limit: usize) -> Result<V
             .map(|(_, obj)| obj)
             .map_err(|e| e.to_string())
     };
-    if stream.dict.has(b"F") {
+    if !matches!(
+        stream.dict.get(b"F").ok().map(direct).transpose()?,
+        None | Some(Object::Null)
+    ) {
         return Err(said!("external attachment streams are unsupported"));
     }
     let filters = match stream.dict.get(b"Filter").ok().map(direct).transpose()? {
@@ -278,12 +287,7 @@ pub fn save(
     password: Option<&str>,
     outside: &dyn crate::save::Rewriter,
 ) -> Result<usize, String> {
-    let same = |a: &std::path::Path, b: &std::path::Path| match (a.canonicalize(), b.canonicalize())
-    {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
-    };
-    if same(source, dest) {
+    if crate::save::same_file(source, dest) {
         return Err(said!(
             "The attachment was not saved: that is the document it comes from."
         ));
@@ -434,11 +438,7 @@ fn describe(document: &Document, key: &[u8], spec: &Object) -> Embedded {
         .or_else(|| text(b"F"))
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| decode_text_string(key));
-    let size = spec
-        .and_then(|spec| spec.get(b"EF").ok())
-        .and_then(|ef| resolve(document, ef).as_dict().ok())
-        .and_then(|ef| ef.get(b"UF").or_else(|_| ef.get(b"F")).ok())
-        .and_then(|file| resolve(document, file).as_stream().ok())
+    let size = embedded_stream(document, spec)
         .and_then(|file| file.dict.get(b"Params").ok())
         .and_then(|params| resolve(document, params).as_dict().ok())
         .and_then(|params| params.get(b"Size").ok())
@@ -580,6 +580,38 @@ mod tests {
         assert_eq!(content(&doc, 1).expect("packed"), packed);
         let missing = content(&doc, 2).expect_err("no third");
         assert!(missing.contains("no attachment 3 (it has 2)"), "{missing}");
+    }
+
+    #[test]
+    fn null_optional_attachment_entries_are_absent() {
+        let mut doc = carrying(&[("a", "note.txt", b"NOTE", false)], false);
+        let null = doc.add_object(Object::Null);
+        for value in [Object::Null, Object::Reference(null)] {
+            for o in doc.objects.values_mut() {
+                if let Ok(stream) = o.as_stream_mut() {
+                    stream.dict.set("F", value.clone());
+                } else if let Ok(ef) = o
+                    .as_dict_mut()
+                    .and_then(|d| d.get_mut(b"EF"))
+                    .and_then(Object::as_dict_mut)
+                {
+                    ef.set("UF", value.clone());
+                }
+            }
+            assert_eq!(list(&doc)[0].size, Some(4));
+            assert_eq!(content(&doc, 0).unwrap(), b"NOTE");
+        }
+        let stream = doc
+            .objects
+            .values_mut()
+            .find_map(|o| o.as_stream_mut().ok())
+            .unwrap();
+        stream
+            .dict
+            .set("F", Object::string_literal("elsewhere.dat"));
+        assert!(content(&doc, 0)
+            .unwrap_err()
+            .contains("external attachment"));
     }
 
     #[test]
@@ -792,10 +824,15 @@ mod tests {
         let source = written(&dir, &mut doc);
         let expected = crate::fingerprint::Fingerprint::of(&source).expect("fingerprint");
         let before = std::fs::read(&source).expect("read");
-        let refused = save(&source, &expected, 0, &source, None, &crate::save::Here)
-            .expect_err("over itself");
-        assert!(refused.contains("the document it comes from"), "{refused}");
-        assert_eq!(std::fs::read(&source).expect("read"), before);
+        let alias = dir.join("alias.pdf");
+        std::fs::hard_link(&source, &alias).expect("create source alias");
+        for destination in [&source, &alias] {
+            let refused = save(&source, &expected, 0, destination, None, &crate::save::Here)
+                .expect_err("over itself");
+            assert!(refused.contains("the document it comes from"), "{refused}");
+            assert_eq!(std::fs::read(destination).expect("read"), before);
+        }
+        assert!(crate::save::same_file(&source, &alias));
     }
 
     #[test]

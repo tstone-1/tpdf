@@ -874,10 +874,10 @@ fn an_estimate_writes_nothing_and_names_the_page_that_loses_most() {
     assert_eq!(estimated.bytes.len(), written.len());
 
     // Nowhere to look when no picture changes.
-    assert!(estimate(&doc, Compress::Lossless)
-        .expect("estimates")
-        .focus
-        .is_none());
+    let lossless = estimate(&doc, Compress::Lossless).expect("estimates");
+    assert!(lossless.focus.is_none());
+    assert_eq!(lossless.estimate.done.pictures, 2);
+    assert_eq!(lossless.estimate.done.pictures_changed, 0);
 }
 
 #[test]
@@ -898,6 +898,7 @@ fn a_pdfa_one_declaration_keeps_the_classic_xref_and_metadata() {
         ));
         doc.catalog_mut().unwrap().set("Metadata", id);
         let estimated = super::estimate(&doc, Compress::Lossless).unwrap();
+        assert_eq!(estimated.estimate.done.pictures, 0);
         let copy = Document::load_mem(&estimated.bytes).unwrap();
         assert_eq!(
             matches!(
