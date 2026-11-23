@@ -587,9 +587,8 @@ unchanged rules out.
 password is: `Keep`, which every plan out of the model carries, `Remove` or `Set`. `save::checked`
 asks `protect::allowed` before anything is built, `save::rewrite` asks `protect::resolve` for
 the state to encrypt with, and `protect::written_as_asked` loads the serialised bytes with and
-without the password before they are returned. That last call has no failing input in the
-tests: nothing short of a defect in `lopdf`'s writer makes it fire, so a mutation that deletes
-it survives. A plan that changes the password is never an append and never the identity.
+without the password through the bounded loader before they are returned. The read-back checks
+protection and page count separately. A plan that changes the password is never an append and never the identity.
 
 **`protect::finish` runs after every `Document::encrypt`, also when the password is kept.**
 `lopdf` writes each crypt filter without its key length. `qpdf` and PDFium assume the length
@@ -603,7 +602,10 @@ A new password is one string used as both the user and the owner password, with 
 permission granted, under `V 5`/`R 6`. Setting one is refused if the source opens without
 a password and restricts permissions. `cli/protect.rs` is the tool's two commands, which
 open the staged copy in fresh PDFium workers before publishing it; `commands/protect.rs` is
-the window's one command, `protect_copy`, where a password sets and its absence removes. On
+the window's copy command, which reopens the staged file with the viewer before publishing.
+The new-password dialog asks the writer to validate both the UTF-8 length and SASLprep
+rules before opening the destination chooser. When PDFium rejects a literal password,
+tpdf tries the prepared spelling and accepts it only for revision 6. On
 the frontend the rules and sentences are `src/lib/protect.ts` and the dialog is
 `newpassworddialog.ts`; `App.svelte` keeps the two dialogs in order and the `invoke`.
 
@@ -837,7 +839,8 @@ the routine that paints search hits, and the command line turns into rectangles 
 `cli/regions.rs`, the routine `search` uses.
 
 Words are runs between whitespace; a soft hyphen is left out of the word and kept inside its
-span. The diff is patience over interned word ids: words unique to both sides anchor, common
+span. A word split at a discretionary hyphen can span consecutive readable pages. A blank
+page ends the continuation. The diff is patience over interned word ids: words unique to both sides anchor, common
 words at either end of a stretch are taken off, and a stretch with no unique word in common is
 aligned by an LCS table up to `MAX_TABLE_CELLS`, past which it is one replacement and counted
 in `unaligned`. Both callers stop extracting when a side exceeds 16 million characters or two million words.

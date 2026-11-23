@@ -143,6 +143,8 @@ tauri-plugin-dialog = "2.7.3"
 # the whole tree rather than read off a README, because one copyleft crate anywhere
 # removes the option of making this repository public (AGENTS.md).
 caseless = "0.2.2"
+# The same revision-6 password preparation that lopdf uses when writing.
+stringprep = "0.1.5"
 # In-app updates. MIT OR Apache-2.0, and the **largest single addition the tree
 # has taken**: 48 crates, because it brings a TLS stack (`rustls`) and archive
 # extraction (`zip`, `tar`). It is also the only network authority in the

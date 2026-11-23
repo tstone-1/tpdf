@@ -632,6 +632,27 @@ pub fn write_copy(
     copy_with(source, plan, out, password, rewriter, None, &|| Ok(()))
 }
 
+/// A regular Save a Copy, including its changed-source notice, with an
+/// additional reader check before the staged file takes its final name.
+pub(crate) fn write_verified_copy(
+    source: &Path,
+    plan: &Plan,
+    out: &Path,
+    password: Option<&str>,
+    rewriter: &dyn Rewriter,
+    check: Check<'_>,
+) -> Result<Copied, Refusal> {
+    copy_with(
+        source,
+        plan,
+        out,
+        password,
+        rewriter,
+        Some((OnChange::Proceed, check)),
+        &|| Ok(()),
+    )
+}
+
 /// [`write_copy`] for a copy that is only worth having if it reads back.
 ///
 /// `check` is shown the staged file before it is given its name. A refusal from
@@ -675,7 +696,7 @@ pub(crate) fn write_checked_copy_until(
         out,
         password,
         rewriter,
-        Some(check),
+        Some((OnChange::Refuse, check)),
         before_publish,
     )
     .map(|_| ())
@@ -691,7 +712,7 @@ fn copy_with(
     out: &Path,
     password: Option<&str>,
     rewriter: &dyn Rewriter,
-    check: Option<Check<'_>>,
+    check: Option<(OnChange, Check<'_>)>,
     before_publish: &dyn Fn() -> Result<(), Refusal>,
 ) -> Result<Copied, Refusal> {
     if same_file(source, out) {
@@ -705,11 +726,7 @@ fn copy_with(
     // points at, so refusing a changed source here would leave a reader whose
     // file moved under them with nowhere at all to put their work. What comes
     // back is the fact, and `Copied` carries it to them.
-    let on_change = if check.is_some() {
-        OnChange::Refuse
-    } else {
-        OnChange::Proceed
-    };
+    let on_change = check.map_or(OnChange::Proceed, |(policy, _)| policy);
     let ready = rewrite_ready(source, plan, on_change)?;
     // Named differently from `stage_in_place`'s, deliberately, and the reason is
     // the mutation harness rather than taste: two character-for-character
@@ -729,7 +746,7 @@ fn copy_with(
         )
         .map(|_| ())
     })?;
-    if let Some(check) = check {
+    if let Some((_, check)) = check {
         // Removed on a refusal, and `stage` created it, so removing it cannot
         // take anything that was not ours.
         let checked = check(&staged).and_then(|()| {

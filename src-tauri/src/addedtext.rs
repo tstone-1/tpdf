@@ -466,7 +466,7 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
     }
     for (slot, list) in by_page {
         let page = pages[slot as usize];
-        let shown = pagetree::displayed_page(doc, page);
+
         let unit = pagetree::user_unit(doc, page)
             .ok_or_else(|| said!("the page has an invalid user unit"))?;
         let open = unclosed(doc, page);
@@ -479,14 +479,22 @@ pub fn write(doc: &mut Document, lines: &[AddedText]) -> Result<(), String> {
             })?
             .cloned()
             .unwrap_or_default();
+        let shown = pagetree::writable_page(doc, page).ok_or_else(|| {
+            said!(
+                "the geometry for added text on page {page} could not be read",
+                page = slot + 1
+            )
+        })?;
         let subdictionary = |key: &str| -> Result<Dictionary, String> {
             if !resources.has(key.as_bytes()) {
                 return Ok(Dictionary::new());
             }
             resources
                 .get_deref(key.as_bytes(), doc)
-                .and_then(Object::as_dict)
-                .cloned()
+                .and_then(|value| match value {
+                    Object::Null => Ok(Dictionary::new()),
+                    _ => value.as_dict().cloned(),
+                })
                 .map_err(|e| {
                     said!(
                         "the {key} resources on page {page} could not be read: {e}",
@@ -893,6 +901,64 @@ mod tests {
             .map(|o| o.as_float().map(f64::from).expect("a number"))
             .collect();
         v.try_into().expect("six")
+    }
+
+    #[test]
+    fn null_resource_subdictionaries_are_absent() {
+        for key in ["Font", "ExtGState"] {
+            for indirect in [false, true] {
+                let mut doc = document(1, 0, b"");
+                let page = pagetree::ordered_pages(&doc)[0];
+                let value = if indirect {
+                    Object::Reference(doc.add_object(Object::Null))
+                } else {
+                    Object::Null
+                };
+                let mut resources = Dictionary::new();
+                resources.set(key, value);
+                doc.get_dictionary_mut(page)
+                    .unwrap()
+                    .set("Resources", resources);
+                write(&mut doc, &[AddedText::page_numbers()]).unwrap();
+                assert_eq!(shown(&doc, 0), ["Page 1 of 1"]);
+            }
+        }
+    }
+
+    #[test]
+    fn locally_available_resources_cannot_mask_unresolved_geometry() {
+        for key in ["MediaBox", "CropBox", "Rotate"] {
+            for depth in [1, 66] {
+                let mut doc = document(1, 0, b"");
+                let page = pagetree::ordered_pages(&doc)[0];
+                let leaf = doc.get_dictionary_mut(page).unwrap();
+                let root = leaf.get(b"Parent").unwrap().as_reference().unwrap();
+                leaf.set("CropBox", vec![0.into(), 0.into(), 100.into(), 100.into()]);
+                let inherited = leaf.remove(key.as_bytes()).unwrap();
+                doc.get_dictionary_mut(root).unwrap().set(key, inherited);
+                let mut parent = root;
+                for _ in 1..depth {
+                    let child = doc.add_object(
+                        dictionary! { "Type" => "Pages", "Parent" => parent, "Count" => 1 },
+                    );
+                    doc.get_dictionary_mut(parent)
+                        .unwrap()
+                        .set("Kids", vec![Object::Reference(child)]);
+                    parent = child;
+                }
+                doc.get_dictionary_mut(parent)
+                    .unwrap()
+                    .set("Kids", vec![Object::Reference(page)]);
+                doc.get_dictionary_mut(page).unwrap().set("Parent", parent);
+                let result = write(&mut doc, &[AddedText::page_numbers()]);
+                if depth == 1 {
+                    result.unwrap();
+                    assert_eq!(shown(&doc, 0), ["Page 1 of 1"]);
+                } else {
+                    assert!(result.unwrap_err().contains("geometry"), "{key}");
+                }
+            }
+        }
     }
 
     #[test]

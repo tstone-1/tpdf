@@ -22,7 +22,7 @@ import { suggestedName } from "./protect";
 /** A word `testdata/text-base14.pdf` draws. */
 const WORD = "quartz";
 /** Typed into the dialog; `tabs_check.py` opens the copy with the same one. */
-const SECRET = "tr0ub4dor";
+const SECRET = "sample-cafe\u0301-\uff21";
 
 const SETTLE_MS = 20_000;
 const DIALOG_MS = 5000;
@@ -87,7 +87,13 @@ export async function protectCheck(host: OpenCheckHost, expected: string, report
     dialog(NEW_PASSWORD) !== null && alert() === "The two passwords are not the same.", alert());
   report.check("before any name is asked for", host.saveSuggestions().length === before,
     `${host.saveSuggestions().length} against ${before}`);
-  second!.value = SECRET;
+  const mixed = "sample-\u05d0";
+  first!.value = second!.value = mixed;
+  press(NEW_PASSWORD, "Enter");
+  const declined = await settle(() => alert().includes("writing direction"), DIALOG_MS);
+  report.check("a password refused by the writer stays editable before the save panel",
+    declined && first!.value === mixed && second!.value === mixed && host.saveSuggestions().length === before, alert());
+  first!.value = second!.value = SECRET;
   press(NEW_PASSWORD, "Enter");
   const said = await settle(() => shown().includes("Saved locked.pdf"), WRITE_MS);
   report.check("the copy ends on its sentence", said &&

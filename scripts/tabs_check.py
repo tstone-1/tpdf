@@ -657,7 +657,7 @@ def protected_files(directory: Path, binary: Path) -> bool:
         checks = [
             ("locked.pdf gives no text without the password", text(locked, None)[0] == 3),
             ("locked.pdf gives no text with another password", text(locked, "another")[0] == 3),
-            ("locked.pdf gives its text with the password", "quartz" in text(locked, "tr0ub4dor")[1]),
+            ("locked.pdf gives its text with the password", "quartz" in text(locked, "sample-cafe\u0301-\uff21")[1]),
             ("open.pdf gives its text unasked", "quartz" in text(opened, None)[1]),
             ("open.pdf holds no encryption dictionary", b"/Encrypt" not in opened.read_bytes()),
         ]

@@ -234,8 +234,8 @@ ROWS = [
     Mutation(
         "compare: one span across a page break",
         "src/compare.rs",
-        "            Some(span) if span.page == word.page => span.end = word.end,",
-        "            Some(span) => span.end = word.end,",
+        "            Some(last) if last.page == span.page => last.end = span.end,",
+        "            Some(last) => last.end = span.end,",
         "a_change_over_a_page_break_has_one_span_per_page",
     ),
     Mutation(

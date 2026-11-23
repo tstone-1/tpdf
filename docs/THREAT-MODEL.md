@@ -2995,9 +2995,8 @@ resource name and the sweep takes the object.
 
 `tpdf protect` and `tpdf unprotect` write a copy with a new password or with none, and the
 window's *Save a copy with a password* and *Save a copy without its password* do the same
-through `protect_copy`, the thirteenth command that writes a file (§3). The write is
-`save::write_copy`, the path every copy takes, with one field more in the plan
-(`protect::Protection`).
+through `protect_copy`, the thirteenth command that writes a file (§3). The desktop uses `save::write_verified_copy` with
+`protect::Protection` in the plan.
 
 **What a new password is.** AES-256 under the PDF 2.0 handler (`V 5`, `R 6`), built by
 `lopdf`. One password is both the user and the owner password and no permission is
@@ -3007,8 +3006,9 @@ identifier of a file that had none come from the operating system's generator
 for it; `lopdf` draws its own salts the same way. Measured on macOS under the shipped
 profile. **On Windows the low-integrity worker has not been run through this path.**
 
-**Where the new password travels.** From the dialog's two fields to `protect_copy` as an
-argument, into the plan, and over the worker's request pipe with the rest of the plan. It
+**Where the new password travels.** The dialog first calls `validate_new_password` to check the
+writer's Unicode rules. After the reader chooses a destination, `protect_copy` puts the
+password in the plan and sends it over the worker's request pipe. It
 is never on a command line: the tool reads it from an environment variable, as it reads
 the one that opens the input. `Protection`'s `Debug` form prints no password, because a
 plan is printed in refusals and in test output. It is not stored. A reader who loses it
@@ -3018,9 +3018,10 @@ has lost the copy, and the dialog and the README say so.
 built twice with `lopdf`: without a password, where a protected copy must stay locked and
 an unprotected one must open with no trace of encryption, and with the new password,
 where the page count must be the one written. That is the writer reading its own output.
-The tool adds a reader that shares no code with it: the staged file is opened in fresh
-PDFium workers before it is published, and `tests/cli/protect.rs` asks `qpdf` as a third.
-The window has the first check only.
+The permission check and the writer's read-back use the bounded loader. Both the desktop
+and the CLI reopen the staged document through PDFium before publishing it and verify
+its page count. A protected copy must also refuse to open without the password.
+`tests/cli/protect.rs` asks `qpdf` as a third reader.
 
 **Removal is refused for a document that opens without a password.** Such a file carries
 restrictions somebody else chose, and `lopdf` authenticates it with the empty password by

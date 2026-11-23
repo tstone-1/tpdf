@@ -19,6 +19,15 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Protected copies are reopened before publication. Compatible Unicode spellings open
+  revision-6 PDFs, and unsupported new passwords can be corrected before choosing a file.
+  Password changes use the bounded PDF loader throughout.
+- Page numbers and watermarks refuse unresolved page geometry and accept null resource
+  entries. Extracting pages drops unsupported bookmark trees and preserves outlines with
+  exactly 20,000 entries.
+- Text comparison joins words broken by a discretionary hyphen across pages, counts only
+  unmatched words beside a scan, and keeps excerpts within their character limit.
+
 - Page numbering and watermarks preserve inherited artwork and refuse unreadable page
   resources. Blank padding no longer makes an off-page label pass the visibility check.
   The dialog explains the first-number limit and identifies soft hyphens before saving.

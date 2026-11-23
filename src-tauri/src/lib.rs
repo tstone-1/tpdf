@@ -1101,6 +1101,7 @@ pub fn run() {
             edit_state,
             save_document,
             save_copy,
+            validate_new_password,
             protect_copy,
             add_text_copy,
             compress_estimate,

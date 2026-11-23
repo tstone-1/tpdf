@@ -89,6 +89,44 @@ pub(super) fn sets_and_removes_a_password(report: &mut Report) {
         &format!("no password {without}; wrong {wrong}; right {with}"),
     );
 
+    for password in ["café", "cafe\u{301}", "ABC\u{ff21}"] {
+        let path = at("unicode.pdf");
+        let (status, _, why) = tool(
+            &[
+                "protect",
+                &plain,
+                "-o",
+                &path,
+                "--force",
+                "--new-password-env",
+                "KEY",
+            ],
+            &[("KEY", password)],
+        );
+        let (opens, output) = text(&path, Some(password));
+        report.check(
+            "Unicode password opens the protected copy as entered",
+            status == 0 && opens == 0 && output == words,
+            &why,
+        );
+    }
+    let (status, _, why) = tool(
+        &[
+            "protect",
+            &plain,
+            "-o",
+            &refused,
+            "--new-password-env",
+            "KEY",
+        ],
+        &[("KEY", "ab\u{05d0}")],
+    );
+    report.check(
+        "a prohibited bidirectional password is a usage error",
+        status == 2 && why.contains("writing direction") && !Path::new(&refused).exists(),
+        &why,
+    );
+
     match qpdf(&["--check", &format!("--password={NEW}"), &protected]) {
         Some((code, said)) => report.check(
             "qpdf reads the copy as AES-256 with nothing to warn about",

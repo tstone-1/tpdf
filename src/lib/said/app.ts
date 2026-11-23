@@ -220,6 +220,12 @@ export default {
     "Dieses tpdf ist nicht installiert, daher gibt es kein tpdf.desktop, das sich nennen ließe: Installiere das tpdf-Paket und starte es aus dem Anwendungsmenü",
   "tpdf is not the default: {e}": "tpdf ist nicht die Standard-App: {e}",
 
+  "the geometry for added text on page {page} could not be read": "Die Seitengeometrie für den zusätzlichen Text auf Seite {page} konnte nicht gelesen werden",
+  "The page count changed from {pages} to {actual}.": "Die Seitenzahl hat sich von {pages} auf {actual} geändert.",
+  "This combination of characters is not allowed in a PDF password. Check the characters and their writing direction.":
+    "Diese Zeichenkombination ist in einem PDF-Passwort unzulässig. Bitte die Zeichen und ihre Schreibrichtung prüfen.",
+  "After Unicode preparation a PDF password must contain between 1 and {MAX_BYTES} bytes.":
+    "Nach der Unicode-Aufbereitung muss ein PDF-Passwort zwischen 1 und {MAX_BYTES} Byte enthalten.",
   // protect.rs
   "The password is empty; a document protected with it would open for anybody.":
     "Das Passwort ist leer; ein damit geschütztes Dokument würde sich für jeden öffnen.",

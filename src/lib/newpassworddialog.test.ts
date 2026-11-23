@@ -1,12 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DIALOG_CLASS, NewPasswordDialog } from "./newpassworddialog";
 import { ADVICE, NOT_ASCII } from "./protect";
 import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 
+const { validate } = vi.hoisted(() => ({ validate: vi.fn() }));
+vi.mock("./ipc", () => ({ call: validate }));
+
 let dom: FakeDom;
 
 beforeEach(() => {
+  validate.mockReset().mockResolvedValue(undefined);
   dom = installFakeDom();
 });
 
@@ -98,6 +102,20 @@ describe("NewPasswordDialog", () => {
     second.value = "tr0ub4dor";
     backdrop.dispatch("keydown", { key: "Enter", target: first });
     await expect(answer).resolves.toBe("tr0ub4dor");
+  });
+
+  it("keeps a refused native password in both fields and accepts a correction", async () => {
+    const { dialog, first, second, save, problem } = open();
+    const answer = dialog.ask("report.pdf");
+    first.value = second.value = "ab\u05d0";
+    validate.mockRejectedValueOnce("Invalid writing direction");
+    save.dispatch("click", {});
+    await vi.waitFor(() => expect(problem.textContent).toBe("Invalid writing direction"));
+    expect(dialog.isOpen).toBe(true);
+    expect([first.value, second.value]).toEqual(["ab\u05d0", "ab\u05d0"]);
+    first.value = second.value = "corrected";
+    save.dispatch("click", {});
+    await expect(answer).resolves.toBe("corrected");
   });
 
   it("does not save with nothing typed", () => {

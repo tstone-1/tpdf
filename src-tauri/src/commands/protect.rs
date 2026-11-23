@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use super::{outside_of, password_for};
+use super::{answered, outside_of, password_for};
 use crate::protect::{self, Protection};
 use crate::render::RenderService;
 use crate::{edits, save};
@@ -28,6 +28,53 @@ pub(crate) fn asked(mut plan: edits::Plan, new: Option<String>) -> Result<edits:
     Ok(plan)
 }
 
+/// Validate the new password while the two fields are still editable.
+#[tauri::command]
+pub fn validate_new_password(password: String) -> Result<(), String> {
+    protect::acceptable(&password)
+}
+
+/// Reopen the staged copy through the same reader the desktop uses.
+fn verify_copy(
+    service: &RenderService,
+    staged: &Path,
+    password: Option<&str>,
+    expected: usize,
+) -> Result<(), save::Refusal> {
+    let open = |key| {
+        answered("protect_copy", |reply| {
+            service.open(staged.into(), true, key, reply)
+        })
+    };
+    let close = |id| {
+        answered("protect_copy", |reply| service.close(id, reply)).map_err(save::Refusal::from)
+    };
+    if password.is_some() {
+        match open(None) {
+            Err(e) if e.locked => (),
+            Err(e) => return Err(e.reason.into()),
+            Ok(info) => {
+                close(info.id)?;
+                return Err(said!(
+                    "The copy tpdf built opens without the password, so it was not written."
+                )
+                .into());
+            }
+        }
+    }
+    let info = open(password.map(str::to_owned)).map_err(|e| save::Refusal::from(e.reason))?;
+    close(info.id)?;
+    if info.page_count != expected {
+        return Err(said!(
+            "The page count changed from {pages} to {actual}.",
+            pages = expected,
+            actual = info.page_count
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// Writes the working document to `path` with `password` as its password, or
 /// with none when `password` is absent.
 ///
@@ -43,16 +90,19 @@ pub async fn protect_copy(
     path: String,
     password: Option<String>,
 ) -> Result<save::Copied, String> {
-    let plan = asked(edits.plan(doc)?, password)?;
+    let plan = asked(edits.plan(doc)?, password.clone())?;
+    let expected = plan.pages.len();
     let opened_with = password_for(&service, doc, "protect_copy").await;
     let writing = outside_of(&app, service.backend());
+    let service = service.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        save::write_copy(
+        save::write_verified_copy(
             Path::new(&source),
             &plan,
             Path::new(&path),
             opened_with.as_deref(),
             &*writing,
+            &|staged| verify_copy(&service, staged, password.as_deref(), expected),
         )
     })
     .await

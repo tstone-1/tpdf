@@ -12,6 +12,8 @@
  * `textContent`.
  */
 
+import { call } from "./ipc";
+import { spokenError } from "./said";
 import { catalog } from "./i18n";
 import { passwordKeys } from "./passwordkeys";
 import { ADVICE, NOT_ASCII, beyondAscii, judge } from "./protect";
@@ -133,13 +135,25 @@ export class NewPasswordDialog {
     this.problem.textContent = beyondAscii(this.first.value) ? NOT_ASCII : "";
   }
 
-  private submit(): void {
+  private async submit(): Promise<void> {
     const why = judge(this.first.value, this.second.value);
     if (why) {
       this.problem.textContent = why;
       return;
     }
-    this.settle(this.first.value);
+    const password = this.first.value;
+    const pending = this.pending;
+    try {
+      await call("validate_new_password", { password });
+    } catch (error) {
+      if (this.pending === pending && this.first.value === password && this.second.value === password) {
+        this.problem.textContent = spokenError(error);
+      }
+      return;
+    }
+    if (this.pending === pending && this.first.value === password && this.second.value === password) {
+      this.settle(password);
+    }
   }
 
   /** Resolves once, clears both fields and hides the dialog. */

@@ -75,6 +75,12 @@ pub fn acceptable(password: &str) -> Result<(), String> {
                     which most readers cannot type back."
         ));
     }
+    let prepared = stringprep::saslprep(password).map_err(|_| {
+        said!("This combination of characters is not allowed in a PDF password. Check the characters and their writing direction.")
+    })?;
+    if prepared.is_empty() || prepared.len() > MAX_BYTES {
+        return Err(said!("After Unicode preparation a PDF password must contain between 1 and {MAX_BYTES} bytes."));
+    }
     Ok(())
 }
 
@@ -97,21 +103,19 @@ pub fn allowed(protection: &Protection, had: bool, original: &[u8]) -> Result<()
             // Asked of the bytes rather than of the password that was given:
             // `lopdf` tries the empty password by itself, so a wrong password
             // on a document that opens without one still arrives decrypted.
-            let plain = Document::load_mem_with_options(original, lopdf::LoadOptions::default());
+            let plain = crate::encoding::load(original, None)?;
             if let Protection::Set(password) = protection {
-                let may_change = plain.is_ok_and(|doc| {
-                    doc.is_encrypted()
-                        || doc
-                            .encryption_state
-                            .is_some_and(|s| s.permissions().contains(Permissions::all()))
-                });
+                let may_change = plain.is_encrypted()
+                    || plain
+                        .encryption_state
+                        .is_some_and(|s| s.permissions().contains(Permissions::all()));
                 if !may_change {
                     return Err(said!(
                         "Changing the password would discard the document restrictions."
                     ));
                 }
                 acceptable(password)
-            } else if plain.is_ok_and(|doc| doc.is_encrypted()) {
+            } else if plain.is_encrypted() {
                 Ok(())
             } else {
                 Err(said!(
@@ -248,25 +252,26 @@ pub fn finish(doc: &mut Document, protection: &Protection) -> Result<(), String>
 /// password does not open, or one that should be plain and is not.
 pub fn written_as_asked(protection: &Protection, bytes: &[u8], pages: usize) -> Result<(), String> {
     let load = |password: Option<&str>| {
-        Document::load_mem_with_options(
-            bytes,
-            lopdf::LoadOptions {
-                password: password.map(str::to_string),
-                ..Default::default()
-            },
-        )
-        .map_err(|e| said!("tpdf could not read back the copy it built: {e}"))
+        crate::encoding::load(bytes, password)
+            .map_err(|e| said!("tpdf could not read back the copy it built: {e}"))
+    };
+    let check_pages = |document: &Document| {
+        let actual = document.get_pages().len();
+        if actual != pages {
+            return Err(said!("The page count changed from {pages} to {actual}."));
+        }
+        Ok(())
     };
     match protection {
         Protection::Keep => Ok(()),
         Protection::Remove => {
             let plain = load(None)?;
-            if plain.is_encrypted() || plain.was_encrypted() || plain.get_pages().len() != pages {
+            if plain.is_encrypted() || plain.was_encrypted() {
                 return Err(said!(
                     "The copy tpdf built is still encrypted, so it was not written."
                 ));
             }
-            Ok(())
+            check_pages(&plain)
         }
         Protection::Set(password) => {
             // `lopdf` parses no objects for a document it cannot authenticate
@@ -277,14 +282,14 @@ pub fn written_as_asked(protection: &Protection, bytes: &[u8], pages: usize) -> 
                 ));
             }
             // A password that does not open it is an `Err` from the load.
-            let opens = load(Some(password))
-                .is_ok_and(|doc| !doc.is_encrypted() && doc.get_pages().len() == pages);
-            if !opens {
-                return Err(said!(
-                    "The copy tpdf built does not open with the password, so it was not written."
-                ));
+            let wrong = || {
+                said!("The copy tpdf built does not open with the password, so it was not written.")
+            };
+            let opened = load(Some(password)).map_err(|_| wrong())?;
+            if opened.is_encrypted() {
+                return Err(wrong());
             }
-            Ok(())
+            check_pages(&opened)
         }
     }
 }
@@ -414,10 +419,24 @@ mod tests {
     }
 
     #[test]
+    fn new_passwords_obey_the_writers_unicode_profile() {
+        for password in ["cafe\u{301}", "ABC\u{ff21}", "אב"] {
+            acceptable(password).unwrap();
+        }
+        assert!(acceptable("abא").unwrap_err().contains("writing direction"));
+        assert!(acceptable("\u{ad}").is_err());
+        assert!(acceptable(&"\u{fdfa}".repeat(8)).is_err());
+    }
+
+    #[test]
     fn a_copy_that_lost_a_page_is_refused() {
         let bytes = protected("s3cret");
-        assert!(written_as_asked(&Protection::Set("s3cret".into()), &bytes, 2).is_err());
-        assert!(written_as_asked(&Protection::Remove, &bytes_of(plain()), 2).is_err());
+        for failure in [
+            written_as_asked(&Protection::Set("s3cret".into()), &bytes, 2),
+            written_as_asked(&Protection::Remove, &bytes_of(plain()), 2),
+        ] {
+            assert_eq!(failure.unwrap_err(), "The page count changed from 2 to 1.");
+        }
     }
 
     #[test]

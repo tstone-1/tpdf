@@ -5850,6 +5850,7 @@ dependencies = [
  "sha2 0.10.9",
  "sha2 0.11.1",
  "signature 2.2.0",
+ "stringprep",
  "subsetter",
  "tauri",
  "tauri-build",

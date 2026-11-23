@@ -1842,7 +1842,7 @@ ROWS += [
         # Somebody else's restrictions, dropped for a reader who was never asked for a password.
         'protect: remove restrictions from a document that opens unasked',
         'src/protect.rs',
-        '            } else if plain.is_ok_and(|doc| doc.is_encrypted()) {',
+        '            } else if plain.is_encrypted() {',
         '            } else if true {',
         'a_removal_needs_a_document_that_a_password_opens',
     ),
@@ -1898,16 +1898,16 @@ ROWS += [
         # A copy that opens and is missing a page is not the document.
         "protect: do not count the protected copy's pages",
         'src/protect.rs',
-        '                .is_ok_and(|doc| !doc.is_encrypted() && doc.get_pages().len() == pages);',
-        '                .is_ok_and(|doc| !doc.is_encrypted());',
+        '            check_pages(&opened)',
+        '            Ok(())',
         'a_copy_that_lost_a_page_is_refused',
     ),
     Mutation(
         # The same, for the copy with no password.
         "protect: do not count the unprotected copy's pages",
         'src/protect.rs',
-        '            if plain.is_encrypted() || plain.was_encrypted() || plain.get_pages().len() != pages {',
-        '            if plain.is_encrypted() || plain.was_encrypted() {',
+        '            check_pages(&plain)',
+        '            Ok(())',
         'a_copy_that_lost_a_page_is_refused',
     ),
     Mutation(

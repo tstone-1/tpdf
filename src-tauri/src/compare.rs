@@ -65,6 +65,7 @@ pub(crate) struct ComparisonInput {
     words: Vec<Word>,
     pages: Pages,
     characters: usize,
+    continues: bool,
 }
 
 impl ComparisonInput {
@@ -76,9 +77,37 @@ impl ComparisonInput {
         }
         self.characters += codes.len();
         let before = self.words.len();
-        append_words(&mut self.words, page, codes, which)?;
+        let join = self.continues
+            && codes
+                .first()
+                .and_then(|&c| char::from_u32(c))
+                .is_some_and(char::is_alphanumeric);
+        append_words(
+            &mut self.words,
+            page,
+            codes,
+            which,
+            MAX_WORDS + usize::from(join),
+        )?;
+        let readable = self.words.len() > before;
+        // PDFium can include trailing line breaks after a discretionary hyphen.
+        self.continues = readable
+            && self.words.last().is_some_and(|word| {
+                let end = word.end as usize;
+                codes[end - 1] == u32::from(SOFT_HYPHEN)
+                    && codes[end..].iter().all(|c| matches!(c, 13 | 10))
+            });
+        if join {
+            let tail = self.words.remove(before);
+            self.pages
+                .continuations
+                .entry(before - 1)
+                .or_default()
+                .push(tail.span());
+            self.words[before - 1].text.push_str(&tail.text);
+        }
         self.pages.position.insert(page, self.pages.count);
-        if self.words.len() == before {
+        if !readable {
             self.pages.unread.push((self.pages.count, page));
         }
         self.pages.count += 1;
@@ -134,6 +163,16 @@ struct Word {
     end: u32,
     /// The word's characters, soft hyphens left out.
     text: String,
+}
+
+impl Word {
+    fn span(&self) -> Span {
+        Span {
+            page: self.page,
+            start: self.start,
+            end: self.end,
+        }
+    }
 }
 
 /// A run of characters on one page that a change covers.
@@ -312,9 +351,9 @@ pub(crate) fn compare_inputs(left: &ComparisonInput, right: &ComparisonInput) ->
             total += 1;
             if changes.len() < MAX_CHANGES {
                 changes.push(change(
-                    left_words,
+                    left,
                     removed,
-                    right_words,
+                    right,
                     added,
                     ai - before.min(CONTEXT_WORDS)..ai,
                     pa..pa + after.min(CONTEXT_WORDS),
@@ -322,11 +361,11 @@ pub(crate) fn compare_inputs(left: &ComparisonInput, right: &ComparisonInput) ->
             }
         };
         if fallback && removed.is_empty() && !added.is_empty() && ai < pa {
-            excess_runs(&b[bi..pb], &a[ai..pa], |r| {
+            left_unread -= excess_runs(&b[bi..pb], &a[ai..pa], |r| {
                 record(ai..ai, bi + r.start..bi + r.end)
             });
         } else if fallback && added.is_empty() && !removed.is_empty() && bi < pb {
-            excess_runs(&a[ai..pa], &b[bi..pb], |r| {
+            right_unread -= excess_runs(&a[ai..pa], &b[bi..pb], |r| {
                 record(ai + r.start..ai + r.end, bi..bi)
             });
         } else if !removed.is_empty() || !added.is_empty() {
@@ -361,7 +400,12 @@ pub(crate) fn compare_inputs(left: &ComparisonInput, right: &ComparisonInput) ->
 /// In a fallback passage the aligner has not established which words match.
 /// When a scan hides one side, only excess occurrences on the readable side
 /// are certain. Keep their positions without marking intervening shared words.
-fn excess_runs(words: &[u32], opposite: &[u32], mut record: impl FnMut(std::ops::Range<usize>)) {
+fn excess_runs(
+    words: &[u32],
+    opposite: &[u32],
+    mut record: impl FnMut(std::ops::Range<usize>),
+) -> usize {
+    let mut matched = 0;
     let mut available = HashMap::<u32, usize>::new();
     for id in opposite {
         *available.entry(*id).or_default() += 1;
@@ -370,6 +414,7 @@ fn excess_runs(words: &[u32], opposite: &[u32], mut record: impl FnMut(std::ops:
     for (i, id) in words.iter().enumerate() {
         if let Some(count) = available.get_mut(id).filter(|n| **n > 0) {
             *count -= 1;
+            matched += 1;
             if let Some(from) = start.take() {
                 record(from..i);
             }
@@ -380,6 +425,7 @@ fn excess_runs(words: &[u32], opposite: &[u32], mut record: impl FnMut(std::ops:
     if let Some(from) = start {
         record(from..words.len());
     }
+    matched
 }
 
 /// One side's pages in the order given, and which of them have no words.
@@ -387,12 +433,22 @@ fn excess_runs(words: &[u32], opposite: &[u32], mut record: impl FnMut(std::ops:
 struct Pages {
     /// Each page number's position in the order given.
     position: HashMap<u32, usize>,
+    /// Further page spans, only for words split across pages.
+    continuations: HashMap<usize, Vec<Span>>,
     /// Positions of pages with no words, ascending, and their caller-supplied page IDs.
     unread: Vec<(usize, u32)>,
     count: usize,
 }
 
 impl Pages {
+    fn last_span(&self, words: &[Word], i: usize) -> Span {
+        self.continuations
+            .get(&i)
+            .and_then(|v| v.last())
+            .copied()
+            .unwrap_or_else(|| words[i].span())
+    }
+
     /// Whether a page with no words lies between word `first - 1` and word
     /// `next` of `words`, both pages included: the stretch of this side where
     /// the other side's unmatched words would stand. The start of the side
@@ -401,15 +457,14 @@ impl Pages {
         if self.unread.is_empty() {
             return false;
         }
-        let at = |word: &Word| self.position.get(&word.page).copied();
+
         let from = first
             .checked_sub(1)
-            .and_then(|i| words.get(i))
-            .and_then(at)
+            .and_then(|i| self.position.get(&self.last_span(words, i).page).copied())
             .unwrap_or(0);
         let to = words
             .get(next)
-            .and_then(at)
+            .and_then(|word| self.position.get(&word.page).copied())
             .unwrap_or(self.count.saturating_sub(1));
         let first = self
             .unread
@@ -451,7 +506,13 @@ fn wrapped_separator(codes: &[u32], index: usize) -> bool {
 }
 
 /// The words of one side, in page order as given.
-fn append_words(out: &mut Vec<Word>, page: u32, codes: &[u32], which: &str) -> Result<(), String> {
+fn append_words(
+    out: &mut Vec<Word>,
+    page: u32,
+    codes: &[u32],
+    which: &str,
+    limit: usize,
+) -> Result<(), String> {
     let mut current: Option<Word> = None;
     for (index, code) in codes.iter().enumerate() {
         // Some producers include a line separator even at a discretionary
@@ -485,7 +546,7 @@ fn append_words(out: &mut Vec<Word>, page: u32, codes: &[u32], which: &str) -> R
                 }
             }
         }
-        if out.len() > MAX_WORDS {
+        if out.len() > limit {
             return Err(said!(
                 "the {which} document has more than {MAX_WORDS} words, which is more \
                      than tpdf compares"
@@ -495,7 +556,7 @@ fn append_words(out: &mut Vec<Word>, page: u32, codes: &[u32], which: &str) -> R
     if let Some(word) = current.take() {
         out.push(word);
     }
-    if out.len() > MAX_WORDS {
+    if out.len() > limit {
         return Err(said!(
             "the {which} document has more than {MAX_WORDS} words, which is more than tpdf \
              compares"
@@ -506,16 +567,22 @@ fn append_words(out: &mut Vec<Word>, page: u32, codes: &[u32], which: &str) -> R
 
 /// The words of `range` as per-page spans, first word's start to last word's
 /// end on each page.
-fn spans(side: &[Word], range: std::ops::Range<usize>) -> Vec<Span> {
+fn spans(side: &ComparisonInput, range: std::ops::Range<usize>) -> Vec<Span> {
     let mut out: Vec<Span> = Vec::new();
-    for word in &side[range] {
-        match out.last_mut() {
-            Some(span) if span.page == word.page => span.end = word.end,
-            _ => out.push(Span {
-                page: word.page,
-                start: word.start,
-                end: word.end,
-            }),
+    for i in range {
+        let spans = std::iter::once(side.words[i].span()).chain(
+            side.pages
+                .continuations
+                .get(&i)
+                .into_iter()
+                .flatten()
+                .copied(),
+        );
+        for span in spans {
+            match out.last_mut() {
+                Some(last) if last.page == span.page => last.end = span.end,
+                _ => out.push(span),
+            }
         }
     }
     out
@@ -523,16 +590,19 @@ fn spans(side: &[Word], range: std::ops::Range<usize>) -> Vec<Span> {
 
 /// Where a change at word `at` of `side` is: that word's start, or, at the
 /// end of the side, just after its last word.
-fn place(side: &[Word], at: usize) -> Place {
-    match (side.get(at), side.last()) {
+fn place(side: &ComparisonInput, at: usize) -> Place {
+    match (side.words.get(at), side.words.len().checked_sub(1)) {
         (Some(word), _) => Place {
             page: word.page,
             index: word.start,
         },
-        (None, Some(last)) => Place {
-            page: last.page,
-            index: last.end,
-        },
+        (None, Some(i)) => {
+            let last = side.pages.last_span(&side.words, i);
+            Place {
+                page: last.page,
+                index: last.end,
+            }
+        }
         (None, None) => Place { page: 0, index: 0 },
     }
 }
@@ -541,12 +611,9 @@ fn place(side: &[Word], at: usize) -> Place {
 fn quote(side: &[Word], range: std::ops::Range<usize>, limit: usize) -> String {
     let mut out = String::new();
     let mut chars = 0usize;
-    for word in &side[range] {
-        if !out.is_empty() {
-            out.push(' ');
-            chars += 1;
-        }
-        for ch in word.text.chars() {
+    for (index, word) in side[range].iter().enumerate() {
+        let separator = (index > 0).then_some(' ');
+        for ch in separator.into_iter().chain(word.text.chars()) {
             if chars >= limit {
                 out.push('\u{2026}');
                 return out;
@@ -559,9 +626,9 @@ fn quote(side: &[Word], range: std::ops::Range<usize>, limit: usize) -> String {
 }
 
 fn change(
-    left: &[Word],
+    left: &ComparisonInput,
     a: std::ops::Range<usize>,
-    right: &[Word],
+    right: &ComparisonInput,
     b: std::ops::Range<usize>,
     before: std::ops::Range<usize>,
     after: std::ops::Range<usize>,
@@ -577,10 +644,10 @@ fn change(
         right: spans(right, b.clone()),
         left_at: place(left, a.start),
         right_at: place(right, b.start),
-        removed: quote(left, a, QUOTE_CHARS),
-        added: quote(right, b, QUOTE_CHARS),
-        before: quote(left, before, QUOTE_CHARS),
-        after: quote(left, after, QUOTE_CHARS),
+        removed: quote(&left.words, a, QUOTE_CHARS),
+        added: quote(&right.words, b, QUOTE_CHARS),
+        before: quote(&left.words, before, QUOTE_CHARS),
+        after: quote(&left.words, after, QUOTE_CHARS),
     }
 }
 
@@ -942,9 +1009,46 @@ mod tests {
         let old = format!("{}old", "old shared ".repeat(2100));
         let new = format!("{}new", "new shared ".repeat(2100));
         let result = run(&[(0, &old)], &[(0, ""), (1, &new)]);
+        assert_eq!(result.left_unread, 2101);
+        let reversed = run(&[(0, ""), (1, &new)], &[(0, &old)]);
+        assert_eq!(
+            (reversed.removed_words, reversed.right_unread),
+            (2101, 2101)
+        );
         assert_eq!(result.added_words, 2101);
         assert_eq!(result.removed_words, 0);
         assert!(result.changes.iter().all(|c| c.added == "new"));
+    }
+
+    #[test]
+    fn discretionary_wrap_spans_pages_without_crossing_blank_pages() {
+        let wrapped = [(5, "discre\u{ad}"), (3, "tion\u{ad}"), (1, "ary")];
+        let same = run(&wrapped, &[(0, "discretionary")]);
+        assert_eq!((same.total_changes, same.left_words), (0, 1));
+        assert!(same.left_without_words.is_empty());
+        let changed = run(&wrapped, &[(0, "different")]);
+        assert_eq!(
+            changed.changes[0]
+                .left
+                .iter()
+                .map(|s| (s.page, s.start, s.end))
+                .collect::<Vec<_>>(),
+            [(5, 0, 7), (3, 0, 5), (1, 0, 3)]
+        );
+        for split in [
+            vec![(5, "discre"), (1, "tionary")],
+            vec![(5, "discre\u{ad}"), (3, ""), (1, "tionary")],
+        ] {
+            assert_eq!(run(&split, &[(0, "discretionary")]).left_words, 2);
+        }
+    }
+
+    #[test]
+    fn excerpt_ends_before_a_separator_outside_the_budget() {
+        let word = "x".repeat(QUOTE_CHARS);
+        let added = format!("{word} tail");
+        let result = run(&[(0, "old")], &[(0, &added)]);
+        assert_eq!(result.changes[0].added, format!("{word}\u{2026}"));
     }
 
     #[test]

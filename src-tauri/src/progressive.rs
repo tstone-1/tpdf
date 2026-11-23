@@ -537,6 +537,46 @@ impl Drop for RawForm {
     }
 }
 
+/// Try the literal password first for existing files. Revision 6 writers can
+/// apply SASLprep where PDFium accepts only the prepared bytes.
+fn open_handle(
+    bindings: Bindings,
+    password: Option<&str>,
+    load: impl Fn(Option<&str>) -> FPDF_DOCUMENT,
+) -> Result<FPDF_DOCUMENT, Refusal> {
+    if password.is_some_and(|p| p.contains('\0')) {
+        return Err(Refusal::of(err::PASSWORD));
+    }
+    let handle = load(password);
+    if !handle.is_null() {
+        return Ok(handle);
+    }
+    // SAFETY: read on this thread immediately after the failed load.
+    let failure = unsafe { Refusal::last(bindings) };
+    let Some(raw) = password.filter(|p| failure.locked && p.len() <= crate::protect::MAX_BYTES)
+    else {
+        return Err(failure);
+    };
+    let Ok(prepared) = stringprep::saslprep(raw) else {
+        return Err(failure);
+    };
+    if prepared.is_empty() || prepared == raw {
+        return Err(failure);
+    }
+    let handle = load(Some(&prepared));
+    if !handle.is_null() {
+        // SAFETY: this load returned a live handle. Transfer ownership only
+        // for the revision that uses SASLprep, closing other handles here.
+        unsafe {
+            if bindings.FPDF_GetSecurityHandlerRevision(handle) == 6 {
+                return Ok(handle);
+            }
+            bindings.FPDF_CloseDocument(handle);
+        }
+    }
+    Err(failure)
+}
+
 impl RawDocument {
     /// Opens a document from a path.
     ///
@@ -550,12 +590,9 @@ impl RawDocument {
         })?;
 
         // SAFETY: `text` outlives the call, and Pdfium copies what it needs.
-        let handle = unsafe { bindings.FPDF_LoadDocument(text, password) };
-        if handle.is_null() {
-            // SAFETY: read immediately after the failure it describes --- PDFium
-            // keeps one error per thread and the next call overwrites it.
-            return Err(unsafe { Refusal::last(bindings) });
-        }
+        let handle = open_handle(bindings, password, |key| unsafe {
+            bindings.FPDF_LoadDocument(text, key)
+        })?;
 
         let form = RawForm::open(bindings, handle);
         Ok(Self {
@@ -625,11 +662,9 @@ impl RawDocument {
         // SAFETY: the caller retains the buffer until this document is dropped,
         // which is exactly what this call requires and what the safe wrapper cannot
         // express.
-        let handle = unsafe { bindings.FPDF_LoadMemDocument64(bytes, password) };
-        if handle.is_null() {
-            // SAFETY: as in `open` --- read immediately after the failure.
-            return Err(unsafe { Refusal::last(bindings) });
-        }
+        let handle = open_handle(bindings, password, |key| unsafe {
+            bindings.FPDF_LoadMemDocument64(bytes, key)
+        })?;
 
         let form = RawForm::open(bindings, handle);
         Ok(Self {

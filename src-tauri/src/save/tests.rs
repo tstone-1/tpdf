@@ -6727,6 +6727,19 @@ fn a_checked_copy_refuses_a_changed_source_where_a_plain_copy_proceeds() {
     let plain = scratch.join("plain.pdf");
     let copied = write_copy(&source, &plan, &plain, None, &writer).expect("a plain copy proceeds");
     assert!(copied.changed);
+    let verified = scratch.join("verified.pdf");
+    let copied = write_verified_copy(&source, &plan, &verified, None, &writer, &|staged| {
+        assert_eq!(std::fs::read(staged).unwrap(), b"SYNTHETIC OUTPUT");
+        Ok(())
+    })
+    .unwrap();
+    assert!(copied.changed);
+    let refusal = write_verified_copy(&source, &plan, &verified, None, &writer, &|_| {
+        Err("reader refused".into())
+    })
+    .unwrap_err();
+    assert_eq!(refusal.message, "reader refused");
+    assert!(leftovers_beside(&verified).is_empty());
     writer.asked.borrow_mut().clear();
 
     let out = scratch.join("copy.pdf");

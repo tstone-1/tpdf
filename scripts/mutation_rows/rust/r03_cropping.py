@@ -428,7 +428,7 @@ ROWS += [
         # reddening a test in another module is the point of sharing the code.
         "pagetree: place rectangles against the media box rather than the crop box",
         "src/pagetree.rs",
-        "    let shown = match box_of(b\"CropBox\") {",
+        "    let shown = match crop {",
         "    let shown = match None::<[f32; 4]> {",
         "a_cropped_page_places_a_rectangle_in_the_crop_box_s_space",
     ),
@@ -448,8 +448,8 @@ ROWS += [
         # renderer never uses.
         "pagetree: trust a crop box larger than the media box",
         "src/pagetree.rs",
-        "    let shown = match box_of(b\"CropBox\") {\n        Some(crop) => [\n            crop[0].max(media[0]),\n            crop[1].max(media[1]),\n            crop[2].min(media[2]),\n            crop[3].min(media[3]),\n        ],",
-        "    let shown = match box_of(b\"CropBox\") {\n        Some(crop) => crop,",
+        "    let shown = match crop {\n        Some(crop) => [\n            crop[0].max(media[0]),\n            crop[1].max(media[1]),\n            crop[2].min(media[2]),\n            crop[3].min(media[3]),\n        ],",
+        "    let shown = match crop {\n        Some(crop) => crop,",
         "a_crop_box_larger_than_the_page_is_intersected_with_it",
     ),
     Mutation(

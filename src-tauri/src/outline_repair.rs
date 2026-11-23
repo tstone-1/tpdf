@@ -110,6 +110,9 @@ enum Aim {
 /// What [`pagetree::forget`] and [`pagetree::drop_outline`] refuse.
 pub fn keep_for(doc: &mut Document, doomed: &HashSet<ObjectId>) -> Result<Kept, String> {
     let Some(root) = redact::outline_root(doc) else {
+        if doc.catalog().map_err(|e| e.to_string())?.has(b"Outlines") {
+            return whole(doc);
+        }
         return Ok(Kept::default());
     };
     let Some(Tree { order, children }) = tree_of(doc, root) else {
@@ -276,14 +279,19 @@ fn tree_of(doc: &Document, root: ObjectId) -> Option<Tree> {
     while let Some(&node) = queue.get(at) {
         at += 1;
         let mut under: Vec<ObjectId> = Vec::new();
-        let mut next = redact::first_child(doc, node);
+        let link = |dict: &Dictionary, key: &[u8]| match dict.get(key) {
+            Ok(Object::Null) | Err(_) => Some(None),
+            Ok(value) => value.as_reference().ok().map(Some),
+        };
+        let mut next = link(doc.get_dictionary(node).ok()?, b"First")?;
         while let Some(id) = next {
-            if !seen.insert(id) || seen.len() > MAX_ITEMS {
+            // The already visited root is not a bookmark.
+            if seen.len() > MAX_ITEMS || !seen.insert(id) {
                 return None;
             }
             let item = doc.get_dictionary(id).ok()?;
             under.push(id);
-            next = item.get(b"Next").and_then(Object::as_reference).ok();
+            next = link(item, b"Next")?;
         }
         order.extend(&under);
         queue.extend(&under);
@@ -927,6 +935,32 @@ mod tests {
 
         let kept = keep_for(&mut doc, &doomed(&[kids[1]])).expect("repair");
         assert!(kept.whole);
+    }
+
+    #[test]
+    fn a_direct_outline_is_removed_on_page_deletion() {
+        let (mut doc, kids) = pages(2);
+        let root = outline(&mut doc, vec![entry("discarded", to(kids[1]), vec![])]);
+        let direct = doc.get_dictionary(root).unwrap().clone();
+        doc.catalog_mut().unwrap().set("Outlines", direct);
+        assert!(keep_for(&mut doc, &doomed(&kids[1..])).unwrap().whole);
+        assert!(!doc.catalog().unwrap().has(b"Outlines"));
+    }
+
+    #[test]
+    fn the_outline_budget_counts_entries_only() {
+        for count in [MAX_ITEMS, MAX_ITEMS + 1] {
+            let (mut doc, kids) = pages(2);
+            let entries = (0..count)
+                .map(|_| entry("kept", to(kids[0]), vec![]))
+                .collect();
+            outline(&mut doc, entries);
+            assert_eq!(
+                keep_for(&mut doc, &doomed(&kids[1..])).unwrap().whole,
+                count > MAX_ITEMS
+            );
+            assert_eq!(doc.catalog().unwrap().has(b"Outlines"), count == MAX_ITEMS);
+        }
     }
 
     /// A document with no outline is left without one, and nothing is reported.

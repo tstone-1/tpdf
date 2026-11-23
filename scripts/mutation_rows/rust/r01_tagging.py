@@ -1915,8 +1915,8 @@ ROWS += [
         # the same guard one function down.
         "save: refuse a copy from a source that changed, stranding the reader",
         "src/save.rs",
-        "    } else {\n        OnChange::Proceed\n    };\n    let ready = rewrite_ready(source, plan, on_change)?;",
-        "    } else {\n        OnChange::Refuse\n    };\n    let ready = rewrite_ready(source, plan, on_change)?;",
+        "check.map_or(OnChange::Proceed, |(policy, _)| policy)",
+        "check.map_or(OnChange::Refuse, |(policy, _)| policy)",
         "a_copy_is_written_when_the_source_changed_and_reports_it",
     ),
     Mutation(

@@ -476,6 +476,7 @@ export interface Commands {
     args: { doc: DocHandle; source: string; path: string };
     reply: Copied;
   };
+  validate_new_password: { args: { password: string }; reply: void };
   protect_copy: {
     args: { doc: DocHandle; source: string; path: string; password: string | null };
     reply: Copied;

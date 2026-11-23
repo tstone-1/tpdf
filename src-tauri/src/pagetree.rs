@@ -79,7 +79,9 @@ fn inherited_value<'a>(
     for _ in 0..MAX_PARENTS {
         let node = doc.get_dictionary(at)?;
         if let Ok(value) = node.get(key) {
-            return Ok(Some(value));
+            if !matches!(doc.dereference(value)?.1, Object::Null) {
+                return Ok(Some(value));
+            }
         }
         let Ok(parent) = node.get(b"Parent") else {
             return Ok(None);
@@ -243,8 +245,11 @@ impl DisplayedPage {
 /// module's note is about, and it would disagree in exactly the case that makes
 /// the difference --- a box written corner-first.
 pub(crate) fn box_on(doc: &Document, page: ObjectId, key: &[u8]) -> Option<[f32; 4]> {
-    inherited(doc, page, key)
-        .and_then(|object| numbers_of(doc, &object, 4))
+    box_value(doc, inherited_value(doc, page, key).ok()??)
+}
+
+fn box_value(doc: &Document, value: &Object) -> Option<[f32; 4]> {
+    numbers_of(doc, value, 4)
         .filter(|values| values.iter().all(|value| value.is_finite()))
         .map(|v| {
             [
@@ -290,7 +295,25 @@ pub fn displayed_page(doc: &Document, page: ObjectId) -> DisplayedPage {
     let box_of = |key: &[u8]| box_on(doc, page, key);
 
     let media = box_of(b"MediaBox").unwrap_or([0.0, 0.0, 612.0, 792.0]);
-    let shown = match box_of(b"CropBox") {
+    page_geometry(media, box_of(b"CropBox"), effective_rotation(doc, page))
+}
+
+/// A writer must know the actual page geometry before placing visible content.
+pub(crate) fn writable_page(doc: &Document, page: ObjectId) -> Option<DisplayedPage> {
+    let media = box_value(doc, inherited_value(doc, page, b"MediaBox").ok()??)?;
+    let crop = match inherited_value(doc, page, b"CropBox").ok()? {
+        Some(value) => Some(box_value(doc, value)?),
+        None => None,
+    };
+    let rotation = match inherited_value(doc, page, b"Rotate").ok()? {
+        Some(value) => doc.dereference(value).ok()?.1.as_i64().ok()?,
+        None => 0,
+    };
+    Some(page_geometry(media, crop, rotation))
+}
+
+fn page_geometry(media: [f32; 4], crop: Option<[f32; 4]>, rotation: i64) -> DisplayedPage {
+    let shown = match crop {
         Some(crop) => [
             crop[0].max(media[0]),
             crop[1].max(media[1]),
@@ -309,7 +332,7 @@ pub fn displayed_page(doc: &Document, page: ObjectId) -> DisplayedPage {
         media
     };
 
-    let turns = turns_of_degrees(effective_rotation(doc, page));
+    let turns = turns_of_degrees(rotation);
     let (width, height) = (shown[2] - shown[0], shown[3] - shown[1]);
     DisplayedPage {
         width: if turns % 2 == 1 { height } else { width },

@@ -66,6 +66,7 @@ TERMINAL = [
     # staged file read back before the rename. Named on its own because the
     # scan below matches `save::<name>` and `save::write_copy` is not a prefix
     # of `save::write_checked_copy`.
+    "write_verified_copy",
     "write_checked_copy",
     "write_checked_copy_until",
     # Added 2026-10-03: a document made from pictures, the first writer that
