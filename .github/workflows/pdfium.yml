@@ -13,6 +13,10 @@ on:
       version:
         description: Build this version, <branch>-tpdf.<n>, not the pinned one (with pdfium)
         required: false
+      rehearse:
+        type: boolean
+        default: false
+        description: Report the candidate result to the rehearsal issue
       pdfium:
         description: The PDFium commit of that version, 40 digits
         required: false
@@ -123,6 +127,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       VERSION: ${{ inputs.version }}
       PDFIUM: ${{ inputs.pdfium }}
+      REHEARSE: ${{ inputs.rehearse }}
       RESULT: ${{ needs.build.result }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
@@ -134,6 +139,7 @@ jobs:
             exit 1
           fi
           title="PDFium: build $VERSION at ${PDFIUM:0:12}"
+          if [ "$REHEARSE" = true ]; then title="Rehearsal, nothing to do: $title"; fi
           jobs=$(gh run view "$GITHUB_RUN_ID" --json jobs \
             --jq '.jobs[] | select(.name != "Result in the issue") | "- \(.name): \(.conclusion)"')
           if [ -z "$jobs" ]; then
@@ -150,8 +156,8 @@ jobs:
           # Read first and searched after, as in `pdfium-bump`: a listing cut
           # short must not read as "no issue".
           issues=$(gh issue list --state open --limit 200 --json number,title)
-          number=$(jq -r --arg t "$title" --arg r "Rehearsal, nothing to do: $title" \
-            '[.[] | select(.title == $t or .title == $r) | .number] | first // empty' <<< "$issues")
+          number=$(jq -r --arg t "$title" \
+            '[.[] | select(.title == $t) | .number] | first // empty' <<< "$issues")
           if [ -z "$number" ]; then
             echo "no open issue is titled: $title -- the result above is this run's only report"
             exit 0

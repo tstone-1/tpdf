@@ -417,11 +417,7 @@ fn annotation_plans_require_visible_geometry_and_a_representable_direction() {
     text.char_turns = vec![0, 0, 0, 1, 1, 1, 1, 0];
     let search = |word: &str, text: PageText, kind| {
         let found = walk(&[query(SearchKind::Text, word)], &[1], &[text]);
-        let file = searched_for("source.pdf", 1, Vec::new(), &found, kind);
-        match file.error {
-            Some(error) => Err(error.message),
-            None => Ok(file.matches),
-        }
+        searched_for("source.pdf", 1, Vec::new(), &found, kind).map(|file| file.matches)
     };
     for kind in [Markup::Underline, Markup::Strikeout, Markup::Squiggly] {
         assert!(search("UP", text.clone(), Some(kind)).is_ok());

@@ -728,17 +728,7 @@ pub fn outline_targets(bytes: &[u8], page_count: usize) -> Result<Vec<Target>, S
     )
     .map_err(|e| said!("could not parse the document: {e}"))?;
 
-    let pages = document.get_pages();
-    let numbers: HashMap<ObjectId, u32> = pages
-        .iter()
-        .take(page_count)
-        .map(|(number, id)| (*id, number.saturating_sub(1)))
-        .collect();
-    let geometry: Vec<PageBox> = pages
-        .values()
-        .take(page_count)
-        .map(|page| page_geometry(&document, *page))
-        .collect();
+    let (numbers, geometry) = outline_page_geometry(&document, page_count);
 
     let Ok(catalog) = document.catalog() else {
         return Ok(Vec::new());
@@ -776,6 +766,112 @@ pub fn outline_targets(bytes: &[u8], page_count: usize) -> Result<Vec<Target>, S
         MAX_TREE_DEPTH,
     );
     Ok(out)
+}
+
+fn outline_page_geometry(
+    document: &Document,
+    page_count: usize,
+) -> (HashMap<ObjectId, u32>, Vec<PageBox>) {
+    let pages = document.get_pages();
+    let numbers: HashMap<ObjectId, u32> = pages
+        .iter()
+        .take(page_count)
+        .map(|(number, id)| (*id, number.saturating_sub(1)))
+        .collect();
+    let geometry: Vec<PageBox> = pages
+        .values()
+        .take(page_count)
+        .map(|page| page_geometry(document, *page))
+        .collect();
+
+    (numbers, geometry)
+}
+
+/// PDFium looks up both PDF names and strings in the name tree first. When a
+/// legacy destination dictionary exists, resolve local named targets by type.
+/// Follow the displayed tree by sibling and child, retaining its traversal limits.
+pub(crate) fn correct_named_outline(
+    document: &Document,
+    items: &mut [crate::outline::OutlineItem],
+    page_count: usize,
+) {
+    let Ok(catalog) = document.catalog() else {
+        return;
+    };
+    if !catalog.has(b"Dests") {
+        return;
+    }
+    let Some(root) = catalog
+        .get_deref(b"Outlines", document)
+        .ok()
+        .and_then(|o| o.as_dict().ok())
+    else {
+        return;
+    };
+    let names = Destinations::of(document);
+    let pages = std::cell::OnceCell::new();
+    fn siblings<'a>(
+        document: &'a Document,
+        parent: &'a Dictionary,
+        items: &mut [crate::outline::OutlineItem],
+        resolve_target: &mut impl FnMut(&Object) -> Target,
+    ) {
+        let mut next = parent.get(b"First");
+        for item in items {
+            let Ok(dict) = next.and_then(|o| document.dereference(o)?.1.as_dict()) else {
+                break;
+            };
+            next = dict.get(b"Next");
+            // Do not substitute another row's destination if the parsers disagree on structure.
+            let title = dict.get_deref(b"Title", document).and_then(Object::as_str);
+            if !title.is_ok_and(|raw| {
+                raw.len() <= crate::outline::MAX_TITLE_BYTES
+                    && crate::outline::sanitize_title(
+                        &crate::annots::decode_text_string(raw),
+                        crate::outline::MAX_TITLE_CHARS,
+                    )
+                    .0 == item.title
+            }) {
+                continue;
+            }
+            let dest = if dict.has(b"A") {
+                dict.get_deref(b"A", document)
+                    .ok()
+                    .and_then(|action| action.as_dict().ok())
+                    .and_then(|action| {
+                        (action
+                            .get_deref(b"S", document)
+                            .and_then(Object::as_name)
+                            .ok()
+                            == Some(b"GoTo"))
+                        .then(|| action.get_deref(b"D", document).ok())
+                        .flatten()
+                    })
+            } else {
+                dict.get_deref(b"Dest", document).ok()
+            };
+            if let Some(key @ (Object::Name(_) | Object::String(_, _))) = dest {
+                if matches!(
+                    item.target,
+                    Target::Page { .. } | Target::None | Target::Broken
+                ) {
+                    item.target = resolve_target(key);
+                }
+            }
+            siblings(document, dict, &mut item.children, resolve_target);
+        }
+    }
+    siblings(document, root, items, &mut |key| {
+        let (numbers, geometry) = pages.get_or_init(|| outline_page_geometry(document, page_count));
+        destination(
+            key,
+            document,
+            numbers,
+            geometry,
+            &mut Limits::default(),
+            &names,
+        )
+    });
 }
 
 /// Walks a sibling chain and everything under it, pre-order.

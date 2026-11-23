@@ -4504,7 +4504,7 @@ fn search_reads_its_line_and_refuses_one_with_nothing_to_find() {
         }
     );
     let marking = parse(&argv(
-        "a.pdf --text x --annotate squiggly --color 1,0.9,0.2",
+        "a.pdf --text x --annotate squiggly --color 1,0.9,0.2 --json",
     ))
     .expect("marking");
     assert_eq!(marking.annotate, Some(super::search::Markup::Squiggly));
@@ -4513,10 +4513,6 @@ fn search_reads_its_line_and_refuses_one_with_nothing_to_find() {
         (
             "search a.pdf --text x --annotate box",
             "highlight, underline, strikeout and squiggly",
-        ),
-        (
-            "search a.pdf --text x --annotate highlight --json",
-            "leave out `--json`",
         ),
         (
             "search a.pdf b.pdf --text x --annotate highlight",

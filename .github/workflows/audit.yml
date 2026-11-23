@@ -162,7 +162,7 @@ jobs:
             echo "an open issue already has the title: $title"
             exit 0
           fi
-          gh workflow run pdfium.yml --ref "$GITHUB_REF_NAME" -f version="$VERSION" -f pdfium="$PDFIUM"
+          gh workflow run pdfium.yml --ref "$GITHUB_REF_NAME" -f version="$VERSION" -f pdfium="$PDFIUM" -f rehearse="${REHEARSE:-false}"
           build="The candidate build was started: [runs of the PDFium workflow]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/pdfium.yml). It builds this version without changing the pin of the repository, and writes its result here as a comment when it ends."
           if [ "$REHEARSE" = true ]; then
             build="$build This run was a rehearsal against a copy of the pin set back to 8066, so the build is of a version that exists and its result is needed for nothing."

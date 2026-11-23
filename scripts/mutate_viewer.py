@@ -777,7 +777,7 @@ MUTATIONS = [
         # answer reached a reader until this corpus was opened in a window.
         "encoding: report no unsearchable page whatever the backend said",
         "src/lib/search.ts",
-        "    return this.mapping.filter((page) => page.guessing > 0).length;",
+        "    return this.mapping.filter((page, index) => page.guessing > 0 && !this.recovered(filePage(index))).length;",
         "    return 0;",
         "the pages whose text is a guess reach the frontend",
         runner="viewer-encodings",

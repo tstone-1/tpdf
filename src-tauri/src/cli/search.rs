@@ -45,7 +45,7 @@ use crate::worker_proto::{Reply, Request};
 /// `search`, registered.
 pub const COMMAND: Registered = Registered {
     name: "search",
-    usage: "search <file.pdf | ->... (--text STR | --pattern REGEX)...\n        [--case-sensitive] [--whole-word] [--pages 1-3,7] [--password-env VAR]\n        [--json | --annotate highlight|underline|strikeout|squiggly [--color r,g,b]]",
+    usage: "search <file.pdf | ->... (--text STR | --pattern REGEX)...\n        [--case-sensitive] [--whole-word] [--pages 1-3,7] [--password-env VAR]\n        [--json] [--annotate highlight|underline|strikeout|squiggly [--color r,g,b]]",
     summary: "Prints every match of each --text and --pattern with the words\n            around it, one line per match, found as the viewer's find and\n            `redact` find it. Exit 1 when nothing matched. A page with no\n            text to search is named. --annotate prints an edit plan that\n            marks every match, for `edit --plan -`.",
     parse: boxed,
 };
@@ -179,12 +179,6 @@ pub fn parse(args: &[String]) -> Result<Search, String> {
         );
     }
     if command.annotate.is_some() {
-        if command.json {
-            return Err(
-                "`--annotate` prints an edit plan, which is JSON already; leave out `--json`"
-                    .into(),
-            );
-        }
         if command.files.len() > 1 {
             return Err(
                 "`--annotate` writes one plan for one document, and there are several".into(),
@@ -359,7 +353,11 @@ impl Subcommand for Search {
                 });
                 search_one(env, self, path, &queries, password.as_deref(), opened)
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>();
+        let files = match files {
+            Ok(files) => files,
+            Err(why) => return Ok(annotation_refusal(self.json, &why, out, err)),
+        };
         let report = report::Searched {
             schema: SCHEMA,
             command: "search".into(),
@@ -389,9 +387,12 @@ impl Subcommand for Search {
                 let digest = digest.ok_or_else(|| {
                     Failure::new(Exit::Internal, "the searched revision is missing")
                 })?;
-                let plan = plan(&report.files[0], &digest, kind, self.color)
-                    .map_err(|why| Failure::new(Exit::Refused, why))?;
-                json(out, &plan);
+                match plan(&report.files[0], &digest, kind, self.color) {
+                    Ok(plan) => json(out, &plan),
+                    Err(why) => return Ok(annotation_refusal(self.json, &why, out, err)),
+                }
+            } else if self.json && exit != Exit::Strict {
+                json(out, &report);
             }
             return Ok(exit);
         }
@@ -409,6 +410,24 @@ impl Subcommand for Search {
         }
         Ok(search_exit(&report))
     }
+}
+
+fn annotation_refusal(
+    structured: bool,
+    message: &str,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Exit {
+    say(err, message);
+    if structured {
+        json(
+            out,
+            &serde_json::json!({
+                "schema": SCHEMA, "command": "search", "error": { "kind": "annotation", "message": message }
+            }),
+        );
+    }
+    Exit::Refused
 }
 
 /// The exit code: a document that could not be read first, then whether
@@ -484,6 +503,7 @@ pub fn plain(report: &report::Searched) -> String {
 #[must_use]
 pub fn searched(path: &str, pages: usize, empty: Vec<u32>, found: &Found) -> report::SearchedFile {
     searched_for(path, pages, empty, found, None)
+        .expect("plain search has no annotation constraints")
 }
 
 /// Refuse unrepresentable marks while the source geometry is still available.
@@ -493,13 +513,11 @@ pub(super) fn searched_for(
     empty: Vec<u32>,
     found: &Found,
     annotate: Option<Markup>,
-) -> report::SearchedFile {
+) -> Result<report::SearchedFile, String> {
     let mut hits = Vec::with_capacity(found.matches.len());
     for (hit, query) in found.matches.iter().zip(&found.by) {
-        let (rects, partial_geometry) = match rects_of(hit, found, annotate) {
-            Ok(geometry) => geometry,
-            Err(why) => return failed_file(path, ErrorKind::Refused, format!("{path}: {why}")),
-        };
+        let (rects, partial_geometry) =
+            rects_of(hit, found, annotate).map_err(|why| format!("{path}: {why}"))?;
         hits.push((
             hit.page,
             hit.start,
@@ -516,13 +534,13 @@ pub(super) fn searched_for(
         ));
     }
     hits.sort_by_key(|(page, start, hit)| (*page, *start, hit.query));
-    report::SearchedFile {
+    Ok(report::SearchedFile {
         path: path.to_string(),
         error: None,
         pages_searched: u32::try_from(pages).unwrap_or(u32::MAX),
         pages_without_text: empty,
         matches: hits.into_iter().map(|(_, _, hit)| hit).collect(),
-    }
+    })
 }
 
 /// Where one match is: `regions.rs`'s rectangles for each page it touches, as
@@ -584,9 +602,9 @@ fn search_one(
     queries: &[(SearchKind, String, Prepared)],
     password: Option<&str>,
     opened: Result<(std::fs::File, usize), String>,
-) -> report::SearchedFile {
+) -> Result<report::SearchedFile, String> {
     let shown = path.display().to_string();
-    let failed = |kind, message| failed_file(&shown, kind, message);
+    let failed = |kind, message| Ok(failed_file(&shown, kind, message));
     let declined = |why: Declined| match why {
         Declined::Locked(_) if password.is_some() => failed(
             ErrorKind::Locked,

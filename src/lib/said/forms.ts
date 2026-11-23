@@ -16,6 +16,7 @@ const KIND: Record<string, string> = {
 const pages = (n: string): string => (n === "1" ? "1 Seite" : `${n} Seiten`);
 
 export default {
+  "the PNG colour profile does not match its samples": "Das Farbprofil der PNG-Datei passt nicht zu ihren Farbkanälen",
   // formfields.rs
   "`{name}`: a text size is {least} to {most} points, and is left out for one that follows the field":
     "`{name}`: Eine Schriftgröße liegt zwischen {least} und {most} Punkt und entfällt bei einer, die sich dem Feld anpasst",

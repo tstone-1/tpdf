@@ -426,9 +426,11 @@ def issue_titles() -> list[str]:
     wrong = []
     for name in ("audit.yml", "pdfium.yml"):
         lines = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8").splitlines()
-        count = sum(line.strip() == ISSUE_TITLE for line in lines)
-        if count != 1:
-            wrong.append(f"{name} builds the candidate issue's title {count} times as `{ISSUE_TITLE}`, not once")
+        titles = [ISSUE_TITLE, 'if [ "$REHEARSE" = true ]; then title="Rehearsal, nothing to do: $title"; fi']
+        for title in titles:
+            count = sum(line.strip() == title for line in lines)
+            if count != 1:
+                wrong.append(f"{name} builds the candidate issue's title {count} times as `{title}`, not once")
     return wrong
 
 

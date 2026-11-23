@@ -66,6 +66,8 @@ describe("where an open puts the reader", () => {
 it("uses the settled session on a fresh open and the same open path for closed tabs", () => {
   const open = functionIn(app, "async function openDocument(");
   expect(open).toMatch(/places\.flush\(\);[\s\S]*await places\.settled\(\);\s*remembered = \(await loadSession\(\)\)\.places;/);
+  expect(open).toMatch(/await loadSession\(\)[\s\S]*settlingOpen = !discard;[\s\S]*await settleDocument\([\s\S]*keepActiveTab\(\);[\s\S]*unmountDocument\(\);/);
+  expect(app).toContain("inert={settlingOpen}");
   expect(functionIn(app, "async function reopenClosedTab(")).toContain("await closedTabs.reopen(isOpenTab, openPath)");
 });
 

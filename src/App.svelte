@@ -756,6 +756,7 @@
     sayStatus(heard.status);
   });
   let opening = $state(false);
+  let settlingOpen = $state(false);
   let documentBusy = $state(false);
   const documentTasks = new DocumentTasks((busy) => {
     documentBusy = busy;
@@ -7186,6 +7187,17 @@
     try {
       const doc = retained?.doc ?? await openOrAsk(path, !resuming);
       acquired = retained ? -1 : doc.id;
+      // Whatever the outgoing document was owed, before its path is replaced.
+      notePlace();
+      places.flush();
+      let remembered = session.places;
+      if (!retained?.place && !override && places.writes > 0) {
+        // A regular open or drop may return to a tab closed since the last
+        // recents refresh. Read its position after pending writes have landed.
+        await places.settled();
+        remembered = (await loadSession()).places;
+      }
+      settlingOpen = !discard;
       // The replacement file is open. Confirmed Reload drops its document's
       // drafts on teardown, leaving editors in unrelated panes alone.
       if (discard) await editing.run(async () => {});
@@ -7215,15 +7227,6 @@
       const view = retained?.view ?? viewOf(doc.id);
       const pages = pageTable(doc);
 
-      // Whatever the outgoing document was owed, before its path is replaced.
-      places.flush();
-      let remembered = session.places;
-      if (!retained?.place && !override && places.writes > 0) {
-        // A regular open or drop may return to a tab closed since the last
-        // recents refresh. Read its position after pending writes have landed.
-        await places.settled();
-        remembered = (await loadSession()).places;
-      }
       for (const twin of twins) {
         asDocument(twin.view, () => { if (!discard) commitPopups(); keepActiveTab(); unmountDocument(); });
       }
@@ -7232,6 +7235,7 @@
       // its file and the lookups keyed by its ids included: a page number or a
       // mark id kept would be read as the next file's.
       unmountDocument();
+      settlingOpen = false;
       openDoc = doc.id;
       openView = view;
       title = basename(path);
@@ -7280,6 +7284,7 @@
       // open says so from here on, and keeps its control for removing it.
       startPage.failed(path, e);
     } finally {
+      settlingOpen = false;
       opening = false;
       // In the `finally`, so that a failed open greys the menu back out. Every
       // command but four is withheld without a document, and an open that threw
@@ -7617,7 +7622,7 @@
               {@render tabStrip(tabRows.filter((tab) => tab.slot === slot), paneLayout.front[slot] ?? -1,
                 paneLayout.order[slot] === 0 ? TEXT().leftDocuments : TEXT().rightDocuments)}
             {/if}
-            <div class="surface" bind:this={areaHosts[slot]}></div>
+            <div class="surface" inert={settlingOpen} bind:this={areaHosts[slot]}></div>
           </div>
         {/each}
         {#if paneLayout.split}

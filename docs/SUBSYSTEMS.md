@@ -527,7 +527,9 @@ as an unrelated second note by another author.
 
 **Links take the same route, and it costs a second destination resolver** —
 `outline.rs` asks PDFium because a bookmark is a PDFium object, `links.rs` reads the
-destination array itself. That is the drift trap this file's index names, so `links.pdf`
+destination array itself. When the catalog has a legacy destination dictionary, bookmarks
+with named local targets use the same typed lookup as links. A name and a string with
+the same bytes can point to different pages. That is the drift trap this file's index names, so `links.pdf`
 gives its outline entries the same destinations as its links and `links-probe --mode agree`
 compares them, both against the manifest rather than against each other. The properties
 readout in `docinfo.rs` takes the `lopdf` route too, and since 2026-08-21 also parses the signer's
@@ -563,7 +565,9 @@ runs out is refused; the decoder forgives a missing end marker and about twenty 
 EXIF orientation becomes the content matrix, all eight values, and a page takes the shown
 shape. The matrices were checked against Quick Look for 5 and 6, and the unit test holds all
 eight against the EXIF table. A PNG is expanded to eight-bit gray or RGB and deflated, with an
-`/SMask` when any pixel is not opaque. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
+`/SMask` when any pixel is not opaque. For a PNG with an embedded ICC profile, the writer
+checks its header against the decoded components and embeds it as an ICCBased colour space.
+Untagged PNGs use DeviceGray or DeviceRGB. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
 A page is the picture at its stated resolution, 72 DPI
 when it states none, held between 3 and 14,400 points a side.
 
@@ -686,6 +690,10 @@ number got no layer. Text alone could not draw the line: measured on pages built
 `text-heavy.pdf`, scans with 12 to 48 typed characters have 0.2 to 0.6% of the page under
 characters, and a born-digital page with 31 characters has 0.4%; but the scans are 100%
 picture and born-digital pages 0 to 3.1%.
+
+Windows OCR returns word boxes in deskewed bitmap coordinates. Before converting them to
+points, rotate their four corners around the bitmap centre by the reported text angle.
+The enclosing rectangle is used by both temporary selection and the saved text layer.
 
 A recognised word is dropped when the characters the page already has inside its box spell it,
 letters and digits only, either containing the other (`ocr_layer::already_there`). Dropping

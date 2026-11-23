@@ -1256,10 +1256,8 @@ starts at 0 and increments within the month.
    npm run build
    ```
 
-   It runs the viewer check, the mark check on three documents, the tab phases `tabs`,
-   `tabs-position`, `sides`, `views`, `answers`, `form-beside`, `import`, `fit`, `compare`,
-   `add-text` and `recognise`, the session check and the open check, one after the other, and
-   exits 1 when any of them fails or a fixture is missing; `--list` prints the commands.
+   Use `scripts/window_checks.py --list` for the current phases and their commands.
+   They run sequentially. A failed check or missing fixture gives exit 1.
    `recognise` clicks **Recognize this page** in the find bar; 26.10.26 shipped that button
    disabled while every check reached the command through the palette.
    The last line puts the normal frontend back in `dist/`, which the checks build replaced.

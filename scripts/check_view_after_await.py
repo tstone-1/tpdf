@@ -125,6 +125,7 @@ PER_WINDOW: dict[str, str] = {
     "tabLabelPx": "the tab labels' size",
     "activeTab": "which tab is the reader's, for the markup",
     # What blocks the whole window while it runs.
+    "settlingOpen": "both panes stop accepting input during the final settlement of an open",
     "opening": "an open or a tab change is running; focus does not move under it",
     "documentBusy": "a document task is running; focus does not move under it",
     "copyTaskBusy": "a copy task is running; focus does not move under it",

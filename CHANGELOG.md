@@ -19,6 +19,15 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Desktop search redaction checks the visible characters of every match before adding any marks.
+  Returning to a tab keeps the reading position with Find open. Cross-page hits scroll to their start.
+- Opening another PDF preserves form input entered while the previous document is still visible.
+  Temporary OCR refreshes accessible text and the search status. Windows places OCR boxes on tilted pages.
+- PDFs made from PNGs retain their embedded colour profiles. Bookmarks with same-spelling PDF names
+  and strings resolve to their respective pages, and extraction preserves indirect page and outline counts.
+- Python search annotations report locked and unreadable inputs as file errors. Recent documents
+  and recovery preserve literal backslashes in POSIX filenames.
+
 - Document comparison joins words split by discretionary hyphens and preserves literal hyphens.
 - Windows PowerPoint copy asks for a save when the open document has edits, so words
   under an unsaved cover cannot enter the clipboard as editable text.

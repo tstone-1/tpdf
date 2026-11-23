@@ -733,6 +733,23 @@ describe("Edits", () => {
     expect(edits.state.marks).toEqual([]);
   });
 
+  it("refuses the whole pending search batch if a matched character falls outside the surviving regions", async () => {
+    const edits = new Edits(9);
+    core.invoke.mockResolvedValueOnce(state(1));
+    await edits.refresh();
+    core.invoke.mockClear().mockResolvedValueOnce([1]);
+    const batch = edits.redactText([{
+      page: pageId(1), quads: [10, 10, 20, 20, 10, 40, 10.1, 40.1],
+      hit: { index: 0, centres: [{ x: 15, y: 15 }, { x: 10.05, y: 40.05 }] },
+    }]);
+    const pending = edits.trackSearchMarks(batch.catch(() => null));
+    const maySave = edits.searchMarksReady();
+    await expect(batch).rejects.toThrow("not be located in full");
+    await pending;
+    expect(await maySave).toBe(false);
+    expect(core.invoke.mock.calls.map(call => call[0])).toEqual(["page_units"]);
+  });
+
   it("uses physical side lengths for text redactions and sends native rectangles in page order", async () => {
     const baseline = state(3);
     core.invoke.mockResolvedValueOnce(baseline);

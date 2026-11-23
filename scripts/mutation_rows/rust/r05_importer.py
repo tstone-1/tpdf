@@ -1254,8 +1254,8 @@ ROWS += [
         # assertions and wraps to the largest count there is in release.
         "pagetree: decrement a node's count without saturating",
         "src/pagetree.rs",
-        '                tree.set("Count", count.saturating_sub(1));',
-        '                tree.set("Count", count - 1);',
+        '            tree.set("Count", count.saturating_sub(1));',
+        '            tree.set("Count", count - 1);',
         "a_count_at_the_bottom_of_its_range_saturates_rather_than_wrapping",
     ),
     Mutation(

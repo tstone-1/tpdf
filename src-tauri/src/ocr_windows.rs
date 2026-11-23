@@ -24,20 +24,9 @@
 //!   `ocr_gate::MIN_CONTROL_PX`. See [`Self::recognise`] for what that does and
 //!   does not settle about [`Options::language_correction`].
 //!
-//! ## The coordinate conversion, and why it is the *easy* one here
-//!
-//! `ocr_vision.rs` carries a long warning because Vision reports a box
-//! **normalised 0..1 with the origin at the bottom-left, y up**, and everything
-//! in this codebase is points with the origin top-left, y down --- so a flip is
-//! required and `docs/TRAPS.md` has two entries about getting one wrong.
-//!
-//! `OcrWord::BoundingRect` is a `Rect` in **pixels of the source bitmap, origin
-//! top-left, y down**. That is already this codebase's convention, so the
-//! conversion is a division by `scale` and no flip at all. The asymmetry is
-//! worth stating rather than leaving for someone to infer from the absence of a
-//! flip: **the two engines disagree about the convention, and only one of them
-//! needs correcting.** A reader who has just come from `ocr_vision.rs` and adds
-//! a flip here for symmetry breaks it.
+//! Word boxes are in deskewed pixels with the origin at top left. To put them
+//! back on the source bitmap, rotate clockwise around its centre by TextAngle.
+//! Scaling then converts the enclosing rectangle to PDF points.
 //!
 //! ## Why the pixel conversion has a test and the text does not
 //!
@@ -211,6 +200,39 @@ pub fn pixels_to_points(rect: (f32, f32, f32, f32), scale: f32) -> [f32; 4] {
     [left, top, left + w / scale, top + h / scale]
 }
 
+/// Enclose all four rotated corners in original bitmap coordinates (y grows down).
+fn rotated_word(
+    rect: (f32, f32, f32, f32),
+    width: u32,
+    height: u32,
+    (sin, cos): (f64, f64),
+    scale: f32,
+) -> [f32; 4] {
+    if sin == 0.0 && cos == 1.0 {
+        return pixels_to_points(rect, scale);
+    }
+    let (x, y, w, h) = rect;
+    let (cx, cy) = (f64::from(width) / 2.0, f64::from(height) / 2.0);
+    let mut bounds = [
+        f32::INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NEG_INFINITY,
+    ];
+    for (px, py) in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)] {
+        let (dx, dy) = (f64::from(px) - cx, f64::from(py) - cy);
+        let left = ((cx + cos * dx - sin * dy) / f64::from(scale)) as f32;
+        let top = ((cy + sin * dx + cos * dy) / f64::from(scale)) as f32;
+        bounds = [
+            bounds[0].min(left),
+            bounds[1].min(top),
+            bounds[2].max(left),
+            bounds[3].max(top),
+        ];
+    }
+    bounds
+}
+
 impl Recogniser for WindowsOcr {
     fn id(&self) -> EngineId {
         EngineId {
@@ -326,6 +348,17 @@ impl Recogniser for WindowsOcr {
             .join()
             .map_err(|e| RecogniseError::Crashed(format!("awaiting RecognizeAsync: {e}")))?;
 
+        // windows-rs maps a successful nullable interface result to an empty error.
+        let angle = match result.TextAngle() {
+            Ok(value) => value.Value(),
+            Err(e) if e.code().is_ok() => Ok(0.0),
+            Err(e) => Err(e),
+        }
+        .map_err(|e| RecogniseError::Crashed(format!("reading text angle: {e}")))?;
+        if !angle.is_finite() {
+            return Err(RecogniseError::Crashed("invalid OCR text angle".into()));
+        }
+        let rotation = angle.to_radians().sin_cos();
         let lines = result
             .Lines()
             .map_err(|e| RecogniseError::Crashed(format!("reading lines: {e}")))?;
@@ -345,7 +378,13 @@ impl Recogniser for WindowsOcr {
                     .map_err(|e| RecogniseError::Crashed(format!("reading a box: {e}")))?;
                 items.push(RecognisedItem {
                     text,
-                    rect: pixels_to_points((rect.X, rect.Y, rect.Width, rect.Height), pixels.scale),
+                    rect: rotated_word(
+                        (rect.X, rect.Y, rect.Width, rect.Height),
+                        pixels.width,
+                        pixels.height,
+                        rotation,
+                        pixels.scale,
+                    ),
                     // Not `Some(0.0)`, and not a made-up number. This engine
                     // reports no per-word confidence at all, and
                     // `RecognisedItem::confidence` is an `Option` for exactly
@@ -390,6 +429,19 @@ mod tests {
         assert!(
             rgba_to_bgra_opaque(&[]).is_some(),
             "no pixels is still whole"
+        );
+    }
+
+    #[test]
+    fn rotated_word_uses_the_bitmap_centre_and_all_four_corners() {
+        let rect = (10.0, 15.0, 20.0, 10.0);
+        assert_eq!(
+            rotated_word(rect, 100, 80, (1.0, 0.0), 2.0),
+            [32.5, 0.0, 37.5, 10.0]
+        );
+        assert_eq!(
+            rotated_word(rect, 100, 80, (0.0, 1.0), 2.0),
+            [5.0, 7.5, 15.0, 12.5]
         );
     }
 

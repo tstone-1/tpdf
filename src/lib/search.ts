@@ -438,6 +438,7 @@ export class Search {
       page: filePage(slot),
     }),
     private readonly ask: (args: Commands["search_page"]["args"]) => Promise<PageMatches> = args => call("search_page", args),
+    private readonly recovered: (page: FilePage) => boolean = () => false,
   ) {
     this.doc = doc;
     this.pageCount = pageCount;
@@ -502,7 +503,7 @@ export class Search {
    */
   get unsearchablePages(): number {
     if (this.mapping === null) return 0;
-    return this.mapping.filter((page) => page.guessing > 0).length;
+    return this.mapping.filter((page, index) => page.guessing > 0 && !this.recovered(filePage(index))).length;
   }
 
   /**

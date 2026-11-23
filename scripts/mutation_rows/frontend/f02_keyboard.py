@@ -385,8 +385,8 @@ ROWS += [
         # Same gap `encoding::` had in `mutate_rust.py`, on the other side.
         "mapping: report a page nobody could judge as unreadable",
         "src/lib/search.ts",
-        "    return this.mapping.filter((page) => page.guessing > 0).length;",
-        "    return this.mapping.filter((page) => page.guessing > 0 || page.truncated).length;",
+        "    return this.mapping.filter((page, index) => page.guessing > 0 && !this.recovered(filePage(index))).length;",
+        "    return this.mapping.filter((page, index) => (page.guessing > 0 || page.truncated) && !this.recovered(filePage(index))).length;",
         "does not count a page nobody could judge",
     ),
     Mutation(

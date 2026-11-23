@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """Clears leftover instances of tpdf before a harness launches its own.
 
-Two functions with two policies, and the difference is the whole content of this
-module. `clear_strays` ends only what is running the exact binary under test.
-`clear_leftover_app` ends every tpdf, which is what the two loops over
-`viewer_check.py` have always done; its docstring says why that is not simply
-narrowed to the other.
-
 **Why this exists, measured rather than anticipated.** Windows gives tpdf its
 document handover through `tauri-plugin-single-instance`: a second launch forwards
 its argv to the first process and then **exits**. That is exactly the behaviour a
@@ -28,12 +22,15 @@ failure surfaces one phase later as a timeout with no output at all.
 harness that killed every `tpdf` would kill the copy the person at the keyboard is
 reading, which is a harness that cannot be run on a working machine. Only processes
 running the exact binary under test are ended, which for a `target/release` build is
-always ours. `clear_leftover_app` does not hold to that on Windows and says so.
+always ours.
 
 `clear_strays` reports what it did, always. A helper that silently tidies up is one whose failures
 become someone else's mystery --- if a run needed this, the transcript should say so.
 """
 
+import ctypes
+from functools import cache
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -62,56 +59,12 @@ def clear_strays(binary: Path) -> int:
         f"instance silently absorbs later launches through the single-instance plugin, "
         f"so a run that finds any here should be treated as suspect."
     )
+    ended = 0
     for pid in pids:
-        _end(pid)
-    return len(pids)
-
-
-#: The bundle path a leftover viewer run is matched on, on POSIX.
-#:
-#: Not resolved from a caller's argument, because the two callers hand
-#: `viewer_check.py` a path that may be either the bundle or the executable
-#: inside it, and the pattern has to match the command line either way.
-LEFTOVER_APP = "tpdf.app/Contents/MacOS/tpdf"
-
-
-def clear_leftover_app() -> None:
-    """Kills any tpdf still running, on whichever platform this is.
-
-    The coarse counterpart to `clear_strays`, used by the two scripts that drive
-    `viewer_check.py` in a loop --- `mutate_viewer.py` and `viewer_sweep.py` ---
-    where a window left by the previous iteration occludes the next one, WebKit
-    suspends an occluded page, and the run then produces nothing while using no
-    CPU. Both had their own copy of these six lines.
-
-    **This was `pkill` unconditionally, and on Windows that is not a program.**
-    `check=False` swallows a non-zero exit and not a `FileNotFoundError`, so
-    `mutate_viewer.py` died before its first mutation with a traceback and exit
-    0, and `viewer_sweep.py` died on its first corpus with a traceback and no
-    table. A harness that dies while looking like one that ran is the failure
-    this repository has an entry about.
-
-    Failure is ignored on purpose: "there was nothing to kill" is the ordinary
-    case and both tools report it with a non-zero exit. And no such tool on this
-    machine is a slow run or a swallowed launch rather than a wrong answer, both
-    of which are visible in the check output, so it is not worth refusing over.
-
-    **It matches by image name on Windows, which `clear_strays` refuses to do**,
-    and the difference is not an oversight to tidy away. `clear_strays` will only
-    end a process running the exact binary under test, precisely so a harness
-    cannot close the document a reader has open in their own installed tpdf; this
-    ends every `tpdf.exe`. Narrowing it is the right change and is a behaviour
-    change to two harnesses that need a screen to run, so it is named here rather
-    than made blind.
-    """
-    if sys.platform == "win32":
-        command = ["taskkill", "/F", "/IM", "tpdf.exe"]
-    else:
-        command = ["pkill", "-f", LEFTOVER_APP]
-    try:
-        subprocess.run(command, check=False, capture_output=True)
-    except OSError:
-        pass
+        if sys.platform == "win32" or _executable(pid) == path:
+            _end(pid)
+            ended += 1
+    return ended
 
 
 def _running(path: str) -> list[int]:
@@ -139,12 +92,27 @@ def _running(path: str) -> list[int]:
                 found.append(int(pid))
         return found
 
-    # `pgrep -f` matches the whole command line, and the binary path is its first
-    # word for every launch a harness makes.
-    out = subprocess.run(
-        ["pgrep", "-f", path], capture_output=True, text=True, timeout=60
-    ).stdout
-    return [int(p) for p in out.split() if p.isdigit()]
+    out = subprocess.run(["ps", "-axo", "pid="], check=True, capture_output=True,
+                         text=True, timeout=60).stdout
+    return [int(pid) for pid in out.split() if pid.isdigit() and _executable(int(pid)) == path]
+
+
+@cache
+def _libproc() -> ctypes.CDLL:
+    return ctypes.CDLL("/usr/lib/libproc.dylib")
+
+
+def _executable(pid: int) -> str | None:
+    """Read the kernel's image path. Arguments can contain any other program's name."""
+    if sys.platform == "darwin":
+        buf = ctypes.create_string_buffer(4096)  # PROC_PIDPATHINFO_MAXSIZE
+        if _libproc().proc_pidpath(pid, buf, len(buf)) <= 0:
+            return None
+        return os.path.realpath(os.fsdecode(buf.value))
+    try:
+        return os.readlink(f"/proc/{pid}/exe")
+    except OSError:
+        return None
 
 
 def _end(pid: int) -> None:

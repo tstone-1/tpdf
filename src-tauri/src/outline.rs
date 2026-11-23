@@ -85,7 +85,7 @@ const MAX_DEPTH: usize = 32;
 const MAX_ITEMS: usize = 10_000;
 
 /// Longest title kept, in characters.
-const MAX_TITLE_CHARS: usize = 300;
+pub(crate) const MAX_TITLE_CHARS: usize = 300;
 
 /// Largest title buffer that will be allocated, in bytes.
 ///
@@ -94,7 +94,7 @@ const MAX_TITLE_CHARS: usize = 300;
 /// choice is to allocate what it asks for or to decline. A title beyond this is
 /// declined and marked clipped rather than allowed to size an allocation from
 /// the file.
-const MAX_TITLE_BYTES: usize = 1 << 20;
+pub(crate) const MAX_TITLE_BYTES: usize = 1 << 20;
 
 /// Longest page label kept, in characters.
 ///
@@ -429,7 +429,12 @@ pub fn read(document: &OpenDocument) -> Outline {
         walk.bindings
             .FPDFBookmark_GetFirstChild(walk.document, std::ptr::null_mut())
     };
-    let items = walk.siblings(first, 0);
+    let mut items = walk.siblings(first, 0);
+    if !items.is_empty() {
+        if let Ok(graph) = document.graph().parsed() {
+            crate::links::correct_named_outline(graph, &mut items, walk.page_count as usize);
+        }
+    }
     let page_labels = page_labels(walk.bindings, walk.document, walk.page_count);
 
     Outline {

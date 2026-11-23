@@ -35,7 +35,8 @@
 import type { Command } from "./commands";
 import { catalog } from "./i18n";
 import { isOpenRefusal } from "./ipc";
-import { labelsFor, MAX_RECENTS, pathSeparators, recentCommandId } from "./recents";
+import { pathSeparators } from "./paths";
+import { labelsFor, MAX_RECENTS, recentCommandId } from "./recents";
 import type { Place, Session, SessionWriter } from "./session";
 import { spokenError } from "./said";
 

@@ -21,17 +21,12 @@
  * check result. A round trip per label buys nothing that a split does not.
  */
 
-/**
- * The last segment of `path`, treating both `/` and `\` as separators.
- *
- * Both, unconditionally, rather than "the separator this platform uses": the
- * frontend has no reliable way to ask, a Windows path can legally mix the two,
- * and a POSIX file name containing a backslash is a pathological case nobody
- * here produces. Returns `path` unchanged when there is no separator, and when
- * the path *ends* in one --- a trailing separator leaves an empty last segment,
- * which is a worse label than the input it came from.
- */
+/** Absolute POSIX names may contain literal backslashes. */
+export function pathSeparators(path: string): RegExp {
+  return path.startsWith("/") ? /\/+/ : /[\\/]+/;
+}
+
+/** Last segment, falling back to the input for a trailing separator. */
 export function basename(path: string): string {
-  const last = path.split(/[\\/]/).pop();
-  return last === undefined || last === "" ? path : last;
+  return path.split(pathSeparators(path)).at(-1) || path;
 }

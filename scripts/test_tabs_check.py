@@ -17,9 +17,11 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import stray
 from run_on_mac import RECEIVE, REMOTE, VOICEOVER_DRIVER, remote_path
 from tabs_check import answer_rewrites  # noqa: E402
 
@@ -46,6 +48,30 @@ with log.open("a", encoding="utf-8") as out:
 ask(2)
 sys.exit(code)
 """
+
+
+@unittest.skipUnless(sys.platform in {"darwin", "linux"}, "POSIX image lookup")
+class StrayProcesses(unittest.TestCase):
+    def test_only_the_viewer_executable_is_selected(self):
+        viewer = Path("/bin/sleep").resolve()
+        children = []
+        try:
+            children.append(subprocess.Popen([str(viewer), "20"]))
+            children.append(subprocess.Popen(
+                [f"{viewer}-cli", "-f", "/dev/null"], executable="/usr/bin/tail",
+                stdout=subprocess.DEVNULL,
+            ))
+            children.append(subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(20)", str(viewer)]
+            ))
+            with patch.object(stray, "_end") as end:
+                stray.clear_strays(viewer)
+            selected = {call.args[0] for call in end.call_args_list}
+            self.assertEqual(selected.intersection(child.pid for child in children), {children[0].pid})
+        finally:
+            for child in children:
+                child.kill()
+                child.wait()
 
 
 class AnswerRewrites(unittest.TestCase):

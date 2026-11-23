@@ -89,6 +89,14 @@ use std::collections::HashSet;
 
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 
+/// Check the declared size, colour space and signature before retaining an ICC profile.
+pub(crate) fn icc_header_matches(bytes: &[u8], space: &[u8; 4]) -> bool {
+    bytes.len() >= 132
+        && bytes[..4] == (bytes.len() as u32).to_be_bytes()
+        && &bytes[16..20] == space
+        && &bytes[36..40] == b"acsp"
+}
+
 /// Largest decompressed stream any scan here will accept.
 ///
 /// **The one copy.** `AGENTS.md` states "all `lopdf` stream decoding is

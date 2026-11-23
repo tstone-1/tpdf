@@ -643,6 +643,17 @@ mod tests {
             doc.save_to(&mut bytes).expect("save");
             let reopened = Document::load_mem(&bytes).expect("reopen");
             assert_eq!(shape(&reopened), [survivor]);
+            let mut displayed = [crate::outline::OutlineItem {
+                title: survivor.into(),
+                open: false,
+                target: crate::outline::Target::Broken,
+                children: vec![],
+            }];
+            links::correct_named_outline(&reopened, &mut displayed, 1);
+            assert!(matches!(
+                displayed[0].target,
+                crate::outline::Target::Page { page: 0, .. }
+            ));
             let page = reopened.get_pages()[&1];
             let root = redact::outline_root(&reopened).expect("outline");
             let item = reopened

@@ -4,6 +4,27 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Search redaction, delayed form input, colours and OCR (2026-11-23)
+
+The two-line Python annotation fixture contains an A and a full stop on separate lines.
+The desktop viewer and edit model were exercised with the character boxes from
+`text-probe --mode json`. With a one-point font for the full stop, the journal received
+zero marks and the pending save was refused. With a twelve-point font it received
+two marks and the save guard passed. A separate form probe held the session read open,
+typed a new answer and inspected the outgoing tab snapshot. The previous open sequence
+lost the answer. The corrected sequence retained it.
+
+Poppler rendered the same PNG samples from the generated PDFs as (200, 70, 90) for
+sRGB and (217, 56, 87) for Display P3, matching an independent profile conversion.
+The outline reader followed the name and string forms of Chapter to different pages.
+After each single-page extraction it followed the surviving bookmark to page one.
+A two-page extract with indirect counts retained its collapsed bookmark at `/Count -1`.
+
+On Windows, a synthetic scan placed ANCHOR near the edge of an 800 by 600 page.
+At a twelve-degree clockwise tilt, the word's ink began at (147, 54). Searching the
+saved OCR copy placed its rectangle at (150, 49), compared with (107, 110) before
+the correction. The upright control kept the same geometry in both builds.
+
 ### Print preview, split-view Save and form properties (2026-11-21)
 
 In Chromium and WebKit the print dialog refused Enter for an invalid range and

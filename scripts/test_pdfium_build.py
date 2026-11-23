@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from build_pdfium import canonical_archive, check_upstream_report, complete_licenses, digest, windows_bash
+from fetch_pdfium import read_stamp
 from pdfium_verify import LIMITATIONS, ORDINARY, verify
 
 
@@ -21,6 +22,24 @@ def observation():
         chars = [[ord(ch), [float(i), float(i + 1), 0.0, 1.0]] for i, ch in enumerate(text)]
         return {"text": text, "chars": chars, "pixels_sha256": "a" * 64}
     return manifest, {name: seen(LIMITATIONS.get(name, "AB")) for name in names}
+
+
+class StampTests(unittest.TestCase):
+    def test_only_a_one_line_stamp_uses_the_legacy_check(self):
+        archive, library, name = "a" * 64, "b" * 64, "lib/libpdfium.so"
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            for tail, expected in [
+                ("", (archive, None, None)),
+                (f"{library}  {name}\n", (archive, library, name)),
+                (f"abcde  {name}\n", None),
+                (f"{'x' * 64}  {name}\n", None),
+                ("\n", None),
+                (f"{library}  {name}\nextra\n", None),
+            ]:
+                with self.subTest(tail=tail):
+                    (root / "SHA256.txt").write_text(f"{archive}  pdfium.tgz\n" + tail)
+                    self.assertEqual(read_stamp(root), expected)
 
 
 class ObservationTests(unittest.TestCase):

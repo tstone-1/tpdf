@@ -30,8 +30,26 @@
  * string --- are both answerable without it.
  */
 
+import { catalog } from "./i18n";
+import type { PageId } from "./pages";
 import { readingTextOf } from "./reading";
 import { runsFor, type Caret, type PageText, type Quad } from "./text";
+
+export interface TextRedactionGroup {
+  page: PageId;
+  quads: readonly number[];
+  /** Only Find supplies a match id and the centres of its visible characters. */
+  hit?: { index: number; centres: { x: number; y: number }[] };
+}
+
+const markText = catalog({
+  "en-US": { incomplete: "Some matched text could not be located in full. Nothing was marked." },
+  "de-DE": { incomplete: "Einige Treffer konnten nicht vollständig lokalisiert werden. Es wurde nichts markiert." },
+});
+
+export function incompleteMatch(): Error {
+  return new Error(markText().incomplete);
+}
 
 /**
  * A page's text if it has already arrived, asked for by **slot**.

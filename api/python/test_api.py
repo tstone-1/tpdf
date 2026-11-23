@@ -318,6 +318,17 @@ class ClientTests(unittest.TestCase):
                 self.pdf.mark_matches(self.source, output, texts=['ORIGINAL'])
         self.assertFalse(output.exists())
 
+    def test_mark_matches_preserves_document_errors(self):
+        protected = self.root / 'locked.pdf'
+        self.pdf.protect(self.source, protected, 'test-password')
+        output = self.root / 'marked.pdf'
+        for source, kind in [(protected, 'locked'), (self.root / 'missing.pdf', 'unreadable')]:
+            with self.subTest(source=source), self.assertRaises(CommandError) as caught:
+                self.pdf.mark_matches(source, output, texts=['ORIGINAL'], password='wrong')
+            self.assertNotIsInstance(caught.exception, ValueError)
+            self.assertEqual(caught.exception.report['files'][0]['error']['kind'], kind)
+            self.assertFalse(output.exists())
+
     def test_mark_matches_refuses_partial_geometry(self):
         output = self.root / 'marked.pdf'
         output.write_bytes(b'previous output')

@@ -4230,7 +4230,7 @@ fn recount_in(doc: &mut Document, node: ObjectId, depth: usize, walk: &mut TreeW
         let open = doc
             .get_dictionary(child)
             .ok()
-            .and_then(|item| item.get(b"Count").ok())
+            .and_then(|item| item.get_deref(b"Count", doc).ok())
             .and_then(|value| value.as_i64().ok())
             .is_none_or(|count| count > 0);
         let under = recount_in(doc, child, depth + 1, walk);

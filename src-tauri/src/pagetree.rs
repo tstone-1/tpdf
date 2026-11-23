@@ -686,16 +686,18 @@ pub fn drop_pages(doc: &mut Document, numbers: &[u32]) -> Result<(), String> {
         }
     }
     for parent in decrements {
-        if let Ok(tree) = doc.get_object_mut(parent).and_then(Object::as_dict_mut) {
-            if let Ok(count) = tree.get(b"Count").and_then(Object::as_i64) {
-                // Saturating, because the count is the document's number and
-                // `/Count -9223372036854775808` is as writable as any other:
-                // `count - 1` on it panics under debug assertions and wraps to
-                // the largest positive count there is in the shipped build,
-                // which is a document that reports 9.2 quintillion pages after
-                // one was deleted.
-                tree.set("Count", count.saturating_sub(1));
-            }
+        let count = doc
+            .get_dictionary(parent)
+            .and_then(|tree| tree.get_deref(b"Count", doc))
+            .and_then(Object::as_i64);
+        if let (Ok(count), Ok(tree)) = (count, doc.get_dictionary_mut(parent)) {
+            // Saturating, because the count is the document's number and
+            // `/Count -9223372036854775808` is as writable as any other:
+            // `count - 1` on it panics under debug assertions and wraps to
+            // the largest positive count there is in the shipped build,
+            // which is a document that reports 9.2 quintillion pages after
+            // one was deleted.
+            tree.set("Count", count.saturating_sub(1));
         }
     }
 

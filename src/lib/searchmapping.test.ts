@@ -129,6 +129,17 @@ describe("Search across pages of another file", () => {
 });
 
 describe("Search.unsearchablePages", () => {
+  it("counts an unmapped page again only after its OCR text is cleared", async () => {
+    let recovered = false;
+    core.invoke.mockResolvedValue([mapping(1)]);
+    const search = new Search(1, 1, () => {}, undefined, undefined, () => recovered);
+    await search.ensureMapping();
+    expect(search.unsearchablePages).toBe(1);
+    recovered = true;
+    expect(search.unsearchablePages).toBe(0);
+    recovered = false;
+    expect(search.unsearchablePages).toBe(1);
+  });
   it("counts a page the document declares no mapping for", () => {
     // The case the whole feature exists for.
     return expect(scanFindingNothing([mapping(1)])).resolves.toBe(1);

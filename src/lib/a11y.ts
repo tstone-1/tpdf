@@ -211,6 +211,13 @@ export class AccessibleText {
     return [...this.pages.keys()].sort((a, b) => a - b);
   }
 
+  /** Rebuild just this article on the next sync when its source text changes. */
+  invalidatePage(page: number): void {
+    this.pages.get(page)?.remove();
+    this.pages.delete(page);
+    this.built.delete(page);
+  }
+
   /**
    * Brings the tree in line with what is on screen.
    *
@@ -225,11 +232,8 @@ export class AccessibleText {
   ): void {
     const wanted = new Set(visible);
 
-    for (const [page, element] of this.pages) {
-      if (wanted.has(page)) continue;
-      element.remove();
-      this.pages.delete(page);
-      this.built.delete(page);
+    for (const page of this.pages.keys()) {
+      if (!wanted.has(page)) this.invalidatePage(page);
     }
 
     for (const page of [...wanted].sort((a, b) => a - b)) {

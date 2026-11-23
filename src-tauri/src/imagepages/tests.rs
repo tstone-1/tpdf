@@ -101,6 +101,40 @@ fn png_of(
     out
 }
 
+#[test]
+fn png_profile_is_embedded_with_its_unmodified_samples() {
+    let mut profile = vec![0; 132];
+    profile[..4].copy_from_slice(&132_u32.to_be_bytes());
+    profile[16..20].copy_from_slice(b"RGB ");
+    profile[36..40].copy_from_slice(b"acsp");
+    let mut info = png::Info::with_size(1, 1);
+    info.color_type = png::ColorType::Rgb;
+    info.icc_profile = Some(profile.clone().into());
+    let mut bytes = Vec::new();
+    png::Encoder::with_info(&mut bytes, info)
+        .unwrap()
+        .write_header()
+        .unwrap()
+        .write_image_data(&[200, 70, 90])
+        .unwrap();
+    let pdf = document(&[(&bytes, "sample.png")], own()).unwrap();
+    let stream = pdf
+        .objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .find(|s| s.dict.has(b"ColorSpace"))
+        .unwrap();
+    let space = stream.dict.get(b"ColorSpace").unwrap().as_array().unwrap();
+    assert_eq!(space[0].as_name().unwrap(), b"ICCBased");
+    let icc = pdf
+        .get_object(space[1].as_reference().unwrap())
+        .unwrap()
+        .as_stream()
+        .unwrap();
+    assert_eq!(icc.dict.get(b"N").unwrap().as_i64().unwrap(), 3);
+    assert_eq!(icc.content, profile);
+}
+
 fn own() -> Options {
     Options::default()
 }

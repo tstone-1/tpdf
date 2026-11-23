@@ -1903,6 +1903,62 @@ describe("Viewer matches across a page edit", () => {
     vi.clearAllMocks();
   });
 
+  it("navigates a cross-page hit to its first line even when the end index on page two is smaller", async () => {
+    core.invoke.mockImplementation(async (command: string, args: { page: number }) => {
+      if (command === "search_page") {
+        const matches = args.page === 1
+          ? [{ page: 0, endPage: 1, start: 1, end: 1, before: "", hit: "b a", after: "" }]
+          : [];
+        return { page: args.page, chars: 2, matches };
+      }
+      if (command === "page_text")
+        return { ...pageText(), boxes: [10, 10, 20, 22, 20, 700, 30, 712] };
+      return null;
+    });
+    const viewer = build(dom);
+    viewer.search("b a");
+    await settle();
+    await settle();
+    expect(viewer.searchMatches).toHaveLength(1);
+    expect(viewer.position.page).toBe(0);
+    expect(viewer.position.top).toBeGreaterThan(300);
+    viewer.destroy();
+  });
+
+  it("refuses search redaction when a visible character has no position", async () => {
+    core.invoke.mockImplementation(async (command: string, args: { page: number }) => {
+      if (command === "page_text")
+        return { ...pageText(), boxes: [10, 10, 20, 22, 0, 0, 0, 0] };
+      if (command === "search_page") {
+        const matches = args.page === 0
+          ? [{ page: 0, start: 0, end: 2, before: "", hit: "ab", after: "" }]
+          : [];
+        return { page: args.page, chars: 2, matches };
+      }
+      return null;
+    });
+    const viewer = build(dom);
+    viewer.search("ab");
+    await settle();
+    await expect(viewer.matchQuadsByPage()).rejects.toThrow();
+    viewer.destroy();
+  });
+
+  it("restores Find results without moving the saved viewport", async () => {
+    const viewer = build(dom);
+    const saved = viewer.position;
+    viewer.restoreSearch("ab", viewer.searchOptionsNow, null);
+    await settle();
+    await settle();
+    expect(viewer.searchMatches.map(hit => hit.page)).toEqual([2]);
+    expect(viewer.position).toEqual(saved);
+    viewer.search("ab");
+    await settle();
+    await settle();
+    expect(viewer.position).not.toEqual(saved);
+    viewer.destroy();
+  });
+
   it("matches_asked_for_before_a_page_move_are_not_marked_on_the_page_that_took_the_slot", async () => {
     const viewer = build(dom);
     // Held from the start: the search itself asks for no text, and anything

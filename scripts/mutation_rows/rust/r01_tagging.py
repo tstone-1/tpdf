@@ -807,7 +807,7 @@ ROWS += [
     Mutation('textedit: forget saved fill colour space', 'src/textedit/inspect.rs', 'saved.push(self.clone());', 'saved.push(Graphics { fill_components: patterns::Colour::Solid(1), ..self.clone() });', 'textedit_colours_restore_state_and_preserve_operators'),
     Mutation("textedit: omit colour component count", "src/textedit/colors.rs", "if values.len() != components {", "if false {", "textedit_colours_refuse_bad_components_and_unsupported_spaces"),
     Mutation("textedit: omit colour component range", "src/textedit/colors.rs", "if !(0.0..=1.0).contains(&number(value)?) {", "if false {", "textedit_colours_refuse_bad_components_and_unsupported_spaces"),
-    Mutation("textedit: omit ICC header signature", "src/textedit/colors.rs", "|| &bytes[36..40] != b\"acsp\"", "|| false", "textedit_icc_checks_header_range_and_preserves_profile_bytes"),
+    Mutation("textedit: omit ICC header signature", "src/encoding.rs", "&& &bytes[36..40] == b\"acsp\"", "&& true", "textedit_icc_checks_header_range_and_preserves_profile_bytes"),
     Mutation("textedit: raise ICC decode limit", "src/textedit/colors.rs", "filters::decode(profile, super::MAX_CONTENT)?", "filters::decode(profile, super::MAX_CONTENT * 2)?", "textedit_icc_decoding_and_colour_space_count_are_bounded"),
     Mutation("textedit: omit colour space count", 'src/textedit/inspect.rs', 'if self.colour_spaces.len() >= 32 {', "if false {", "textedit_icc_decoding_and_colour_space_count_are_bounded"),
 

@@ -149,6 +149,21 @@ describe("AccessibleText and a change of order", () => {
     return parts.join("");
   }
 
+  it("replaces a visible page after OCR and after its recovered text is cleared", () => {
+    const dom = installFakeDom();
+    try {
+      const layer = new AccessibleText(dom.root as never, 1);
+      layer.sync([0], () => page([]) as never);
+      const empty = said(dom.root);
+      layer.invalidatePage(0);
+      layer.sync([0], () => page([72, 105]) as never);
+      expect(said(dom.root)).toContain("Hi");
+      layer.invalidatePage(0);
+      layer.sync([0], () => page([]) as never);
+      expect(said(dom.root)).toEqual(empty);
+    } finally { dom.restore(); }
+  });
+
   it("rebuilds when the order changes and the page count does not", () => {
     // The case a deletion cannot produce. This dropped every built page only
     // when the count differed, which is right for a document that lost a page

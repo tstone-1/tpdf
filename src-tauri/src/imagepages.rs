@@ -87,6 +87,7 @@ struct Picture {
     height: u32,
     /// `DeviceGray` or `DeviceRGB`.
     gray: bool,
+    profile: Option<Vec<u8>>,
     /// `DCTDecode` or `FlateDecode`.
     jpeg: bool,
     data: Vec<u8>,
@@ -322,6 +323,7 @@ fn jpeg(bytes: &[u8]) -> Result<Picture, String> {
         height: facts.height,
         gray,
         jpeg: true,
+        profile: None,
         data: bytes.to_vec(),
         mask: None,
         orientation: facts.orientation,
@@ -381,6 +383,12 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
     if size != pixels * channels {
         return Err(said!("it is not the size its header says"));
     }
+    let profile = reader.info().icc_profile.as_deref();
+    if profile.is_some_and(|bytes| {
+        !crate::encoding::icc_header_matches(bytes, if gray { b"GRAY" } else { b"RGB " })
+    }) {
+        return Err(said!("the PNG colour profile does not match its samples"));
+    }
     let (data, mask) = if alpha {
         let colour = channels - 1;
         let mut samples = Vec::with_capacity(pixels * colour);
@@ -400,6 +408,7 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
         height,
         gray,
         jpeg: false,
+        profile: profile.map(<[u8]>::to_vec),
         data: deflated(&data)?,
         mask: mask.as_deref().map(deflated).transpose()?,
         orientation: 1,
@@ -542,10 +551,24 @@ pub fn document(images: &[(&[u8], &str)], options: Options) -> Result<Document, 
                 alpha,
             ))
         });
+        let device = if found.gray {
+            "DeviceGray"
+        } else {
+            "DeviceRGB"
+        };
+        let color_space = if let Some(profile) = found.profile {
+            let id = doc.add_object(Stream::new(
+                dictionary! { "N" => if found.gray { 1 } else { 3 }, "Alternate" => device },
+                profile,
+            ));
+            Object::Array(vec!["ICCBased".into(), id.into()])
+        } else {
+            Object::from(device)
+        };
         let mut image = dictionary! {
             "Type" => "XObject", "Subtype" => "Image",
             "Width" => i64::from(found.width), "Height" => i64::from(found.height),
-            "ColorSpace" => if found.gray { "DeviceGray" } else { "DeviceRGB" },
+            "ColorSpace" => color_space,
             "BitsPerComponent" => 8,
             "Filter" => if found.jpeg { "DCTDecode" } else { "FlateDecode" },
         };

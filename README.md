@@ -1303,7 +1303,9 @@ The plan holds at most 1,000 marks and includes the SHA-256 of the searched docu
 If the input bytes change before `edit`, it refuses the plan and leaves the output untouched. Nothing is printed when
 nothing matched. Matches must have usable positions entirely within the displayed page.
 Use a highlight for turned text. Underline, strikeout and squiggly require text that is
-upright on the displayed page.
+upright on the displayed page. With `--annotate --json`, a successful search prints the same
+plan. An input-file failure prints a search report with a per-file error. A mark the planner
+cannot create returns a top-level error with `kind` set to `annotation`.
 
 **Reading from a pipe.** `info`, `verify`, `text`, `search`, `compare` and `fields` take `-` for the
 document and read it from standard input: `curl -s https://example.org/a.pdf | tpdf text -`.

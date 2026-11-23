@@ -100,11 +100,7 @@ pub(super) fn space(doc: &Document, value: &Object) -> Result<usize, String> {
         3 => b"RGB ",
         _ => b"CMYK",
     };
-    if bytes.len() < 132
-        || u32::from_be_bytes(bytes[..4].try_into().map_err(|_| invalid())?) as usize != bytes.len()
-        || &bytes[16..20] != signature
-        || &bytes[36..40] != b"acsp"
-    {
+    if !crate::encoding::icc_header_matches(&bytes, signature) {
         return Err(invalid());
     }
     Ok(components)

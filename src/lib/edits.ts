@@ -14,7 +14,8 @@
  * is to have skipped a reply.
  */
 
-import { areasFrom } from "./selection";
+import { areasFrom, incompleteMatch, type TextRedactionGroup } from "./selection";
+import { coversPoint } from "./text";
 import { call, physicalPageUnit, physicalPageUnits } from "./ipc";
 import {
   PageMap,
@@ -869,9 +870,9 @@ export class Edits {
   }
 
   /** Filter text runs in physical points, then journal them in their source page's coordinates. */
-  async redactText(groups: readonly { page: PageId; quads: readonly number[] }[]): Promise<EditState> {
+  async redactText(groups: readonly TextRedactionGroup[]): Promise<EditState> {
     const byDoc = new Map<number, { id: PageId; file: FilePage }[]>();
-    for (const { page } of groups) {
+    for (const page of new Set(groups.map(group => group.page))) {
       const slot = this.pageMap.slotOfId(page);
       const source = slot === undefined ? undefined : this.pageMap.addressOf(slot, this.doc);
       if (!source) throw new Error("The page is no longer available");
@@ -885,9 +886,18 @@ export class Edits {
       const values = await physicalPageUnits(doc, batch.map(entry => entry.file));
       batch.forEach((entry, index) => units.set(entry.id, values[index]!));
     }
-    const regions = groups.flatMap(({ page, quads }) =>
-      areasFrom(quads, units.get(page)!).map(area => [page, area] as const)
-    );
+    const marked = new Map<number, boolean>();
+    const regions = groups.flatMap(({ page, quads, hit }) => {
+      const areas = areasFrom(quads, units.get(page)!);
+      if (hit) {
+        if (hit.centres.some(({ x, y }) => !areas.some(area => coversPoint(area, 0, x, y)))) {
+          throw incompleteMatch();
+        }
+        marked.set(hit.index, areas.length > 0 || marked.get(hit.index) === true);
+      }
+      return areas.map(area => [page, area] as const);
+    });
+    if ([...marked.values()].includes(false)) throw incompleteMatch();
     return this.adopt(await call("redact_marks", { doc: this.doc, regions }));
   }
 

@@ -25,6 +25,8 @@
  * stays short; the ambiguous case says exactly as much as it must and no more.
  */
 
+import { pathSeparators } from "./paths";
+
 /** Recent documents the palette offers. */
 export const MAX_RECENTS = 8;
 
@@ -40,11 +42,6 @@ export function recentCommandId(index: number): string {
  * registry knows which commands the replacement supersedes.
  */
 export const RECENT_PREFIX = "file.recent.";
-
-/** Absolute POSIX names may contain literal backslashes. */
-export function pathSeparators(path: string): RegExp {
-  return path.startsWith("/") ? /\/+/ : /[\\/]+/;
-}
 
 /** A path split into its segments, with the separator it was written with. */
 function split(path: string): { segments: string[]; separator: string } {

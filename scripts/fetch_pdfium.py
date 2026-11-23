@@ -67,6 +67,7 @@ import argparse
 import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -140,8 +141,7 @@ def file_digest(path: Path) -> str:
 def read_stamp(dest: Path) -> "tuple[str, str | None, str | None] | None":
     """Reads SHA256.txt as (archive digest, library digest, library path).
 
-    Returns None when there is no stamp or its first line is not a digest --
-    i.e. when there is nothing here that claims to be an install at all.
+    Returns None for an absent or malformed stamp.
 
     The last two are None for a stamp written before the library line existed.
     That case is honoured rather than rejected, and `check` says so out loud:
@@ -155,13 +155,17 @@ def read_stamp(dest: Path) -> "tuple[str, str | None, str | None] | None":
 
     lines = stamp.read_text(encoding="utf-8").splitlines()
     first = lines[0].split() if lines else []
-    if not first or len(first[0]) != 64:
+    if not first or not re.fullmatch(r"[0-9a-f]{64}", first[0]):
         return None
 
-    second = lines[1].split() if len(lines) > 1 else []
-    if len(second) == 2 and len(second[0]) == 64:
+    if len(lines) == 1:
+        return first[0], None, None
+    if len(lines) != 2:
+        return None
+    second = lines[1].split()
+    if len(second) == 2 and re.fullmatch(r"[0-9a-f]{64}", second[0]):
         return first[0], second[0], second[1]
-    return first[0], None, None
+    return None
 
 
 def installed_complete(key: str, dest: Path) -> bool:

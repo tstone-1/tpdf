@@ -29,6 +29,7 @@
  * within the week of it being written.
  */
 
+import { basename } from "./paths";
 import { catalog } from "./i18n";
 import { spoken } from "./said";
 import { reviewGroups, reviewLines } from "./redactreview";
@@ -496,7 +497,7 @@ export function afterRasterRedaction(
  * The changed-source sentence is appended, as for a split.
  */
 export function afterExtract(extracted: { changed?: boolean }, path: string, pages: number): string {
-  const said = TEXT().extracted(pages, basenameOf(path));
+  const said = TEXT().extracted(pages, basename(path));
   return extracted.changed ? `${said} ${TEXT().afterCopyChanged}` : said;
 }
 
@@ -516,17 +517,11 @@ export function afterExtract(extracted: { changed?: boolean }, path: string, pag
  */
 export function afterSplit(split: { changed?: boolean; paths: string[] }): string {
   const count = split.paths.length;
-  const first = basenameOf(split.paths[0] ?? "");
-  const last = basenameOf(split.paths[count - 1] ?? "");
+  const first = basename(split.paths[0] ?? "");
+  const last = basename(split.paths[count - 1] ?? "");
   const said = count === 0 ? TEXT().splitNothing : TEXT().splitWrote(count, first, last);
   if (!split.changed) return said;
   return `${said}${TEXT().splitChanged}`;
-}
-
-/** The last path segment, for either platform's separator. */
-function basenameOf(path: string): string {
-  const at = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return at === -1 ? path : path.slice(at + 1);
 }
 
 /**

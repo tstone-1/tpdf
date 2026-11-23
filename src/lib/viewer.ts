@@ -161,9 +161,10 @@ import {
   type SearchScope,
   type ScopeRange,
 } from "./search";
-import { Selection } from "./selection";
+import { Selection, incompleteMatch, type TextRedactionGroup } from "./selection";
 import {
   caretAt,
+  centreOfCharacter,
   lineAt,
   nearestChar,
   onText,
@@ -1370,6 +1371,7 @@ export class Viewer {
    * able to finish without moving anyone.
    */
   private currentMatch = -1;
+  private jumpToFirstMatch = true;
 
   private selection: Selection | null = null;
   private selectionIntent = 0;
@@ -1882,6 +1884,7 @@ export class Viewer {
       () => this.onSearchProgress(),
       (slot) => this.pages.addressOf(slot, opts.doc),
       this.recovery.search,
+      (page) => this.recovery.has(opts.doc, page),
     );
 
     this.surfaceHost = document.createElement("div");
@@ -6634,6 +6637,10 @@ export class Viewer {
     if (this.life.ended || this.pages !== pages) throw new Error(TEXT().pageChanged);
     if (!text.codes.length) throw new Error(TEXT().noWordsRecognised);
     this.recovery.put(at.doc, at.page, text);
+    for (const visible of this.a11y.present) {
+      const source = pages.addressOf(visible, this.opts.doc);
+      if (source?.doc === at.doc && source.page === at.page) this.a11y.invalidatePage(visible);
+    }
     at.cache.invalidatePage(at.page);
     this.clearSelection();
     this.searchScope = null;
@@ -6645,11 +6652,14 @@ export class Viewer {
   /** Any document edit can change pixels or their coordinates. */
   clearRecognition(): void {
     if (!this.recovery.size) return;
-    this.recovery.clear();
     for (let slot = 0; slot < this.pages.length; slot++) {
       const at = this.textAt(slot);
-      if (at) at.cache.invalidatePage(at.page);
+      if (at && this.recovery.has(at.doc, at.page)) {
+        at.cache.invalidatePage(at.page);
+        this.a11y.invalidatePage(slot);
+      }
     }
+    this.recovery.clear();
     this.clearSelection();
     this.searchScope = null;
     if (this.searcher.query) this.search(this.searcher.query);
@@ -7322,8 +7332,10 @@ export class Viewer {
    * the reason the match painter gives --- there is no shared coordinate space
    * between two pages, so one rectangle cannot span them.
    */
-  async matchQuadsByPage(): Promise<{ page: PageId; quads: number[] }[] | null> {
-    const halves = matchHalves(this.searcher.matches);
+  async matchQuadsByPage(): Promise<TextRedactionGroup[] | null> {
+    const matches = this.searcher.matches;
+    const halves = matches.flatMap((match, index) =>
+      matchHalves([match]).map(half => ({ ...half, index })));
     const slots = [...new Set(halves.map((half) => half.slot))].sort(
       (a, b) => a - b,
     );
@@ -7332,7 +7344,7 @@ export class Viewer {
     // after it.
     const pages = this.pages;
 
-    const out: { page: PageId; quads: number[] }[] = [];
+    const out: TextRedactionGroup[] = [];
     for (let at = 0; at < slots.length; at += COPY_CHUNK) {
       const chunk = await Promise.all(
         slots.slice(at, at + COPY_CHUNK).map(async (slot) => ({
@@ -7353,15 +7365,22 @@ export class Viewer {
         if (!text) return null;
         const id = pages.idOf(slot);
         if (id === undefined) return null;
-        const quads: number[] = [];
+        const crop = this.cropAt(slot);
         for (const half of halves) {
           if (half.slot !== slot) continue;
+          const centres = [];
+          for (let i = half.from; i < Math.min(half.to, text.codes.length); i++) {
+            // Spacing and format controls need no ink. Mirrors CLI regions::uncovered.
+            if (/^[\p{White_Space}\p{Cc}\u00ad\u200b-\u200d\u2060\ufeff]$/u.test(String.fromCodePoint(text.codes[i]!))) continue;
+            const centre = centreOfCharacter(text.boxes, i);
+            if (!centre) throw incompleteMatch();
+            centres.push({ x: centre.x + crop.left, y: centre.y + crop.top });
+          }
+          const quads: number[] = [];
           for (const quad of runsFor(text, half.from, half.to)) {
             quads.push(quad.left, quad.top, quad.right, quad.bottom);
           }
-        }
-        if (quads.length > 0) {
-          out.push({ page: id, quads: outOfCrop(quads, this.cropAt(slot)) });
+          out.push({ page: id, quads: outOfCrop(quads, crop), hit: { index: half.index, centres } });
         }
       }
     }
@@ -8538,7 +8557,8 @@ export class Viewer {
    * document --- which on a 775-page manual is the difference between a useful
    * search and a jump to the beginning.
    */
-  search(query: string): void {
+  search(query: string, jumpToFirst = true): void {
+    this.jumpToFirstMatch = jumpToFirst;
     this.currentMatch = -1;
     void this.searcher.run(
       query,
@@ -8605,7 +8625,7 @@ export class Viewer {
   restoreSearch(query: string, options: SearchOptions, scope: readonly ScopeRange[] | null): void {
     this.searchOptions = options;
     this.searchScope = scope ? scope.map((range) => ({ ...range })) : null;
-    if (query) this.search(query);
+    if (query) this.search(query, false);
     else this.wake();
   }
 
@@ -8803,7 +8823,7 @@ export class Viewer {
    * while they were trying to read the hit they were already shown.
    */
   private onSearchProgress(): void {
-    if (this.currentMatch < 0 && this.searcher.matches.length > 0) {
+    if (this.jumpToFirstMatch && this.currentMatch < 0 && this.searcher.matches.length > 0) {
       void this.goToMatch(0);
     }
     this.wake();
@@ -8832,7 +8852,8 @@ export class Viewer {
     // nothing withdraws it --- so the scroll below would run against a torn-down
     // scroller. See `life`.
     if (!text || this.life.ended) return;
-    const [first] = runsFor(text, match.start, match.end);
+    const [half] = matchHalves([match]);
+    const [first] = runsFor(text, half!.from, half!.to);
     const top =
       this.scroller.pageTopOf(match.page) + (first ? first.top * this.zoom : 0);
     // A third down rather than at the top edge: a hit flush against the top of
@@ -8870,24 +8891,12 @@ export class Viewer {
       // two pages, so one rectangle cannot span them. `Infinity` is the first
       // half's end because it runs to wherever that page's text stops, which
       // this does not have to know and `runsFor` clamps.
-      const halves: { page: number; from: number; to: number }[] =
-        match.endPage === undefined
-          ? [{ page: match.page, from: match.start, to: match.end }]
-          : [
-              { page: match.page, from: match.start, to: Infinity },
-              { page: match.endPage, from: 0, to: match.end },
-            ];
-
-      for (const half of halves) {
-        if (!visible.has(half.page)) continue;
-        // Not requested if missing: `prefetchText` already asks for every
-        // visible page, and asking again from the paint path would queue an
-        // extraction per frame for a page whose reply has not landed yet.
-        const text = this.textOn(half.page);
+      for (const { slot, from, to } of matchHalves([match])) {
+        if (!visible.has(slot)) continue;
+        const text = this.textOn(slot);
         if (!text) continue;
-
-        const origin = this.scroller.pageOrigin(half.page);
-        for (const quad of runsFor(text, half.from, half.to)) {
+        const origin = this.scroller.pageOrigin(slot);
+        for (const quad of runsFor(text, from, to)) {
           ctx.fillRect(
             (origin.left + quad.left * this.zoom) * dpr,
             (origin.top + quad.top * this.zoom - this.scrollTop) * dpr,

@@ -642,7 +642,7 @@ class Tpdf:
             if len(color) != 3 or not all(0 <= channel <= 1 for channel in color):
                 raise ValueError('color must be red, green and blue from 0 to 1')
         args = _search_options(texts, patterns, pages, case_sensitive, whole_word)
-        args += ['--annotate', kind]
+        args += ['--annotate', kind, '--json']
         if color is not None:
             args += ['--color', ','.join(map(str, color))]
         # This method accepts a source file. Bare '-' means stdin to search.
@@ -652,8 +652,16 @@ class Tpdf:
         if exit_code == 1 and not stdout:
             return None
         if exit_code:
-            error = _AnnotationRefused if exit_code == 3 else CommandError
-            raise error(Result({}, exit_code, stderr))
+            try:
+                failure = json.loads(stdout) if stdout else {}
+            except (ValueError, UnicodeDecodeError) as error:
+                raise ProtocolError('invalid search failure report', stderr=stderr, exit_code=exit_code) from error
+            if not isinstance(failure, dict):
+                raise ProtocolError('invalid search failure report', stderr=stderr, exit_code=exit_code)
+            detail = failure.get('error')
+            error_type = (_AnnotationRefused if isinstance(detail, dict) and detail.get('kind') == 'annotation'
+                          else CommandError)
+            raise error_type(Result(failure, exit_code, stderr))
         try:
             plan = json.loads(stdout)
         except (ValueError, UnicodeDecodeError) as error:
