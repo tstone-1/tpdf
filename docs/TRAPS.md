@@ -102,6 +102,7 @@ hop through the index.
 - PDFium folds the horizontal scaling into a text object's matrix, so one em is the font size times that matrix's first row
 - A position measured from the engine already contains what moved the pen
 - A line in the reading order is not one row of text, and the one-line fix regressed real documents
+- A staggered margin note can join two body lines across the gutter
 
 ## Text matching, and scripts that are not English
 - `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
@@ -873,6 +874,7 @@ hop through the index.
 - A clean Windows holds none of the timestamp authorities' roots, and HTTPS hid it for one of them
 - A section over the document's file held every other program off it, and Python called that `Invalid argument`
 - Keys sent into the installed window landed in two runs of five, and the dialog's buttons cannot be invoked
+- A WSL build can exhaust the Windows volume while the guest reports free space
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -27791,3 +27793,22 @@ can assign the same gesture number to adjacent nudges, causing Undo to reverse b
 Passing a plain counter object in the viewer options also gives each view a copy: `scoped`
 recursively copies option objects. The document now issues IDs through a callback, and
 the two-view regression passes that callback through `scoped` before issuing either nudge.
+
+### A staggered margin note can join two body lines across the gutter
+
+On Ubuntu, the glyph bounds of the margin note in `tagged.pdf` overlapped
+successive body lines. Grouping the whole page by vertical overlap and then
+cutting at the gutter left multiple lines in one fragment. The CLI agreed with
+its in-process control and both returned `documentmeans`. The authored manifest
+caught the lost boundary. When a gutter splits a band, group the glyphs on each
+side by vertical overlap again. The drawing coordinates and the original
+line-break expectations can both stay as they are.
+
+### A WSL build can exhaust the Windows volume while the guest reports free space
+
+The Linux build filesystem reported more than 690 GiB free while its virtual
+disk and a concurrent native Rust build were growing on the same Windows
+volume. The native linker ran out of space and Windows detached the virtual
+disk during a write. Before running both builds on one machine, check free
+space on the Windows volume holding the VHDX as well as the volume holding
+the native Cargo target. An ext4 free-space check measures neither limit.

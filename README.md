@@ -1702,8 +1702,10 @@ pip install tpdf-client
 ```
 
 It starts the command-line tool, so the application has to be installed as well; on Linux
-that is the `.deb`, which puts `tpdf-cli` on the `PATH` (the AppImage does not). `uv pip install ./api/python` installs it
-from a checkout.
+that is the `.deb`, which puts `tpdf-cli` on the `PATH` (the AppImage does not).
+The examples using `compare()`, `page_numbers()`, `watermark()`, `reverse()`, `print()`
+or `long_term()` require the checkout client. Run `uv pip install ./api/python` from the
+repository and use the CLI built from that checkout.
 The client has no runtime dependencies and requires Python 3.10 or newer.
 
 ```python
@@ -1762,7 +1764,7 @@ The words are equal when there are zero changes and both sides report zero uncom
 
 ```python
 report = pdf.compare("contract-v1.pdf", "contract-v2.pdf")
-if report["old"]["words_not_compared"] or report["new"]["words_not_compared"]:
+if any(side.get("words_not_compared") != 0 for side in (report["old"], report["new"])):
     print("Comparison incomplete")
 elif not report["changes"]:
     print("The words are equal")

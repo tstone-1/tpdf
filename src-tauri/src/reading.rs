@@ -496,12 +496,40 @@ fn aligned_fragments(view: &View, axes: Axes, gap: f64) -> Vec<Fragment> {
         trailing.insert(first, joined);
     }
 
-    let mut by_cross = items.clone();
-    by_cross.sort_by(|a, b| by(a.extents.cross_start, b.extents.cross_start));
+    let mut fragments = Vec::new();
+    for mut members in line_bands(items) {
+        members.sort_by(|a, b| by(a.extents.along_start, b.extents.along_start));
+        let mut columns = Vec::new();
+        let mut current = Vec::new();
+        let mut reach = f64::NEG_INFINITY;
+        for item in members {
+            if !current.is_empty() && item.extents.along_start - reach > gap {
+                columns.push(std::mem::take(&mut current));
+            }
+            reach = reach.max(item.extents.along_end);
+            current.push(item);
+        }
+        if columns.is_empty() {
+            fragments.push(fragment_of(&current, &trailing));
+        } else {
+            columns.push(current);
+            // The other column can bridge distinct lines across the gutter.
+            for column in columns {
+                for line in line_bands(column) {
+                    fragments.push(fragment_of(&line, &trailing));
+                }
+            }
+        }
+    }
+    fragments
+}
+
+fn line_bands(mut items: Vec<Placed>) -> Vec<Vec<Placed>> {
+    items.sort_by(|a, b| by(a.extents.cross_start, b.extents.cross_start));
     let mut bands: Vec<Vec<Placed>> = Vec::new();
     let mut band: Vec<Placed> = Vec::new();
     let mut band_extents: Option<Extents> = None;
-    for item in by_cross {
+    for item in items {
         if let Some(extents) = band_extents.as_mut() {
             if same_band(*extents, item.extents) {
                 extents.cross_end = extents.cross_end.max(item.extents.cross_end);
@@ -518,25 +546,7 @@ fn aligned_fragments(view: &View, axes: Axes, gap: f64) -> Vec<Fragment> {
     if !band.is_empty() {
         bands.push(band);
     }
-
-    let mut fragments = Vec::new();
-    for mut members in bands {
-        members.sort_by(|a, b| by(a.extents.along_start, b.extents.along_start));
-        let mut current: Vec<Placed> = Vec::new();
-        let mut reach = f64::NEG_INFINITY;
-        for item in members {
-            if !current.is_empty() && item.extents.along_start - reach > gap {
-                fragments.push(fragment_of(&current, &trailing));
-                current.clear();
-            }
-            reach = reach.max(item.extents.along_end);
-            current.push(item);
-        }
-        if !current.is_empty() {
-            fragments.push(fragment_of(&current, &trailing));
-        }
-    }
-    fragments
+    bands
 }
 
 /// `fragmentOf`.

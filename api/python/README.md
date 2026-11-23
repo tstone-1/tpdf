@@ -36,8 +36,9 @@ for file in pdf.search("a.pdf", "b.pdf", texts=["North Pier"])["files"]:
         print(file["path"], match["page"], match["hit"])
 ```
 
-For revision-checked `mark_matches`, use the client and CLI built from the
-same checkout. The PyPI 0.1.0 client can mark partially located matches and
+For `compare`, `page_numbers`, `watermark`, `reverse`, `print`, `long_term` and
+revision-checked `mark_matches`, install with `uv pip install ./api/python`
+from the repository and use the CLI built from the same checkout. The PyPI 0.1.0 client can mark partially located matches and
 does not check whether the source changed. Released CLIs through 26.11.11
 cannot process a revision-checked edit plan.
 

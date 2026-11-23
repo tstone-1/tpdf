@@ -19,6 +19,15 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Renaming radio buttons preserves other fields' appearances and the selected and
+  default answers, including inherited answers. A button can reuse a value freed
+  in the same save. Removing a selected dropdown option also clears an inherited answer.
+- Merge accepts a null optional-content entry and widgets whose selected appearance
+  name is indirect. Text extraction keeps staggered margin notes and body lines separate.
+- The Linux print dialog refuses an empty page range. On macOS and Linux the print
+  command accepts queue names regardless of case and applies local CUPS printing
+  preferences while keeping the chosen pages.
+
 - Merge and Reverse preserve artwork inherited through a null page attribute. Merge
   and Insert Pages refuse to flatten a field whose stored appearance may show an old
   answer. Extract preserves bookmarks whose final sibling link references null.

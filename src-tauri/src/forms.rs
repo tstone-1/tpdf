@@ -1395,6 +1395,41 @@ pub(crate) fn checkbox_appearances(
     (off, on)
 }
 
+pub(crate) fn parent_has_answer(doc: &Document, field: ObjectId) -> bool {
+    doc.get_dictionary(field)
+        .and_then(|field| field.get(b"Parent"))
+        .and_then(Object::as_reference)
+        .ok()
+        .and_then(|parent| inherited(doc, parent, b"V"))
+        .is_some()
+}
+
+/// Mask an inherited answer on this child, leaving its siblings untouched.
+pub(crate) fn clear_choice(
+    field: &mut Dictionary,
+    inherited: bool,
+    multiple: bool,
+    empty_export: bool,
+) -> Result<(), String> {
+    if !inherited {
+        field.remove(b"V");
+        field.remove(b"I");
+    } else {
+        field.set("I", Object::Array(Vec::new()));
+        if multiple {
+            field.set("V", Object::Array(Vec::new()));
+        } else {
+            if empty_export {
+                return Err(said!(
+                    "An empty option prevents clearing this inherited choice"
+                ));
+            }
+            field.set("V", pdf_string(""));
+        }
+    }
+    Ok(())
+}
+
 /// Writes all widgets of a shared field, plus its value, in one rewrite.
 pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
     if changes.is_empty() {
@@ -1490,13 +1525,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                 }
             }
         }
-        let inherited_answer = doc
-            .get_dictionary(change.object)
-            .and_then(|field| field.get(b"Parent"))
-            .and_then(Object::as_reference)
-            .ok()
-            .and_then(|parent| inherited(doc, parent, b"V"))
-            .is_some();
+        let inherited_answer = parent_has_answer(doc, change.object);
         let flags = integer(doc, change.object, b"Ff");
         let field = doc
             .get_dictionary_mut(change.object)
@@ -1562,17 +1591,12 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                     field.set("TI", indices.first().copied().unwrap_or(0) as i64);
                 }
                 if indices.is_empty() {
-                    if !inherited_answer {
-                        field.remove(b"V");
-                        field.remove(b"I");
-                    } else if !multiple {
-                        if options.iter().any(|option| option.export.is_empty()) {
-                            return Err(said!(
-                                "An empty option prevents clearing this inherited choice"
-                            ));
-                        }
-                        field.set("V", pdf_string(""));
-                    }
+                    clear_choice(
+                        field,
+                        inherited_answer,
+                        multiple,
+                        options.iter().any(|option| option.export.is_empty()),
+                    )?;
                 }
             } else {
                 field.remove(b"I");

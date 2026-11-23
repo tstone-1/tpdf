@@ -237,6 +237,10 @@ PDFKit displays the first label for duplicate dropdown exports despite a saved
 control for `choice_pdfkit_check.swift`, which asserts the selected dropdown label
 and radio states. PDFKit's thumbnail also omits list-selection shading; the
 independent parser checks the saved list values, indices and shaded appearances.
+A radio rename detaches the widget's appearance dictionaries before changing state
+names because another field can share them. The terminal field overrides matching
+inherited answers and reset values. All renames in a save use the group's original
+answers and its final set of button names.
 
 Document tabs retain backend handles and edit journals in `src/lib/documenttabs.ts`.
 Only the active tab mounts a Viewer and Sidebar; switching commits open note fields,

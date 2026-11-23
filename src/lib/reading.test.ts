@@ -110,6 +110,12 @@ function columns(order: "natural" | "interleaved"): PageText {
 }
 
 describe("readingOrder", () => {
+  it("keeps lines separate when a staggered margin note bridges their bands", () => {
+    const text = page([...word("ABC", 100, 100), ...word("DEF", 100, 110),
+      ...word("note", 350, 105)]);
+    expect(linesAs(text)).toEqual(["ABC", "DEF", "note"]);
+  });
+
   it("leaves a single column in the order it arrived", () => {
     // The control. Nothing here needs reordering, and an implementation that
     // shuffled the easy case would be worse than the one it replaced.

@@ -919,7 +919,8 @@ pub fn reorder_pages(doc: &mut Document, order: &[ObjectId]) -> Result<(), Strin
 ///
 /// # Errors
 ///
-/// `page` is not a dictionary.
+/// The page dictionary or an inherited attribute cannot be read, or the page
+/// has no usable media box.
 pub fn detached_page(doc: &Document, page: ObjectId) -> Result<Dictionary, String> {
     let mut dictionary = doc
         .get_object(page)

@@ -1786,3 +1786,116 @@ fn changing_text_size_on_a_scaled_page_writes_a_physical_size() {
     assert_eq!(declared(&f.doc, name.object), "/Helv 6 Tf 0 g");
     assert!(drawn(&f.doc, name.widget).contains("/F0 6 Tf"));
 }
+
+#[test]
+fn renames_do_not_mutate_shared_appearances() {
+    let (mut doc, buttons) = with_buttons();
+    let id = buttons[1].widget;
+    let normal = doc
+        .get_dictionary(id)
+        .unwrap()
+        .get_deref(b"AP", &doc)
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get_deref(b"N", &doc)
+        .unwrap()
+        .clone();
+    let states = doc.add_object(normal);
+    let shared = doc.add_object(dictionary! { "N" => states });
+    doc.get_dictionary_mut(id).unwrap().set("AP", shared);
+    // An unrelated checkbox can use exactly the same selected drawing.
+    let other = one(&doc, "Agree").widget;
+    let peer = doc.get_dictionary_mut(other).unwrap();
+    peer.set("AP", shared);
+    peer.set("AS", Object::Name(b"Cash".to_vec()));
+    peer.set("V", Object::Name(b"Cash".to_vec()));
+    apply(&mut doc, &[valued(&buttons[1], "Transfer")]).unwrap();
+    let saved = Document::load_mem(&bytes(&doc)).unwrap();
+    assert_eq!(looks(&saved, id, b"N"), ["Off", "Transfer"]);
+    assert_eq!(looks(&saved, other, b"N"), ["Cash", "Off"]);
+    assert_eq!(name_at(&saved, other, b"AS"), "Cash");
+    assert_eq!(one(&saved, "Agree").value, Value::Checked(true));
+}
+
+/// Put an existing root field under a parent that supplies V and DV.
+fn inherit_answer(doc: &mut Document, field: ObjectId, answer: &Object) -> ObjectId {
+    let parent = doc.add_object(dictionary! { "T" => Object::string_literal("Owner"),
+    "V" => answer.clone(), "DV" => answer.clone(), "Kids" => vec![field.into()] });
+    let child = doc.get_dictionary_mut(field).unwrap();
+    child.remove(b"V");
+    child.remove(b"DV");
+    child.set("Parent", parent);
+    let form = doc
+        .catalog()
+        .unwrap()
+        .get(b"AcroForm")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let fields = doc
+        .get_dictionary(form)
+        .unwrap()
+        .get(b"Fields")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let roots = doc.get_object_mut(fields).unwrap().as_array_mut().unwrap();
+    let slot = roots
+        .iter_mut()
+        .find(|v| v.as_reference().ok() == Some(field))
+        .unwrap();
+    *slot = parent.into();
+    parent
+}
+
+#[test]
+fn radio_renames_use_original_inherited_answers_and_final_button_names() {
+    let (mut doc, buttons) = with_buttons();
+    let group = buttons[0].object;
+    let parent = inherit_answer(&mut doc, group, &Object::Name(b"Cash".to_vec()));
+    apply(
+        &mut doc,
+        &[valued(&buttons[1], "Card"), valued(&buttons[0], "Cash")],
+    )
+    .unwrap();
+    for key in [b"V".as_slice(), b"DV"] {
+        assert_eq!(name_at(&doc, group, key), "Card");
+        assert_eq!(name_at(&doc, parent, key), "Cash");
+    }
+    assert_eq!(name_at(&doc, buttons[1].widget, b"AS"), "Card");
+    assert_eq!(name_at(&doc, buttons[0].widget, b"AS"), "Off");
+
+    let (mut doc, buttons) = with_buttons();
+    apply(&mut doc, &[valued(&buttons[0], "Cash"), gone(&buttons[1])]).unwrap();
+    assert_eq!(name_at(&doc, buttons[0].object, b"V"), "Off");
+    assert_eq!(looks(&doc, buttons[0].widget, b"N"), ["Cash", "Off"]);
+}
+
+#[test]
+fn removing_an_inherited_choice_clears_only_the_child() {
+    let mut f = fixture();
+    let colour = with_colours(&mut f);
+    let green = crate::forms::pdf_string("Green");
+    let parent = inherit_answer(&mut f.doc, colour.object, &green);
+    apply(
+        &mut f.doc,
+        &[with(
+            &colour,
+            Props {
+                options: Some(vec!["Blue".into()]),
+                ..Props::default()
+            },
+        )],
+    )
+    .unwrap();
+    let saved = Document::load_mem(&bytes(&f.doc)).unwrap();
+    assert_eq!(
+        one(&saved, "Owner.Colour").value,
+        Value::Selection(Vec::new())
+    );
+    assert_eq!(
+        saved.get_dictionary(parent).unwrap().get(b"V").unwrap(),
+        &green
+    );
+}

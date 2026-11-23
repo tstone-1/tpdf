@@ -877,7 +877,14 @@ class ListedPage(TypedDict):
     timestamp: bool
 
 
-class AppendixReport(TypedDict):
+class _AppendixRemoval(TypedDict, total=False):
+    # Earlier schema-1 reports omit this measurement.
+    # Objects it had that a later cross-reference section marks free, or
+    # that the document no longer has.
+    removed: int
+
+
+class AppendixReport(_AppendixRemoval):
     """What was written after a signature's range, by the file's own names."""
 
     # tpdf could not read it: the counts are 0, the lists empty, and they
@@ -887,9 +894,6 @@ class AppendixReport(TypedDict):
     added: int
     # Objects it had, written again differently.
     replaced: int
-    # Objects it had that a later cross-reference section marks free, or
-    # that the document no longer has.
-    removed: int
     # What the file calls the added and replaced objects, such as "Sig" and
     # "Annot/Widget".
     kinds: list[str]
@@ -905,7 +909,15 @@ class AppendixReport(TypedDict):
     sentence: str
 
 
-class Signature(TypedDict):
+class _SignatureLock(TypedDict, total=False):
+    # Earlier schema-1 reports omit this measurement.
+    # What the signature says may change after it: 0 when it locks nothing,
+    # 1 no changes (what `sign --lock` writes), 2 form filling and signing,
+    # 3 those and comments. A statement, not a check.
+    lock: int
+
+
+class Signature(_SignatureLock):
     """One signature, as the properties dialog reports it."""
 
     # True for a document timestamp, including an archive timestamp.
@@ -927,10 +939,6 @@ class Signature(TypedDict):
     # `appended_bytes` when this is `unread` or has
     # more `pages_touched` than `pages_listing` has entries.
     appendix: AppendixReport | None
-    # What the signature says may change after it: 0 when it locks nothing,
-    # 1 no changes (what `sign --lock` writes), 2 form filling and signing,
-    # 3 those and comments. A statement, not a check.
-    lock: int
     integrity: IntegrityReport
     # None unless integrity.verdict is "intact" or "weak".
     trust: TrustReport | None
@@ -1465,7 +1473,14 @@ class SearchReport(TypedDict):
 CompareKind = Literal["removed", "added", "replaced"]
 
 
-class ComparedFile(TypedDict):
+class _ComparisonCoverage(TypedDict, total=False):
+    # Earlier schema-1 reports omit this measurement.
+    # Words not compared: they stand where the other document has a page with
+    # no text, which may hold them.
+    words_not_compared: int
+
+
+class ComparedFile(_ComparisonCoverage):
     """One of the two documents `compare` was given."""
 
     # The path as given on the command line.
@@ -1476,9 +1491,6 @@ class ComparedFile(TypedDict):
     pages_without_text: list[int]
     # Words read.
     words: int
-    # Words not compared: they stand where the other document has a page with
-    # no text, which may hold them.
-    words_not_compared: int
 
 
 class CompareChange(TypedDict):

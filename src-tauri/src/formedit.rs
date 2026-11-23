@@ -231,21 +231,12 @@ fn revalued<'a>(
     if *was == to {
         return Ok(None);
     }
-    let others = || {
-        states
-            .iter()
-            .enumerate()
-            .filter(|(at, _)| at != index)
-            .map(|(_, state)| state)
-    };
-    if others().any(|state| *state == to) {
-        return Err(said!(
-            "`{name}`: the group already has a button with the value `{value}`"
-        ));
-    }
-    // Buttons that share a value are chosen together. Renaming one would
-    // take it out of that, which is a different change from the one asked for.
-    if others().any(|state| state == was) {
+    // Buttons sharing their original state are chosen together.
+    if states
+        .iter()
+        .enumerate()
+        .any(|(at, state)| at != *index && state == was)
+    {
         return Err(said!(
             "`{name}` keeps its value: another button of the group has the same one, and they are chosen together"
         ));
@@ -257,81 +248,75 @@ fn revalued<'a>(
     }))
 }
 
-/// Renames the state a radio button has when chosen: in each of its
-/// appearances, in what it is showing now, and in what the group holds and
-/// holds after a reset where that is this button.
-fn revalue(doc: &mut Document, widget: &Widget, was: &[u8], to: &[u8]) -> Result<(), String> {
-    let appearances = match doc
-        .get_dictionary(widget.widget)
-        .map_err(|e| e.to_string())?
-        .get(b"AP")
+/// Check the values that will coexist after the entire edit. An unchanged
+/// group may already have buttons selected in unison.
+fn validate_radio_values(changes: &[Revalued<'_>], removals: &[&Widget]) -> Result<(), String> {
+    let mut vacated = BTreeSet::new();
+    for widget in changes
+        .iter()
+        .map(|change| change.widget)
+        .chain(removals.iter().copied())
     {
-        Ok(Object::Reference(id)) => Some(*id),
-        _ => None,
-    };
-    for look in [b"N".as_slice(), b"D", b"R"] {
-        // The appearances and each look are a dictionary in place or an object of their own.
-        let held = |doc: &Document| -> Option<Object> {
-            let ap = match appearances {
-                Some(id) => doc.get_dictionary(id).ok()?,
-                None => doc
-                    .get_dictionary(widget.widget)
-                    .ok()?
-                    .get(b"AP")
-                    .ok()?
-                    .as_dict()
-                    .ok()?,
-            };
-            ap.get(look).ok().cloned()
-        };
-        let Some(states) = held(doc) else { continue };
-        let rename = |states: &mut lopdf::Dictionary| {
-            if let Some(drawing) = states.remove(was) {
-                states.set(to.to_vec(), drawing);
-            }
-        };
-        match states {
-            Object::Reference(id) => {
-                if let Ok(states) = doc.get_dictionary_mut(id) {
-                    rename(states);
-                }
-            }
-            Object::Dictionary(_) => {
-                let ap = match appearances {
-                    Some(id) => doc.get_dictionary_mut(id).map_err(|e| e.to_string())?,
-                    None => doc
-                        .get_dictionary_mut(widget.widget)
-                        .map_err(|e| e.to_string())?
-                        .get_mut(b"AP")
-                        .and_then(Object::as_dict_mut)
-                        .map_err(|e| e.to_string())?,
-                };
-                if let Ok(states) = ap.get_mut(look).and_then(Object::as_dict_mut) {
-                    rename(states);
-                }
-            }
-            _ => {}
+        if let Control::Radio { index, .. } = &widget.control {
+            vacated.insert((widget.object, *index));
         }
     }
-    let renamed = |dict: &mut lopdf::Dictionary, key: &[u8]| {
-        if dict
-            .get(key)
-            .and_then(Object::as_name)
-            .is_ok_and(|now| now == was)
+    let mut assigned = BTreeSet::new();
+    for change in changes {
+        let widget = change.widget;
+        let Control::Radio { states, .. } = &widget.control else {
+            unreachable!()
+        };
+        if !assigned.insert((widget.object, &change.to))
+            || states.iter().enumerate().any(|(index, state)| {
+                state == &change.to && !vacated.contains(&(widget.object, index))
+            })
         {
-            dict.set(key.to_vec(), Object::Name(to.to_vec()));
+            return Err(said!(
+                "`{name}`: the group already has a button with the value `{value}`",
+                name = widget.name,
+                value = String::from_utf8_lossy(&change.to)
+            ));
         }
-    };
-    renamed(
-        doc.get_dictionary_mut(widget.widget)
-            .map_err(|e| e.to_string())?,
-        b"AS",
-    );
-    let group = doc
-        .get_dictionary_mut(widget.object)
-        .map_err(|e| e.to_string())?;
-    renamed(group, b"V");
-    renamed(group, b"DV");
+    }
+    Ok(())
+}
+
+/// A widget can share both its AP dictionary and its state dictionaries.
+/// Copy only the dictionaries being edited and retain the drawing references.
+fn revalue(doc: &mut Document, change: &Revalued<'_>) -> Result<(), String> {
+    let id = change.widget.widget;
+    let widget = doc.get_dictionary(id).map_err(|e| e.to_string())?;
+    let mut ap = widget
+        .get(b"AP")
+        .and_then(|obj| doc.dereference(obj))
+        .and_then(|(_, obj)| obj.as_dict())
+        .map_err(|e| e.to_string())?
+        .clone();
+    for look in [b"N".as_slice(), b"D", b"R"] {
+        if let Ok(states) = ap
+            .get(look)
+            .and_then(|obj| doc.dereference(obj))
+            .and_then(|(_, obj)| obj.as_dict())
+        {
+            if let Ok(drawing) = states.get(&change.was) {
+                let mut renamed = states.clone();
+                renamed.remove(&change.was);
+                renamed.set(change.to.clone(), drawing.clone());
+                ap.set(look, renamed);
+            }
+        }
+    }
+    let selected = widget
+        .get(b"AS")
+        .and_then(|obj| doc.dereference(obj))
+        .and_then(|(_, obj)| obj.as_name())
+        .is_ok_and(|state| state == change.was);
+    let widget = doc.get_dictionary_mut(id).map_err(|e| e.to_string())?;
+    widget.set("AP", ap);
+    if selected {
+        widget.set("AS", Object::Name(change.to.clone()));
+    }
     Ok(())
 }
 
@@ -742,7 +727,12 @@ fn propertied<'a>(widget: &'a Widget, props: &'a Props) -> Result<Propertied<'a>
 /// form's recipient may be reading. What was chosen stays chosen where the
 /// new choices still have it; otherwise the field holds nothing.
 fn set_options(doc: &mut Document, widget: &Widget, to: &[String]) -> Result<Value, String> {
-    let Control::Choice { options: was, .. } = &widget.control else {
+    let Control::Choice {
+        options: was,
+        multiple,
+        ..
+    } = &widget.control
+    else {
         return Ok(widget.value.clone());
     };
     let exported = |label: &String| -> String {
@@ -775,6 +765,7 @@ fn set_options(doc: &mut Document, widget: &Widget, to: &[String]) -> Result<Val
         }
         other => other.clone(),
     };
+    let inherited_answer = forms::parent_has_answer(doc, widget.object);
     let field = doc
         .get_dictionary_mut(widget.object)
         .map_err(|e| e.to_string())?;
@@ -785,7 +776,12 @@ fn set_options(doc: &mut Document, widget: &Widget, to: &[String]) -> Result<Val
     field.remove(b"I");
     match &value {
         Value::Selection(chosen) if chosen.is_empty() => {
-            field.remove(b"V");
+            forms::clear_choice(
+                field,
+                inherited_answer,
+                *multiple,
+                to.iter().any(|label| exported(label).is_empty()),
+            )?;
         }
         Value::Selection(chosen) => {
             field.set(
@@ -998,6 +994,7 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         }
     }
 
+    validate_radio_values(&values, &removals)?;
     for (widget, rect) in &rects {
         doc.get_dictionary_mut(*widget)
             .map_err(|e| e.to_string())?
@@ -1095,11 +1092,27 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             dict.set("Ff", flags);
         }
     }
-    for Revalued { widget, was, to } in &values {
-        revalue(doc, widget, was, to)?;
-    }
     for widget in removals {
         remove(doc, widget)?;
+    }
+    // Read each group's effective answers before writing any rename. In a
+    // swap the result of the first rename must not be renamed a second time.
+    let mut answers = Vec::new();
+    for change in &values {
+        for key in [b"V".as_slice(), b"DV"] {
+            if forms::inherited(doc, change.widget.object, key)
+                .and_then(|value| value.as_name().ok())
+                == Some(change.was.as_slice())
+            {
+                answers.push((change.widget.object, key, &change.to));
+            }
+        }
+        revalue(doc, change)?;
+    }
+    for (group, key, answer) in answers {
+        doc.get_dictionary_mut(group)
+            .map_err(|e| e.to_string())?
+            .set(key, Object::Name(answer.clone()));
     }
     // Last, on the rectangles as they now are: a text or choice field's
     // appearance is drawn for its size, so a resized one is drawn again.

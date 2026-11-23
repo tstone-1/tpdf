@@ -287,7 +287,7 @@ unsafe fn hand_over_pages(
             .iter()
             .map(|r| (r.start(), r.end()))
             .collect();
-        cups_page_ranges(&ranges)
+        Some(cups_page_ranges(&ranges)?)
     } else {
         None
     };
@@ -319,12 +319,12 @@ unsafe fn hand_over_pages(
     Ok(())
 }
 
-/// The dialog's page ranges as CUPS's `page-ranges` value, or `None` for
-/// none: numbered from 1, in ascending order with overlaps joined, because
+/// The dialog's page ranges as CUPS's `page-ranges` value, refusing an explicit
+/// empty selection: numbered from 1, in ascending order with overlaps joined, because
 /// the CUPS scheduler refuses a job whose ranges go backwards or overlap. So
 /// "3,1" prints page 1 and then page 3. GTK numbers from 0 and keeps an open
 /// end ("5-" in the dialog) as an end before the start, which stays open here.
-pub(crate) fn cups_page_ranges(ranges: &[(i32, i32)]) -> Option<String> {
+pub(crate) fn cups_page_ranges(ranges: &[(i32, i32)]) -> Result<String, String> {
     const OPEN: i64 = i64::MAX;
     let mut spans: Vec<(i64, i64)> = ranges
         .iter()
@@ -347,7 +347,7 @@ pub(crate) fn cups_page_ranges(ranges: &[(i32, i32)]) -> Option<String> {
         }
     }
     if joined.is_empty() {
-        return None;
+        return Err(said!("Enter a page range or choose All Pages"));
     }
     let parts: Vec<String> = joined
         .iter()
@@ -357,7 +357,7 @@ pub(crate) fn cups_page_ranges(ranges: &[(i32, i32)]) -> Option<String> {
             _ => format!("{low}-{high}"),
         })
         .collect();
-    Some(parts.join(","))
+    Ok(parts.join(","))
 }
 
 /// GTK's answer when the job has gone to the print system, or failed to.
@@ -542,20 +542,20 @@ mod tests {
     #[test]
     fn the_dialogs_ranges_become_cups_page_ranges() {
         // GTK's ranges are numbered from 0; CUPS's from 1.
-        assert_eq!(cups_page_ranges(&[(1, 2)]).as_deref(), Some("2-3"));
-        assert_eq!(cups_page_ranges(&[(4, 4)]).as_deref(), Some("5"));
+        assert_eq!(cups_page_ranges(&[(1, 2)]).as_deref(), Ok("2-3"));
+        assert_eq!(cups_page_ranges(&[(4, 4)]).as_deref(), Ok("5"));
         // "5-" in the dialog: GTK keeps the end before the start.
-        assert_eq!(cups_page_ranges(&[(4, -1)]).as_deref(), Some("5-"));
+        assert_eq!(cups_page_ranges(&[(4, -1)]).as_deref(), Ok("5-"));
         // Ascending and joined, as the scheduler requires.
-        assert_eq!(cups_page_ranges(&[(2, 2), (0, 0)]).as_deref(), Some("1,3"));
+        assert_eq!(cups_page_ranges(&[(2, 2), (0, 0)]).as_deref(), Ok("1,3"));
         assert_eq!(
             cups_page_ranges(&[(0, 3), (2, 6), (7, 7)]).as_deref(),
-            Some("1-8")
+            Ok("1-8")
         );
         assert_eq!(
             cups_page_ranges(&[(0, 0), (5, -1), (8, 9)]).as_deref(),
-            Some("1,6-")
+            Ok("1,6-")
         );
-        assert_eq!(cups_page_ranges(&[]), None);
+        assert!(cups_page_ranges(&[]).is_err());
     }
 }

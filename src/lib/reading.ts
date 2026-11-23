@@ -534,11 +534,40 @@ function alignedFragments(text: PageText, axes: Axes, gap: number): Fragment[] {
     trailing.delete(-1);
   }
 
+  const fragments: Fragment[] = [];
+  for (const members of lineBands(items)) {
+    members.sort((a, b) => a.extents.alongStart - b.extents.alongStart);
+    const columns: Placed[][] = [];
+    let current: Placed[] = [];
+    let reach = -Infinity;
+    for (const item of members) {
+      if (current.length > 0 && item.extents.alongStart - reach > gap) {
+        columns.push(current);
+        current = [];
+      }
+      current.push(item);
+      reach = Math.max(reach, item.extents.alongEnd);
+    }
+    if (columns.length === 0) {
+      fragments.push(fragmentOf(current, trailing));
+    } else {
+      columns.push(current);
+      // A staggered adjacent column can bridge separate lines during the
+      // first pass. Recover their individual bands once the gutter is known.
+      for (const column of columns) {
+        for (const line of lineBands(column)) fragments.push(fragmentOf(line, trailing));
+      }
+    }
+  }
+  return fragments;
+}
+
+function lineBands(items: Placed[]): Placed[][] {
   // Banded by cross position, so a line is a line wherever its characters came
   // from. Sorted by the *start* of the extent rather than the middle: a
   // superscript shares a band with the text it hangs off, and its middle does
   // not.
-  const byCross = [...items].sort((a, b) => a.extents.crossStart - b.extents.crossStart);
+  const byCross = items.sort((a, b) => a.extents.crossStart - b.extents.crossStart);
   const bands: Placed[][] = [];
   let band: Placed[] = [];
   let bandExtents: Extents | null = null;
@@ -553,23 +582,7 @@ function alignedFragments(text: PageText, axes: Axes, gap: number): Fragment[] {
     bandExtents = { ...item.extents };
   }
   if (band.length > 0) bands.push(band);
-
-  const fragments: Fragment[] = [];
-  for (const members of bands) {
-    members.sort((a, b) => a.extents.alongStart - b.extents.alongStart);
-    let current: Placed[] = [];
-    let reach = -Infinity;
-    for (const item of members) {
-      if (current.length > 0 && item.extents.alongStart - reach > gap) {
-        fragments.push(fragmentOf(current, trailing));
-        current = [];
-      }
-      current.push(item);
-      reach = Math.max(reach, item.extents.alongEnd);
-    }
-    if (current.length > 0) fragments.push(fragmentOf(current, trailing));
-  }
-  return fragments;
+  return bands;
 }
 
 /** A box no character occupies, for a page whose characters have no boxes. */

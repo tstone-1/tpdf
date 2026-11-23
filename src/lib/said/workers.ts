@@ -130,6 +130,7 @@ export default {
   "GTK would not take the print job: {why}": "GTK hat den Druckauftrag nicht angenommen: {why}",
   "{name:?} prints every page of the document, so it cannot print only the pages chosen; choose All Pages, or a printer":
     "{name} druckt jede Seite des Dokuments und kann deshalb nicht nur die gewählten Seiten drucken; wähle „Alle Seiten“ oder einen Drucker",
+  "Enter a page range or choose All Pages": "Bitte einen Seitenbereich eingeben oder „Alle Seiten“ wählen",
   "GTK dropped the print job without an answer": "GTK hat den Druckauftrag ohne Antwort fallen gelassen",
   "GTK did not say the job was sent within {secs} s":
     "GTK hat nicht innerhalb von {secs} s gemeldet, dass der Auftrag gesendet wurde",

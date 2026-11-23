@@ -44,13 +44,10 @@ pub fn send(
     _library_dir: &std::path::Path,
 ) -> Result<Sent, String> {
     let cups = cups::Cups::load()?;
-    let names = cups.printers();
-    if !names.iter().any(|name| name == printer) {
-        return Err(unknown(printer, &names));
-    }
+    let queue = cups.destination(printer)?;
     let (path, file) = stage(bytes)?;
     drop(file);
-    let sent = cups.print_file(printer, &path, title);
+    let sent = cups.print_file(&queue, &path, title);
     let _ = std::fs::remove_file(&path);
     sent.map(|job| Sent { job: Some(job) })
 }
@@ -244,6 +241,38 @@ mod cups {
         options: *mut Opt,
     }
 
+    pub(super) struct Queue {
+        name: CString,
+        options: Vec<(CString, CString)>,
+    }
+
+    impl Queue {
+        // SAFETY: dest comes from the live cupsGetDests array.
+        unsafe fn from_dest(dest: &Dest, name: &CStr) -> Self {
+            let mut options = Vec::new();
+            if !dest.options.is_null() {
+                for index in 0..usize::try_from(dest.num_options).unwrap_or(0) {
+                    // SAFETY: CUPS supplies num_options live pairs.
+                    let option = unsafe { &*dest.options.add(index) };
+                    // SAFETY: both strings live until cupsFreeDests.
+                    let (key, value) =
+                        unsafe { (CStr::from_ptr(option.name), CStr::from_ptr(option.value)) };
+                    // The staged PDF already contains exactly the job's pages.
+                    if ![b"page-ranges".as_slice(), b"page-set"]
+                        .iter()
+                        .any(|filter| key.to_bytes().eq_ignore_ascii_case(filter))
+                    {
+                        options.push((key.to_owned(), value.to_owned()));
+                    }
+                }
+            }
+            Self {
+                name: name.to_owned(),
+                options,
+            }
+        }
+    }
+
     type GetDests = unsafe extern "C" fn(*mut *mut Dest) -> c_int;
     type FreeDests = unsafe extern "C" fn(c_int, *mut Dest);
     type PrintFile =
@@ -311,14 +340,15 @@ mod cups {
             }
         }
 
-        /// The names of the printers CUPS knows, without instances.
-        pub fn printers(&self) -> Vec<String> {
+        /// Resolve a queue and its local printing preferences before staging.
+        pub(super) fn destination(&self, printer: &str) -> Result<Queue, String> {
             let mut dests: *mut Dest = std::ptr::null_mut();
             // SAFETY: CUPS fills `dests` with `count` entries, freed below.
             let count = unsafe { (self.get_dests)(&mut dests) };
             let mut names = Vec::new();
+            let mut queue = None;
             if dests.is_null() {
-                return names;
+                return Err(super::unknown(printer, &names));
             }
             for i in 0..usize::try_from(count).unwrap_or(0) {
                 // SAFETY: `i` is below the count CUPS returned.
@@ -327,16 +357,20 @@ mod cups {
                     continue;
                 }
                 // SAFETY: a NUL-terminated string CUPS owns until the free.
-                let name = unsafe { CStr::from_ptr(dest.name) }
-                    .to_string_lossy()
-                    .into_owned();
+                let name = unsafe { CStr::from_ptr(dest.name) };
+                if name.to_bytes().eq_ignore_ascii_case(printer.as_bytes()) {
+                    // SAFETY: dest and all its strings remain live until the free below.
+                    queue = Some(unsafe { Queue::from_dest(dest, name) });
+                    break;
+                }
+                let name = name.to_string_lossy().into_owned();
                 if !names.contains(&name) {
                     names.push(name);
                 }
             }
             // SAFETY: the list and count `cupsGetDests` returned, freed once.
             unsafe { (self.free_dests)(count, dests) };
-            names
+            queue.ok_or_else(|| super::unknown(printer, &names))
         }
 
         /// Sends the file at `path` to `printer`, answering the job's number.
@@ -344,20 +378,34 @@ mod cups {
         /// # Errors
         ///
         /// CUPS refusing the job, with its own reason.
-        pub fn print_file(&self, printer: &str, path: &Path, title: &str) -> Result<u32, String> {
+        pub(super) fn print_file(
+            &self,
+            queue: &Queue,
+            path: &Path,
+            title: &str,
+        ) -> Result<u32, String> {
             let text = |value: &str| CString::new(value.replace('\0', "")).unwrap_or_default();
-            let (printer_c, title_c) = (text(printer), text(title));
+            let title_c = text(title);
             let path_c =
                 CString::new(path.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
-            // SAFETY: three NUL-terminated strings that outlive the call, and
-            // no options.
+            // libcups borrows the option names and values for this call.
+            let mut options: Vec<Opt> = queue
+                .options
+                .iter()
+                .map(|(key, value)| Opt {
+                    name: key.as_ptr().cast_mut(),
+                    value: value.as_ptr().cast_mut(),
+                })
+                .collect();
+            // SAFETY: all strings and the array outlive this call. The count
+            // is bounded by the original CUPS destination's c_int count.
             let job = unsafe {
                 (self.print_file)(
-                    printer_c.as_ptr(),
+                    queue.name.as_ptr(),
                     path_c.as_ptr(),
                     title_c.as_ptr(),
-                    0,
-                    std::ptr::null_mut(),
+                    options.len() as c_int,
+                    options.as_mut_ptr(),
                 )
             };
             if job > 0 {
@@ -372,6 +420,7 @@ mod cups {
                     CStr::from_ptr(raw).to_string_lossy().into_owned()
                 }
             };
+            let printer = queue.name.to_string_lossy();
             Err(format!(
                 "CUPS did not take the job for \"{printer}\": {reason}"
             ))
@@ -384,12 +433,20 @@ mod cups {
         use std::os::unix::ffi::OsStrExt;
 
         unsafe extern "C" fn read_job(
-            _: *const c_char,
+            printer: *const c_char,
             path: *const c_char,
             _: *const c_char,
-            _: c_int,
-            _: *mut Opt,
+            count: c_int,
+            options: *mut Opt,
         ) -> c_int {
+            // SAFETY: these pointers are live for the mocked CUPS call.
+            if count != 1
+                || unsafe { CStr::from_ptr(printer) } != c"Office"
+                || unsafe { CStr::from_ptr((*options).name) } != c"sides"
+                || unsafe { CStr::from_ptr((*options).value) } != c"two-sided-long-edge"
+            {
+                return 0;
+            }
             // SAFETY: print_file supplies a live NUL-terminated pathname.
             let bytes = unsafe { CStr::from_ptr(path) }.to_bytes();
             let received = Path::new(OsStr::from_bytes(bytes));
@@ -416,7 +473,41 @@ mod cups {
         }
         let mut cups = Cups::load().expect("CUPS");
         cups.print_file = read_job;
-        assert_eq!(cups.print_file("test", &path, "test"), Ok(1));
+        let mut prefs = [
+            (c"sides", c"two-sided-long-edge"),
+            (c"page-ranges", c"2"),
+            (c"page-set", c"odd"),
+        ]
+        .map(|(k, v)| Opt {
+            name: k.as_ptr().cast_mut(),
+            value: v.as_ptr().cast_mut(),
+        });
+        let mut dest = Dest {
+            name: c"Office".as_ptr().cast_mut(),
+            instance: std::ptr::null_mut(),
+            is_default: 0,
+            num_options: 3,
+            options: prefs.as_mut_ptr(),
+        };
+        // Exercise the name lookup and copy before the simulated CUPS free.
+        thread_local! { static DEST: std::cell::Cell<*mut Dest> = const { std::cell::Cell::new(std::ptr::null_mut()) }; }
+        unsafe extern "C" fn get(out: *mut *mut Dest) -> c_int {
+            // SAFETY: the caller gives CUPS an out-pointer for its list.
+            unsafe {
+                *out = DEST.with(std::cell::Cell::get);
+            }
+            1
+        }
+        unsafe extern "C" fn free(_: c_int, _: *mut Dest) {}
+        DEST.set(&raw mut dest);
+        cups.get_dests = get;
+        cups.free_dests = free;
+        for spelling in ["Office", "office"] {
+            let queue = cups.destination(spelling).unwrap();
+            assert_eq!(cups.print_file(&queue, &path, "test"), Ok(1));
+        }
+        assert!(cups.destination("Unknown").is_err());
+        DEST.set(std::ptr::null_mut());
     }
 }
 
@@ -442,7 +533,7 @@ mod tests {
         // Every machine the tests run on has CUPS: macOS always, Ubuntu with
         // the desktop. The list may be empty; the call must answer.
         let cups = super::cups::Cups::load().expect("CUPS");
-        let _ = cups.printers();
+        assert!(cups.destination("tpdf-no-such-printer").is_err());
         let refused = super::send(
             "tpdf-no-such-printer",
             b"%PDF-1.4",

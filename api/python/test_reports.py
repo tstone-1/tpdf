@@ -190,6 +190,21 @@ class ReportsMatchSamples(unittest.TestCase):
         self.assertNotIn("signatures_complete", previous["files"][0])
         self.assertIs(current["files"][0]["signatures_complete"], True)
 
+    def test_older_schema_one_reports_can_omit_later_measurements(self) -> None:
+        # v26.10.23 compare side, and the signature/appendix keys that
+        # v26.10.17 and v26.10.13 respectively did not yet emit.
+        side = {"path": "survey-v1.pdf", "pages": 3, "pages_without_text": [3], "words": 412}
+        previous = json.loads((Path(__file__).parent / "testdata" / "v26.11.9-verify.json").read_text(encoding="utf-8"))
+        for file in previous["files"]:
+            for signature in file["signatures"]:
+                del signature["lock"]
+                if signature["appendix"] is not None:
+                    del signature["appendix"]["removed"]
+        walk = Walk()
+        walk.check(side, reports.ComparedFile, "old")
+        walk.check(previous, reports.VerifyReport, "verify")
+        self.assertEqual(walk.errors, [])
+
     def test_the_verify_sample_holds_an_appendix_and_a_signature_without_one(self) -> None:
         # A key that may be null is checked as an object only where a sample
         # has it as one; `appendix` is null exactly when nothing was appended.

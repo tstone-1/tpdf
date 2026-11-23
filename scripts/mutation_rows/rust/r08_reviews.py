@@ -2498,17 +2498,17 @@ ROWS += [
     Mutation(
         "printer: a printer nothing knows sent to anyway (macos)",
         "src/printer.rs",
-        "    if !names.iter().any(|name| name == printer) {",
-        "    if names.is_empty() && !names.iter().any(|name| name == printer) {",
-        "cups_loads_and_answers_a_list_and_a_refusal",
+        "if name.to_bytes().eq_ignore_ascii_case(printer.as_bytes()) {",
+        "if !name.to_bytes().is_empty() {",
+        "cups_receives_exact_staging_path",
         only_on="macos",
     ),
     Mutation(
         "printer: a printer nothing knows sent to anyway (linux)",
         "src/printer.rs",
-        "    if !names.iter().any(|name| name == printer) {",
-        "    if names.is_empty() && !names.iter().any(|name| name == printer) {",
-        "cups_loads_and_answers_a_list_and_a_refusal",
+        "if name.to_bytes().eq_ignore_ascii_case(printer.as_bytes()) {",
+        "if !name.to_bytes().is_empty() {",
+        "cups_receives_exact_staging_path",
         only_on="linux",
     ),
 ]

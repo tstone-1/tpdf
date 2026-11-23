@@ -173,13 +173,14 @@ pub fn import(
         .and_then(Object::as_reference)
         .map_err(|e| said!("no page tree: {e}"))?;
 
-    if from
-        .catalog()
-        .is_ok_and(|catalog| catalog.has(b"OCProperties"))
-    {
-        return Err(said!(
-            "pages from a layered PDF cannot be imported with their visibility settings"
-        ));
+    let catalog = from.catalog().map_err(|e| e.to_string())?;
+    if let Ok(entry) = catalog.get(b"OCProperties") {
+        let (_, value) = from.dereference(entry).map_err(|e| e.to_string())?;
+        if !matches!(value, Object::Null) {
+            return Err(said!(
+                "pages from a layered PDF cannot be imported with their visibility settings"
+            ));
+        }
     }
     let pages = pagetree::ordered_pages(from);
     if pages.is_empty() {
@@ -397,8 +398,9 @@ fn static_widget(from: &Document, widget: &Dictionary) -> Result<Dictionary, Str
         Some(Object::Stream(_)) => normal,
         Some(Object::Dictionary(states)) => widget
             .get(b"AS")
-            .and_then(Object::as_name)
             .ok()
+            .and_then(resolve)
+            .and_then(|state| state.as_name().ok())
             .and_then(|name| states.get(name).ok())
             .ok_or_else(missing)?,
         _ => return Err(missing()),
@@ -805,6 +807,47 @@ mod tests {
             action(2).get_deref(b"D", &doc).unwrap().as_name().unwrap(),
             b"Chapter"
         );
+    }
+
+    #[test]
+    fn null_optional_content_is_absent_and_broken_references_are_refused() {
+        let mut other = flat("appendix");
+        let null = other.add_object(Object::Null);
+        for entry in [Object::Null, Object::Reference(null)] {
+            other.catalog_mut().unwrap().set("OCProperties", entry);
+            append(&mut flat("base"), &other).unwrap();
+        }
+        let missing = other.new_object_id();
+        other.catalog_mut().unwrap().set("OCProperties", missing);
+        assert!(append(&mut flat("base"), &other).is_err());
+    }
+
+    #[test]
+    fn flattening_resolves_the_selected_widget_state() {
+        let mut from = flat("form");
+        let selected = from.add_object(Object::Name(b"Yes".to_vec()));
+        let on = from.add_object(Stream::new(dictionary! {}, b"selected".to_vec()));
+        let off = from.add_object(Stream::new(dictionary! {}, Vec::new()));
+        let mut widget = dictionary! {"Rect" => vec![0.into(),0.into(),10.into(),10.into()],
+        "AP" => dictionary!{"N" => dictionary!{"Yes" => on, "Off" => off}}};
+        for state in [Object::Name(b"Yes".to_vec()), Object::Reference(selected)] {
+            widget.set("AS", state);
+            let stamp = super::static_widget(&from, &widget).unwrap();
+            assert_eq!(
+                stamp
+                    .get(b"AP")
+                    .unwrap()
+                    .as_dict()
+                    .unwrap()
+                    .get(b"N")
+                    .unwrap()
+                    .as_reference()
+                    .unwrap(),
+                on
+            );
+        }
+        widget.set("AS", Object::Name(b"Missing".to_vec()));
+        assert!(super::static_widget(&from, &widget).is_err());
     }
 
     #[test]
