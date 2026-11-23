@@ -320,7 +320,7 @@ fn oversized_string(raw: &[u8]) -> bool {
     raw.len() > limit
 }
 
-fn option_text(doc: &Document, value: &Object) -> Result<String, String> {
+pub(crate) fn option_text(doc: &Document, value: &Object) -> Result<String, String> {
     let raw = doc
         .dereference(value)
         .map_err(|e| e.to_string())?
@@ -513,6 +513,11 @@ fn one_drawing(doc: &Document, widget: ObjectId) -> bool {
         .and_then(|a| a.get(b"N").ok())
         .and_then(|o| doc.dereference(o).ok())
         .is_some_and(|(_, o)| o.as_stream().is_ok())
+}
+
+pub(crate) fn appearance_state(doc: &Document, widget: ObjectId) -> Option<&[u8]> {
+    let state = doc.get_dictionary(widget).ok()?.get(b"AS").ok()?;
+    doc.dereference(state).ok()?.1.as_name().ok()
 }
 
 pub(crate) fn button_state(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
@@ -907,13 +912,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             .enumerate()
             .find_map(|(index, i)| {
                 let widget = &result.widgets[*i];
-                let state = doc
-                    .get_dictionary(widget.widget)
-                    .ok()?
-                    .get(b"AS")
-                    .ok()?
-                    .as_name()
-                    .ok()?;
+                let state = appearance_state(doc, widget.widget)?;
                 (state == states[index]).then_some(index)
             })
             .or_else(|| {
@@ -1395,12 +1394,12 @@ pub(crate) fn checkbox_appearances(
     (off, on)
 }
 
-pub(crate) fn parent_has_answer(doc: &Document, field: ObjectId) -> bool {
+pub(crate) fn parent_has(doc: &Document, field: ObjectId, key: &[u8]) -> bool {
     doc.get_dictionary(field)
         .and_then(|field| field.get(b"Parent"))
         .and_then(Object::as_reference)
         .ok()
-        .and_then(|parent| inherited(doc, parent, b"V"))
+        .and_then(|parent| inherited(doc, parent, key))
         .is_some()
 }
 
@@ -1525,7 +1524,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                 }
             }
         }
-        let inherited_answer = parent_has_answer(doc, change.object);
+        let inherited_answer = parent_has(doc, change.object, b"V");
         let flags = integer(doc, change.object, b"Ff");
         let field = doc
             .get_dictionary_mut(change.object)

@@ -136,6 +136,7 @@ export class AddTextDialog {
       event.stopPropagation();
       // Handled here as well as by the dialog's own `cancel`, which a key
       // event the page sends does not raise.
+      if (event.isComposing) return;
       if (event.key === "Escape") {
         event.preventDefault();
         this.settle(null);

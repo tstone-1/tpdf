@@ -4166,8 +4166,8 @@
       try {
         await settleDrafts();
         const pages = { left: left.pageOrder.map(p => p.id), right: right.pageOrder.map(p => p.id) };
-        const a = await gather(names.left, left.slotCount, (slot) => left.loadText(slot));
-        const b = await gather(names.right, right.slotCount, (slot) => right.loadText(slot));
+        const a = await gather(names.left, left.slotCount, left.comparisonText());
+        const b = await gather(names.right, right.slotCount, right.comparisonText());
         blockingTask = COMPARING;
         const result = await call("compare_texts", { left: a, right: b });
         const refused = refusal(names, result);

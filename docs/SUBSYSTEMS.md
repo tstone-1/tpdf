@@ -627,6 +627,13 @@ not by whether one was given.
 
 ## A smaller copy (`tpdf compress`, *Save a smaller copy*)
 
+Downsampling weights each color sample by its soft-mask opacity and accumulates
+one output pixel at a time. If the color and mask grids differ, the color image
+keeps its resolution. Its mask may shrink onto the color grid, or independently
+when every parent is a uniform color. The desktop measures the written file for its size and
+asks the worker for the lossless picture count without serializing another copy.
+
+
 `compress.rs` makes a parsed document smaller before the rewrite encrypts and writes it:
 `Plan::compress` is `No`, `Lossless` or `Pictures { dpi, quality, jpeg }`, and
 `save::rewrite` calls `compress::apply` after the sweep and before `Document::encrypt`,
@@ -836,6 +843,11 @@ written to `/Reason` and `/Location` and left out of the appearance's lines
 earlier request draw what they drew.
 
 ## Comparing two documents (`tpdf compare`, *Compare with*)
+
+Comparison stops and names the page when its fonts require guessing the character
+codes. A desktop page with recovered OCR text uses that text. Word limits join a
+discretionary hyphen and its continuation on the immediately following page.
+
 
 `compare.rs` is the comparison, and both callers run it on the same input: each page's
 characters from the one text extraction (`text.rs`), in the order the pages are shown. The

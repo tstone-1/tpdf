@@ -307,11 +307,7 @@ fn revalue(doc: &mut Document, change: &Revalued<'_>) -> Result<(), String> {
             }
         }
     }
-    let selected = widget
-        .get(b"AS")
-        .and_then(|obj| doc.dereference(obj))
-        .and_then(|(_, obj)| obj.as_name())
-        .is_ok_and(|state| state == change.was);
+    let selected = forms::appearance_state(doc, id) == Some(change.was.as_slice());
     let widget = doc.get_dictionary_mut(id).map_err(|e| e.to_string())?;
     widget.set("AP", ap);
     if selected {
@@ -381,7 +377,7 @@ fn placed(doc: &Document, widget: &Widget, rect: [f32; 4]) -> Result<[f64; 4], S
 enum List {
     Array(ObjectId),
     Key(ObjectId, &'static [u8]),
-    CatalogForm(ObjectId),
+    CatalogForm(ObjectId, &'static [u8]),
 }
 
 fn list_at(doc: &Document, owner: ObjectId, key: &'static [u8]) -> Option<List> {
@@ -392,18 +388,18 @@ fn list_at(doc: &Document, owner: ObjectId, key: &'static [u8]) -> Option<List> 
     }
 }
 
-/// The form's top-level field list.
-fn top_fields(doc: &Document) -> Option<List> {
+/// An array in the AcroForm, whether the form and array are direct or indirect.
+fn form_list(doc: &Document, key: &'static [u8]) -> Option<List> {
     let root = doc
         .trailer
         .get(b"Root")
         .and_then(Object::as_reference)
         .ok()?;
     match doc.get_dictionary(root).ok()?.get(b"AcroForm").ok()? {
-        Object::Reference(form) => list_at(doc, *form, b"Fields"),
-        Object::Dictionary(form) => match form.get(b"Fields").ok()? {
+        Object::Reference(form) => list_at(doc, *form, key),
+        Object::Dictionary(form) => match form.get(key).ok()? {
             Object::Reference(id) => Some(List::Array(*id)),
-            Object::Array(_) => Some(List::CatalogForm(root)),
+            Object::Array(_) => Some(List::CatalogForm(root, key)),
             _ => None,
         },
         _ => None,
@@ -420,14 +416,14 @@ fn items_mut<'a>(doc: &'a mut Document, list: &List) -> Option<&'a mut Vec<Objec
             .ok()?
             .as_array_mut()
             .ok(),
-        List::CatalogForm(root) => doc
+        List::CatalogForm(root, key) => doc
             .get_dictionary_mut(*root)
             .ok()?
             .get_mut(b"AcroForm")
             .ok()?
             .as_dict_mut()
             .ok()?
-            .get_mut(b"Fields")
+            .get_mut(key)
             .ok()?
             .as_array_mut()
             .ok(),
@@ -450,7 +446,7 @@ fn siblings(doc: &Document, field: ObjectId) -> Option<List> {
         .and_then(Object::as_reference)
     {
         Ok(parent) => list_at(doc, parent, b"Kids"),
-        Err(_) => top_fields(doc),
+        Err(_) => form_list(doc, b"Fields"),
     }
 }
 
@@ -463,11 +459,11 @@ fn fields_beside(doc: &Document, field: ObjectId) -> Vec<(ObjectId, String)> {
             .get_dictionary(owner)
             .ok()
             .and_then(|dict| dict.get(key).and_then(Object::as_array).ok().cloned()),
-        Some(List::CatalogForm(root)) => doc
+        Some(List::CatalogForm(root, key)) => doc
             .get_dictionary(root)
             .ok()
             .and_then(|dict| dict.get(b"AcroForm").and_then(Object::as_dict).ok())
-            .and_then(|form| form.get(b"Fields").and_then(Object::as_array).ok().cloned()),
+            .and_then(|form| form.get(key).and_then(Object::as_array).ok().cloned()),
         None => None,
     }
     .unwrap_or_default();
@@ -543,23 +539,14 @@ fn remove(doc: &mut Document, widget: &Widget) -> Result<(), String> {
                     .flatten()
                     .filter_map(|v| v.as_reference().ok())
                     .collect();
-                let on = remaining.iter().find_map(|&id| {
-                    doc.get_dictionary(id)
-                        .ok()?
-                        .get(b"AS")
-                        .ok()?
-                        .as_name()
-                        .ok()
-                        .filter(|s| *s != b"Off")
+                let on = remaining.iter().any(|&id| {
+                    forms::appearance_state(doc, id).is_some_and(|state| state != b"Off")
                 });
                 let selected =
                     matches!(&widget.value, Value::Selection(indices) if indices.contains(index));
-                let removed_was_on = doc
-                    .get_dictionary(widget.widget)
-                    .ok()
-                    .and_then(|w| w.get(b"AS").ok()?.as_name().ok())
+                let removed_was_on = forms::appearance_state(doc, widget.widget)
                     .is_some_and(|state| state != b"Off");
-                let clear_value = (selected || removed_was_on) && on.is_none();
+                let clear_value = (selected || removed_was_on) && !on;
                 let clear_default = removed_state.is_some()
                     && forms::inherited(doc, widget.object, b"DV").and_then(|v| v.as_name().ok())
                         == removed_state
@@ -585,15 +572,7 @@ fn remove(doc: &mut Document, widget: &Widget) -> Result<(), String> {
     take(doc, &beside, gone).ok_or_else(|| said!("the form's field list could not be changed"))?;
     // The calculation order names fields too, and a name left there is a
     // reference that keeps the removed field in the file.
-    let root = doc.trailer.get(b"Root").and_then(Object::as_reference).ok();
-    let form = root.and_then(|root| {
-        doc.get_dictionary(root)
-            .ok()?
-            .get(b"AcroForm")
-            .and_then(Object::as_reference)
-            .ok()
-    });
-    if let Some(order) = form.and_then(|form| list_at(doc, form, b"CO")) {
+    if let Some(order) = form_list(doc, b"CO") {
         take(doc, &order, gone);
     }
     Ok(())
@@ -624,6 +603,14 @@ fn propertied<'a>(widget: &'a Widget, props: &'a Props) -> Result<Propertied<'a>
             Value::Text(text) => text.chars().count(),
             _ => 0,
         };
+        if most > 0
+            && props.default_value.is_none()
+            && widget.default_value.chars().count() > most as usize
+        {
+            return Err(said!(
+                "`{name}`: the default value is longer than the new character limit"
+            ));
+        }
         if most > 0 && holds > most as usize {
             return Err(said!(
                 "`{name}` holds {holds} characters, which is more than the {most} it would take"
@@ -730,6 +717,7 @@ fn set_options(doc: &mut Document, widget: &Widget, to: &[String]) -> Result<Val
     let Control::Choice {
         options: was,
         multiple,
+        editable,
         ..
     } = &widget.control
     else {
@@ -740,6 +728,39 @@ fn set_options(doc: &mut Document, widget: &Widget, to: &[String]) -> Result<Val
             .find(|old| &old.label == label)
             .map_or_else(|| label.clone(), |old| old.export.clone())
     };
+    // Keep surviving reset choices. A free-text combo may also reset to text
+    // outside its option list, so a list edit leaves that default alone.
+    if let Some(default) = forms::inherited(doc, widget.object, b"DV")
+        .filter(|value| !editable && !matches!(value, Object::Null))
+    {
+        let allowed: BTreeSet<_> = to.iter().map(exported).collect();
+        let defaults = default
+            .as_array()
+            .map_or_else(|_| std::slice::from_ref(default), Vec::as_slice);
+        let mut kept = Vec::new();
+        for value in defaults {
+            if allowed.contains(&forms::option_text(doc, value)?) {
+                kept.push(value.clone());
+            }
+        }
+        if kept.len() != defaults.len() {
+            let inherited = forms::parent_has(doc, widget.object, b"DV");
+            let field = doc
+                .get_dictionary_mut(widget.object)
+                .map_err(|e| e.to_string())?;
+            if !kept.is_empty() || (inherited && *multiple) {
+                field.set("DV", Object::Array(kept));
+            } else if !inherited {
+                field.remove(b"DV");
+            } else if allowed.contains("") {
+                return Err(said!(
+                    "An empty option prevents clearing this inherited choice"
+                ));
+            } else {
+                field.set("DV", forms::pdf_string(""));
+            }
+        }
+    }
     let entries: Vec<Object> = to
         .iter()
         .map(|label| {
@@ -765,7 +786,7 @@ fn set_options(doc: &mut Document, widget: &Widget, to: &[String]) -> Result<Val
         }
         other => other.clone(),
     };
-    let inherited_answer = forms::parent_has_answer(doc, widget.object);
+    let inherited_answer = forms::parent_has(doc, widget.object, b"V");
     let field = doc
         .get_dictionary_mut(widget.object)
         .map_err(|e| e.to_string())?;
@@ -1047,12 +1068,7 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             };
             redraw.insert(*field, value);
         }
-        let inherited_default = doc
-            .get_dictionary(*field)
-            .ok()
-            .and_then(|dict| dict.get(b"Parent").ok())
-            .and_then(|parent| parent.as_reference().ok())
-            .is_some_and(|parent| forms::inherited(doc, parent, b"DV").is_some());
+        let inherited_default = forms::parent_has(doc, *field, b"DV");
         let dict = doc.get_dictionary_mut(*field).map_err(|e| e.to_string())?;
         if let Some(tip) = &props.tooltip {
             if tip.is_empty() {

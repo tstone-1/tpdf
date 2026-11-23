@@ -6688,6 +6688,32 @@ fn a_smaller_copy_checks_the_finished_edit_before_replacing_the_destination() {
 }
 
 #[test]
+fn a_missing_number_on_the_staged_page_preserves_the_previous_copy() {
+    let scratch = Scratch::new("numbered-copy-mismatch");
+    let (source, mut plan) = staging_subject(&scratch, "source.pdf").unwrap();
+    let numbers = crate::addedtext::AddedText::page_numbers();
+    let expected = crate::addedtext::plan_lines(2, std::slice::from_ref(&numbers)).unwrap();
+    plan.added_text = vec![numbers];
+    let out = scratch.join("numbered.pdf");
+    std::fs::write(&out, b"earlier copy").unwrap();
+    let writer = FakeWriter::writing(Ok(b"staged output".to_vec()));
+    let why = write_checked_copy(&source, &plan, &out, None, &writer, &|staged| {
+        assert_eq!(std::fs::read(staged).unwrap(), b"staged output");
+        crate::addedtext::verify_lines(&expected, |_| {
+            Ok(crate::text::PageText {
+                codes: "Page 1 of 2".chars().map(u32::from).collect(),
+                ..Default::default()
+            })
+        })
+        .map_err(Refusal::from)
+    })
+    .unwrap_err();
+    assert!(why.message.contains("on page 2"), "{}", why.message);
+    assert_eq!(std::fs::read(&out).unwrap(), b"earlier copy");
+    assert!(leftovers_beside(&out).is_empty());
+}
+
+#[test]
 fn a_checked_copy_that_fails_its_check_leaves_nothing_and_replaces_nothing() {
     let scratch = Scratch::new("checked-copy-refused");
     let (source, plan) = staging_subject(&scratch, "source.pdf").expect("subject");

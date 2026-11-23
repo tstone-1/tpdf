@@ -722,7 +722,10 @@ fn handle(
             Ok(found) => Response::reply(Reply::Codes(Box::new(found))),
             Err(e) => Response::err(e),
         },
-        Request::Shrink { compress } => match render::run_shrink(bindings, document, *compress) {
+        Request::Shrink {
+            compress,
+            count_only,
+        } => match render::run_shrink(bindings, document, *compress, *count_only) {
             Ok(estimate) => Response::reply(Reply::Shrunk(Box::new(estimate))),
             Err(e) => Response::err(e),
         },

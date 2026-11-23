@@ -595,6 +595,17 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
     walk.shown
 }
 
+/// Count drawings without re-encoding the working document for a lossless estimate.
+pub(crate) fn picture_count(doc: &Document) -> Estimate {
+    Estimate {
+        done: Done {
+            pictures: drawn(doc).len(),
+            ..Done::default()
+        },
+        ..Estimate::default()
+    }
+}
+
 /// How a picture's samples are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stored {
@@ -610,6 +621,15 @@ struct Picture {
     /// 1 for grey, 3 for RGB.
     channels: usize,
     stored: Stored,
+}
+
+impl Picture {
+    fn size_at(&self, shown: Shown, dpi: u32) -> (usize, usize) {
+        (
+            side(self.width, shown.width, f64::from(dpi)),
+            side(self.height, shown.height, f64::from(dpi)),
+        )
+    }
 }
 
 /// How many components a colour space has, when it is one this handles.
@@ -795,80 +815,41 @@ fn samples(doc: &Document, id: ObjectId, picture: &Picture) -> Option<Vec<u8>> {
 }
 
 /// `data` scaled to `to` by averaging the area each new pixel covers.
-fn scaled(data: &[u8], from: (usize, usize), to: (usize, usize), channels: usize) -> Vec<u8> {
-    // One axis at a time. Each new sample is the mean of the old samples its
-    // span covers, an old sample on a boundary counted by the part inside.
-    fn axis(
-        data: &[f32],
-        lines: usize,
-        from: usize,
-        to: usize,
-        channels: usize,
-        stride: usize,
-        step: usize,
-    ) -> Vec<f32> {
-        let ratio = from as f64 / to as f64;
-        let mut out = vec![0.0f32; lines * to * channels];
-        for at in 0..to {
-            let (start, end) = (at as f64 * ratio, (at + 1) as f64 * ratio);
-            let (first, last) = (start.floor() as usize, (end.ceil() as usize).min(from));
-            for line in 0..lines {
-                for channel in 0..channels {
-                    let mut sum = 0.0f64;
-                    for old in first..last {
-                        let covered = (end.min((old + 1) as f64) - start.max(old as f64)).max(0.0);
-                        sum += covered * f64::from(data[line * stride + old * step + channel]);
-                    }
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        out[line * to * channels + at * channels + channel] =
-                            (sum / (end - start)) as f32;
-                    }
-                }
-            }
-        }
-        out
-    }
-    let source: Vec<f32> = data.iter().map(|sample| f32::from(*sample)).collect();
-    // Across: every row from `from.0` to `to.0` samples.
-    let across = axis(
-        &source,
-        from.1,
-        from.0,
-        to.0,
-        channels,
-        from.0 * channels,
-        channels,
-    );
-    // Down: turn it, so a column is a line, scale, and turn it back.
-    let mut turned = vec![0.0f32; across.len()];
-    for y in 0..from.1 {
-        for x in 0..to.0 {
-            for c in 0..channels {
-                turned[(x * from.1 + y) * channels + c] = across[(y * to.0 + x) * channels + c];
-            }
-        }
-    }
-    let down = axis(
-        &turned,
-        to.0,
-        from.1,
-        to.1,
-        channels,
-        from.1 * channels,
-        channels,
-    );
-    let mut out = vec![0u8; to.0 * to.1 * channels];
+fn scaled(
+    data: &[u8],
+    from: (usize, usize),
+    to: (usize, usize),
+    channels: usize,
+    alpha: Option<&[u8]>,
+) -> Vec<u8> {
+    // Bounds on each axis in units of 1 / target_length of a source pixel.
+    // Accumulate one output pixel at a time, so scratch is independent of the
+    // photo's size. The 40 MP limit bounds area * alpha * channel well within u64.
+    let mut out = Vec::with_capacity(to.0 * to.1 * channels);
     for y in 0..to.1 {
+        let top = y * from.1;
+        let bottom = top + from.1;
         for x in 0..to.0 {
-            for c in 0..channels {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                {
-                    out[(y * to.0 + x) * channels + c] = down[(x * to.1 + y) * channels + c]
-                        .round()
-                        .clamp(0.0, 255.0)
-                        as u8;
+            let left = x * from.0;
+            let right = left + from.0;
+            let mut sums = [0u64; 3];
+            let mut total = 0;
+            for sy in top / to.1..bottom.div_ceil(to.1) {
+                let height = bottom.min((sy + 1) * to.1) - top.max(sy * to.1);
+                for sx in left / to.0..right.div_ceil(to.0) {
+                    let width = right.min((sx + 1) * to.0) - left.max(sx * to.0);
+                    let index = sy * from.0 + sx;
+                    let weight = (width * height) as u64 * alpha.map_or(1, |a| u64::from(a[index]));
+                    total += weight;
+                    for c in 0..channels {
+                        sums[c] += weight * u64::from(data[index * channels + c]);
+                    }
                 }
+            }
+            for sum in &sums[..channels] {
+                out.push(
+                    u8::try_from((sum + total / 2).checked_div(total).unwrap_or(0)).unwrap_or(255),
+                );
             }
         }
     }
@@ -944,11 +925,7 @@ fn shrink(
     if !shown.width.is_finite() || !shown.height.is_finite() {
         return false;
     }
-    let dpi = f64::from(how.dpi);
-    let to = (
-        side(picture.width, shown.width, dpi),
-        side(picture.height, shown.height, dpi),
-    );
+    let to = picture.size_at(shown, how.dpi);
     let from = (picture.width, picture.height);
     let scaling = to != from;
     if !scaling && picture.stored == Stored::Jpeg {
@@ -958,7 +935,21 @@ fn shrink(
         return false;
     };
     let pixels = if scaling {
-        scaled(&original, from, to, picture.channels)
+        let alpha = if let Some(mask_id) = soft_mask(doc, id) {
+            let Some(mask) = self::picture(doc, mask_id, true) else {
+                return false;
+            };
+            if (mask.width, mask.height) != from {
+                return false;
+            }
+            let Some(alpha) = samples(doc, mask_id, &mask) else {
+                return false;
+            };
+            Some(alpha)
+        } else {
+            None
+        };
+        scaled(&original, from, to, picture.channels, alpha.as_deref())
     } else {
         original
     };
@@ -1014,6 +1005,20 @@ fn soft_mask(doc: &Document, id: ObjectId) -> Option<ObjectId> {
         .ok()
 }
 
+/// After color compression, opacity may be reduced onto the same grid.
+/// A uniform color can use any mask resolution without exposing hidden colors.
+fn can_resize_mask(doc: &Document, parent: ObjectId, target: (usize, usize)) -> bool {
+    let Some(color) = picture(doc, parent, false) else {
+        return false;
+    };
+    (color.width, color.height) == target
+        || samples(doc, parent, &color).is_some_and(|pixels| {
+            pixels
+                .chunks_exact(color.channels)
+                .all(|sample| sample == &pixels[..color.channels])
+        })
+}
+
 /// Shrinks the drawn pictures. Returns how many changed and how many have unknown size.
 fn pictures(
     doc: &mut Document,
@@ -1026,18 +1031,19 @@ fn pictures(
         .count();
     let mut changed = BTreeSet::new();
     // A mask is scaled once, for the largest any of its pictures is shown.
-    let mut masks: BTreeMap<ObjectId, Shown> = BTreeMap::new();
+    let mut masks: BTreeMap<ObjectId, (Shown, Vec<ObjectId>)> = BTreeMap::new();
 
     for (id, shown) in shown {
         // A parent with an unsupported colour space can still depend on a shared mask.
         if let Some(mask) = soft_mask(doc, *id) {
-            let entry = masks.entry(mask).or_default();
+            let (entry, parents) = masks.entry(mask).or_default();
+            parents.push(*id);
             entry.width = entry.width.max(shown.width);
             entry.height = entry.height.max(shown.height);
         }
     }
     for (id, shown) in shown {
-        if let Some(mask) = masks.get_mut(id) {
+        if let Some((mask, _)) = masks.get_mut(id) {
             mask.width = mask.width.max(shown.width);
             mask.height = mask.height.max(shown.height);
         } else if picture(doc, *id, false)
@@ -1046,8 +1052,19 @@ fn pictures(
             changed.insert(*id);
         }
     }
-    for (id, extent) in masks {
-        if picture(doc, id, true).is_some_and(|found| shrink(doc, id, &found, extent, how, true)) {
+    for (id, (extent, parents)) in masks {
+        let Some(mask) = picture(doc, id, true) else {
+            continue;
+        };
+        let target = mask.size_at(extent, how.dpi);
+        if target != (mask.width, mask.height)
+            && !parents
+                .iter()
+                .all(|&parent| can_resize_mask(doc, parent, target))
+        {
+            continue;
+        }
+        if shrink(doc, id, &mask, extent, how, true) {
             changed.insert(id);
         }
     }

@@ -88,6 +88,9 @@ export async function compressCheck(host: OpenCheckHost, expected: string, repor
   const sized = await settle(worked, ESTIMATE_MS);
   report.check("every choice is shown with what it comes to", sized, outcomes().join(" | "));
   if (!sized) return;
+  const lossless = await host.edits()!.compressEstimate(host.path(), null);
+  report.check("the lossless estimate counts the drawn picture and changes none",
+    lossless.pictures === 1 && lossless.picturesChanged === 0, JSON.stringify(lossless));
   report.check("and the three that shrink pictures are each smaller",
     outcomes().slice(1, 4).every((text) => / smaller$/.test(text)), outcomes().join(" | "));
   report.check("no name has been asked for yet", host.saveSuggestions().length === before,

@@ -37,7 +37,7 @@ use crate::worker_proto::{Reply, Request};
 pub const COMMAND: Registered = Registered {
     name: "compare",
     usage: "compare <old.pdf> <new.pdf> [--password-env VAR] [--json]",
-    summary: "Prints every change in the words from the first document to the\n            second, one line per change, as the window's Compare with lists\n            them. Text only: pictures, drawings, formatting and layout are\n            not compared. Exit 1 when the words differ or some could not be\n            compared beside a page with no text, 3 when a document has no\n            text on any page.",
+    summary: "Prints every change in the words from the first document to the\n            second, one line per change, as the window's Compare with lists\n            them. Text only: pictures, drawings, formatting and layout are\n            not compared. Exit 1 when the words differ or some could not be\n            compared beside a page with no text, 3 when a document has no\n            text on any page or a page has text with a guessed encoding.",
     parse: boxed,
 };
 
@@ -152,12 +152,22 @@ fn read(
     let mut input = ComparisonInput::default();
     let mut texts = Vec::new();
 
+    let mappings = super::text::mapping(&mut session).map_err(declined)?;
     for page in 0..count {
         match session
             .ask(Request::Text { page, crop: None })
             .map_err(declined)?
         {
             Reply::Text(text) => {
+                if !text.codes.is_empty()
+                    && mappings
+                        .get(page as usize)
+                        .is_some_and(crate::encoding::PageMapping::unreadable)
+                {
+                    return Err(Failure::new(Exit::Refused, format!(
+                        "{shown}: page {} has text with a guessed character encoding. The comparison stopped.", page + 1
+                    )));
+                }
                 input
                     .add(page, &text.codes, which)
                     .map_err(|why| Failure::new(Exit::Refused, why))?;

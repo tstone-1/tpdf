@@ -2191,7 +2191,13 @@ impl Engine for Workers {
         doc: u32,
         compress: crate::compress::Compress,
     ) -> Result<crate::compress::Estimate, String> {
-        match self.ask(doc, &Request::Shrink { compress })? {
+        match self.ask(
+            doc,
+            &Request::Shrink {
+                compress,
+                count_only: matches!(compress, crate::compress::Compress::Lossless),
+            },
+        )? {
             Reply::Shrunk(estimate) => Ok(*estimate),
             other => Err(mismatched("shrink", &other)),
         }

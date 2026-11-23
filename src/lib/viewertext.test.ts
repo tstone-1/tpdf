@@ -208,6 +208,19 @@ describe("Reading a page's text, and asking for it again", () => {
     }
   });
 
+  it("refuses comparison when the visible page uses guessed character codes", async () => {
+    const viewer = build();
+    try {
+      const previous = core.invoke.getMockImplementation()!;
+      core.invoke.mockImplementation((command, args) => command === "document_mapping"
+        ? Promise.resolve([{ guessing: 0 }, { guessing: 1 }]) : previous(command, args));
+      deleteFirstPage(viewer);
+      await expect(viewer.comparisonText()(0)).rejects.toThrow("Page 1 has text with a guessed character encoding");
+    } finally {
+      viewer.destroy();
+    }
+  });
+
   /** Presses inside a slot's first glyph, left of its midpoint. */
   function press(viewer: Viewer, slot: number): void {
     const at = viewer.screenPoint(slot, 12, 15);

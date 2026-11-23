@@ -159,16 +159,22 @@ fn a_side_is_scaled_only_past_the_slack_and_never_up() {
 fn scaling_averages_the_area_each_new_pixel_covers() {
     // 4 by 2 to 2 by 1: each new pixel is the mean of a 2 by 2 block.
     let data = [10, 20, 100, 200, 30, 40, 110, 190];
-    assert_eq!(scaled(&data, (4, 2), (2, 1), 1), vec![25, 150]);
+    assert_eq!(scaled(&data, (4, 2), (2, 1), 1, None), vec![25, 150]);
     // 3 to 2 across: the middle sample is shared half and half.
-    assert_eq!(scaled(&[0, 90, 180], (3, 1), (2, 1), 1), vec![30, 150]);
+    assert_eq!(
+        scaled(&[0, 90, 180], (3, 1), (2, 1), 1, None),
+        vec![30, 150]
+    );
     // Channels are averaged apart: two RGB pixels to one.
     assert_eq!(
-        scaled(&[10, 200, 0, 30, 100, 50], (2, 1), (1, 1), 3),
+        scaled(&[10, 200, 0, 30, 100, 50], (2, 1), (1, 1), 3, None),
         vec![20, 150, 25]
     );
     // Down only: two rows of two to one row.
-    assert_eq!(scaled(&[0, 10, 100, 30], (2, 2), (2, 1), 1), vec![50, 20]);
+    assert_eq!(
+        scaled(&[0, 10, 100, 30], (2, 2), (2, 1), 1, None),
+        vec![50, 20]
+    );
 }
 
 #[test]
@@ -608,6 +614,40 @@ fn a_change_only_to_opacity_counts_the_parent_and_selects_a_preview() {
 }
 
 #[test]
+fn resampling_color_uses_only_the_visible_part_of_each_pixel() {
+    let colors = [255, 255, 255, 0, 0, 0];
+    let opacity = [255, 0];
+    assert_eq!(scaled(&colors, (2, 1), (1, 1), 3, Some(&opacity)), [255; 3]);
+    assert_eq!(scaled(&opacity, (2, 1), (1, 1), 1, None), [128]);
+    assert_eq!(scaled(&colors, (2, 1), (1, 1), 3, Some(&[0, 0])), [0; 3]);
+}
+
+#[test]
+fn a_finer_mask_keeps_its_grid_when_its_nonuniform_picture_cannot_follow() {
+    let (mut doc, parent) = one_picture(image(220, 220, "DeviceGray".into()), noise(220 * 220));
+    let mask = doc.add_object(Stream::new(
+        image(440, 440, "DeviceGray".into()),
+        noise(440 * 440),
+    ));
+    doc.get_object_mut(parent)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("SMask", mask);
+    let before = stream(&doc, mask).content.clone();
+    let done = apply(&mut doc, SCREEN);
+    assert_eq!(done.pictures_changed, 0);
+    assert_eq!(whole(&doc, parent, b"Width"), 220);
+    assert_eq!(whole(&doc, mask, b"Width"), 440);
+    // Unfiltered data may be compressed without changing its samples.
+    assert_eq!(
+        super::samples(&doc, mask, &super::picture(&doc, mask, true).unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
 fn a_soft_mask_is_scaled_with_its_picture_and_never_stored_as_jpeg() {
     let mut doc = Document::with_version("1.7");
     let mask = doc.add_object(
@@ -660,6 +700,15 @@ fn a_picture_whose_new_form_is_hardly_smaller_is_left() {
     assert_eq!(apply(&mut doc, SCREEN).pictures_changed, 0);
     assert_eq!(stream(&doc, picture).content, stored);
     assert!(!stream(&doc, picture).dict.has(b"DecodeParms"));
+}
+
+#[test]
+fn the_count_only_estimate_counts_drawn_pictures_in_the_working_document() {
+    let (pictured, _) = one_picture(image(400, 400, "DeviceGray".into()), vec![0; 400 * 400]);
+    assert_eq!(super::picture_count(&pictured).done.pictures, 1);
+    let mut empty = Document::with_version("1.7");
+    page_with(&mut empty, "", &[]);
+    assert_eq!(super::picture_count(&empty).done.pictures, 0);
 }
 
 #[test]

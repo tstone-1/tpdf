@@ -229,6 +229,15 @@ describe("gather", () => {
     await expect(gather("separate", 1, load("discre\r\ntionary"), 100, 1)).rejects.toThrow("word limit");
   });
 
+  it("continues a discretionary word on the following page only", async () => {
+    const load = (parts: string[]) => async (slot: number) => ({
+      codes: Array.from(parts[slot]!, c => c.codePointAt(0)!), boxes: [], width_pt: 1, height_pt: 1,
+      quarter_turns: 0, extract_ms: 0,
+    });
+    await expect(gather("continued", 3, load(["dis\u00ad\r\n", "cre\u00ad", "tionary"]), 100, 1)).resolves.toHaveLength(3);
+    await expect(gather("blank", 3, load(["dis\u00ad", "", "tinct"]), 100, 1)).rejects.toThrow("word limit");
+  });
+
   it("stops requesting pages when a side exceeds the character budget", async () => {
     const asked: number[] = [];
     const load = async (slot: number) => {

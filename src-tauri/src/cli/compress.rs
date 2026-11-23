@@ -256,6 +256,7 @@ impl Compress {
         // The estimate, when it is the answer or the preview needs it.
         let estimate: Option<Estimate> = if self.dry_run || self.preview.is_some() {
             let asked = session.ask(Request::Shrink {
+                count_only: false,
                 compress: self.way(),
             });
             match asked {

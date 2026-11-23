@@ -434,9 +434,10 @@ fn describe(document: &Document, key: &[u8], spec: &Object) -> Embedded {
             _ => None,
         }
     };
-    let raw = text(b"UF")
-        .or_else(|| text(b"F"))
-        .filter(|name| !name.trim().is_empty())
+    let raw = [b"UF".as_slice(), b"F"]
+        .into_iter()
+        .filter_map(text)
+        .find(|name| !name.trim().is_empty())
         .unwrap_or_else(|| decode_text_string(key));
     let size = embedded_stream(document, spec)
         .and_then(|file| file.dict.get(b"Params").ok())
@@ -554,6 +555,19 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_blank_unicode_filename_falls_back_to_the_ordinary_filename() {
+        let mut doc = carrying(&[("a", "orders.csv", b"sample", false)], false);
+        let spec = doc
+            .objects
+            .values_mut()
+            .find_map(|value| value.as_dict_mut().ok().filter(|d| d.has(b"EF")))
+            .unwrap();
+        spec.set("UF", Object::string_literal("   "));
+        assert_eq!(list(&doc)[0].name, "orders.csv");
+        assert_eq!(content(&doc, 0).unwrap(), b"sample");
     }
 
     #[test]

@@ -19,6 +19,16 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Removing a form field clears its calculation-order entry. Removing a radio button
+  preserves the selected answer when the remaining widget stores its state indirectly.
+  Changing options or a character limit now accounts for the field's reset value.
+- Picture compression preserves color at transparent edges and uses bounded resampling
+  memory. Lossless desktop estimates count the pictures in the working document.
+- Compare identifies pages with guessed character encodings before reporting word
+  changes. The desktop word limit handles words continued across a page break.
+- Watermark and page-number dialogs allow Enter to confirm composed text. Attachments
+  with a blank Unicode filename use their ordinary filename.
+
 - Renaming radio buttons preserves other fields' appearances and the selected and
   default answers, including inherited answers. A button can reuse a value freed
   in the same save. Removing a selected dropdown option also clears an inherited answer.

@@ -407,7 +407,9 @@ project conventions.
   it says the comparison is incomplete. Words that stand where the other document has a
   page with no text are not listed as removed or added: the tab says how many were not
   compared, since the change may be on that page. A document with no text on any page is
-  not compared at all, and the window says why. It is `tpdf compare` in the window, and lists the same changes.
+  not compared at all, and the window says why. If a page's character encoding leaves
+  its words uncertain, comparison stops and identifies the page. In the window,
+  recognized text from OCR can supply its words. The CLI uses the same comparison rules.
   <!-- built: file.compareWith nav.nextChange nav.previousChange -->
 - Notices when another program rewrites the open file. By default it says so and offers
   a reload; *When the file changes on disk: reload automatically* reloads at once, keeping

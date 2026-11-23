@@ -243,6 +243,10 @@ pub enum Request {
     /// Document-level, from the same `lopdf` parse. The answer is
     /// [`Reply::Shrunk`]: the size, and one picture before and after.
     Shrink {
+        /// The desktop measures the saved file separately. In lossless mode
+        /// it needs only the number of drawn images from this worker.
+        #[serde(default)]
+        count_only: bool,
         /// How the copy would be made smaller.
         compress: crate::compress::Compress,
     },

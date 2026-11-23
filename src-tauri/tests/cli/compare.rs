@@ -384,6 +384,22 @@ pub(super) fn finds_what_changed_in_the_words(report: &mut Report) {
         edited.display().to_string(),
     );
 
+    if let Some(unmapped) = super::fixture("encodings.pdf") {
+        let (exit, out, err) = tool(
+            &["compare", &old, &unmapped.to_string_lossy(), "--json"],
+            &[],
+        );
+        report.check(
+            "compare: guessed text is refused before reporting a word change",
+            exit == 3
+                && serde_json::from_str::<serde_json::Value>(&out).is_ok_and(|body| {
+                    body["error"]["kind"] == "refused" && body.get("changes").is_none()
+                })
+                && err.contains("page 1 has text with a guessed character encoding"),
+            &format!("exit {exit}: {out} {err}"),
+        );
+    }
+
     let (code, out, err) = tool(&["compare", &old, &reflowed, "--json"], &[]);
     let same: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
     report.check(

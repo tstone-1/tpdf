@@ -1874,6 +1874,7 @@ impl Engine for InProcess {
             self.bindings,
             open_slot(&self.docs.borrow(), doc)?,
             compress,
+            matches!(compress, crate::compress::Compress::Lossless),
         )
     }
 
@@ -3071,7 +3072,11 @@ pub(crate) fn run_shrink(
     bindings: Bindings,
     document: &OpenDocument,
     compress: crate::compress::Compress,
+    count_only: bool,
 ) -> Result<crate::compress::Estimate, String> {
+    if count_only {
+        return Ok(crate::compress::picture_count(document.graph().parsed()?));
+    }
     let estimated = document.graph().shrink(compress)?;
     let mut estimate = estimated.estimate;
     if let Some(focus) = estimated.focus {

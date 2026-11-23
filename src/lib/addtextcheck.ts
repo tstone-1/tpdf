@@ -134,14 +134,15 @@ export async function addTextCheck(host: OpenCheckHost, expected: string, report
   report.check("Greek page numbers end on their sentence", greek &&
     shown().trim() === "Saved greek.pdf with page numbers.", `${alert()} ${shown().slice(0, 200)}`);
 
-  // PDFium extracts the WinAnsi soft hyphen as a hard hyphen. The staged
-  // page is valid, but its text differs. The disk check reads the earlier copy.
-  host.answerSave(at("numbered.pdf"));
+  const beforeRefusal = host.saveSuggestions().length;
   await run("page numbers", "Save a copy with page numbers");
-  if (!(await settle(() => dialog() !== null, DIALOG_MS))) throw new Error("the read-back check did not open");
-  field("Text")!.value = "co\u00adoperate";
-  field("Pages")!.value = "2";
+  if (!(await settle(() => dialog() !== null, DIALOG_MS))) throw new Error("the dialog did not open");
+  const input = field("Text")!;
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true }));
+  report.check("composing Enter keeps the text dialog open", dialog() !== null && host.saveSuggestions().length === beforeRefusal, shown());
+  input.value = "co\u00adoperate";
   press("Enter");
-  const refused = await settle(() => shown().includes("on page 2"), WRITE_MS);
-  report.check("a missing line on page two refuses an otherwise valid copy", refused, shown().slice(0, 200));
+  report.check("a soft hyphen is refused before choosing a destination",
+    dialog() !== null && alert().includes("soft hyphen") && host.saveSuggestions().length === beforeRefusal, alert());
+  press("Escape");
 }

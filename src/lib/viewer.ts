@@ -157,6 +157,7 @@ import {
   Search,
   sameOptions,
   type Match,
+  type PageMapping,
   type SearchOptions,
   type SearchScope,
   type ScopeRange,
@@ -202,6 +203,7 @@ const TEXT = catalog({
     noWordsRecognised: "No words could be recognized on this page.",
     notMarked: "The entire selection could not be read. No marks were added.",
     notCopied: "Some of the selected pages' text could not be read, so nothing was copied.",
+    comparisonGuessed: (page: number) => `Page ${page} has text with a guessed character encoding. The comparison stopped.`,
     comparisonReadFailed: (page: number) => `Could not read the text on page ${page}. The comparison stopped.`,
   },
   "en-GB": {
@@ -220,6 +222,7 @@ const TEXT = catalog({
     noWordsRecognised: "Auf dieser Seite konnten keine Wörter erkannt werden.",
     notMarked: "Die Auswahl konnte nicht vollständig gelesen werden. Es wurden keine Markierungen hinzugefügt.",
     notCopied: "Der Text einiger ausgewählter Seiten konnte nicht gelesen werden, daher wurde nichts kopiert.",
+    comparisonGuessed: (page: number) => `Auf Seite ${page} ist die Zeichenkodierung unsicher. Der Vergleich wurde abgebrochen.`,
     comparisonReadFailed: (page: number) => `Der Text auf Seite ${page} konnte nicht gelesen werden. Der Vergleich wurde abgebrochen.`,
   },
   "de-DE-formal": {
@@ -6703,6 +6706,24 @@ export class Viewer {
   textOn(slot: number): PageText | null {
     const at = this.textAt(slot);
     return at ? at.cache.peek(at.page) : null;
+  }
+
+  /** Each source document is checked once per comparison, including imported pages. */
+  comparisonText(): (slot: number) => Promise<PageText | null> {
+    const mappings = new Map<number, PageMapping[]>();
+    return async (slot) => {
+      const text = await this.loadText(slot);
+      const at = this.pages.addressOf(slot, this.opts.doc);
+      if (text?.codes.length && at && !this.recovery.has(at.doc, at.page)) {
+        let mapping = mappings.get(at.doc);
+        if (!mapping) {
+          mapping = await call("document_mapping", { doc: at.doc });
+          mappings.set(at.doc, mapping);
+        }
+        if ((mapping[at.page]?.guessing ?? 0) > 0) throw new Error(TEXT().comparisonGuessed(slot + 1));
+      }
+      return text;
+    };
   }
 
   /**

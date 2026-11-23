@@ -1891,6 +1891,11 @@ fn removing_an_inherited_choice_clears_only_the_child() {
     .unwrap();
     let saved = Document::load_mem(&bytes(&f.doc)).unwrap();
     assert_eq!(
+        crate::forms::inherited(&saved, colour.object, b"DV"),
+        Some(&crate::forms::pdf_string(""))
+    );
+    assert_eq!(crate::forms::inherited(&saved, parent, b"DV"), Some(&green));
+    assert_eq!(
         one(&saved, "Owner.Colour").value,
         Value::Selection(Vec::new())
     );
@@ -1898,4 +1903,95 @@ fn removing_an_inherited_choice_clears_only_the_child() {
         saved.get_dictionary(parent).unwrap().get(b"V").unwrap(),
         &green
     );
+}
+
+#[test]
+fn radio_removal_resolves_the_surviving_widgets_state() {
+    let (mut doc, buttons) = with_buttons();
+    let selected = buttons[1].widget;
+    let shared_look = doc
+        .get_dictionary(selected)
+        .unwrap()
+        .get(b"AP")
+        .unwrap()
+        .clone();
+    doc.get_dictionary_mut(buttons[0].widget)
+        .unwrap()
+        .set("AP", shared_look);
+    let state = doc.add_object(Object::Name(b"Cash".to_vec()));
+    doc.get_dictionary_mut(selected).unwrap().set("AS", state);
+    assert_eq!(widgets(&doc, "Pay")[0].value, Value::Selection(vec![1]));
+    apply(&mut doc, &[gone(&buttons[0])]).unwrap();
+    let saved = Document::load_mem(&bytes(&doc)).unwrap();
+    assert_eq!(name_at(&saved, buttons[0].object, b"V"), "Cash");
+    assert_eq!(
+        crate::forms::appearance_state(&saved, selected),
+        Some(b"Cash".as_slice())
+    );
+}
+
+#[test]
+fn deleting_a_field_removes_its_calculation_reference_in_every_representation() {
+    for direct_form in [false, true] {
+        for direct_order in [false, true] {
+            let mut f = fixture();
+            let removed = one(&f.doc, "Name");
+            let kept = one(&f.doc, "Notes");
+            let form = f
+                .doc
+                .catalog()
+                .unwrap()
+                .get(b"AcroForm")
+                .unwrap()
+                .as_reference()
+                .unwrap();
+            let order = Object::Array(vec![removed.object.into(), kept.object.into()]);
+            let order = if direct_order {
+                order
+            } else {
+                f.doc.add_object(order).into()
+            };
+            f.doc.get_dictionary_mut(form).unwrap().set("CO", order);
+            if direct_form {
+                let direct = f.doc.get_object(form).unwrap().clone();
+                f.doc.catalog_mut().unwrap().set("AcroForm", direct);
+            }
+            apply(&mut f.doc, &[gone(&removed)]).unwrap();
+            crate::sweep::collect(&mut f.doc).unwrap();
+            let saved = Document::load_mem(&bytes(&f.doc)).unwrap();
+            assert!(saved.get_object(removed.object).is_err());
+            let form = saved
+                .catalog()
+                .unwrap()
+                .get_deref(b"AcroForm", &saved)
+                .unwrap()
+                .as_dict()
+                .unwrap();
+            assert_eq!(
+                form.get_deref(b"CO", &saved).unwrap().as_array().unwrap(),
+                &[Object::Reference(kept.object)]
+            );
+        }
+    }
+}
+
+#[test]
+fn a_new_limit_checks_the_existing_reset_value() {
+    let mut f = fixture();
+    let text = one(&f.doc, "Name");
+    f.doc
+        .get_dictionary_mut(text.object)
+        .unwrap()
+        .set("DV", crate::forms::pdf_string("lengthy"));
+    let edit = with(
+        &text,
+        Props {
+            max_length: Some(4),
+            ..Props::default()
+        },
+    );
+    assert!(apply(&mut f.doc, &[edit])
+        .unwrap_err()
+        .contains("default value"));
+    assert!(!f.doc.get_dictionary(text.object).unwrap().has(b"MaxLen"));
 }

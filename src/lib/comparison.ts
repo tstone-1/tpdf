@@ -215,18 +215,24 @@ export async function gather(
   const pages: PageCodes[] = [];
   let characters = 0;
   let words = 0;
+  let continues = false;
   try {
     for (let slot = 0; slot < slots; slot++) {
       const text = await load(slot);
       const codes = text?.codes ?? [];
       characters += codes.length;
       if (characters > maxCharacters) throw new Error(TEXT().tooLong);
-      // Same boundaries as compare.rs: a page ends its last word and a soft
-      // hyphen can extend an existing word but cannot start one.
-      let inWord = false;
+      // A word may continue directly onto the next page after a soft hyphen.
+      const first = codes[0];
+      let inWord = continues && first !== undefined && first <= 0x10ffff
+        && /[\p{Alphabetic}\p{N}]/u.test(String.fromCodePoint(first));
+      let lastContent = codes.length - 1;
+      while (lastContent >= 0 && (codes[lastContent] === 13 || codes[lastContent] === 10)) lastContent--;
+      continues = false;
       for (let i = 0; i < codes.length; i++) {
         const code = codes[i]!;
         if (code === 0xad) {
+          if (inWord && i === lastContent) continues = true;
           // Preserve a word across an explicit discretionary line break.
           const next = i + 1;
           const end = codes[next] === 13 && codes[next + 1] === 10 ? next + 2

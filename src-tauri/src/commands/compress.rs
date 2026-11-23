@@ -150,34 +150,20 @@ pub async fn compress_estimate(
             temp.permissions(std::fs::Permissions::from_mode(0o700));
         }
         let dir = temp.tempdir().map_err(|e| e.to_string())?;
-        let path = dir.path().join("working.pdf");
-        let mut estimate = crate::compress::Estimate::default();
-        if pictures.is_some() {
-            let temporary = if plan.is_identity() {
-                None
-            } else {
-                save::write_checked_copy(
-                    source,
-                    &plan,
-                    &path,
-                    password.as_deref(),
-                    &*writer,
-                    &|_| Ok(()),
-                )
-                .map_err(|why| why.message)?;
-                let info = answered("compress_estimate", |reply| {
-                    service.open(path.clone(), true, password.clone(), reply)
-                })
-                .map_err(|why| why.reason)?;
-                Some(info.id)
-            };
-            let result = answered("compress_estimate", |reply| {
-                service.shrink(temporary.unwrap_or(doc), compress, reply)
-            });
-            if let Some(id) = temporary {
-                answered("compress_estimate", |reply| service.close(id, reply))?;
-            }
-            estimate = result?;
+        // A lossy preview needs the working document before compression. For
+        // lossless mode the count is identical in the final, already staged copy.
+        let edited = !plan.is_identity();
+        let working = dir.path().join("working.pdf");
+        if edited && pictures.is_some() {
+            save::write_checked_copy(
+                source,
+                &plan,
+                &working,
+                password.as_deref(),
+                &*writer,
+                &|_| Ok(()),
+            )
+            .map_err(|why| why.message)?;
         }
         plan.compress = compress;
         let sized = dir.path().join("compressed.pdf");
@@ -190,6 +176,23 @@ pub async fn compress_estimate(
             &|_| Ok(()),
         )
         .map_err(|why| why.message)?;
+        let temporary = if edited {
+            let path = if pictures.is_some() { &working } else { &sized };
+            let info = answered("compress_estimate", |reply| {
+                service.open(path.clone(), true, password.clone(), reply)
+            })
+            .map_err(|why| why.reason)?;
+            Some(info.id)
+        } else {
+            None
+        };
+        let result = answered("compress_estimate", |reply| {
+            service.shrink(temporary.unwrap_or(doc), compress, reply)
+        });
+        if let Some(id) = temporary {
+            answered("compress_estimate", |reply| service.close(id, reply))?;
+        }
+        let estimate = result?;
         Ok(Shrinkage {
             bytes_before,
             bytes_after: file_size(&sized)?,
