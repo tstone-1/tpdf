@@ -1353,7 +1353,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const list = () => document.querySelector<HTMLSelectElement>('.form-fields select[multiple]');
       const radios = () => [...document.querySelectorAll<HTMLInputElement>('.form-fields input[type="radio"]')];
       const single = () => document.querySelector<HTMLSelectElement>('.form-fields select[size]:not([multiple])');
-      const custom = () => document.querySelector<HTMLInputElement>('.form-fields input[list]');
+      const custom = () => document.querySelector<HTMLInputElement>('.form-fields input[data-editable-choice]');
       const sourceForm = await call("document_form", { doc: a.id });
       const mixed = phase === "forms-mixed" || sourceForm.widgets.some((widget) => widget.control.kind === "choice");
       if (mixed) {

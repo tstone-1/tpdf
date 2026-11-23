@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = 'tstone-1/tpdf'
@@ -81,17 +82,49 @@ def require_audited(runs, sha):
     return latest
 
 
-def require_assets(draft, version):
+def tested_packages(run_id):
+    """Read only the package evidence uploaded by this release run."""
+    with tempfile.TemporaryDirectory() as temp:
+        subprocess.run(['gh', 'run', 'download', str(run_id), '--repo', REPO,
+                        '--pattern', 'packaged-api-*', '--dir', temp], check=True, timeout=120)
+        reports = [json.loads(path.read_text(encoding='utf-8'))
+                   for path in Path(temp).glob('packaged-api-*/packaged-api.json')]
+    if sorted(report['platform'] for report in reports) != ['darwin', 'linux', 'win32']:
+        raise RuntimeError('incomplete platform package evidence')
+    return [package for report in reports for package in report['packages']]
+
+
+def require_assets(draft, version, packages):
     installer = f'tpdf_{version}_x64-setup.exe'
     updater = 'tpdf_aarch64.app.tar.gz'
     expected = {'latest.json', installer, installer + '.sig', updater, updater + '.sig',
                 f'tpdf_{version}_aarch64.dmg', f'tpdf_{version}_amd64.deb',
                 f'tpdf_{version}_amd64.AppImage'}
+    # The macOS bundler calls its updater tpdf.app.tar.gz locally. The release
+    # action adds the architecture to that name when it uploads the same bytes.
+    digests = {}
+    for package in packages:
+        name = package['package']
+        if name == 'tpdf.app.tar.gz':
+            name = updater
+        digest = package['sha256']
+        if name in digests or not re.fullmatch(r'[a-f0-9]{64}', digest):
+            raise RuntimeError(f'invalid package evidence for {name}')
+        digests[name] = 'sha256:' + digest
+    tested = expected - {'latest.json', installer + '.sig', updater + '.sig'}
+    if set(digests) != tested:
+        raise RuntimeError('package evidence does not cover the five release packages')
     assets = draft['releaseAssets']
     actual = {item['name'] for item in assets['nodes']}
     if actual != expected or assets['totalCount'] != len(expected):
         raise RuntimeError(f'draft asset mismatch: missing {sorted(expected - actual)}, '
                            f'unexpected {sorted(actual - expected)}, total {assets["totalCount"]}')
+
+    # REST reports the digest of the bytes stored on GitHub for each asset.
+    stored = gh('api', f'repos/{REPO}/releases/{draft["databaseId"]}/assets?per_page=100')
+    if (len(stored) != len(expected) or {a['name'] for a in stored} != expected
+            or any(a.get('digest') != digests[a['name']] for a in stored if a['name'] in tested)):
+        raise RuntimeError('draft assets differ from the tested release packages')
 
 
 def main():
@@ -137,7 +170,7 @@ def main():
     if len(drafts) != 1 or not drafts[0]['isDraft']:
         raise RuntimeError('expected exactly one unpublished draft for this tag')
     if not rehearsal:
-        require_assets(drafts[0], version)
+        require_assets(drafts[0], version, tested_packages(latest['databaseId']))
     print(f'[PASS] {args.tag} at {sha}: all {len(PLATFORMS)} packaged API checks passed in run {latest["databaseId"]}, '
           f'audit run {audit["databaseId"]} passed')
     if args.publish:

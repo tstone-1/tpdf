@@ -2443,7 +2443,7 @@ starts at 0 and increments within the month.
     bypass this helper through the website or direct API calls; do not publish
     a failed draft that way.
 
-    **Check the draft assets before publishing.** The publication helper checks their exact names and count on the selected stable draft. For a manual check, use GraphQL. A complete release
+    **Check the draft assets before publishing.** The publication helper checks their exact names and count on the selected stable draft. It compares the SHA-256 digests of all five distributed packages with the package-test reports from the selected release run. For a manual check, use GraphQL. A complete release
     is **8** files: the `.dmg`, `tpdf_aarch64.app.tar.gz` and its `.sig`, the
     `-setup.exe` and its `.sig`, `latest.json`, and since 26.10.19 the `.deb` and the
     AppImage. It was 8 up to 26.10.10, the last release with an `.msi`, and 6 from 26.10.11

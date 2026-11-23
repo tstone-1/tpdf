@@ -20,7 +20,7 @@ point of writing it as a script rather than a third warning.
 
 WHAT IS COMPARED, and why it is the sequence rather than the text: the ordered
 list of what each step *executes* --- every `uses:` with its pinned SHA and every
-`run:` body, whitespace-normalised. Step `name:`s are not compared, since two
+`run:` body, whitespace-normalised, with its condition and failure policy. Step `name:`s are not compared, since two
 identical commands under different labels are still the same job, and the labels
 are prose. Order is compared because these steps are a sequence with real
 dependencies: fetching PDFium after running the gates would pass a set
@@ -112,6 +112,32 @@ def job_block(text: str, job: str) -> list[str]:
 
 
 def steps(block: list[str]) -> list[str]:
+    """Compare command and execution policy within the same workflow step."""
+    starts = [i for i, line in enumerate(block) if line.startswith("      - ")]
+    out = []
+    for start, stop in zip(starts, [*starts[1:], len(block)]):
+        step = block[start:stop]
+        # Normalize a key on the list marker to the same indent as its siblings.
+        step[0] = "        " + step[0][8:]
+        policy = []
+        for i, line in enumerate(step):
+            match = re.match(r"^        (if|continue-on-error): *(.*)", line)
+            if match:
+                value = match[2].strip()
+                if value in ("|", ">", ">-", "|-"):
+                    body = []
+                    for part in step[i + 1:]:
+                        if part.strip() and not part.startswith("          "):
+                            break
+                        body.append(part.strip())
+                    value = " ".join(body).strip()
+                policy.append(f"{match[1]}={value}")
+        for command in commands(step):
+            out.append(" ".join([command, *sorted(policy)]))
+    return out
+
+
+def commands(block: list[str]) -> list[str]:
     """Extracts what each step executes, in order.
 
     A step is either `uses:` (an action, compared with its pinned SHA) or `run:`
@@ -225,14 +251,42 @@ def authority(workflow: str, block: list[str], whole: str) -> list[str]:
     interpreter and PyYAML is not a dependency here.
     """
     wrong: list[str] = []
-    body = "\n".join(block)
-
     # 1. Read-only, declared either on this job or on the workflow. Job level
-    #    wins where both exist, and either is enough -- what must not happen is
+    #    wins where both exist -- what must not happen is
     #    inheriting `contents: write` because nothing said otherwise.
-    job_level = re.search(r"^\s{4}permissions:\s*$\n\s{6}contents:\s*read\s*$", body, re.M)
-    file_level = re.search(r"^permissions:\s*$\n\s{2}contents:\s*read\s*$", whole, re.M)
-    if not (job_level or file_level):
+    def permissions(lines, indent):
+        prefix = " " * indent
+        for i, line in enumerate(lines):
+            key = re.fullmatch(prefix + r"permissions:\s*([^#]*?)(?:\s*#.*)?", line)
+            if not key:
+                continue
+            value = key[1].strip()
+            if value.startswith("{") and value.endswith("}"):
+                entries = value[1:-1].split(",")
+            elif value:
+                return value == "read-all"
+            else:
+                entries = []
+                for entry in lines[i + 1:]:
+                    if not entry.strip() or entry.lstrip().startswith("#"):
+                        continue
+                    if not entry.startswith(prefix + "  "):
+                        break
+                    entries.append(entry)
+            grants = {}
+            for entry in entries:
+                name, _, access = entry.partition("#")[0].partition(":")
+                grants[name.strip()] = access.strip()
+            return grants.get("contents") == "read" and all(v in ("read", "none") for v in grants.values())
+        return None
+
+    if any(re.match(r"^    continue-on-error:", line) and line.partition(":")[2].strip() != "false" for line in block):
+        wrong.append(f"{workflow}: the gates job must fail when a gate fails")
+
+    effective = permissions(block, 4)
+    if effective is None:
+        effective = permissions(whole.splitlines(), 0)
+    if not effective:
         wrong.append(
             f"{workflow}: the '{JOB}' job can write to the repository -- it installs and runs "
             f"third-party code before the gates, so give it 'permissions:\\n  contents: read'"

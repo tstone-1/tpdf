@@ -19,6 +19,16 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Saving a form preserves untouched multiline answers and empty dropdown labels. Editable
+  dropdowns distinguish options with the same label, and optional radio buttons can be cleared.
+  The CLI lists and fills fields with indirectly stored names.
+- PNG pages preserve colour calibration and use EXIF resolution when no physical pixel
+  density is present. Placing a PNG on an existing page also honors its EXIF rotation.
+- Windows print preview lets readers choose another printer after setup fails, keeps each
+  printer's paper and duplex settings, and previews black-and-white output.
+- A later forward search takes precedence over an earlier reply. Desktop launch errors
+  use the window language, and Linux forwards validated filenames to an open window.
+
 - Cropping clips pending marks, redactions and ruler lines to their page. Region and ruler
   drags use the release point. Closing Find cancels pending jumps, and Previous after
   tab restoration starts at the last match.

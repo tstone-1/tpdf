@@ -739,6 +739,18 @@ pub fn run() {
     let args = launch::desktop_args(std::env::args_os(), |arg| {
         eprintln!("tpdf: ignoring an argument that is not valid Unicode: {arg:?}");
     });
+    // The Linux single-instance plugin reads argv again when it hands a launch
+    // to D-Bus. Give it the same Unicode arguments the cold launch received.
+    #[cfg(target_os = "linux")]
+    if std::env::args_os().any(|arg| arg.to_str().is_none()) {
+        use std::os::unix::process::CommandExt;
+        let error = std::process::Command::new("/proc/self/exe")
+            .arg0(args.first().map_or("tpdf", String::as_str))
+            .args(args.iter().skip(1))
+            .exec();
+        eprintln!("[FAIL] could not forward the validated launch arguments: {error}");
+        std::process::exit(1);
+    }
     // The OCR worker, checked first because it is the narrower marker and
     // because it shares nothing with the parser worker but this dispatch: it
     // maps no PDF library, opens no document, and applies a different profile.
@@ -1152,6 +1164,7 @@ pub fn run() {
             print_preview_page,
             print_confirm,
             print_discard,
+            print_printers,
             print_setup,
             print_printer_settings,
             print_cancel,

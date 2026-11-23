@@ -623,7 +623,7 @@
   import { SyncFollow } from "./lib/syncfollow";
   import { describeFit, percentOf } from "./lib/zoom";
   import { applyPlace, hasPlace, type Opening } from "./lib/launchplace";
-  import { forwardSaid, parseForward } from "./lib/forward";
+  import { ForwardRequests, forwardSaid, parseForward } from "./lib/forward";
 
   /**
    * The window's two page areas. The second is used when two documents are
@@ -5142,6 +5142,7 @@
         const chooser = isLinux()
           ? null
           : {
+              printers: () => call("print_printers", {}),
               setup: (settings: PrintSettings) => call("print_setup", { job: preview.job, settings }),
               driver: (settings: PrintSettings) => call("print_printer_settings", { job: preview.job, settings }),
             };
@@ -5653,6 +5654,7 @@
    * gives: ⌘K was unreachable by any check while it lived in this file.
    */
   function onWindowKey(event: KeyboardEvent) {
+    if (printPreviewDialog?.isOpen) return;
     // First, and it has to be: Escape closes the menu rather than the find bar,
     // and the arrows walk its rows rather than scrolling the document under it.
     // A closed menu consumes nothing, so this costs one boolean per keystroke.
@@ -6311,22 +6313,26 @@
     });
   }
 
+  const forwardRequests = new ForwardRequests();
+
   /**
    * LaTeX forward search (`forward.ts`, `synctex.rs`): the page and the boxes
    * the source line made, marked on `shown` unless the reader has moved to
    * another document by the time the answer comes.
    */
   async function searchForward(shown: Viewer, pdf: string, raw: string): Promise<void> {
+    const view = openView, model = edits;
+    const current = forwardRequests.start(shown, () => stillIn(view, model, shown));
     const asked = parseForward(raw);
     if ("problem" in asked) { say(asked.problem); return; }
-    const view = openView, model = edits;
     try {
       const found = await call("synctex_forward", { pdf, source: asked.source, line: asked.line });
-      if (!stillIn(view, model, shown)) return;
+      if (!current()) return;
       shown.showSourceBoxes(found.page - 1, found.boxes);
       const note = forwardSaid(found, asked.line);
       if (note !== null) tell(note);
     } catch (e) {
+      if (!current()) return;
       say(TEXT().forwardSearchFailed(spokenError(e)));
     }
   }

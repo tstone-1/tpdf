@@ -9,7 +9,21 @@
  * an editor or a script can see it, and the document still opens.
  */
 
+import { catalog, type UiLocale } from "./i18n";
 import { parseZoomPercent, percentOf, MAX_ZOOM, MIN_ZOOM, type Fitted } from "./zoom";
+
+const TEXT = catalog({
+  "en-US": {
+    zoom: (v: string) => `tpdf was asked to open at --zoom "${v}", which is not a zoom: use fit-width, fit-page, fit-height, fit-content, or a percentage from ${percentOf(MIN_ZOOM)} to ${percentOf(MAX_ZOOM)}`,
+    page: (v: string) => `tpdf was asked to open at --page "${v}", which is not a page number`,
+    outside: (v: string, count: number) => `tpdf was asked to open at --page "${v}", and this document has ${count} page${count === 1 ? "" : "s"}`,
+  },
+  "de-DE": {
+    zoom: (v: string) => `Der Wert "${v}" für --zoom ist ungültig. Gültig sind fit-width, fit-page, fit-height, fit-content oder ein Prozentwert von ${percentOf(MIN_ZOOM)} bis ${percentOf(MAX_ZOOM)}`,
+    page: (v: string) => `Der Wert "${v}" für --page ist keine Seitennummer`,
+    outside: (v: string, count: number) => `Mit --page wurde Seite "${v}" angefordert. Das Dokument hat ${count} ${count === 1 ? "Seite" : "Seiten"}`,
+  },
+});
 
 /** A document handed over from outside: `launch::Opening`. */
 export interface Opening {
@@ -38,27 +52,22 @@ const FITS: Record<string, Fitted> = {
 };
 
 /** A `--zoom` value: a fit, a zoom, or what is wrong with it. */
-export function launchZoom(raw: string): { fit: Fitted } | { zoom: number } | { problem: string } {
+export function launchZoom(raw: string, locale?: UiLocale): { fit: Fitted } | { zoom: number } | { problem: string } {
   const typed = raw.trim();
-  const fit = FITS[typed.toLowerCase().replace(/\s+/g, "-")];
-  if (fit) return { fit };
+  const key = typed.toLowerCase().replace(/\s+/g, "-");
+  if (Object.hasOwn(FITS, key)) return { fit: FITS[key]! };
   const zoom = parseZoomPercent(typed);
   if (zoom !== null) return { zoom };
-  return {
-    problem:
-      `tpdf was asked to open at --zoom "${typed}", which is not a zoom: use fit-width, fit-page, ` +
-      `fit-height, fit-content, or a percentage from ${percentOf(MIN_ZOOM)} to ${percentOf(MAX_ZOOM)}`,
-  };
+  return { problem: TEXT(locale).zoom(typed) };
 }
 
 /** A `--page` value: a page counted from 0, or what is wrong with it. */
-export function launchPage(raw: string, pageCount: number): { page: number } | { problem: string } {
+export function launchPage(raw: string, pageCount: number, locale?: UiLocale): { page: number } | { problem: string } {
   const typed = raw.trim();
-  const said = `tpdf was asked to open at --page "${typed}"`;
-  if (!/^[0-9]+$/.test(typed)) return { problem: `${said}, which is not a page number` };
+  if (!/^[0-9]+$/.test(typed)) return { problem: TEXT(locale).page(typed) };
   const page = Number(typed);
   if (page < 1 || page > pageCount) {
-    return { problem: `${said}, and this document has ${pageCount} page${pageCount === 1 ? "" : "s"}` };
+    return { problem: TEXT(locale).outside(typed, pageCount) };
   }
   return { page: page - 1 };
 }

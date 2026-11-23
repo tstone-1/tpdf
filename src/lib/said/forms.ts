@@ -17,6 +17,7 @@ const pages = (n: string): string => (n === "1" ? "1 Seite" : `${n} Seiten`);
 
 export default {
   "the {format} colour profile does not match its samples": "Das Farbprofil der {format}-Datei passt nicht zu ihren Farbkanälen",
+  "the PNG colour calibration is invalid": "Die Farbkalibrierung der PNG-Datei ist ungültig",
   "the JPEG colour profile is incomplete": "Das JPEG-Farbprofil ist unvollständig",
   // formfields.rs
   "`{name}`: a text size is {least} to {most} points, and is left out for one that follows the field":

@@ -68,6 +68,26 @@ fn exif_resolution_uses_physical_units_and_both_axes() {
             jpeg_facts(&with_segment(RGB, 0xe1, &data)).unwrap().dpi,
             expected
         );
+        for density in [None, Some(10_000)] {
+            let mut info = png::Info::with_size(1, 1);
+            info.exif_metadata = Some(data[6..].to_vec().into());
+            info.pixel_dims = density.map(|n| png::PixelDimensions {
+                xppu: n,
+                yppu: n,
+                unit: png::Unit::Meter,
+            });
+            let mut bytes = Vec::new();
+            png::Encoder::with_info(&mut bytes, info)
+                .unwrap()
+                .write_header()
+                .unwrap()
+                .write_image_data(&[128])
+                .unwrap();
+            assert_eq!(
+                picture(&bytes).unwrap().dpi,
+                density.map(|_| (254.0, 254.0)).or(expected)
+            );
+        }
     }
 }
 
@@ -152,6 +172,46 @@ fn png_profile_and_orientation_are_kept_with_the_image_samples() {
         .unwrap();
     assert_eq!(icc.dict.get(b"N").unwrap().as_i64().unwrap(), 3);
     assert_eq!(icc.content, profile);
+}
+
+#[test]
+fn calibrated_png_samples_keep_their_transfer_curve_and_primaries() {
+    let mut info = png::Info::with_size(2, 1);
+    info.gama_chunk = Some(png::ScaledFloat::new(1.0));
+    let space = png_calibration(&info, false).unwrap().unwrap();
+    let items = space.as_array().unwrap();
+    assert_eq!(items[0].as_name().unwrap(), b"CalRGB");
+    let params = items[1].as_dict().unwrap();
+    assert_eq!(
+        params.get(b"Gamma").unwrap().as_array().unwrap(),
+        &vec![Object::Real(1.0); 3]
+    );
+    let matrix = params.get(b"Matrix").unwrap().as_array().unwrap();
+    assert!((matrix[0].as_float().unwrap() - 0.4124).abs() < 0.001);
+    info.icc_profile = Some(rgb_profile().into());
+    assert!(png_calibration(&info, false).unwrap().is_none());
+}
+
+#[test]
+fn placed_png_orients_mirrored_and_rotated_corners() {
+    let red = [255, 0, 0, 255];
+    let blue = [0, 0, 255, 255];
+    for (orientation, size, first) in [(1, (2, 1), red), (2, (2, 1), blue), (6, (1, 2), red)] {
+        let mut info = png::Info::with_size(2, 1);
+        info.color_type = png::ColorType::Rgba;
+        info.exif_metadata = Some(exif(orientation, true)[6..].to_vec().into());
+        let mut bytes = Vec::new();
+        png::Encoder::with_info(&mut bytes, info)
+            .unwrap()
+            .write_header()
+            .unwrap()
+            .write_image_data(&[red, blue].concat())
+            .unwrap();
+        let placed = crate::signature_import::decode_picture(&bytes).unwrap();
+        assert_eq!((placed.width, placed.height), size);
+        assert_eq!(placed.rgba[..4], first);
+        assert_eq!(picture(&bytes).unwrap().orientation, orientation as u8);
+    }
 }
 
 fn own() -> Options {

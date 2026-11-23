@@ -44,7 +44,7 @@ ENTRY_POINTS = {
 SHARED = {"checkreport.ts", "signaturecheck.ts", "signingcheck.ts", "signphase.ts", "saveanswer.ts",
           "screenshotcheck.ts", "recognisecheck.ts", "protectcheck.ts", "picturescheck.ts",
           "compresscheck.ts", "fieldcheck.ts", "screencheck.ts", "closecheck.ts", "addtextcheck.ts",
-          "fitcheck.ts", "diskchangecheck.ts"}
+          "fitcheck.ts", "diskchangecheck.ts", "outsideinput.ts", "clock.ts", "benchtable.ts"}
 
 FAMILY = ENTRY_POINTS | SHARED
 
@@ -187,14 +187,14 @@ def declared_entry_points() -> "set[str]":
 
 
 def shared_importers() -> "list[str]":
-    """Modules under `src/` that import `checkreport` and are not the family."""
+    """Production modules importing a helper reserved for unattended checks."""
     out: "list[str]" = []
     for path in sorted(ROOT.glob("src/**/*")):
         if path.suffix not in (".ts", ".svelte") or path.name.endswith(".test.ts"):
             continue
         if family_name("/" + path.relative_to(ROOT).as_posix()):
             continue
-        if re.search(r'from\s*"\.{1,2}/(?:lib/)?checkreport"', path.read_text(encoding="utf-8")):
+        if re.search(r'from\s*"\.{1,2}/(?:lib/)?(?:checkreport|outsideinput|clock|benchtable)"', path.read_text(encoding="utf-8")):
             out.append(str(path.relative_to(ROOT)))
     return out
 
@@ -244,7 +244,7 @@ def main() -> int:
         problems.append(f"harness entry inventory differs: extra {sorted(declared - ENTRY_POINTS)}, missing {sorted(ENTRY_POINTS - declared)}")
     borrowed = shared_importers()
     if borrowed:
-        problems.append("production imports checkreport: " + ", ".join(borrowed))
+        problems.append("production imports a check-only helper: " + ", ".join(borrowed))
     if checks:
         missing = sorted(name for name in FAMILY if not family.get(name))
         if missing:

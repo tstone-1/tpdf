@@ -60,6 +60,7 @@ export type Drawer = (index: number, width: number, marks: boolean) => Promise<s
 
 /** Windows: asks the backend to set the printer up, with or without the driver's dialog. */
 export interface Chooser {
+  printers(): Promise<string[]>;
   setup(settings: PrintSettings): Promise<PrintSetup>;
   driver(settings: PrintSettings): Promise<PrintSetup>;
 }
@@ -207,6 +208,7 @@ export class PrintPreviewDialog {
   private readonly side: HTMLElement;
   private readonly problem: HTMLElement;
   private readonly print: HTMLButtonElement;
+  private readonly cancel: HTMLButtonElement;
   private readonly printer: HTMLSelectElement;
   private readonly range: HTMLSelectElement;
   private readonly pagesField: HTMLInputElement;
@@ -361,10 +363,10 @@ export class PrintPreviewDialog {
 
     const buttons = document.createElement("div");
     buttons.style.cssText = "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.6rem;";
-    const cancel = this.button(TEXT().cancel, () => this.settle(false));
+    this.cancel = this.button(TEXT().cancel, () => this.settle(false));
     this.print = this.button(TEXT().print, () => this.settle(true));
     this.print.style.fontWeight = "600";
-    buttons.append(cancel, this.print);
+    buttons.append(this.cancel, this.print);
 
     panel.append(this.heading, this.summary, body, this.under, buttons);
     this.backdrop.append(panel);
@@ -394,9 +396,18 @@ export class PrintPreviewDialog {
       if (event.target === this.backdrop) this.settle(false);
     });
     this.backdrop.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Tab") {
+        const controls = [...panel.querySelectorAll<HTMLElement>("button:enabled, input:enabled, select:enabled, [tabindex='0']")]
+          .filter((element) => element.getClientRects().length > 0);
+        const end = event.shiftKey ? controls[0] : controls.at(-1);
+        if (end && end === document.activeElement) {
+          event.preventDefault();
+          (event.shiftKey ? controls.at(-1) : controls[0])?.focus();
+        }
+      }
       if (event.key === "Escape") {
         event.preventDefault();
-        event.stopPropagation();
         this.settle(false);
         return;
       }
@@ -408,7 +419,6 @@ export class PrintPreviewDialog {
         target instanceof HTMLButtonElement || target instanceof HTMLInputElement || target instanceof HTMLSelectElement;
       if (event.key === "Enter" && !typing) {
         event.preventDefault();
-        event.stopPropagation();
         this.settle(true);
       }
     });
@@ -472,7 +482,7 @@ export class PrintPreviewDialog {
       this.lay(pageSheets(pages));
     }
     this.update();
-    this.print.focus();
+    (this.print.disabled ? this.cancel : this.print).focus();
     return new Promise((resolve) => {
       this.pending = resolve;
     });
@@ -523,6 +533,12 @@ export class PrintPreviewDialog {
   /** A control changed, or Printer settings... was pressed. */
   private change(driver: boolean, control?: HTMLElement): void {
     if (!this.shown || !this.chooser) return;
+    if (control === this.printer) {
+      // Invalidate the old device even if another control currently has an error.
+      this.options(this.paper, []);
+      this.twoSidedRow.style.display = "none";
+      this.colourRow.style.display = "none";
+    }
     const read = this.read();
     if (typeof read === "string") {
       this.queued = null;
@@ -532,10 +548,6 @@ export class PrintPreviewDialog {
       return;
     }
     let settings = read;
-    if (control === this.printer) {
-      // The new printer's own paper, sides and colour, not the last one's.
-      settings = { ...settings, paper: null, twoSided: null, colour: null };
-    }
     if (control === this.perSheet) {
       settings = { ...settings, landscape: suggestLandscape(this.pages[0], settings.perSheet) };
       this.orientation.value = settings.landscape ? "landscape" : "portrait";
@@ -573,7 +585,7 @@ export class PrintPreviewDialog {
           this.apply(setup, settings, driver);
         }
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         if (!current()) return;
         if (this.rememberedPrinter !== null && settings.printer === this.rememberedPrinter) {
           // Before the first preview, recover from an unavailable saved device.
@@ -585,7 +597,14 @@ export class PrintPreviewDialog {
           return;
         }
         this.problem.textContent = String(error);
-        this.broken = true;
+        // Even a broken default device must leave the other installed printers reachable.
+        try {
+          const names = await chooser.printers();
+          if (!current()) return;
+          this.options(this.printer, names.map((name) => [name, name]));
+          this.printer.value = settings.printer ?? "";
+        } catch { /* Keep the driver's original setup error. */ }
+        if (current()) this.broken = true;
       })
       .finally(() => {
         if (run !== this.run) return;
@@ -709,6 +728,7 @@ export class PrintPreviewDialog {
       area.style.cssText =
         `position:absolute;overflow:hidden;left:${printable.left}%;top:${printable.top}%;` +
         `width:${printable.width}%;height:${printable.height}%;`;
+      if (this.settings?.colour === false) area.style.filter = "grayscale(1)";
       const pictures = sheet.placements.map((placed) => {
         const at = placementBox(placed, sheet.paper);
         const holder = document.createElement("div");

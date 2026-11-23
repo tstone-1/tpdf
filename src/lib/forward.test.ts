@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { forwardSaid, parseForward } from "./forward";
+import { ForwardRequests, forwardSaid, parseForward } from "./forward";
 
 describe("A --forward-search value", () => {
+  it("ignores a superseded request and a reply after leaving its view", () => {
+    const requests = new ForwardRequests();
+    const view = {};
+    let active = true;
+    const first = requests.start(view, () => active);
+    const second = requests.start(view, () => active);
+    expect(second()).toBe(true);
+    expect(first()).toBe(false);
+    active = false;
+    expect(second()).toBe(false);
+  });
+
   it("is a file and a line, split at the last colon", () => {
     expect(parseForward("/proj/ch/intro.tex:12")).toEqual({ source: "/proj/ch/intro.tex", line: 12 });
     expect(parseForward(" C:\\proj\\intro.tex:7 ")).toEqual({ source: "C:\\proj\\intro.tex", line: 7 });

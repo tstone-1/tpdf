@@ -9,7 +9,7 @@ from copy import deepcopy
 from unittest.mock import patch
 
 from check_packaged_api import ROOT, RUN_SUITE, one
-from check_workflow_parity import packaged_api
+from check_workflow_parity import authority, job_block, packaged_api, steps
 from publish_release import PACKAGE_STEP, PLATFORMS, require_audited, require_passed
 import publish_release
 
@@ -43,6 +43,19 @@ class PackageGateTests(unittest.TestCase):
     @staticmethod
     def cases(statement='pass'):
         return ''.join(f'    def test_{i}(self): {statement}\n' for i in range(12))
+
+    def test_gate_step_policy_and_permission_precedence(self):
+        text = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+        block = job_block(text, 'gates')
+        baseline = steps(block)
+        for key in ["if: runner.os == 'Linux'", 'continue-on-error: true']:
+            changed = [line.replace('      - name: Quality gates', '      - name: Quality gates\n        ' + key)
+                       for line in block]
+            self.assertNotEqual(baseline, steps('\n'.join(changed).splitlines()))
+        self.assertEqual(baseline, steps([line.replace('name: Quality gates', 'name: Build checks') for line in block]))
+        for job, workflow, safe in [('write-all', 'read-all', False), ('read-all', 'write-all', True),
+                                   ('{contents: write}', 'read-all', False), ('{contents: read}', 'write-all', True)]:
+            self.assertEqual(not authority('ci', [f'    permissions: {job}', *block], f'permissions: {workflow}'), safe)
 
     def test_complete_suite_passes(self):
         process, report = self.suite(self.cases())
@@ -150,8 +163,11 @@ class PackageGateTests(unittest.TestCase):
             require_audited([dict(green, status='in_progress')], 'abc')
 
     def test_publish_entry_point_calls_the_guard_before_mutating(self):
-        for mode in ['passed', 'failed', 'moved', 'dry-run', 'unaudited', 'audit-red', 'mismatch', 'rc-check', 'rc-publish', 'unsigned', 'missing-sig', 'substituted']:
+        for mode in ['passed', 'failed', 'moved', 'dry-run', 'unaudited', 'audit-red', 'mismatch', 'rc-check', 'rc-publish', 'unsigned', 'missing-sig', 'substituted', 'stale']:
             tag = 'v26.9.22-rc1' if mode.startswith('rc-') else 'v26.9.22'
+            packages = ['tpdf.app.tar.gz', 'tpdf_26.9.22_aarch64.dmg', 'tpdf_26.9.22_x64-setup.exe',
+                        'tpdf_26.9.22_amd64.deb', 'tpdf_26.9.22_amd64.AppImage']
+            evidence = [dict(package=p, sha256='a' * 64) for p in packages]
             calls = []
             reads = 0
             def fake_gh(*args):
@@ -196,6 +212,11 @@ class PackageGateTests(unittest.TestCase):
                     remote = dict(totalCount=len(assets), nodes=[dict(name=name) for name in assets])
                     return dict(data=dict(repository=dict(releases=dict(nodes=[
                         dict(databaseId=2, tagName=tag, isDraft=True, releaseAssets=remote)]))))
+                if args == ('api', 'repos/tstone-1/tpdf/releases/2/assets?per_page=100'):
+                    names = [*packages[1:], 'tpdf_aarch64.app.tar.gz', 'tpdf_aarch64.app.tar.gz.sig',
+                             'tpdf_26.9.22_x64-setup.exe.sig', 'latest.json']
+                    return [dict(name=p, digest='sha256:' + ('b' if mode == 'stale' and p.endswith('.deb') else 'a') * 64)
+                            for p in names]
                 if args[:3] == ('api', '--method', 'PATCH'):
                     return dict(draft=False)
                 raise AssertionError(args)
@@ -203,16 +224,19 @@ class PackageGateTests(unittest.TestCase):
             if mode not in ['dry-run', 'rc-check']:
                 argv.append('--publish')
             with self.subTest(mode=mode), patch.object(publish_release, 'gh', fake_gh), \
+                    patch.object(publish_release, 'tested_packages', return_value=evidence) as reports, \
                     patch.object(sys, 'argv', argv), patch('builtins.print'):
                 if mode == 'rc-publish':
                     with patch('sys.stderr'), self.assertRaises(SystemExit):
                         publish_release.main()
                     self.assertEqual(calls, [])
-                elif mode in ['failed', 'moved', 'unaudited', 'audit-red', 'mismatch', 'unsigned', 'missing-sig', 'substituted']:
+                elif mode in ['failed', 'moved', 'unaudited', 'audit-red', 'mismatch', 'unsigned', 'missing-sig', 'substituted', 'stale']:
                     with self.assertRaises(RuntimeError):
                         publish_release.main()
                 else:
                     self.assertEqual(publish_release.main(), 0)
+                if mode in ('passed', 'stale'):
+                    reports.assert_called_once_with(1)
                 mutations = [args for args in calls if args[:3] == ('api', '--method', 'PATCH')]
                 self.assertEqual(len(mutations), int(mode == 'passed'))
 

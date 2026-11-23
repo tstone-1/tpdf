@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  FormLayer, answerError, fieldValue, sameAnswer, shownAlign, shownChoices, shownValue, standingChoice, tabStop,
+  FormLayer, radioExport, answerError, fieldValue, sameAnswer, shownAlign, shownChoices, shownValue, standingChoice, tabStop,
   ringFrom,
   type FormWidget,
 } from "./forms";
@@ -248,26 +248,75 @@ describe("Tab in the form's controls", () => {
     return { layer, inputs, revealed, tab };
   }
 
-  it("scopes each radio group and editable combo list to its mounted form", () => {
-    const mount = (label: string) => {
-      const radios: FormWidget[] = [0, 1].map((index) => ({
-        ...text, widget: [20 + index, 0], value: [0],
-        control: { kind: "radio", index, states: [[65], [66]], unison: false, no_toggle_off: true },
-      }));
-      const combo: FormWidget = { ...text, object: [30, 0], widget: [31, 0], value: [0],
-        control: { kind: "choice", combo: true, editable: true, multiple: false, options: [{ export: label, label }] } };
-      const host = document.createElement("div");
-      new FormLayer(host, { widgets: [...radios, combo] }, () => null, async () => {}, () => {}, () => {});
-      const children = (host as unknown as FakeElement).children[0]!.children;
-      const [first, second, list, input] = children as unknown as [HTMLInputElement, HTMLInputElement, HTMLDataListElement, HTMLInputElement];
-      expect(second.name).toBe(first.name);
-      expect(input.getAttribute("list")).toBe(list.id);
-      expect(children[2]!.children[0]!.value).toBe(label);
-      return { name: first.name, id: list.id };
+  it("keeps radio groups separate across two mounted views", () => {
+    const radio: FormWidget = { ...text, value: [0], control: {
+      kind: "radio", index: 0, states: [[65]], unison: false, no_toggle_off: true } };
+    for (let i = 0; i < 2; i++) {
+      new FormLayer(dom.root as unknown as HTMLElement, { widgets: [radio] }, () => null, async () => {}, () => {}, () => {});
+    }
+    const inputs = dom.root.children.map(node => node.children[0] as unknown as HTMLInputElement);
+    expect(inputs[0]!.name).not.toBe(inputs[1]!.name);
+  });
+
+  it("keeps empty labels and normalized line endings until the reader edits them", async () => {
+    const create = document.createElement.bind(document);
+    document.createElement = (tag: string) => {
+      const element = create(tag);
+      if (tag === "textarea") {
+        let value = "";
+        Object.defineProperty(element, "value", { get: () => value,
+          set: (raw: string) => { value = raw.replace(/\r\n?/g, "\n"); } });
+      }
+      return element;
     };
-    const left = mount("Left"); const right = mount("Right");
-    expect(left.name).not.toBe(right.name);
-    expect(left.id).not.toBe(right.id);
+    const combo: FormWidget = { ...text, object: [24, 0], value: [0], control: {
+      kind: "choice", combo: true, editable: true, multiple: false,
+      options: [{ label: "", export: "empty-label" }, { label: "Same", export: "first" }, { label: "Same", export: "second" }] } };
+    const writes: unknown[] = [];
+    const layer = new FormLayer(dom.root as unknown as HTMLElement, { widgets: [
+      { ...text, multiline: true, value: "A\r\nB\rC" }, combo] }, () => null,
+      async (_, value) => { writes.push(value); }, () => {}, () => {});
+    const [area, frame] = dom.root.children[0]!.children;
+    const [entry, picker] = frame!.children;
+    expect(area!.value).toBe("A\nB\nC");
+    layer.commit();
+    await layer.settle();
+    expect(writes).toEqual([]);
+    expect(picker!.children.map(option => option.value)).toEqual(["", "0", "1", "2"]);
+    expect(picker!.children[2]!.textContent).not.toBe(picker!.children[3]!.textContent);
+    for (const index of [2, 1]) {
+      picker!.value = String(index);
+      picker!.dispatch("change", {});
+      expect(entry!.value).toBe("Same");
+      expect(writes.at(-1)).toEqual([index]);
+    }
+    entry!.value = "free text";
+    entry!.dispatch("change", {});
+    expect(writes.at(-1)).toBe("free text");
+  });
+
+  it("withholds the visible sibling of an unfillable widget and permits an unrelated answer", () => {
+    new FormLayer(dom.root as unknown as HTMLElement, { widgets: [text, { ...text, reason: "This field is hidden" },
+      { ...text, object: [66, 0], name: "Other" }] }, () => null, async () => {}, () => {}, () => {});
+    expect(dom.root.children[0]!.children.map(input => input.getAttribute("aria-label"))).toEqual(["Other"]);
+  });
+
+  it("clears only a radio that allows toggling off, and decodes its export like the CLI", () => {
+    const control = { kind: "radio" as const, index: 0, states: [[0xe9], [0xc3, 0xa9]], unison: false, no_toggle_off: false };
+    expect(radioExport(control, 0)).toBe("é");
+    expect(radioExport(control, 1)).toBe("é");
+    expect(radioExport({ ...control, exports: ["export"] }, 0)).toBe("export");
+    const writes: unknown[] = [];
+    for (const no_toggle_off of [true, false]) {
+      new FormLayer(dom.root as unknown as HTMLElement, { widgets: [{ ...text, value: [0], control: { ...control, no_toggle_off } }] },
+        () => null, async (_, value) => { writes.push(value); }, () => {}, () => {});
+      const button = dom.root.children.at(-1)!.children[0]!;
+      let clicks = 0;
+      Object.assign(button, { click() { clicks++; button.dispatch("click", {}); } });
+      button.dispatch("keydown", { key: " ", preventDefault: () => {} });
+      expect(clicks).toBe(no_toggle_off ? 0 : 1);
+    }
+    expect(writes).toEqual([[]]);
   });
 
   it("accepts an unchanged multi-selection after its choices are reordered", async () => {

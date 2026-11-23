@@ -200,7 +200,7 @@ pub fn dimensions_within(bytes: &[u8], limits: &Limits) -> Result<(u32, u32), St
     Err(invalid())
 }
 
-fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<Vec<u8>, String> {
+fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec<u8>, u8), String> {
     let invalid = |_| refusal.to_string();
     let pixels = width as usize * height as usize;
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
@@ -222,14 +222,17 @@ fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<Vec<u
     if frame.bit_depth != png::BitDepth::Eight {
         return Err(refusal.into());
     }
-    match frame.color_type {
-        png::ColorType::Rgba if size == pixels * 4 => Ok(decoded),
-        png::ColorType::GrayscaleAlpha if size == pixels * 2 => Ok(decoded
+    reader.finish().map_err(invalid)?;
+    let orientation = crate::imagepages::png_orientation(reader.info());
+    let rgba = match frame.color_type {
+        png::ColorType::Rgba if size == pixels * 4 => decoded,
+        png::ColorType::GrayscaleAlpha if size == pixels * 2 => decoded
             .chunks_exact(2)
             .flat_map(|p| [p[0], p[0], p[0], p[1]])
-            .collect()),
-        _ => Err(refusal.into()),
-    }
+            .collect(),
+        _ => return Err(refusal.into()),
+    };
+    Ok((rgba, orientation))
 }
 
 fn jpeg(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<Vec<u8>, String> {
@@ -342,7 +345,7 @@ fn averaged(
 pub fn decode(bytes: &[u8]) -> Result<Image, String> {
     let size = dimensions(bytes)?;
     let rgba = if bytes.starts_with(&PNG) {
-        png(bytes, size, INVALID)?
+        png(bytes, size, INVALID)?.0
     } else {
         jpeg(bytes, size, INVALID)?
     };
@@ -413,7 +416,7 @@ pub fn oriented(image: Image, orientation: u8) -> Image {
 /// A picture in a PNG or JPEG file's bytes, upright and scaled to
 /// [`placed_size`]: what a page holds.
 ///
-/// [`decode`]'s path with [`PICTURE`]'s limits, no trimming, and a JPEG's
+/// [`decode`]'s path with [`PICTURE`]'s limits, no trimming, and the picture's
 /// EXIF orientation applied, since a photograph from a phone is usually
 /// stored on its side.
 ///
@@ -424,7 +427,7 @@ pub fn oriented(image: Image, orientation: u8) -> Image {
 pub fn decode_picture(bytes: &[u8]) -> Result<Image, String> {
     let size = dimensions_within(bytes, &PICTURE)?;
     let (rgba, orientation) = if bytes.starts_with(&PNG) {
-        (png(bytes, size, PICTURE.invalid)?, 1)
+        png(bytes, size, PICTURE.invalid)?
     } else {
         (
             jpeg(bytes, size, PICTURE.invalid)?,

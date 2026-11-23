@@ -399,6 +399,21 @@ pub struct Setup {
     pub sheets: Vec<Vec<crate::print_layout::Placement>>,
 }
 
+/// Lists installed Windows printers, including when configuring a device failed.
+#[tauri::command]
+pub async fn print_printers() -> Result<Vec<String>, String> {
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(crate::printers_win::list)
+            .await
+            .map_err(|e| said!("the printer could not be asked: {e}"))?
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
 /// Applies the preview's settings to its printer and lays the job out on the
 /// paper that gives. The default printer when none is named.
 ///

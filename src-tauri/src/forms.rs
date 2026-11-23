@@ -706,7 +706,10 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 let d = doc
                     .get_dictionary(id)
                     .map_err(|_| said!("Unreadable form field"))?;
-                if let Ok(raw) = d.get(b"T").and_then(Object::as_str) {
+                if let Ok(raw) = d
+                    .get(b"T")
+                    .and_then(|value| crate::encoding::resolve(doc, value).as_str())
+                {
                     if raw.len() > 1024 {
                         return Err(said!("This form contains an oversized field name"));
                     }
@@ -2194,6 +2197,62 @@ pub(crate) mod tests {
             std::fs::write(path, &bytes).unwrap();
         }
         (Document::load_mem(&bytes).unwrap(), field, check)
+    }
+
+    #[test]
+    fn indirect_partial_names_on_parent_and_terminal_fields_are_joined() {
+        let (mut doc, field, _) = fixture();
+        let parent = doc
+            .get_dictionary(field)
+            .unwrap()
+            .get(b"Parent")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        for id in [field, parent] {
+            let name = doc.get_dictionary(id).unwrap().get(b"T").unwrap().clone();
+            let reference = doc.add_object(name);
+            doc.get_dictionary_mut(id).unwrap().set("T", reference);
+        }
+        let form = scan(&doc).unwrap();
+        assert_eq!(
+            form.widgets
+                .iter()
+                .filter(|w| w.name == "ACME.answer")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn editable_choices_with_equal_labels_write_the_selected_export() {
+        let (mut doc, _, combo, _) = mixed_fixture();
+        let field = doc.get_dictionary_mut(combo).unwrap();
+        field.set("Ff", (1 << 17) | (1 << 18));
+        let options =
+            ["A", "B"].map(|code| Object::Array(vec![pdf_string(code), pdf_string("Same")]));
+        field.set("Opt", options.to_vec());
+        field.remove(b"V");
+        field.remove(b"I");
+        for (index, code) in ["A", "B"].into_iter().enumerate() {
+            write(
+                &mut doc,
+                &[Change {
+                    object: combo,
+                    value: Value::Selection(vec![index]),
+                }],
+            )
+            .unwrap();
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).unwrap();
+            let saved = Document::load_mem(&bytes).unwrap();
+            let field = saved.get_dictionary(combo).unwrap();
+            assert_eq!(option_text(&saved, field.get(b"V").unwrap()).unwrap(), code);
+            assert_eq!(
+                field.get(b"I").unwrap().as_array().unwrap(),
+                &vec![Object::Integer(index as i64)]
+            );
+        }
     }
 
     #[test]

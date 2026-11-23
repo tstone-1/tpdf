@@ -453,19 +453,21 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
   const dialog = new PrintPreviewDialog(host);
   const previous = localStorage.getItem("tpdf.print-settings");
   const requests: PrintSettings[] = [], draws: number[] = [];
-  let installed = "Printer A", driverCopies = 3;
+  let installed = "Printer A", driverCopies = 3, brokenDefault = false;
   let holdSetup = false, finishSetup = () => {}, releaseDraw = () => {};
   const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
   const reply = (s: PrintSettings, copies: number): PrintSetup => ({
-    printers: [installed],
+    printers: brokenDefault ? ["Printer B", "Printer C"] : [installed],
     device: { printer: installed, papers: [{ id: 1, name: "A4" }], paper: 1,
-      landscape: !!s.landscape, copies, mostCopies: 10, twoSided: "off", colour: true },
+      landscape: !!s.landscape, copies, mostCopies: 10, twoSided: "off", colour: s.colour ?? true },
     paper: { width: 595, height: 842, left: 10, top: 10, printableWidth: 575, printableHeight: 822 },
     sheets: (s.pages ?? [0, 1]).map(page => [{ page, x: 0, y: 0, width: 575, height: 822, turned: false }]),
   });
   const chooser: Chooser = {
+    printers: async () => ["Printer B", "Printer C"],
     setup: async s => {
       requests.push(s);
+      if (!s.printer && brokenDefault) throw new Error("default unavailable");
       if (s.printer && s.printer !== installed) throw new Error("printer removed");
       if (holdSetup) await new Promise<void>(resolve => { finishSetup = resolve; });
       return reply(s, Math.min(s.copies, 10));
@@ -540,6 +542,42 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
     record("a removed remembered printer recovers to the installed printer", requests[0]?.printer === "Printer A"
       && requests.length === 2 && retry?.printer === null && retry.paper === null && retry.twoSided === null
       && retry.colour === null && names.join() === installed && !print.disabled, names.join());
+    // A failing default still offers the available devices. Copies can change
+    // while a device opens without reusing the previous printer's settings.
+    dialog.close();
+    localStorage.removeItem("tpdf.print-settings");
+    brokenDefault = true;
+    const recovered = job();
+    await turn();
+    const printer = control<HTMLSelectElement>("select");
+    record("a failed default leaves an alternative printer available",
+      print.disabled && [...printer.options].some(option => option.value === installed), printer.value);
+    change(printer, installed);
+    await turn();
+    const colour = control<HTMLOptionElement>('option[value="black"]').parentElement as HTMLSelectElement;
+    change(colour, "black");
+    await turn();
+    record("accepted monochrome applies to the displayed sheet",
+      !!host.querySelector('img')?.closest('[style*="grayscale(1)"]'), colour.value);
+    change(colour, "colour");
+    await turn();
+    record("accepted colour restores the displayed sheet",
+      !!host.querySelector("img") && !host.querySelector('img')!.closest('[style*="grayscale(1)"]'), colour.value);
+    installed = "Printer C";
+    holdSetup = true;
+    change(printer, installed);
+    change(copies, "2");
+    holdSetup = false;
+    finishSetup();
+    await turn();
+    const last = requests.at(-1);
+    record("changing copies while switching printers preserves device defaults",
+      last?.printer === installed && last.copies === 2 && last.paper === null
+      && last.twoSided === null && last.colour === null, JSON.stringify(last));
+    enter();
+    if (dialog.isOpen) dialog.close();
+    const confirmed = await recovered;
+    record("the replacement printer can print", confirmed.print && confirmed.settings?.printer === installed, installed);
   } finally {
     releaseDraw();
     dialog.close();

@@ -726,6 +726,7 @@ export interface Commands {
   print_confirm: { args: { job: number; settings?: PrintSettings | null }; reply: void };
   print_discard: { args: { job: number }; reply: void };
   /** Windows: sets the preview's printer up and lays the job out on its paper. */
+  print_printers: { args: Record<string, never>; reply: string[] };
   print_setup: { args: { job: number; settings: PrintSettings }; reply: PrintSetup };
   /** Windows: the driver's own settings dialog, then as `print_setup`. */
   print_printer_settings: { args: { job: number; settings: PrintSettings }; reply: PrintSetup };

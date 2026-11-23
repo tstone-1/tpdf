@@ -63,7 +63,11 @@ export type FormControl = { kind: "text" | "checkbox" | "unsupported" }
 
 /** The string a recipient sees when this button is the form's answer. */
 export function radioExport(control: Extract<FormControl, { kind: "radio" }>, index: number): string {
-  return control.exports?.[index] ?? new TextDecoder().decode(new Uint8Array(control.states[index] ?? []));
+  const explicit = control.exports?.[index];
+  if (explicit !== undefined) return explicit;
+  const bytes = new Uint8Array(control.states[index] ?? []);
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { return Array.from(bytes, (byte) => String.fromCharCode(byte)).join(""); }
 }
 
 /** Mirrors the worker's AcroForm reply. Object ids name shared fields. */
@@ -222,12 +226,15 @@ export function answerError(widget: FormWidget, value: FormValue): string | null
 
 interface Mounted {
   widget: FormWidget;
+  frame: HTMLElement;
   input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
   accepted: FormValue;
+  /** The DOM may normalize a PDF string when displaying it (for example CRLF). */
+  displayed: string;
   pending: number;
   /** A list's choices as the control offers them, and the element that holds them. */
   choices: ShownChoice[];
-  list: HTMLElement | null;
+  list: HTMLSelectElement | null;
 }
 
 /** Array identity changes at every IPC reply; equality is about the selected indices. */
@@ -316,6 +323,7 @@ export class FormLayer {
     host.append(this.node);
     // A split view can mount the same PDF object numbers twice in this document.
     const prefix = `form-${++nextLayerId}`;
+    const blocked = new Set(form.widgets.filter((w) => w.reason !== null).map((w) => fieldKey(w.object)));
     for (const widget of form.widgets) {
       // A place for a signature is pressed, not typed into.
       if (this.sign && isEmptySignature(widget)) {
@@ -332,42 +340,57 @@ export class FormLayer {
         this.node.append(button);
         continue;
       }
-      if (widget.reason) continue;
+      if (blocked.has(fieldKey(widget.object))) continue;
       const kind = widget.control;
       const input = kind.kind === "choice" && !kind.editable ? document.createElement("select") : widget.multiline ? document.createElement("textarea") : document.createElement("input");
       if (input instanceof HTMLInputElement) {
         input.type = kind.kind === "radio" ? "radio" : kind.kind === "checkbox" ? "checkbox" : "text";
         if (kind.kind === "radio") input.name = `${prefix}-${fieldKey(widget.object)}${kind.unison ? `-${kind.index}` : ""}`;
       }
-      let list: HTMLElement | null = null;
+      let list: HTMLSelectElement | null = null;
       if (kind.kind === "choice") {
         if (input instanceof HTMLSelectElement) {
           input.multiple = kind.multiple && !kind.combo;
           list = input;
         } else {
-          list = document.createElement("datalist"); list.id = `${prefix}-options-${fieldKey(widget.widget)}`;
-          input.setAttribute("list", list.id); this.node.append(list);
+          list = document.createElement("select");
+          input.dataset.editableChoice = "";
+          list.setAttribute("aria-label", `${widget.name || TEXT().formField}: ${TEXT().chooseAnOption}`);
+          list.style.cssText = "pointer-events:auto;box-sizing:border-box;min-width:0;width:1.8em;max-width:50%;font:inherit;padding:0";
         }
       }
       input.setAttribute("aria-label", widget.name || TEXT().formField);
       input.dataset.field = fieldKey(widget.object);
       input.autocomplete = "off";
       input.spellcheck = false;
-      input.disabled = widget.reason !== null;
-      input.title = widget.reason === null ? (widget.tooltip || widget.name) : spoken(widget.reason);
+      input.title = widget.tooltip || widget.name;
       if (widget.required) input.required = true;
       input.style.cssText = "position:absolute;box-sizing:border-box;margin:0;pointer-events:auto;border:1px solid #4674be88;border-radius:1px;background:#f4f7ff;color:#171717;padding:2px;font:12px Helvetica,Arial,sans-serif;resize:none;min-width:0;min-height:0";
       if (widget.align && widget.align !== "left") input.style.textAlign = widget.align;
-      const control: Mounted = { widget, input, accepted: widget.value, pending: 0, choices: [], list };
+      const frame = list && list !== input ? document.createElement("div") : input;
+      if (frame !== input && list) {
+        frame.style.position = "absolute";
+        input.style.position = "static";
+        input.style.flex = "1";
+        frame.append(input, list);
+      }
+      this.node.append(frame);
+      const control: Mounted = { widget, frame, input, accepted: widget.value, displayed: "", pending: 0, choices: [], list };
       if (kind.kind === "choice") this.offer(control, kind.options.map((option, index) => ({ label: option.label, index })));
       this.controls.push(control);
       this.put(control, widget.value);
       input.addEventListener("pointerdown", (event) => event.stopPropagation());
-      input.addEventListener("keydown", (raw) => {
+      const handleKey = (raw: Event) => {
         const event = raw as KeyboardEvent;
         // Save and application undo retain their usual meaning. Ordinary typing
         // must never reach the viewer's page-navigation shortcuts.
         if (!(event.metaKey || event.ctrlKey)) event.stopPropagation();
+        if (kind.kind === "radio" && !kind.no_toggle_off && event.key === " ") {
+          // Native radios suppress activation by Space when already checked.
+          event.preventDefault();
+          if (!event.repeat) input.click();
+          return;
+        }
         if (kind.kind === "radio" && ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) {
           const group = this.controls.filter((c) => fieldKey(c.widget.object) === fieldKey(widget.object));
           const direction = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1;
@@ -379,7 +402,8 @@ export class FormLayer {
           if (!stop.to && stop.moved) { this.reveal(widget); this.layout(); }
           event.preventDefault();
         }
-        if (event.key === "Tab") {
+        const withinCombo = frame !== input && (event.shiftKey ? event.currentTarget === list : event.currentTarget === input);
+        if (event.key === "Tab" && !withinCombo) {
           const stop = this.stopIn(this.controls, this.controls.indexOf(control), event.shiftKey ? -1 : 1);
           if (stop.further) event.preventDefault();
           if (stop.to) stop.to.input.focus({ preventScroll: true });
@@ -387,15 +411,42 @@ export class FormLayer {
           // keyboard is still in, so the reader sees where they are.
           else if (stop.moved) { this.reveal(widget); this.layout(); }
         }
-        if (event.key === "Escape") { input.blur(); event.preventDefault(); }
-      });
+        if (event.key === "Escape" && (frame === input || event.currentTarget !== list)) { input.blur(); event.preventDefault(); }
+      };
+      input.addEventListener("keydown", handleKey);
+      if (kind.kind === "radio" && !kind.no_toggle_off) {
+        input.addEventListener("click", () => {
+          const selected = Array.isArray(control.accepted) && control.accepted.some((index) =>
+            index === kind.index || (kind.unison && sameAnswer(kind.states[index]!, kind.states[kind.index]!)));
+          if (selected) {
+            (input as HTMLInputElement).checked = false;
+            this.commitOne(control, false, []);
+          }
+        });
+      }
       input.addEventListener("input", () => {
         if (sameAnswer(this.read(control), control.accepted)) this.drafts.delete(control);
         else this.drafts.add(control);
       });
       input.addEventListener("blur", () => { if (!this.disposed) this.commitOne(control, false); });
       input.addEventListener("change", () => { if (kind.kind !== "text") this.commitOne(control, false); });
-      this.node.append(input);
+      if (list && list !== input) {
+        const picker = list;
+        picker.addEventListener("pointerdown", (event) => event.stopPropagation());
+        picker.addEventListener("keydown", handleKey);
+        picker.addEventListener("change", () => {
+          if (picker.value === "") {
+            input.value = "";
+            this.commitOne(control, false, []);
+            return;
+          }
+          const index = Number(picker.value);
+          const choice = control.choices.find((item) => item.index === index);
+          if (!choice) return;
+          input.value = choice.label;
+          this.commitOne(control, false, [index]);
+        });
+      }
     }
     this.layout();
   }
@@ -408,7 +459,7 @@ export class FormLayer {
   private stopIn(order: readonly Mounted[], at: number, step: 1 | -1) {
     return tabStop(order, at, step,
       (one) => this.anchor(one.widget) !== null,
-      (one) => { this.reveal(one.widget); this.layout(); return one.input.style.display !== "none" && !one.input.disabled; });
+      (one) => { this.reveal(one.widget); this.layout(); return one.frame.style.display !== "none" && !one.input.disabled; });
   }
 
   /**
@@ -420,19 +471,26 @@ export class FormLayer {
     if (kind.kind !== "choice" || !control.list) return;
     control.choices = choices;
     control.list.replaceChildren();
-    if (control.input instanceof HTMLSelectElement) {
-      if (!kind.combo) control.input.size = Math.max(2, Math.min(8, choices.length));
-      if (kind.combo) {
-        const empty = document.createElement("option"); empty.value = ""; empty.textContent = TEXT().chooseAnOption; control.list.append(empty);
-      }
+    if (!kind.combo) control.list.size = Math.max(2, Math.min(8, choices.length));
+    if (kind.combo) {
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = TEXT().chooseAnOption;
+      control.list.append(empty);
+    }
+    const labels = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const { label } of choices) {
+      if (labels.has(label)) duplicates.add(label);
+      labels.add(label);
     }
     for (const choice of choices) {
       const item = document.createElement("option");
-      if (control.input instanceof HTMLSelectElement) {
-        item.textContent = choice.label;
-        item.value = choice.index === null ? "new" : String(choice.index);
-        if (choice.index === null) { item.disabled = true; item.title = TEXT().saveToChoose; }
-      } else item.value = choice.label;
+      const index = choice.index;
+      item.value = index === null ? "new" : String(index);
+      item.textContent = index !== null && (duplicates.has(choice.label) || !choice.label)
+        ? `${choice.label} (${kind.options[index]!.export}, #${index + 1})` : choice.label;
+      if (index === null) { item.disabled = true; item.title = TEXT().saveToChoose; }
       control.list.append(item);
     }
   }
@@ -449,11 +507,11 @@ export class FormLayer {
       return [...control.input.selectedOptions].filter((o) => o.value !== "")
         .map((o) => Number(o.value)).sort((a, b) => a - b);
     }
+    if ((kind.kind === "text" || kind.kind === "choice") && control.input.value === control.displayed) return control.accepted;
     if (kind.kind === "choice" && kind.editable) {
       if (control.input.value === "") return [];
-      if (typeof control.accepted === "string" && control.input.value === control.accepted) return control.accepted;
-      if (Array.isArray(control.accepted) && control.accepted.length === 1 && control.input.value === kind.options[control.accepted[0]!]!.label) return control.accepted;
-      const index = control.choices.find((choice) => choice.label === control.input.value)?.index ?? null;
+      const matches = control.choices.filter((choice) => choice.label === control.input.value);
+      const index = matches.length === 1 ? matches[0]!.index : null;
       return index === null ? control.input.value : [index];
     }
     return kind.kind === "checkbox" ? (control.input as HTMLInputElement).checked : control.input.value;
@@ -468,11 +526,15 @@ export class FormLayer {
     } else if (typeof value === "boolean") (control.input as HTMLInputElement).checked = value;
     else if (Array.isArray(value) && kind.kind === "choice") control.input.value = value.map((i) => kind.options[i]!.label).join(", ");
     else if (typeof value === "string") control.input.value = value;
+    if (control.list && control.list !== control.input) {
+      control.list.value = Array.isArray(value) && value.length ? String(value[0]) : "";
+    }
     control.accepted = value;
+    control.displayed = control.input.value;
   }
 
-  private commitOne(control: Mounted, throwing: boolean): void {
-    const value = this.read(control);
+  private commitOne(control: Mounted, throwing: boolean, answer?: FormValue): void {
+    const value = answer ?? this.read(control);
     this.drafts.delete(control);
     if (sameAnswer(value, control.accepted)) { control.input.setCustomValidity(""); return; }
     const error = answerError(control.widget, value);
@@ -485,6 +547,8 @@ export class FormLayer {
     }
     control.input.setCustomValidity("");
     const previous = control.accepted;
+    const previousDisplay = control.displayed;
+    control.displayed = control.input.value;
     control.accepted = value;
     control.pending += 1;
     const task = this.change(control.widget.object, value).then(() => {
@@ -492,6 +556,7 @@ export class FormLayer {
       if (this.disposed) return;
       if (!control.pending && !sameAnswer(fieldValue(control.widget, this.changes), value)) {
         control.accepted = previous;
+        control.displayed = previousDisplay;
         this.drafts.add(control);
         control.input.setCustomValidity(TEXT().answerRefused);
       }
@@ -506,7 +571,8 @@ export class FormLayer {
   /** Freeze editing during file writes without blurring an uncommitted draft. */
   setBusy(busy: boolean): void {
     for (const { button } of this.places) button.disabled = busy;
-    for (const { widget, input } of this.controls) {
+    for (const { widget, input, list } of this.controls) {
+      if (list) list.disabled = busy;
       if (input instanceof HTMLSelectElement || widget.control.kind === "radio" || widget.control.kind === "checkbox") input.disabled = busy;
       else input.readOnly = busy;
     }
@@ -545,10 +611,14 @@ export class FormLayer {
     for (const control of this.controls) {
       const box = this.anchor(control.widget);
       const visible = box && box.bottom >= 0 && box.top <= height;
-      const display = visible ? "block" : "none";
-      if (control.input.style.display !== display) control.input.style.display = display;
+      const display = visible ? (control.frame === control.input ? "block" : "flex") : "none";
+      if (control.frame.style.display !== display) control.frame.style.display = display;
       if (!box || !visible) continue;
-      Object.assign(control.input.style, { fontSize: `${12 * (box.scale ?? 1)}px`, padding: `${2 * (box.scale ?? 1)}px`, clipPath: box.clip ?? "none", left: `${box.left}px`, top: `${box.top}px`, width: `${box.right - box.left}px`, height: `${box.bottom - box.top}px` });
+      const scale = box.scale ?? 1;
+      Object.assign(control.frame.style, { fontSize: `${12 * scale}px`, clipPath: box.clip ?? "none",
+        left: `${box.left}px`, top: `${box.top}px`, width: `${box.right - box.left}px`, height: `${box.bottom - box.top}px` });
+      control.input.style.fontSize = `${12 * scale}px`;
+      control.input.style.padding = `${2 * scale}px`;
     }
     for (const { widget, button } of this.places) {
       const box = this.anchor(widget);

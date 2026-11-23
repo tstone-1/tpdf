@@ -88,6 +88,7 @@ struct Picture {
     /// `DeviceGray` or `DeviceRGB`.
     gray: bool,
     profile: Option<Vec<u8>>,
+    calibration: Option<Object>,
     /// `DCTDecode` or `FlateDecode`.
     jpeg: bool,
     data: Vec<u8>,
@@ -351,6 +352,7 @@ fn jpeg(bytes: &[u8]) -> Result<Picture, String> {
         height: facts.height,
         gray,
         jpeg: true,
+        calibration: None,
         profile,
         data: bytes.to_vec(),
         mask: None,
@@ -376,6 +378,78 @@ fn validate_profile(profile: Option<&[u8]>, gray: bool, format: &str) -> Result<
         ));
     }
     Ok(())
+}
+
+/// PDF calibrated spaces use linear XYZ primaries and the decoding exponent.
+fn png_calibration(info: &png::Info<'_>, gray: bool) -> Result<Option<Object>, String> {
+    if info.icc_profile.is_some()
+        || info.srgb.is_some()
+        || (info.gama_chunk.is_none() && info.chrm_chunk.is_none())
+    {
+        return Ok(None);
+    }
+    let invalid = || said!("the PNG colour calibration is invalid");
+    let gamma = info.gama_chunk.map_or(2.2, |g| g.into_value().recip());
+    if !gamma.is_finite() {
+        return Err(invalid());
+    }
+    let colours = info.chrm_chunk.unwrap_or_else(|| {
+        png::SourceChromaticities::new((0.3127, 0.3290), (0.64, 0.33), (0.30, 0.60), (0.15, 0.06))
+    });
+    let xyz = |(x, y): (png::ScaledFloat, png::ScaledFloat)| {
+        let (x, y) = (f64::from(x.into_scaled()), f64::from(y.into_scaled()));
+        if y == 0.0 || x + y > 100_000.0 {
+            return Err(invalid());
+        }
+        Ok([x / y, 1.0, (100_000.0 - x - y) / y])
+    };
+    let white = xyz(colours.white)?;
+    if white[0] <= 0.0 || white[2] <= 0.0 {
+        return Err(invalid());
+    }
+    let array = |v: &[f64]| Object::Array(v.iter().map(|x| Object::Real(*x as f32)).collect());
+    let mut params = dictionary! { "WhitePoint" => array(&white) };
+    let name = if gray {
+        params.set("Gamma", gamma);
+        "CalGray"
+    } else {
+        let r = xyz(colours.red)?;
+        let g = xyz(colours.green)?;
+        let b = xyz(colours.blue)?;
+        // Solve [R G B] * scales = white. PDF stores the three scaled columns.
+        let det = |a: [f64; 3], b: [f64; 3], c: [f64; 3]| {
+            a[0] * (b[1] * c[2] - b[2] * c[1]) - b[0] * (a[1] * c[2] - a[2] * c[1])
+                + c[0] * (a[1] * b[2] - a[2] * b[1])
+        };
+        let divisor = det(r, g, b);
+        if divisor.abs() < f64::EPSILON {
+            return Err(invalid());
+        }
+        let mut matrix = Vec::with_capacity(9);
+        for (primary, numerator) in [
+            (r, det(white, g, b)),
+            (g, det(r, white, b)),
+            (b, det(r, g, white)),
+        ] {
+            let scale = numerator / divisor;
+            if scale <= 0.0 {
+                return Err(invalid());
+            }
+            matrix.extend(primary.map(|x| x * scale));
+        }
+        params.set("Matrix", array(&matrix));
+        params.set("Gamma", vec![Object::Real(gamma); 3]);
+        "CalRGB"
+    };
+    Ok(Some(Object::Array(vec![name.into(), params.into()])))
+}
+
+pub(crate) fn png_orientation(info: &png::Info<'_>) -> u8 {
+    info.exif_metadata
+        .as_deref()
+        .and_then(exif_properties)
+        .and_then(|e| e.orientation)
+        .unwrap_or(1)
 }
 
 fn png(bytes: &[u8]) -> Result<Picture, String> {
@@ -424,13 +498,14 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
     }
     // An eXIf chunk can follow the image data.
     reader.finish().map_err(undecodable)?;
-    let orientation = reader
+    let exif = reader
         .info()
         .exif_metadata
         .as_deref()
         .and_then(exif_properties)
-        .and_then(|exif| exif.orientation)
-        .unwrap_or(1);
+        .unwrap_or_default();
+    let orientation = exif.orientation.unwrap_or(1);
+    let dpi = dpi.or(exif.dpi);
     let profile = reader.info().icc_profile.as_deref();
     validate_profile(profile, gray, "PNG")?;
     let (data, mask) = if alpha {
@@ -452,6 +527,7 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
         height,
         gray,
         jpeg: false,
+        calibration: png_calibration(reader.info(), gray)?,
         profile: profile.map(<[u8]>::to_vec),
         data: deflated(&data)?,
         mask: mask.as_deref().map(deflated).transpose()?,
@@ -607,7 +683,7 @@ pub fn document(images: &[(&[u8], &str)], options: Options) -> Result<Document, 
             ));
             Object::Array(vec!["ICCBased".into(), id.into()])
         } else {
-            Object::from(device)
+            found.calibration.unwrap_or_else(|| Object::from(device))
         };
         let mut image = dictionary! {
             "Type" => "XObject", "Subtype" => "Image",

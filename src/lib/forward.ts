@@ -6,6 +6,17 @@
 
 import { catalog } from "./i18n";
 
+/** A second request for this viewer supersedes the first, including a pending error. */
+export class ForwardRequests {
+  private latest = new WeakMap<object, symbol>();
+
+  start(viewer: object, stillHere: () => boolean): () => boolean {
+    const request = Symbol();
+    this.latest.set(viewer, request);
+    return () => this.latest.get(viewer) === request && stillHere();
+  }
+}
+
 /** A rectangle on a page, in points from its top-left corner: `synctex::Rect`. */
 export interface SourceRect {
   x: number;

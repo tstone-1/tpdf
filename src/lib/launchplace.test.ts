@@ -26,6 +26,8 @@ describe("A command line's place", () => {
     expect(launchZoom("150")).toEqual({ zoom: 1.5 });
     expect(launchZoom("150%")).toEqual({ zoom: 1.5 });
     expect(launchZoom("5000")).toHaveProperty("problem");
+    expect(launchZoom("constructor")).toHaveProperty("problem");
+    expect(launchZoom("__proto__")).toHaveProperty("problem");
     expect(launchZoom("width")).toHaveProperty("problem");
     expect(launchZoom("")).toHaveProperty("problem");
   });
@@ -38,6 +40,11 @@ describe("A command line's place", () => {
     expect(launchPage("2.5", 3)).toEqual({ problem: 'tpdf was asked to open at --page "2.5", which is not a page number' });
     expect(launchPage("", 1)).toHaveProperty("problem");
     expect(launchPage("9", 1)).toEqual({ problem: 'tpdf was asked to open at --page "9", and this document has 1 page' });
+  });
+
+  it.each(["de-DE", "de-DE-formal"] as const)("reports invalid launch arguments in %s", (locale) => {
+    expect(launchPage("8", 3, locale)).toEqual({ problem: 'Mit --page wurde Seite "8" angefordert. Das Dokument hat 3 Seiten' });
+    expect(launchZoom("foo", locale)).toMatchObject({ problem: expect.stringContaining('Der Wert "foo" für --zoom ist ungültig') });
   });
 
   it("sets the zoom before going to the page, which a zoom would move", () => {

@@ -392,6 +392,27 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn forwarded_arguments_preserve_invalid_value_slots_and_unicode_neighbours() {
+        use std::os::unix::ffi::OsStringExt;
+        let invalid = std::ffi::OsString::from_vec(vec![0xff]);
+        let args = super::desktop_args(
+            [
+                "tpdf".into(),
+                invalid.clone(),
+                "--page".into(),
+                invalid,
+                "Grüße.pdf".into(),
+            ],
+            |_| {},
+        );
+        let openings = openings_from_second_launch(args, "/work", |_| true);
+        assert_eq!(openings.len(), 1);
+        assert_eq!(openings[0].path, Path::new("/work/Grüße.pdf"));
+        assert_eq!(openings[0].place.page.as_deref(), Some(""));
+    }
+
     #[test]
     fn the_executable_is_not_a_document() {
         assert!(paths_from_args(["/Applications/tpdf.app/Contents/MacOS/tpdf"]).is_empty());

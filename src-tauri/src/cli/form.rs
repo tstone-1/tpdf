@@ -244,12 +244,33 @@ pub fn read_back(
             // The default value it was given, or nothing.
             _ => serde_json::Value::String(field.default_value.clone().unwrap_or_default()),
         };
+        // Radio properties belong to the group: the first tooltip wins and any
+        // required button makes every sibling required.
+        let previous = before.widgets.iter().find(|w| radio && w.name == *name);
+        let mut tooltip = previous.map_or("", |w| w.tooltip.as_str());
+        let mut required = previous.is_some_and(|w| w.required);
+        for member in asked.iter().filter(|f| f.name == *name) {
+            required |= member.required;
+            if tooltip.is_empty() {
+                tooltip = member.tooltip.as_deref().unwrap_or("");
+            }
+        }
         let held = value_json(&widget.control, &widget.value);
         if got != wanted
             || widget.multiline != (field.kind == Kind::Multiline)
             || signature != unsigned
         {
             problems.push(format!("`{name}` reads back as another kind of field"));
+        } else if widget.required != required || widget.tooltip != tooltip {
+            problems.push(format!(
+                "`{name}` reads back with another required flag or tooltip"
+            ));
+        } else if matches!(&widget.control, crate::forms::Control::Choice { options, .. }
+            if !options.iter().map(|o| (&o.export, &o.label)).eq(field.options.iter().map(|s| (s, s))))
+        {
+            problems.push(format!(
+                "`{name}` reads back with different dropdown options"
+            ));
         } else if widget.page != field.page {
             problems.push(format!("`{name}` reads back on page {}", widget.page + 1));
         } else if moved {
@@ -699,6 +720,8 @@ mod tests {
         .contains("has 2 fields of this name"));
         assert!(broken(&|f| f.widgets.push(name.clone())).contains("reads back with 2 boxes"));
         assert!(broken(&|f| f.widgets[1].control = Control::Checkbox).contains("another kind"));
+        assert!(broken(&|f| f.widgets[1].required = true).contains("required flag"));
+        assert!(broken(&|f| f.widgets[1].tooltip = "changed".into()).contains("tooltip"));
         assert!(broken(&|f| f.widgets[1].multiline = true).contains("another kind"));
         assert!(broken(&|f| f.widgets[1].page = 1).contains("reads back on page 2"));
         assert!(broken(&|f| f.widgets[1].display_rect[0] += 0.02).contains("reads back at"));
@@ -718,6 +741,35 @@ mod tests {
         let mut near = good.clone();
         near.widgets[1].display_rect[0] += 0.005;
         assert!(read_back(&asked, &before, &near).is_ok());
+    }
+
+    #[test]
+    fn new_dropdown_must_keep_its_options() {
+        let mut field = new("Choice", Kind::Dropdown, 0, [0.0, 0.0, 100.0, 20.0]);
+        field.options = vec!["First".into()];
+        let mut after = Form {
+            widgets: vec![widget(
+                "Choice",
+                Control::Choice {
+                    options: vec![crate::forms::Choice {
+                        label: "First".into(),
+                        export: "First".into(),
+                    }],
+                    combo: true,
+                    editable: false,
+                    multiple: false,
+                },
+                Value::Selection(vec![]),
+                0,
+                [0.0, 0.0, 100.0, 20.0],
+            )],
+        };
+        let before = Form { widgets: vec![] };
+        assert!(read_back(std::slice::from_ref(&field), &before, &after).is_ok());
+        if let Control::Choice { options, .. } = &mut after.widgets[0].control {
+            options[0].export = "Other".into();
+        }
+        assert!(read_back(&[field], &before, &after).unwrap_err()[0].contains("dropdown options"));
     }
 
     #[test]
