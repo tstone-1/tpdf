@@ -147,6 +147,21 @@ impl Launch {
     }
 }
 
+/// Converts launch arguments without shifting option values or the program name.
+pub(crate) fn desktop_args(
+    args: impl IntoIterator<Item = std::ffi::OsString>,
+    mut rejected: impl FnMut(&std::ffi::OsStr),
+) -> Vec<String> {
+    args.into_iter()
+        .map(|arg| {
+            arg.into_string().unwrap_or_else(|arg| {
+                rejected(&arg);
+                String::new()
+            })
+        })
+        .collect()
+}
+
 /// The options that say where to show a document, each taking one value.
 const PLACE_OPTIONS: [&str; 3] = ["--page", "--zoom", "--forward-search"];
 
@@ -248,7 +263,7 @@ where
     args.into_iter()
         .skip(1)
         .map(|arg| arg.as_ref().to_string())
-        .filter(|arg| !arg.starts_with('-'))
+        .filter(|arg| !arg.is_empty() && !arg.starts_with('-'))
         .map(PathBuf::from)
         .collect()
 }
@@ -358,6 +373,24 @@ mod tests {
         paths_from_launch, paths_from_second_launch, split_place, Delivery, Launch, Opening, Place,
     };
     use std::path::{Path, PathBuf};
+
+    #[test]
+    #[cfg(unix)]
+    fn an_unrepresentable_launch_argument_preserves_the_other_document() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        let invalid = OsString::from_vec(vec![0xff]);
+        let mut skipped = Vec::new();
+        let args =
+            super::desktop_args(["tpdf".into(), invalid.clone(), "good.pdf".into()], |arg| {
+                skipped.push(arg.to_owned())
+            });
+        assert_eq!(skipped, [invalid]);
+        assert_eq!(
+            paths_from_launch(args, |_| false),
+            [PathBuf::from("good.pdf")]
+        );
+    }
 
     #[test]
     fn the_executable_is_not_a_document() {

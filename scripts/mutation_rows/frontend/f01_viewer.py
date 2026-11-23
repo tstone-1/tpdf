@@ -1585,8 +1585,8 @@ ROWS += [
         # lies to you"; the anchor below is the whole tail so the move is a move.
         "drag: tell the target before the drag is torn down",
         "src/lib/drag.ts",
-        "    this.live = null;\n    this.host.removeEventListener(\"pointermove\", this.onMove);\n    this.host.removeEventListener(\"pointerup\", this.onUp);\n    this.host.removeEventListener(\"pointercancel\", this.onCancel);\n    try {\n      this.host.releasePointerCapture(live.pointerId);\n    } catch {\n      // Never captured.\n    }\n    this.target.end(at, committed);",
-        "    this.target.end(at, committed);\n    this.live = null;\n    this.host.removeEventListener(\"pointermove\", this.onMove);\n    this.host.removeEventListener(\"pointerup\", this.onUp);\n    this.host.removeEventListener(\"pointercancel\", this.onCancel);\n    try {\n      this.host.releasePointerCapture(live.pointerId);\n    } catch {\n      // Never captured.\n    }",
+        "    this.live = null;\n    this.host.removeEventListener(\"pointermove\", this.onMove);\n    this.host.removeEventListener(\"pointerup\", this.onUp);\n    this.host.removeEventListener(\"pointercancel\", this.onCancel);\n    try {\n      this.host.releasePointerCapture(live.pointerId);\n    } catch {\n      // Never captured.\n    }\n    if (committed && this.target.moveOnRelease) this.target.move(at);\n    this.target.end(at, committed);",
+        "    if (committed && this.target.moveOnRelease) this.target.move(at);\n    this.target.end(at, committed);\n    this.live = null;\n    this.host.removeEventListener(\"pointermove\", this.onMove);\n    this.host.removeEventListener(\"pointerup\", this.onUp);\n    this.host.removeEventListener(\"pointercancel\", this.onCancel);\n    try {\n      this.host.releasePointerCapture(live.pointerId);\n    } catch {\n      // Never captured.\n    }",
         "is already torn down by the time the target is told",
     ),
     Mutation(

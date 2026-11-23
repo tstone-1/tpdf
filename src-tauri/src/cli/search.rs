@@ -412,7 +412,7 @@ impl Subcommand for Search {
     }
 }
 
-fn annotation_refusal(
+pub(super) fn annotation_refusal(
     structured: bool,
     message: &str,
     out: &mut dyn Write,
@@ -422,9 +422,15 @@ fn annotation_refusal(
     if structured {
         json(
             out,
-            &serde_json::json!({
-                "schema": SCHEMA, "command": "search", "error": { "kind": "annotation", "message": message }
-            }),
+            &report::Failed {
+                schema: SCHEMA,
+                command: "search".into(),
+                error: report::CommandError {
+                    kind: "annotation".into(),
+                    exit_code: Exit::Refused.code(),
+                    message: message.into(),
+                },
+            },
         );
     }
     Exit::Refused

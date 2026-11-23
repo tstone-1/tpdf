@@ -191,6 +191,7 @@ export default {
   "your PATH could not be read (error {status})": "Dein PATH konnte nicht gelesen werden (Fehler {status})",
   "your PATH is not stored as text, so tpdf leaves it alone":
     "Dein PATH ist nicht als Text gespeichert, daher lässt tpdf ihn unverändert",
+  "the installation folder contains a semicolon and cannot be a Windows PATH entry": "Der Installationsordner enthält ein Semikolon und kann nicht zum Windows-Suchpfad hinzugefügt werden",
   "your PATH is too long": "Dein PATH ist zu lang",
   "your PATH holds text tpdf cannot read, so tpdf leaves it alone":
     "Dein PATH enthält Text, den tpdf nicht lesen kann, daher lässt tpdf ihn unverändert",

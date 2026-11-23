@@ -3128,7 +3128,13 @@
     // crops whichever page has moved into it. `cropTo` next door does the same
     // for the same reason; a `source` is safe to read early and a slot is not.
     const page = shown.id;
-    const box = await contentBox(source.doc, source.page).catch(() => null);
+    let box;
+    try {
+      box = await contentBox(source.doc, source.page);
+    } catch (error) {
+      asDocument(view, () => say(spokenError(error)));
+      return;
+    }
     if (!box) {
       asDocument(view, () => say(TEXT().nothingToCrop));
       return;

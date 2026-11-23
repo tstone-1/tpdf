@@ -187,6 +187,12 @@ if [ -n "$identity" ]; then
     || {{ cat "$run/sign.log"; stop "the bundled PDFium could not be signed as $identity"; }}
   echo "[OK] the bundled PDFium is signed as the app is: $identity"
 fi
+# Launch this run's own executable so timeout cleanup can distinguish concurrent
+# applications, including another launch of the reusable build product.
+owned_app="$run/${{app:t}}"
+ditto "$app" "$owned_app" || stop "cannot stage the checks app for this run"
+app="$owned_app"
+trap 'rm -rf -- "$owned_app"' EXIT
 job="com.tpdf.windowchecks.{run_id}"
 rm -f "$run/done" "$run/checks.log"
 # Every other app is hidden for the run and shown again after it; the header
@@ -238,7 +244,7 @@ waited=0
 while [ ! -f "$run/done" ] && [ ! -f "$run/timed-out" ] && [ "$waited" -lt {limit} ]; do sleep 5; waited=$((waited + 5)); done
 launchctl bootout "gui/$(id -u)/$job" 2>/dev/null
 if [[ -f "$run/timed-out" || ! -f "$run/done" ]]; then
-  pkill -f "$app/Contents/MacOS/tpdf" 2>/dev/null
+  python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from stray import clear_strays; clear_strays(Path(sys.argv[1]))' "$app/Contents/MacOS/tpdf"
   show_again
   tail -8 "$run/checks.log" 2>/dev/null
   stop "the window checks did not end within {limit} s"

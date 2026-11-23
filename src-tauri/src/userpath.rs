@@ -64,6 +64,16 @@ fn change(value: &str, dir: &str, add: bool, entry_key: impl Fn(&str) -> String)
     }
 }
 
+#[cfg(any(windows, test))]
+fn validate_dir(dir: &str) -> Result<(), String> {
+    if dir.contains(';') {
+        return Err(said!(
+            "the installation folder contains a semicolon and cannot be a Windows PATH entry"
+        ));
+    }
+    Ok(())
+}
+
 /// What a change did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -80,6 +90,7 @@ pub enum Outcome {
 /// The value could not be read or written, or is not text.
 #[cfg(windows)]
 pub fn apply(dir: &str, add: bool) -> Result<Outcome, String> {
+    validate_dir(dir)?;
     let (value, kind) = windows::read()?;
     let changed = windows::change_entry(&value, kind, dir, add);
     let Some(changed) = changed else {
@@ -98,6 +109,7 @@ pub fn apply(dir: &str, add: bool) -> Result<Outcome, String> {
 /// The value could not be read, or is not text.
 #[cfg(windows)]
 pub fn stored(dir: &str) -> Result<bool, String> {
+    validate_dir(dir)?;
     let (value, kind) = windows::read()?;
     Ok(windows::change_entry(&value, kind, dir, true).is_none())
 }
@@ -376,6 +388,12 @@ mod tests {
     use super::*;
 
     const DIR: &str = r"C:\Users\a\AppData\Local\tpdf";
+
+    #[test]
+    fn a_semicolon_cannot_be_part_of_a_path_entry() {
+        assert!(super::validate_dir(r"C:\Tools;2026\tpdf").is_err());
+        assert!(super::validate_dir(r"C:\Tools 2026\tpdf").is_ok());
+    }
 
     #[test]
     fn a_folder_is_added_last_and_once() {

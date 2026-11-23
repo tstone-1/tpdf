@@ -736,7 +736,9 @@ pub fn run() {
     // app at all. A worker is this executable re-exec'd with a marker argument,
     // and everything below --- the watchdog, the Tauri context, a window ---
     // would be wrong for it. It never returns.
-    let args: Vec<String> = std::env::args().collect();
+    let args = launch::desktop_args(std::env::args_os(), |arg| {
+        eprintln!("tpdf: ignoring an argument that is not valid Unicode: {arg:?}");
+    });
     // The OCR worker, checked first because it is the narrower marker and
     // because it shares nothing with the parser worker but this dispatch: it
     // maps no PDF library, opens no document, and applies a different profile.
@@ -807,7 +809,7 @@ pub fn run() {
     // `argv`, long before there is a webview to tell about it.
     let launch = launch::Launch::default();
     let cwd = std::env::current_dir().unwrap_or_default();
-    for opening in launch::openings_from_launch(std::env::args(), &cwd, |path| path.is_file()) {
+    for opening in launch::openings_from_launch(&args, &cwd, |path| path.is_file()) {
         launch.deliver(opening);
     }
 

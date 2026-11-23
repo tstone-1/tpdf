@@ -2815,6 +2815,17 @@ fn samples() -> Vec<(&'static str, String)> {
                 signatures_unknown: false,
             }),
         ),
+        ("annotation-error", {
+            let mut out = Vec::new();
+            let status = search::annotation_refusal(
+                true,
+                "This match contains turned text",
+                &mut out,
+                &mut Vec::new(),
+            );
+            assert_eq!(status, Exit::Refused);
+            String::from_utf8(out).unwrap().trim_end().to_owned()
+        }),
         (
             "command-error",
             pretty(&report::Failed {
@@ -3009,7 +3020,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 31, "the sample table itself");
+    assert_eq!(want.len(), 32, "the sample table itself");
     assert_eq!(found, want);
 }
 

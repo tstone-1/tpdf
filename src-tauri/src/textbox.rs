@@ -154,7 +154,15 @@ pub fn wrap(text: &str, size: f64, width: f64) -> Vec<String> {
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
         let mut line = String::new();
-        for word in paragraph.split(' ') {
+        // Keep indentation attached to the first word, including a spaces-only line.
+        let body = paragraph.trim_start_matches(' ');
+        let indent = paragraph.len() - body.len();
+        for (index, word) in body.split(' ').enumerate() {
+            let word = if index == 0 {
+                &paragraph[..indent + word.len()]
+            } else {
+                word
+            };
             let candidate = if line.is_empty() {
                 word.to_string()
             } else {
@@ -265,6 +273,14 @@ mod tests {
         // has content, and is the difference between "no text yet" and "a text
         // box whose text was lost".
         assert!(wrap("", SIZE_PT, 200.0).is_empty());
+    }
+
+    #[test]
+    fn explicit_indent_and_spaces_only_lines_survive_wrapping() {
+        assert_eq!(
+            wrap("first\n  indented\n  \nlast", SIZE_PT, 200.0),
+            ["first", "  indented", "  ", "last"]
+        );
     }
 
     #[test]

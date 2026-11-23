@@ -360,7 +360,7 @@ pub struct Failed {
 /// An error shared by command failures and partially published page operations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandError {
-    /// `usage`, `refused`, or `failed`.
+    /// `usage`, `refused`, `annotation` (search geometry), or `failed`.
     pub kind: String,
     /// The process exit status.
     pub exit_code: i32,

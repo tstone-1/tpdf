@@ -1944,6 +1944,40 @@ describe("Viewer matches across a page edit", () => {
     viewer.destroy();
   });
 
+  it("selects the last hit on the first Previous after restoring Find", async () => {
+    core.invoke.mockImplementation(async (command: string, args: { page: number }) => {
+      if (command === "page_text") return pageText();
+      if (command !== "search_page") return null;
+      return { page: args.page, chars: 2, matches: [
+        { page: args.page, start: 0, end: 1, before: "", hit: "a", after: "" },
+      ] };
+    });
+    const viewer = build(dom);
+    viewer.restoreSearch("a", viewer.searchOptionsNow, null);
+    await settle();
+    expect(viewer.matchCount).toBe(3);
+    viewer.prevMatch();
+    expect(viewer.matchIndex).toBe(2);
+    viewer.nextMatch();
+    expect(viewer.matchIndex).toBe(0);
+    viewer.destroy();
+  });
+
+  it("keeps the viewport when Find closes during a pending jump", async () => {
+    held.set(2, () => {});
+    const viewer = build(dom);
+    viewer.search("ab");
+    await settle();
+    expect(viewer.matchCount).toBe(1);
+    const saved = viewer.position;
+    viewer.clearSearch();
+    held.get(2)!();
+    await settle();
+    expect(viewer.matchCount).toBe(0);
+    expect(viewer.position).toEqual(saved);
+    viewer.destroy();
+  });
+
   it("restores Find results without moving the saved viewport", async () => {
     const viewer = build(dom);
     const saved = viewer.position;

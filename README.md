@@ -2138,7 +2138,7 @@ one JSON document on failure, including malformed arguments (2), refusals (3) an
 internal failures (4). Existing detailed reports are preserved: `verify` and `info`
 report per-file errors, and `fill` reports individual answer/readback problems.
 When no detailed report exists, the result is `schema`, `command`, and `error`,
-whose `kind` is `usage`, `refused` or `failed`, `exit_code` is the process status,
+whose `kind` is `usage`, `refused`, `annotation` (a search mark cannot be placed) or `failed`, `exit_code` is the process status,
 and `message` explains it. Branch on the code or kind, not the message text.
 Two refusals come before the command line is read and so carry no JSON: an argument
 that is not valid Unicode (2), and a tool that cannot work out where it is installed (4).

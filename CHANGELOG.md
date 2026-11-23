@@ -19,6 +19,16 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Cropping clips pending marks, redactions and ruler lines to their page. Region and ruler
+  drags use the release point. Closing Find cancels pending jumps, and Previous after
+  tab restoration starts at the last match.
+- Picture import preserves JPEG colour profiles and PNG EXIF orientation. Multiline
+  form appearances retain indentation and spaces-only lines. An empty custom dropdown
+  answer clears the choice, and JSON annotation refusals include the process exit code.
+- Extract Pages withholds ambiguous printed ranges. Crop to Content reports measurement
+  errors. Linux startup skips unrepresentable filenames and Windows PATH setup reports
+  installation directories that contain a semicolon.
+
 - Desktop search redaction checks the visible characters of every match before adding any marks.
   Returning to a tab keeps the reading position with Find open. Cross-page hits scroll to their start.
 - Opening another PDF preserves form input entered while the previous document is still visible.

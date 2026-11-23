@@ -407,6 +407,7 @@ pub fn to_value(group: &Grouped<'_>, answer: &serde_json::Value) -> Result<Value
                 J::Null => Ok(Value::Selection(Vec::new())),
                 J::String(wanted) => match one_of(&exports, wanted, name)? {
                     Some(i) => Ok(Value::Selection(vec![i])),
+                    None if *editable && wanted.is_empty() => Ok(Value::Selection(Vec::new())),
                     None if *editable => Ok(Value::Text(wanted.clone())),
                     None => Err(problem(
                         name,

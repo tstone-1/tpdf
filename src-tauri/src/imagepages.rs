@@ -195,7 +195,9 @@ fn exif_properties(tiff: &[u8]) -> Option<Exif> {
 }
 
 /// What a JPEG's header says, read without decoding anything.
-struct JpegFacts {
+struct JpegFacts<'a> {
+    // APP2 segment numbers run from 1 to 255. Keep slices until the raster is validated.
+    profile_parts: Vec<&'a [u8]>,
     width: u32,
     height: u32,
     components: u8,
@@ -203,9 +205,10 @@ struct JpegFacts {
     dpi: Option<(f64, f64)>,
 }
 
-fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
+fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts<'_>, String> {
     let broken = || said!("it is not a complete JPEG image");
     let mut facts = JpegFacts {
+        profile_parts: Vec::new(),
         width: 0,
         height: 0,
         components: 0,
@@ -248,6 +251,24 @@ fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
                     exif_dpi = found.dpi.or(exif_dpi);
                 }
             }
+            0xe2 if payload.starts_with(b"ICC_PROFILE\0") => {
+                let [sequence, count, data @ ..] = &payload[12..] else {
+                    return Err(said!("the JPEG colour profile is incomplete"));
+                };
+                if *sequence == 0 || sequence > count || data.is_empty() {
+                    return Err(said!("the JPEG colour profile is incomplete"));
+                }
+                let parts = &mut facts.profile_parts;
+                if parts.is_empty() {
+                    parts.resize(usize::from(*count), &[]);
+                }
+                if parts.len() != usize::from(*count)
+                    || !parts[usize::from(*sequence) - 1].is_empty()
+                {
+                    return Err(said!("the JPEG colour profile is incomplete"));
+                }
+                parts[usize::from(*sequence) - 1] = data;
+            }
             // The frame: baseline, extended or progressive, eight bits a sample.
             0xc0..=0xc2 => {
                 if payload.len() < 6 || payload[0] != 8 {
@@ -256,14 +277,16 @@ fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts, String> {
                 facts.height = u32::from(u16::from_be_bytes([payload[1], payload[2]]));
                 facts.width = u32::from(u16::from_be_bytes([payload[3], payload[4]]));
                 facts.components = payload[5];
-                facts.dpi = facts.dpi.or(exif_dpi);
-                return Ok(facts);
             }
             0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf => {
                 return Err(said!(
                     "it is a lossless or arithmetic-coded JPEG, which PDF readers do \
                             not display"
                 ));
+            }
+            0xda if facts.components != 0 => {
+                facts.dpi = facts.dpi.or(exif_dpi);
+                return Ok(facts);
             }
             0xda | 0xd9 => return Err(broken()),
             _ => {}
@@ -318,12 +341,17 @@ fn jpeg(bytes: &[u8]) -> Result<Picture, String> {
     let mut decoded = vec![0; wanted];
     decoder.decode_into(&mut decoded).map_err(undecodable)?;
     drop(decoded);
+    if facts.profile_parts.iter().any(|part| part.is_empty()) {
+        return Err(said!("the JPEG colour profile is incomplete"));
+    }
+    let profile = (!facts.profile_parts.is_empty()).then(|| facts.profile_parts.concat());
+    validate_profile(profile.as_deref(), gray, "JPEG")?;
     Ok(Picture {
         width: facts.width,
         height: facts.height,
         gray,
         jpeg: true,
-        profile: None,
+        profile,
         data: bytes.to_vec(),
         mask: None,
         orientation: facts.orientation,
@@ -337,6 +365,17 @@ fn deflated(raw: &[u8]) -> Result<Vec<u8>, String> {
         .write_all(raw)
         .and_then(|()| encoder.finish())
         .map_err(|e| said!("its pixels could not be compressed: {e}"))
+}
+
+fn validate_profile(profile: Option<&[u8]>, gray: bool, format: &str) -> Result<(), String> {
+    if profile.is_some_and(|bytes| {
+        !crate::encoding::icc_header_matches(bytes, if gray { b"GRAY" } else { b"RGB " })
+    }) {
+        return Err(said!(
+            "the {format} colour profile does not match its samples"
+        ));
+    }
+    Ok(())
 }
 
 fn png(bytes: &[u8]) -> Result<Picture, String> {
@@ -383,12 +422,17 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
     if size != pixels * channels {
         return Err(said!("it is not the size its header says"));
     }
+    // An eXIf chunk can follow the image data.
+    reader.finish().map_err(undecodable)?;
+    let orientation = reader
+        .info()
+        .exif_metadata
+        .as_deref()
+        .and_then(exif_properties)
+        .and_then(|exif| exif.orientation)
+        .unwrap_or(1);
     let profile = reader.info().icc_profile.as_deref();
-    if profile.is_some_and(|bytes| {
-        !crate::encoding::icc_header_matches(bytes, if gray { b"GRAY" } else { b"RGB " })
-    }) {
-        return Err(said!("the PNG colour profile does not match its samples"));
-    }
+    validate_profile(profile, gray, "PNG")?;
     let (data, mask) = if alpha {
         let colour = channels - 1;
         let mut samples = Vec::with_capacity(pixels * colour);
@@ -411,7 +455,7 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
         profile: profile.map(<[u8]>::to_vec),
         data: deflated(&data)?,
         mask: mask.as_deref().map(deflated).transpose()?,
-        orientation: 1,
+        orientation,
         dpi,
     })
 }

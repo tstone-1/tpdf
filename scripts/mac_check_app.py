@@ -79,14 +79,14 @@ class MacCheckApp:
         osa(f'tell application "System Events" to tell {self.process} to set frontmost to true')
 
     def kill(self) -> None:
-        if self.pid is not None and self._stamp() == self.started:
+        if self.pid is not None and self.started and self._stamp() == self.started:
             try:
                 os.kill(self.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
 
     def quit(self) -> None:
-        if self.pid is None or self._stamp() != self.started:
+        if self.pid is None or not self.started or self._stamp() != self.started:
             return
         try:
             osa('use framework "AppKit"\n'

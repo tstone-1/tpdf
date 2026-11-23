@@ -2102,6 +2102,7 @@ export class Viewer {
     // between drags --- a crop replaces whatever crop the page had, so there is
     // no equivalent of ink's several strokes.
     this.cropDrag = new PointerDrag(root, {
+      moveOnRelease: true,
       begin: (at: DragPoint) => {
         if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place" && this.tool.kind !== "region") {
           return false;
@@ -2200,6 +2201,7 @@ export class Viewer {
     // tool does: measuring is usually several lines in a row, and each one needs
     // the reader's eye on the page rather than on a command.
     this.measureDrag = new PointerDrag(root, {
+      moveOnRelease: true,
       begin: (at: DragPoint) => {
         if (this.tool.kind !== "measure") return false;
         const { page, x, y } = this.pageAndPoint(at);
@@ -2237,7 +2239,7 @@ export class Viewer {
           this.showCursor();
           return;
         }
-        // A click, and the tool stays armed: a line of no length measures nothing.
+        // A click leaves the ruler armed.
         if (distance(live.from, live.to) * this.zoom < CORNER_REACH_PX) return;
         const id = this.pages.idOf(live.slot);
         if (id === undefined) return;
@@ -7683,6 +7685,16 @@ export class Viewer {
     return at.cache.loadFileText(at.page);
   }
 
+  /** Confines file-space overlays to their owning page, including stroke edges. */
+  private clipPage(ctx: CanvasRenderingContext2D, slot: number, dpr: number): void {
+    const origin = this.scroller.pageOrigin(slot);
+    const size = this.laidSize(slot);
+    ctx.beginPath();
+    ctx.rect(origin.left * dpr, (origin.top - this.scrollTop) * dpr,
+      size.width * this.zoom * dpr, size.height * this.zoom * dpr);
+    ctx.clip();
+  }
+
   /** Draws the marks, the search highlights and the selection. */
   private paintOverlay(visible: readonly number[]): void {
     const ctx = this.overlayCtx;
@@ -7708,7 +7720,14 @@ export class Viewer {
     // kinds, and marks go first deliberately: a search hit and a selection are
     // washes, and a reader dragging across a struck-out line has to see the
     // selection over it rather than under it.
-    this.paintMarks(ctx, dpr, visible);
+    if (this.marks.length) {
+      for (const slot of visible) {
+        ctx.save();
+        this.clipPage(ctx, slot, dpr);
+        this.paintMarks(ctx, dpr, [slot]);
+        ctx.restore();
+      }
+    }
     this.paintDifferences(ctx, dpr, visible);
     this.paintMatches(ctx, dpr, visible);
     this.paintSourceBoxes(ctx, dpr, visible);
@@ -7765,6 +7784,8 @@ export class Viewer {
         1,
         (region.id === this.picked ? PICKED_EDGE_SCALE : 1) * OUTLINE_WIDTH * this.zoom * dpr,
       );
+      ctx.save();
+      this.clipPage(ctx, slot, dpr);
       const quad = this.viewRectOn(slot, region.area);
       const origin = this.scroller.pageOrigin(slot);
       const x = (origin.left + quad.left * this.zoom) * dpr;
@@ -7776,6 +7797,7 @@ export class Viewer {
       // between the two states and it carries the whole distinction: dashed is
       // a rectangle still being decided, solid is one that is in the list.
       ctx.strokeRect(x, y, w, h);
+      ctx.restore();
     }
     ctx.restore();
   }
@@ -7818,6 +7840,8 @@ export class Viewer {
     ctx.textBaseline = "middle";
     for (const line of lines) {
       if (!visible.has(line.slot)) continue;
+      ctx.save();
+      this.clipPage(ctx, line.slot, dpr);
       const origin = this.scroller.pageOrigin(line.slot);
       const onCanvas = (at: MeasurePoint): MeasurePoint => ({
         x: (origin.left + at.x * this.zoom) * dpr,
@@ -7834,14 +7858,16 @@ export class Viewer {
         ctx.lineTo(b.x, b.y);
       }
       ctx.stroke();
-      if (!line.label) continue;
-      const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
-      const width = ctx.measureText(line.label).width + 8 * dpr;
-      const height = (MEASURE_LABEL_PX + 6) * dpr;
-      ctx.fillStyle = MEASURE_LABEL_FILL;
-      ctx.fillRect(middle.x - width / 2, middle.y - height / 2, width, height);
-      ctx.fillStyle = MEASURE_LABEL_INK;
-      ctx.fillText(line.label, middle.x, middle.y);
+      if (line.label) {
+        const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+        const width = ctx.measureText(line.label).width + 8 * dpr;
+        const height = (MEASURE_LABEL_PX + 6) * dpr;
+        ctx.fillStyle = MEASURE_LABEL_FILL;
+        ctx.fillRect(middle.x - width / 2, middle.y - height / 2, width, height);
+        ctx.fillStyle = MEASURE_LABEL_INK;
+        ctx.fillText(line.label, middle.x, middle.y);
+      }
+      ctx.restore();
     }
     ctx.restore();
   }
@@ -8667,7 +8693,7 @@ export class Viewer {
 
   /** Moves to the previous match, wrapping at the start. */
   prevMatch(): void {
-    void this.goToMatch(this.currentMatch - 1);
+    void this.goToMatch(this.currentMatch < 0 ? -1 : this.currentMatch - 1);
   }
 
   /**
@@ -8818,7 +8844,8 @@ export class Viewer {
   /**
    * Called for every page the scan finishes.
    *
-   * The first match found is jumped to, and only the first: a scan that kept
+   * A new search jumps to its first match. Restoring a search keeps the saved
+   * viewport. A scan that kept
    * moving the viewport as it went would drag a reader through the document
    * while they were trying to read the hit they were already shown.
    */
@@ -8851,7 +8878,7 @@ export class Viewer {
     // The load outlives a document being closed --- it is an IPC round trip and
     // nothing withdraws it --- so the scroll below would run against a torn-down
     // scroller. See `life`.
-    if (!text || this.life.ended) return;
+    if (!text || this.life.ended || this.searcher.matches[this.currentMatch] !== match) return;
     const [half] = matchHalves([match]);
     const [first] = runsFor(text, half!.from, half!.to);
     const top =

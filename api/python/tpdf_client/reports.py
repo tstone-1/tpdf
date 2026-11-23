@@ -121,7 +121,7 @@ __all__ = [
 
 # --- Enumerations ----------------------------------------------------------
 
-CommandErrorKind = Literal["usage", "refused", "failed"]
+CommandErrorKind = Literal["usage", "refused", "annotation", "failed"]
 
 FileErrorKind = Literal["unreadable", "refused", "locked", "failed"]
 
@@ -1517,6 +1517,7 @@ class CompareReport(TypedDict):
 # sample there, so `HelpReport` is not listed.
 REPORTS: dict[str, type] = {
     "command-error": ErrorReport,
+    "annotation-error": ErrorReport,
     "comments": CommentsReport,
     "compare": CompareReport,
     "edit": EditReport,

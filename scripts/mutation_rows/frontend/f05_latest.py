@@ -1264,8 +1264,8 @@ ROWS += [
         'this.namesAreSpoken ? "" : askedName(this.asking)',
         '""',
         "says the question in the live region where a new name is not spoken, until something is typed"),
-    Mutation("page labels: a label printed on two pages names a position", "src/lib/pagelabels.ts",
-        "    if (slots?.length !== 1) return null;",
-        "    if (!slots) return null;",
-        "names nothing for a label printed on two pages, or in a document without labels"),
+    Mutation("page labels: discard a repeated range endpoint", "src/lib/pagelabels.ts",
+        "    if (!slots?.length) return [];",
+        "    if (slots?.length !== 1) return [];",
+        "withholds an extraction hint when a repeated endpoint makes another split possible"),
 ]

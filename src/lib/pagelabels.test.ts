@@ -106,3 +106,8 @@ describe("positionsFor", () => {
     expect(of("ii", [null, null])).toBeNull();
   });
 });
+
+it("withholds an extraction hint when a repeated endpoint makes another split possible", () => {
+  const labels = ["A", "B-C", "A-B", "A-B", "C"];
+  expect(positionsFor("A-B-C", labels.length, slot => labels[slot]!)).toBeNull();
+});

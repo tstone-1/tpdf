@@ -414,7 +414,7 @@ fn every_kind_of_answer_resolves_to_what_the_writer_takes() {
     // `null` clears a radio group or a single choice; `[]` a list.
     let cleared = resolve(
         &form,
-        &given(r#"{"delivery": null, "single_item": null, "items": []}"#),
+        &given(r#"{"delivery": null, "single_item": null, "custom_choice": "", "items": []}"#),
     )
     .expect("cleared");
     assert!(cleared

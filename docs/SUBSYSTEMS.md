@@ -567,7 +567,9 @@ shape. The matrices were checked against Quick Look for 5 and 6, and the unit te
 eight against the EXIF table. A PNG is expanded to eight-bit gray or RGB and deflated, with an
 `/SMask` when any pixel is not opaque. For a PNG with an embedded ICC profile, the writer
 checks its header against the decoded components and embeds it as an ICCBased colour space.
-Untagged PNGs use DeviceGray or DeviceRGB. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
+The same check applies to embedded JPEG profiles, including profiles split across APP2
+segments. Untagged pictures use DeviceGray or DeviceRGB. PNG eXIf orientation uses
+the same page placement as JPEG EXIF orientation. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
 A page is the picture at its stated resolution, 72 DPI
 when it states none, held between 3 and 14,400 points a side.
 

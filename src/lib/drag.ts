@@ -47,6 +47,8 @@ export interface DragPoint {
 
 /** What a caller does with a drag. */
 export interface DragTarget {
+  /** Deliver the release point to move before committing gestures that use their last sample. */
+  readonly moveOnRelease?: boolean;
   /**
    * The drag is starting. Return `false` to refuse it.
    *
@@ -166,7 +168,7 @@ export class PointerDrag {
     const live = this.live;
     if (!live) return;
     if (event && event.pointerId !== live.pointerId) return;
-    const at = event ? { clientX: event.clientX, clientY: event.clientY } : live.at;
+    const at = event ? { clientX: event.clientX, clientY: event.clientY, shiftKey: event.shiftKey } : live.at;
     this.live = null;
     this.host.removeEventListener("pointermove", this.onMove);
     this.host.removeEventListener("pointerup", this.onUp);
@@ -176,6 +178,7 @@ export class PointerDrag {
     } catch {
       // Never captured.
     }
+    if (committed && this.target.moveOnRelease) this.target.move(at);
     this.target.end(at, committed);
   }
 }

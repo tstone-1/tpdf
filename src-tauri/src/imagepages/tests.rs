@@ -101,15 +101,33 @@ fn png_of(
     out
 }
 
-#[test]
-fn png_profile_is_embedded_with_its_unmodified_samples() {
+fn rgb_profile() -> Vec<u8> {
     let mut profile = vec![0; 132];
     profile[..4].copy_from_slice(&132_u32.to_be_bytes());
     profile[16..20].copy_from_slice(b"RGB ");
     profile[36..40].copy_from_slice(b"acsp");
+    profile
+}
+
+#[test]
+fn jpeg_reassembles_split_profiles_in_sequence_order() {
+    let profile = rgb_profile();
+    let mut second = b"ICC_PROFILE\0\x02\x02".to_vec();
+    second.extend_from_slice(&profile[64..]);
+    let mut first = b"ICC_PROFILE\0\x01\x02".to_vec();
+    first.extend_from_slice(&profile[..64]);
+    let jpeg = with_segment(&with_segment(RGB, 0xe2, &first), 0xe2, &second);
+    assert_eq!(picture(&jpeg).unwrap().profile.as_ref(), Some(&profile));
+    assert!(picture(&with_segment(RGB, 0xe2, &second)).is_err());
+}
+
+#[test]
+fn png_profile_and_orientation_are_kept_with_the_image_samples() {
+    let profile = rgb_profile();
     let mut info = png::Info::with_size(1, 1);
     info.color_type = png::ColorType::Rgb;
     info.icc_profile = Some(profile.clone().into());
+    info.exif_metadata = Some(exif(6, true)[6..].to_vec().into());
     let mut bytes = Vec::new();
     png::Encoder::with_info(&mut bytes, info)
         .unwrap()
@@ -117,6 +135,7 @@ fn png_profile_is_embedded_with_its_unmodified_samples() {
         .unwrap()
         .write_image_data(&[200, 70, 90])
         .unwrap();
+    assert_eq!(picture(&bytes).unwrap().orientation, 6);
     let pdf = document(&[(&bytes, "sample.png")], own()).unwrap();
     let stream = pdf
         .objects

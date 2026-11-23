@@ -81,6 +81,19 @@ def require_audited(runs, sha):
     return latest
 
 
+def require_assets(draft, version):
+    installer = f'tpdf_{version}_x64-setup.exe'
+    updater = 'tpdf_aarch64.app.tar.gz'
+    expected = {'latest.json', installer, installer + '.sig', updater, updater + '.sig',
+                f'tpdf_{version}_aarch64.dmg', f'tpdf_{version}_amd64.deb',
+                f'tpdf_{version}_amd64.AppImage'}
+    assets = draft['releaseAssets']
+    actual = {item['name'] for item in assets['nodes']}
+    if actual != expected or assets['totalCount'] != len(expected):
+        raise RuntimeError(f'draft asset mismatch: missing {sorted(expected - actual)}, '
+                           f'unexpected {sorted(actual - expected)}, total {assets["totalCount"]}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('tag')
@@ -116,13 +129,15 @@ def main():
     # duplicates instead of silently publishing whichever lookup found first.
     query = '''{ repository(owner: "tstone-1", name: "tpdf") {
       releases(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
-        nodes { databaseId tagName isDraft }
+        nodes { databaseId tagName isDraft releaseAssets(first: 10) { totalCount nodes { name } } }
       }
     } }'''
     releases = gh('api', 'graphql', '-f', 'query=' + query)['data']['repository']['releases']['nodes']
     drafts = [release for release in releases if release['tagName'] == args.tag]
     if len(drafts) != 1 or not drafts[0]['isDraft']:
         raise RuntimeError('expected exactly one unpublished draft for this tag')
+    if not rehearsal:
+        require_assets(drafts[0], version)
     print(f'[PASS] {args.tag} at {sha}: all {len(PLATFORMS)} packaged API checks passed in run {latest["databaseId"]}, '
           f'audit run {audit["databaseId"]} passed')
     if args.publish:

@@ -128,17 +128,17 @@ export function positionsFor(
   }
   if (slotsOf.size === 0) return null;
   let usedLabel = false;
-  const one = (text: string): string | null => {
+  const positions = (text: string): readonly string[] => {
     if (/^[0-9]+$/.test(text)) {
       const slot = Number(text) - 1;
-      if (slot < 0 || slot >= pageCount || displacedNumbers.has(slot + 1)) return null;
+      if (slot < 0 || slot >= pageCount || displacedNumbers.has(slot + 1)) return [];
       const printed = labelOf(slot);
-      return printed === null || printed === text ? text : null;
+      return printed === null || printed === text ? [text] : [];
     }
     const slots = slotsOf.get(text);
-    if (slots?.length !== 1) return null;
+    if (!slots?.length) return [];
     usedLabel = true;
-    return String(slots[0]! + 1);
+    return slots.map((slot) => String(slot + 1));
   };
   const parts = raw.split(",").map((part) => part.trim());
   let candidates = [""];
@@ -147,12 +147,17 @@ export function positionsFor(
     // split as a range. Discarding the literal would make that range appear unique.
     if ((slotsOf.get(part)?.length ?? 0) > 1) return null;
     const choices = new Set<string>();
-    const whole = one(part);
-    if (whole !== null) choices.add(whole);
+    for (const whole of positions(part)) choices.add(whole);
     for (let at = part.indexOf("-", 1); at > 0; at = part.indexOf("-", at + 1)) {
-      const from = one(part.slice(0, at).trim());
-      const to = from === null ? null : one(part.slice(at + 1).trim());
-      if (from !== null && to !== null) choices.add(`${from}-${to}`);
+      const left = part.slice(0, at).trim();
+      const right = part.slice(at + 1).trim();
+      if ((slotsOf.get(left)?.length ?? 0) > 64 || (slotsOf.get(right)?.length ?? 0) > 64) return null;
+      const starts = positions(left);
+      const ends = positions(right);
+      if (starts.length * ends.length + choices.size > 64) return null;
+      for (const from of starts) {
+        for (const to of ends) choices.add(`${from}-${to}`);
+      }
     }
     // Decline a hint if proving uniqueness would require an unbounded search.
     if (choices.size === 0 || choices.size * candidates.length > 64) return null;

@@ -150,7 +150,7 @@ class PackageGateTests(unittest.TestCase):
             require_audited([dict(green, status='in_progress')], 'abc')
 
     def test_publish_entry_point_calls_the_guard_before_mutating(self):
-        for mode in ['passed', 'failed', 'moved', 'dry-run', 'unaudited', 'audit-red', 'mismatch', 'rc-check', 'rc-publish', 'unsigned']:
+        for mode in ['passed', 'failed', 'moved', 'dry-run', 'unaudited', 'audit-red', 'mismatch', 'rc-check', 'rc-publish', 'unsigned', 'missing-sig', 'substituted']:
             tag = 'v26.9.22-rc1' if mode.startswith('rc-') else 'v26.9.22'
             calls = []
             reads = 0
@@ -184,8 +184,18 @@ class PackageGateTests(unittest.TestCase):
                         mac['steps'][-1]['conclusion'] = 'skipped'
                     return run
                 if args[:2] == ('api', 'graphql'):
+                    self.assertIn('releaseAssets', args[-1])
+                    assets = ['latest.json', 'tpdf_aarch64.app.tar.gz', 'tpdf_aarch64.app.tar.gz.sig',
+                              'tpdf_26.9.22_aarch64.dmg', 'tpdf_26.9.22_amd64.deb',
+                              'tpdf_26.9.22_amd64.AppImage', 'tpdf_26.9.22_x64-setup.exe',
+                              'tpdf_26.9.22_x64-setup.exe.sig']
+                    if mode in ('missing-sig', 'substituted'):
+                        assets.pop()
+                    if mode == 'substituted':
+                        assets.append('unexpected.sig')
+                    remote = dict(totalCount=len(assets), nodes=[dict(name=name) for name in assets])
                     return dict(data=dict(repository=dict(releases=dict(nodes=[
-                        dict(databaseId=2, tagName=tag, isDraft=True)]))))
+                        dict(databaseId=2, tagName=tag, isDraft=True, releaseAssets=remote)]))))
                 if args[:3] == ('api', '--method', 'PATCH'):
                     return dict(draft=False)
                 raise AssertionError(args)
@@ -198,7 +208,7 @@ class PackageGateTests(unittest.TestCase):
                     with patch('sys.stderr'), self.assertRaises(SystemExit):
                         publish_release.main()
                     self.assertEqual(calls, [])
-                elif mode in ['failed', 'moved', 'unaudited', 'audit-red', 'mismatch', 'unsigned']:
+                elif mode in ['failed', 'moved', 'unaudited', 'audit-red', 'mismatch', 'unsigned', 'missing-sig', 'substituted']:
                     with self.assertRaises(RuntimeError):
                         publish_release.main()
                 else:

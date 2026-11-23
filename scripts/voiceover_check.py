@@ -55,6 +55,7 @@ import threading
 import time
 from pathlib import Path
 
+from mac_check_app import MacCheckApp
 from nvda_check import Step, judge
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -105,7 +106,7 @@ def quoted(text: str) -> str:
 
 
 def front() -> str:
-    return osa('tell application "System Events" to get name of first process whose frontmost is true')
+    return osa('tell application "System Events" to get unix id of first process whose frontmost is true')
 
 
 def focused_role() -> str:
@@ -113,10 +114,9 @@ def focused_role() -> str:
                'to get role of (value of attribute "AXFocusedUIElement")')
 
 
-def ensure_front() -> None:
-    name = front()
-    if name != "tpdf":
-        raise Lost(f"the frontmost process is {name!r}, not tpdf")
+def ensure_front(app: MacCheckApp) -> None:
+    if front() != str(app.pid):
+        raise Lost("the check window lost focus")
 
 
 class Listener(threading.Thread):
@@ -144,24 +144,24 @@ def running(name: str) -> bool:
     return subprocess.run(["pgrep", "-x", name], capture_output=True, check=False).returncode == 0
 
 
-def walk(app: Path, pdf: Path, scratch: Path) -> tuple[list[Step], float]:
+def walk(app: MacCheckApp, pdf: Path, scratch: Path) -> tuple[list[Step], float]:
     steps: list[Step] = []
     steps.append(Step("open", time.time(), expect=["Page 1 of 8, printed as i"]))
-    subprocess.run(["open", "-a", str(app), str(pdf)], check=True)
+    app.start(pdf)
     time.sleep(10)
     # Brought forward once: VoiceOver, started a moment ago, can leave the app
     # that was active before it in front.
-    if front() != "tpdf":
-        osa('tell application "System Events" to set frontmost of process "tpdf" to true')
+    if front() != str(app.pid):
+        app.activate()
         time.sleep(3)
-    ensure_front()
+    ensure_front(app)
 
     steps.append(Step("palette", time.time(), expect=["Run a command"]))
     keystroke("k", " using command down")
     time.sleep(1.5)
     keystroke("extract pages")
     time.sleep(1.5)
-    ensure_front()
+    ensure_front(app)
     steps.append(Step("question", time.time(), expect=["Extract pages: Pages, e.g. 1-3,5"]))
     key(ENTER)
     time.sleep(2.5)
@@ -174,7 +174,7 @@ def walk(app: Path, pdf: Path, scratch: Path) -> tuple[list[Step], float]:
     steps.append(Step("preview more", time.time(), expect=["Extract 3 pages · printed as 1–2, App-A"]))
     keystroke(",7")
     time.sleep(3)
-    ensure_front()
+    ensure_front(app)
     steps.append(Step("page turn", time.time(), expect=["Page 2 of 8, printed as ii"]))
     key(PAGE_DOWN)
     time.sleep(3)
@@ -182,7 +182,7 @@ def walk(app: Path, pdf: Path, scratch: Path) -> tuple[list[Step], float]:
     # Escape until the field has lost the focus: the palette leaves its
     # question one level at a time.
     for _ in range(4):
-        ensure_front()
+        ensure_front(app)
         key(ESCAPE)
         time.sleep(1.5)
         if focused_role() != "AXTextField":
@@ -194,7 +194,7 @@ def walk(app: Path, pdf: Path, scratch: Path) -> tuple[list[Step], float]:
 
     # The palette again, so its speech is this step's and not the cancel's.
     steps.append(Step("reopen", time.time()))
-    ensure_front()
+    ensure_front(app)
     keystroke("k", " using command down")
     time.sleep(1.5)
     keystroke("extract pages")
@@ -232,10 +232,8 @@ def walk(app: Path, pdf: Path, scratch: Path) -> tuple[list[Step], float]:
     steps.append(Step("extracted", time.time(), expect=[f"Wrote 2 pages to {EXTRACTED}."]))
     key(ENTER)
     time.sleep(6)
-    ensure_front()
+    ensure_front(app)
     end = time.time()
-    keystroke("q", " using command down")
-    time.sleep(3)
     return steps, end
 
 
@@ -282,16 +280,17 @@ def main() -> int:
         except Lost as lost:
             print(f"[FAIL] VoiceOver does not answer: {lost}")
             return 2
+        owned = MacCheckApp(app)
         listener.start()
         try:
-            steps, end = walk(app, pdf, scratch)
+            steps, end = walk(owned, pdf, scratch)
         except Lost as lost:
             print(f"[FAIL] the walk stopped: {lost}")
             return 2
         finally:
             listener.stopping.set()
             listener.join(timeout=10)
-            subprocess.run(["pkill", "-x", "tpdf"], check=False)
+            owned.quit()
         said = listener.said
         if args.keep:
             args.keep.mkdir(parents=True, exist_ok=True)

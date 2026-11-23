@@ -677,6 +677,58 @@ describe("cropping by dragging", () => {
 });
 
 describe("the redaction tool shares the crop's drag and nothing else", () => {
+  it("uses the release coordinates even when they differ from the last move", async () => {
+    const viewer = build();
+    viewer.setPages(pages(false));
+    await settle();
+    viewer.armRedact();
+    drag({ x: 120, y: 140 }, { x: 220, y: 240 }, false);
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: 320, clientY: 340 });
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    expect(redacted).toHaveLength(2);
+    expect(redacted[0]!.rect).toEqual(redacted[1]!.rect);
+    viewer.destroy();
+  });
+
+  it("clips pending redactions to the owning page and restores them on uncrop", async () => {
+    const viewer = build();
+    viewer.setPages(pages(true));
+    await settle();
+    viewer.setZoom(0.75);
+    viewer.setRedactions([
+      { id: 8, page: pageId(1), area: [210, 640, 230, 660] },
+      { id: 9, page: pageId(1), area: [210, 760, 230, 780] },
+    ]);
+    // Record vertical intersections with the current canvas clip. A missing
+    // clip would draw the second region over the next page.
+    const stack: number[] = [];
+    let bottom = Infinity;
+    let pathBottom = Infinity;
+    const heights: number[] = [];
+    const ctx = {
+      save() { stack.push(bottom); },
+      restore() { bottom = stack.pop()!; },
+      beginPath() { pathBottom = Infinity; },
+      rect(_x: number, y: number, _w: number, height: number) { pathBottom = y + height; },
+      clip() { bottom = Math.min(bottom, pathBottom); },
+      fillRect(_x: number, y: number, _w: number, height: number) {
+        heights.push(Math.max(0, Math.min(y + height, bottom) - y));
+      },
+      strokeRect() {},
+    } as unknown as CanvasRenderingContext2D;
+    viewer["paintRedactions"](ctx, 1, [0, 1]);
+    expect(heights).toEqual([7.5, 0]);
+    const next = viewer["scroller"].pageOrigin(1);
+    expect(viewer.redactionAt({ clientX: next.left + 85, clientY: next.top + 67 })).toBeNull();
+    viewer.setPages(pages(false));
+    await settle();
+    viewer.setZoom(0.75);
+    heights.length = 0;
+    viewer["paintRedactions"](ctx, 1, [0, 1]);
+    expect(heights).toEqual([15, 15]);
+    viewer.destroy();
+  });
+
   it("sends a dragged region to the redaction callback and not the crop's", async () => {
     // **The test the shared drag exists to pass.** One `PointerDrag` serves both
     // tools, so the only thing separating a crop from a redaction is which flag

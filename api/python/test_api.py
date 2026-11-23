@@ -347,6 +347,11 @@ class ClientTests(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, 'turned text'):
                 self.pdf.mark_matches(self.source, output, texts=['TURNED'], kind=kind, force=True)
             self.assertEqual(output.read_bytes(), b'previous output')
+        failure = subprocess.run([BINARY, 'search', '--text', 'TURNED', '--annotate', 'underline',
+                                  '--json', '--', self.source], capture_output=True, check=False)
+        self.assertEqual(failure.returncode, 3)
+        detail = json.loads(failure.stdout)['error']
+        self.assertEqual((detail['kind'], detail['exit_code']), ('annotation', failure.returncode))
         self.pdf.mark_matches(self.source, output, texts=['TURNED'], kind='highlight', force=True)
         self.assertEqual([c['kind'] for c in self.pdf.comments(output)['comments']], ['highlight'])
 

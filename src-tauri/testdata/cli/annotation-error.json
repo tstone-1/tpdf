@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "command": "search",
+  "error": {
+    "kind": "annotation",
+    "exit_code": 3,
+    "message": "This match contains turned text"
+  }
+}

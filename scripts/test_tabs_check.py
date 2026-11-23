@@ -52,6 +52,21 @@ sys.exit(code)
 
 @unittest.skipUnless(sys.platform in {"darwin", "linux"}, "POSIX image lookup")
 class StrayProcesses(unittest.TestCase):
+    def test_cleanup_signals_only_the_owned_instance_with_its_original_start_stamp(self):
+        from mac_check_app import MacCheckApp
+        app = object.__new__(MacCheckApp)
+        app.pid = 101
+        app.started = "first launch"
+        with patch("mac_check_app.os.kill") as kill:
+            with patch.object(app, "_stamp", return_value="later launch"):
+                app.kill()
+                app.quit()
+            kill.assert_not_called()
+            with patch.object(app, "_stamp", return_value="first launch"):
+                app.kill()
+            self.assertEqual([call.args[0] for call in kill.call_args_list], [101])
+
+
     def test_only_the_viewer_executable_is_selected(self):
         viewer = Path("/bin/sleep").resolve()
         children = []

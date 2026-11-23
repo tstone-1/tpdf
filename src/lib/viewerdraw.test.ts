@@ -2033,7 +2033,7 @@ describe("the measure tool", () => {
     const fillText = vi.fn();
     const ctx = {
       save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
-      measureText: () => ({ width: 20 }), fillRect() {}, fillText,
+      rect() {}, clip() {}, measureText: () => ({ width: 20 }), fillRect() {}, fillText,
     } as unknown as CanvasRenderingContext2D;
     viewer["paintMeasures"](ctx, 1, [0]);
     expect(fillText).not.toHaveBeenCalled();
