@@ -125,11 +125,11 @@ describe("Reading a page's text, and asking for it again", () => {
     });
     core.invoke.mockReset();
     core.invoke.mockImplementation(
-      (command: string, args: { doc: number; page: number }) => {
+      (command: string, args: { doc: number; page: number; crop?: [number, number, number, number] | null }) => {
         if (command === "page_text") {
           asked.push(args.page);
           askedOf.push([args.doc, args.page]);
-          return Promise.resolve(pageText(args.page));
+          return Promise.resolve({ ...pageText(args.page), width_pt: args.crop ? args.crop[2] - args.crop[0] : 600 });
         }
         if (command === "page_geometry") {
           return Promise.resolve({
@@ -163,6 +163,34 @@ describe("Reading a page's text, and asking for it again", () => {
   });
 
   /** A three-page document. */
+  it("keeps independent text geometry for two placements of one imported page", async () => {
+    const viewer = build();
+    const source = { imported: { source: 1, page: 0 } };
+    const placements: PageView[] = [
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(8), source, turns: 0, from: 40 },
+      { id: pageId(9), source, turns: 0, from: 40 },
+    ];
+    try {
+      viewer.setPages(placements);
+      viewer.setPageTurns(1, 1);
+      const turns = await Promise.all([viewer.loadText(1), viewer.loadText(2)]);
+      expect(turns.map(text => text?.quarter_turns)).toEqual([1, 0]);
+
+      const crop: [number, number, number, number] = [40, 30, 340, 430];
+      viewer.setPages(placements.map((placement, slot) => slot === 1 ? { ...placement, crop } : placement));
+      await settle();
+      const cropped = await Promise.all([viewer.loadText(1), viewer.loadText(2)]);
+      expect(cropped.map(text => text?.width_pt)).toEqual([300, 600]);
+      const requests = core.invoke.mock.calls.filter(([name]) => name === "page_text").map(([, args]) => args);
+      expect(requests).toContainEqual({ doc: 40, page: 0, crop });
+      expect(requests).toContainEqual({ doc: 40, page: 0, crop: null });
+      expect((await viewer.loadText(2))?.quarter_turns).toBe(0);
+    } finally {
+      viewer.destroy();
+    }
+  });
+
   function build(): Viewer {
     return new Viewer(dom.root as unknown as HTMLElement, {
       doc: 1,

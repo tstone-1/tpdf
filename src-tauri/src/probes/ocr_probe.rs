@@ -654,6 +654,7 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
                     continue;
                 }
                 words.push(ControlWord {
+                    sideways: Some(false),
                     rect: [l, height_pt - t, right, height_pt - b],
                     text: drawn,
                 });

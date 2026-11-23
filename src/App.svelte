@@ -3130,7 +3130,7 @@
     const page = shown.id;
     let box;
     try {
-      box = await contentBox(source.doc, source.page);
+      box = await contentBox(source.doc, source.page, shown.crop ?? null);
     } catch (error) {
       asDocument(view, () => say(spokenError(error)));
       return;

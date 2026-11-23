@@ -209,7 +209,7 @@ ROWS += [
         '    row.append(words, label);',
         'lists each passage with its page and its words, in the order found'),
     Mutation('hidden region: go to the page and not to the passage', 'src/lib/viewer.ts',
-        '    this.goToDestination(slot, Math.max(0, this.viewRectOn(slot, rect).top));',
+        '    this.scrollToDestination(slot, Math.max(0, this.viewRectOn(slot, rect).top));',
         '    this.goToPage(slot);',
         'is scrolled to and ringed where the page has it'),
     Mutation('hidden region: ring the first page whatever was asked', 'src/lib/viewer.ts',

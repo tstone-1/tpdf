@@ -444,10 +444,8 @@ impl fmt::Display for ControlTooEasy {
 ///
 /// If no box had a usable height. Refusing is correct: with nothing to size
 /// against there is no honest control, and no control means no certification.
-fn size_no_easier_than(boxes: &[[f32; 4]]) -> Result<f32, ControlTooEasy> {
-    let smallest = boxes
-        .iter()
-        .map(|b| b[3] - b[1])
+fn size_no_easier_than(heights: impl Iterator<Item = f32>) -> Result<f32, ControlTooEasy> {
+    let smallest = heights
         .filter(|h| h.is_finite() && *h > 0.0)
         .fold(f32::INFINITY, f32::min);
     if !smallest.is_finite() {
@@ -482,7 +480,7 @@ impl Control {
         token: impl Into<String>,
         band: [f32; 4],
     ) -> Result<Self, ControlTooEasy> {
-        let smallest = size_no_easier_than(redacted_boxes)?;
+        let smallest = size_no_easier_than(redacted_boxes.iter().map(|b| b[3] - b[1]))?;
         let token = token.into();
         if token.trim().is_empty() {
             return Err(ControlTooEasy(
@@ -589,6 +587,9 @@ const CONTROL_HEIGHT_SLACK_PT: f32 = 0.01;
 /// has recorded from several other directions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ControlWord {
+    /// Direction of the word in displayed coordinates. Mixed or oblique text has no
+    /// measurable cross-baseline extent in an axis-aligned box.
+    pub sideways: Option<bool>,
     /// Its box, same convention as everything else here: `left, top, right,
     /// bottom` in PDF points, y increasing **downwards**.
     ///
@@ -604,6 +605,14 @@ pub struct ControlWord {
     pub text: String,
 }
 
+impl ControlWord {
+    fn print_height(&self) -> Option<f32> {
+        let axis = usize::from(!self.sideways?);
+        let height = self.rect[axis + 2] - self.rect[axis];
+        (height.is_finite() && height > 0.0).then_some(height)
+    }
+}
+
 /// A control chosen from a page, before anyone knows where its band will land.
 ///
 /// **Two coordinate systems, kept apart on purpose.** [`crop`](Self::crop) is on
@@ -616,6 +625,8 @@ pub struct ControlWord {
 /// space and read in another.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ControlChoice {
+    /// Whether the control's print height runs across the displayed page.
+    pub sideways: bool,
     /// Where on the page the control band is cropped from.
     pub crop: [f32; 4],
     /// The text drawn there, which the engine has to read back.
@@ -672,9 +683,8 @@ impl ControlChoice {
 ///    [`adjudicate`] matches the token against a recognised span by containment
 ///    and a fragment matches by accident.
 ///
-/// The longest qualifying word wins; ties go to the topmost and then the
-/// leftmost, so the same page always yields the same control and a test can say
-/// which.
+/// Prefer a word that covers the scripts of the removed text. Among equally
+/// useful words, choose the longest, then the topmost and leftmost.
 ///
 /// **When no region covers a word, rule 2 has nothing to measure**, and the
 /// size is the page's: the smallest word left that rule 3 admits. The choice
@@ -691,14 +701,13 @@ pub fn control_from_page(
     words: &[ControlWord],
     regions: &[[f32; 4]],
 ) -> Result<ControlChoice, ControlTooEasy> {
-    let covered: Vec<[f32; 4]> = words
+    let covered: Vec<_> = words
         .iter()
         .filter(|word| {
             regions
                 .iter()
                 .any(|region| crate::objects::overlaps(word.rect, *region))
         })
-        .map(|word| word.rect)
         .collect();
 
     let survivors: Vec<&ControlWord> = words
@@ -730,19 +739,32 @@ pub fn control_from_page(
     // size is unknown.
     let from_page = covered.is_empty();
     let size_pt = if from_page {
-        let eligible: Vec<[f32; 4]> = survivors
-            .iter()
-            .filter(|word| longest_run(&word.text).chars().count() >= MIN_CONTROL_CHARS)
-            .map(|word| word.rect)
-            .collect();
-        size_no_easier_than(&eligible)?
+        size_no_easier_than(
+            survivors
+                .iter()
+                .filter(|word| longest_run(&word.text).chars().count() >= MIN_CONTROL_CHARS)
+                .filter_map(|word| word.print_height()),
+        )?
     } else {
-        size_no_easier_than(&covered)?
+        if covered.iter().any(|word| word.sideways.is_none()) {
+            return Err(ControlTooEasy(
+                said!("The print height of angled or mixed-direction text could not be measured"),
+                NotVerifiedCause::ControlNoSize,
+            ));
+        }
+        let heights = covered
+            .iter()
+            .map(|word| word.print_height())
+            .collect::<Option<Vec<_>>>();
+        size_no_easier_than(heights.unwrap_or_default().into_iter())?
     };
 
-    let small: Vec<&&ControlWord> = survivors
-        .iter()
-        .filter(|word| word.rect[3] - word.rect[1] <= size_pt + CONTROL_HEIGHT_SLACK_PT)
+    let small: Vec<&ControlWord> = survivors
+        .into_iter()
+        .filter(|word| {
+            word.print_height()
+                .is_some_and(|height| height <= size_pt + CONTROL_HEIGHT_SLACK_PT)
+        })
         .collect();
     if small.is_empty() {
         return Err(ControlTooEasy(
@@ -754,30 +776,11 @@ pub fn control_from_page(
         ));
     }
 
-    // Longest wins; a tie goes to the topmost and then the leftmost. Ordered by
-    // hand rather than by sorting a key, because two of the three run the other
-    // way: more characters is better and a *smaller* top is.
-    let mut best: Option<&ControlWord> = None;
-    for word in &small {
-        let chars = longest_run(&word.text).chars().count();
-        if chars < MIN_CONTROL_CHARS {
-            continue;
-        }
-        let better = match best {
-            None => true,
-            Some(have) => {
-                let mine = have.text.trim().chars().count();
-                chars > mine
-                    || (chars == mine
-                        && (word.rect[1] < have.rect[1]
-                            || (word.rect[1] == have.rect[1] && word.rect[0] < have.rect[0])))
-            }
-        };
-        if better {
-            best = Some(word);
-        }
-    }
-    let chosen = best.ok_or_else(|| {
+    let required: std::collections::BTreeSet<_> = covered
+        .iter()
+        .flat_map(|word| word.text.chars().filter_map(script_of))
+        .collect();
+    let chosen = best_control(&small, &required).ok_or_else(|| {
         ControlTooEasy(
             said!(
                 "no word left on this page draws {MIN_CONTROL_CHARS} characters at \
@@ -788,11 +791,43 @@ pub fn control_from_page(
     })?;
 
     Ok(ControlChoice {
+        sideways: chosen.sideways.expect("a sized word has a direction"),
         crop: chosen.rect,
         token: longest_run(&chosen.text).to_string(),
         size_pt,
         from_page,
     })
+}
+
+/// Rank eligible words by script coverage, token length and page position.
+fn best_control<'a>(
+    small: &[&'a ControlWord],
+    required: &std::collections::BTreeSet<Script>,
+) -> Option<&'a ControlWord> {
+    let mut best: Option<&ControlWord> = None;
+    let mut highest = (0, 0);
+    for &word in small {
+        let token = longest_run(&word.text);
+        let chars = token.chars().count();
+        if chars < MIN_CONTROL_CHARS {
+            continue;
+        }
+        let score = (scripts_of(token).intersection(required).count(), chars);
+        let better = match best {
+            None => true,
+            Some(have) => {
+                score > highest
+                    || (score == highest
+                        && (word.rect[1] < have.rect[1]
+                            || (word.rect[1] == have.rect[1] && word.rect[0] < have.rect[0])))
+            }
+        };
+        if better {
+            best = Some(word);
+            highest = score;
+        }
+    }
+    best
 }
 
 /// The longest run of non-whitespace in a piece of drawn text.
@@ -1904,6 +1939,7 @@ mod tests {
 
     fn word(text: &str, rect: [f32; 4]) -> ControlWord {
         ControlWord {
+            sideways: Some(false),
             rect,
             text: text.into(),
         }
@@ -1940,6 +1976,17 @@ mod tests {
             "sized against the 6 pt box that went, not against the control: {}",
             chosen.size_pt
         );
+    }
+
+    #[test]
+    fn prefer_a_control_that_can_prove_the_removed_script() {
+        let mut words = page();
+        words.push(word("4711-0815", [0.0, 150.0, 80.0, 156.0]));
+        let chosen = control_from_page(&words, &[OVER_SECRET]).expect("a control");
+        assert_eq!(chosen.token, "readable");
+        words[0].text = "123".into();
+        let chosen = control_from_page(&words, &[OVER_SECRET]).expect("a control");
+        assert_eq!(chosen.token, "4711-0815");
     }
 
     /// The over-selection control. The covered word is the longest on the page

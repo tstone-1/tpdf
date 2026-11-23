@@ -18,7 +18,7 @@
  */
 
 import { call, type Commands } from "./ipc";
-import { quarterTurns, type FilePage } from "./pages";
+import { quarterTurns, type FilePage, type PageId } from "./pages";
 
 /**
  * One run of text the document's own tags claim, as half-open character indices.
@@ -240,6 +240,10 @@ export const TEXT_CACHE_CHARS = 400_000;
  */
 export const TEXT_CACHE_FLOOR = 8;
 
+/** A standalone cache addresses file pages. A viewer can place the same page more than once. */
+export type TextPlacement = `placement:${PageId}`;
+type TextKey = FilePage | TextPlacement;
+
 /**
  * Per-page text, fetched once and dropped when the cache outgrows its bound.
  *
@@ -287,7 +291,7 @@ export class TextCache {
    * end, which is the whole of the LRU bookkeeping: {@link touch} deletes and
    * re-sets, and the eviction scan takes keys from the front.
    */
-  private readonly pages = new Map<FilePage, PageText>();
+  private readonly pages = new Map<TextKey, PageText>();
   /**
    * Each page's crop box, sent with every extraction that has one.
    *
@@ -297,10 +301,10 @@ export class TextCache {
    * box, which is the one thing the cache must not do.
    */
   private readonly crops = new Map<
-    FilePage,
+    TextKey,
     readonly [number, number, number, number]
   >();
-  private readonly pending = new Map<FilePage, Promise<PageText | null>>();
+  private readonly pending = new Map<TextKey, Promise<PageText | null>>();
   /**
    * How many times each page's question has changed, for the pages it has.
    *
@@ -318,7 +322,7 @@ export class TextCache {
    * same scope {@link setPageCrop} has, and a document-wide counter would throw
    * away every other page's extraction with it.
    */
-  private readonly issued = new Map<FilePage, number>();
+  private readonly issued = new Map<TextKey, number>();
   /**
    * Pages whose extraction was asked for and came back with nothing.
    *
@@ -334,7 +338,7 @@ export class TextCache {
    * cleared, so a cropped page's text was dropped and never re-fetched and the
    * pointer could not place a caret on it for the rest of the session.
    */
-  private readonly unreadable = new Set<FilePage>();
+  private readonly unreadable = new Set<TextKey>();
   /** Characters across `pages`, maintained rather than recomputed. */
   private chars = 0;
   /**
@@ -342,7 +346,7 @@ export class TextCache {
    * few thousand boxes on every pointer move. Dropped whole when the view
    * rotates, which is the only thing that can invalidate it.
    */
-  private readonly turned = new Map<FilePage, PageText>();
+  private readonly turned = new Map<TextKey, PageText>();
   private turns = 0;
 
   /**
@@ -352,7 +356,7 @@ export class TextCache {
    * has edited, which is almost all of them, and because it is keyed by the same
    * page number the two caches above are.
    */
-  private readonly extra = new Map<FilePage, number>();
+  private readonly extra = new Map<TextKey, number>();
 
   constructor(doc: number, private readonly ask: (args: Commands["page_text"]["args"]) => Promise<PageText> = args => call("page_text", args)) {
     this.doc = doc;
@@ -387,7 +391,7 @@ export class TextCache {
    * difference from {@link setTurns}: a view rotation invalidates every page and
    * an edit invalidates one.
    */
-  setPageTurns(page: FilePage, turns: number): void {
+  setPageTurns(page: TextKey, turns: number): void {
     const next = quarterTurns(turns);
     if ((this.extra.get(page) ?? 0) === next) return;
     if (next === 0) this.extra.delete(page);
@@ -408,7 +412,7 @@ export class TextCache {
    * for the same reason: a crop is one page's, unlike a view rotation.
    */
   setPageCrop(
-    page: FilePage,
+    page: TextKey,
     crop: readonly [number, number, number, number] | undefined,
   ): void {
     const was = this.crops.get(page);
@@ -424,9 +428,9 @@ export class TextCache {
   }
 
   /** Drops one page's extraction, and everything derived from it. */
-  invalidatePage(page: FilePage): void { this.forget(page); }
+  invalidatePage(page: TextKey): void { this.forget(page); }
 
-  private forget(page: FilePage): void {
+  private forget(page: TextKey): void {
     // Including the record that asking was pointless. This is a page whose
     // *question* changed --- a new crop box means a new extraction --- so a
     // previous failure says nothing about the answer now.
@@ -486,7 +490,7 @@ export class TextCache {
    * cannot see the answer being discarded, goes stale the first time something
    * discards one.
    */
-  worthAsking(page: FilePage): boolean {
+  worthAsking(page: TextKey): boolean {
     return (
       !this.pages.has(page) &&
       !this.pending.has(page) &&
@@ -495,7 +499,7 @@ export class TextCache {
   }
 
   /** A page's text if it has already arrived, without asking for it. */
-  peek(page: FilePage): PageText | null {
+  peek(page: TextKey): PageText | null {
     const text = this.pages.get(page);
     // Counted as a use. This is the paint path, so what is on screen stays the
     // youngest entry and cannot be evicted out from under the frame drawing it.
@@ -520,7 +524,7 @@ export class TextCache {
    * Counts as a use, as {@link peek} does, so a page a mark is being made on
    * cannot be evicted between the two calls.
    */
-  peekUnturned(page: FilePage): PageText | null {
+  peekUnturned(page: TextKey): PageText | null {
     const text = this.pages.get(page);
     if (text === undefined) return null;
     this.touch(page);
@@ -528,7 +532,7 @@ export class TextCache {
   }
 
   /** Moves a page to the young end of the eviction order. */
-  private touch(page: FilePage): void {
+  private touch(page: TextKey): void {
     const text = this.pages.get(page);
     if (text === undefined) return;
     this.pages.delete(page);
@@ -544,7 +548,7 @@ export class TextCache {
    * replaced was written here first and no mutation of it could go red, which is
    * what says it was unreachable rather than merely untested.
    */
-  private remember(page: FilePage, text: PageText): void {
+  private remember(page: TextKey, text: PageText): void {
     this.pages.set(page, text);
     this.chars += text.codes.length;
 
@@ -562,7 +566,7 @@ export class TextCache {
   }
 
   /** The cached view of a page, turning and memoising it on first use. */
-  private view(page: FilePage, text: PageText | undefined): PageText | null {
+  private view(page: TextKey, text: PageText | undefined): PageText | null {
     if (!text) return null;
     const turns = this.turns + (this.extra.get(page) ?? 0);
     if (turns % 4 === 0) return text;
@@ -581,7 +585,7 @@ export class TextCache {
    * page boundary asks on every frame until the answer lands, and without this
    * that is one extraction per frame queued behind the tiles.
    */
-  async load(page: FilePage): Promise<PageText | null> {
+  async load(file: FilePage, page: TextKey = file): Promise<PageText | null> {
     const cached = this.pages.get(page);
     if (cached) {
       this.touch(page);
@@ -599,7 +603,7 @@ export class TextCache {
 
     const request = this.ask({
       doc: this.doc,
-      page,
+      page: file,
       crop: this.crops.get(page) ?? null,
     })
       .then((text) => {
@@ -634,12 +638,12 @@ export class TextCache {
   }
 
   /** Original file-space boxes for stored annotations and redactions. */
-  async loadFileText(page: FilePage): Promise<PageText | null> {
+  async loadFileText(file: FilePage, page: TextKey = file): Promise<PageText | null> {
     if (!this.crops.has(page)) {
-      const text = await this.loadUnturned(page);
+      const text = await this.loadUnturned(file, page);
       if (!this.crops.has(page)) return text;
     }
-    return this.ask({ doc: this.doc, page, crop: null }).catch(() => null);
+    return this.ask({ doc: this.doc, page: file, crop: null }).catch(() => null);
   }
 
   /**
@@ -661,8 +665,8 @@ export class TextCache {
    * quietly contributing nothing leaves a review list that understates what the
    * search found.
    */
-  async loadUnturned(page: FilePage): Promise<PageText | null> {
-    await this.load(page);
+  async loadUnturned(file: FilePage, page: TextKey = file): Promise<PageText | null> {
+    await this.load(file, page);
     return this.peekUnturned(page);
   }
 }

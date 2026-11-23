@@ -302,11 +302,25 @@ pub async fn ask_redactions(
     // the plan or drops the entry.
     let marked: Vec<u32> = gate.iter().map(|page| page.page).collect();
     let mut output_gate = Vec::with_capacity(gate.len());
-    for mut page in gate {
+    let sources: Vec<_> = gate
+        .iter()
+        .map(|page| {
+            let PageSource::Baseline(source) = plan.pages[page.page as usize].source else {
+                unreachable!("gate slots came from baseline pages")
+            };
+            source
+        })
+        .collect();
+    // The worker walks the page tree once for the whole selection.
+    let units = if sources.is_empty() {
+        Ok(Vec::new())
+    } else {
+        let (reply, rx) = reply_channel();
+        service.page_units(doc, sources.clone(), reply);
+        await_reply("redaction page units", rx).await
+    };
+    for (index, (mut page, source)) in gate.into_iter().zip(sources).enumerate() {
         let view = &plan.pages[page.page as usize];
-        let PageSource::Baseline(source) = view.source else {
-            unreachable!("gate slots came from baseline pages")
-        };
         if view.crop.is_some() || view.turns % 4 != 0 {
             let (reply, rx) = reply_channel();
             service.geometry(
@@ -323,7 +337,19 @@ pub async fn ask_redactions(
                 continue;
             }
         }
-        output_gate.push(page);
+        let measured = units.as_ref().map_err(Clone::clone).and_then(|units| {
+            let unit = units
+                .get(index)
+                .ok_or_else(|| said!("the page has an invalid user unit"))?;
+            page.apply_unit(*unit)
+        });
+        match measured {
+            Ok(()) => output_gate.push(page),
+            Err(why) => concerns.push(said!(
+                "Page {number}: the removed area could not be checked on the written page: {why}",
+                number = page.page + 1
+            )),
+        }
     }
     // How many of the written pages came from another file, counted off the
     // plan the write uses rather than off the model --- one list, one reader.

@@ -1478,8 +1478,8 @@ ROWS += [
         # heading at the top of the page then certifies a page of small print.
         "control: accept a word of any size",
         "src/ocr.rs",
-        "        .filter(|word| word.rect[3] - word.rect[1] <= size_pt + CONTROL_HEIGHT_SLACK_PT)",
-        "        .filter(|word| word.rect[3] - word.rect[1] >= 0.0 || size_pt >= 0.0)",
+        'height <= size_pt + CONTROL_HEIGHT_SLACK_PT',
+        'height >= 0.0',
         "a_word_set_larger_than_what_went_is_refused",
     ),
     Mutation(
@@ -1531,7 +1531,7 @@ ROWS += [
         # readable one, and the control it yields is a fragment.
         "control: rank by the whole line rather than its longest word",
         "src/ocr.rs",
-        "        let chars = longest_run(&word.text).chars().count();",
+        "        let chars = token.chars().count();",
         "        let chars = word.text.trim().chars().count();",
         "a_line_of_short_words_does_not_outrank_one_long_one",
     ),
@@ -1603,8 +1603,8 @@ ROWS += [
         # 2026-08-28 measurement rests on toward its own conclusion.
         "geometry: report the probe image without the margins and the gap",
         "src/ocr_gate.rs",
-        "    let height_pt = tallest + control_pt + padding;",
-        "    let height_pt = tallest + control_pt;",
+        '    let height_pt = tallest + (choice.crop[3] - choice.crop[1]).abs() + padding;',
+        '    let height_pt = tallest + (choice.crop[3] - choice.crop[1]).abs();',
         "the_reported_shape_is_the_page_wide_and_the_two_strips_tall",
     ),
     Mutation(

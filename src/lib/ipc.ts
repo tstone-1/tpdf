@@ -303,7 +303,7 @@ export interface Commands {
     reply: EditState;
   };
   page_content_box: {
-    args: { doc: DocHandle; page: number };
+    args: { doc: DocHandle; page: number; crop?: readonly [number, number, number, number] | null };
     reply: [number, number, number, number] | null;
   };
   page_geometry: {

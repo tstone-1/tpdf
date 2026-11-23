@@ -19,6 +19,14 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Redaction verification isolates the selected OCR control word and measures its print
+  size in physical points, including after a page turn.
+- Text comparison checks indirect font subtypes and treats a null Unicode map as absent.
+- Repeated placements of an imported page keep their own text crop and rotation.
+  Jumping to a field or other marked location on a rotated page scrolls to its displayed position.
+- Crop to Content measures the current crop. Extract Pages withholds ambiguous
+  printed-label hints when a displaced numeric label could be a range endpoint.
+
 - Graphic export preserves drawing bounds on rotated pages. Selections with optional layers use PNG
   to preserve visibility, and repeated drawing exports keep objects owned by the worker page.
 - Page extraction removes excluded bookmark titles even with a null action.

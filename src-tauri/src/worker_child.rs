@@ -646,8 +646,8 @@ fn handle(
                 Err(e) => Response::err(e),
             }
         }
-        Request::Content { page } => {
-            match render::run_content(bindings, document, *page, &CancelToken::default()) {
+        Request::Content { page, crop } => {
+            match render::run_content(bindings, document, *page, *crop, &CancelToken::default()) {
                 Ok(found) => Response::reply(Reply::Content(found)),
                 Err(e) => Response::err(e),
             }

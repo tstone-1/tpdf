@@ -374,6 +374,22 @@ describe("a cropped page", () => {
     viewer.destroy();
   });
 
+  it("scrolls a rotated field into view at its displayed offset", async () => {
+    const viewer = build();
+    try {
+      viewer.setPages(pages(false));
+      await settle();
+      viewer.setPageTurns(0, 1);
+      viewer.setZoom(2);
+      viewer.goToPage(0);
+      const start = viewer.offset;
+      viewer.showForm({ page: 0, display_rect: [400, 110, 450, 125] } as import("./forms").FormWidget);
+      expect((viewer.offset - start) / viewer.currentZoom).toBeCloseTo(394);
+    } finally {
+      viewer.destroy();
+    }
+  });
+
   it("scrolls a form field to where it is on the cropped page, as a region is", async () => {
     // A field's rectangle is the file's displayed one. Its raw top is the
     // crop's own top further down than the field is on the cropped page.

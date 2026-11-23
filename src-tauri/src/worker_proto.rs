@@ -125,7 +125,7 @@ pub enum Request {
     /// small and finds the bounding box of everything that is not paper. Per
     /// page and never document-wide --- it costs a render, and a reader crops
     /// the page in front of them.
-    Content { page: u32 },
+    Content { page: u32, crop: Option<[f32; 4]> },
     /// The share of one page that pictures cover, from 0 to 1.
     ///
     /// What text recognition asks before it reads a page that already has

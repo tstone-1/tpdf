@@ -796,9 +796,10 @@ pub async fn page_content_box(
     service: tauri::State<'_, RenderService>,
     doc: u32,
     page: u32,
+    crop: Option<[f32; 4]>,
 ) -> Result<Option<[f64; 4]>, String> {
     let (reply, rx) = reply_channel();
-    service.content(doc, page, reply);
+    service.content(doc, page, crop, reply);
     await_reply("page_content_box", rx).await
 }
 

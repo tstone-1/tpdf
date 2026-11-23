@@ -2074,7 +2074,7 @@ ROWS += [
         # had these three lines since it was written.
         "viewer: open a mark's note without scrolling to the mark",
         "src/lib/viewer.ts",
-        "    if (where.bottom < 0 || where.top > height) {\n      this.goToDestination(\n        this.pages.slotOfId(mark.page) ?? 0,\n        this.markTopPt(mark),\n      );\n    }",
+        '    if (where.bottom < 0 || where.top > height) {\n      this.scrollToDestination(\n        this.pages.slotOfId(mark.page) ?? 0,\n        this.markTopPt(mark),\n      );\n    }',
         "",
         "scrolls to a mark that is off screen",
     ),

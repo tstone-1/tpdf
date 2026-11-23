@@ -637,6 +637,7 @@ fn measure(
         }
         if gate && !provable.is_empty() {
             gate_pages.push(GatePage {
+                unit: 1.0,
                 page,
                 regions: provable,
                 words,
@@ -716,7 +717,7 @@ fn px_bucket(px: f32) -> &'static str {
 }
 
 /// How tall the control the gate chose for this page landed, how long it is, and
-/// how wide the probe image it sits in is against its height.
+/// the aspect ratio budgeted for the stack before blank columns are trimmed.
 ///
 /// Calls the gate's own two functions rather than repeating what they do, which
 /// is why [`ocr_gate::geometry_for`] is public at all. `None` means the gate
@@ -954,7 +955,7 @@ fn run_gate(
     file: &Path,
     opened: &tpdf_lib::render::DocumentInfo,
     redactions: Vec<PlannedRedaction>,
-    pages: Vec<GatePage>,
+    mut pages: Vec<GatePage>,
     tally: &mut Tally,
 ) {
     let out = std::env::temp_dir().join(format!("tpdf-reach-{}.pdf", std::process::id()));
@@ -989,6 +990,17 @@ fn run_gate(
         return;
     }
     tally.gate_pages += pages.len();
+    let page_numbers = pages.iter().map(|page| page.page).collect();
+    let geometry =
+        wait(|reply| service.page_units(opened.id, page_numbers, reply)).and_then(|units| {
+            if units.len() != pages.len() {
+                return Err("missing page unit".to_owned());
+            }
+            pages
+                .iter_mut()
+                .zip(units)
+                .try_for_each(|(page, unit)| page.apply_unit(unit))
+        });
     let asked: Vec<[f32; 4]> = pages.iter().flat_map(|p| p.regions.clone()).collect();
     tally.gate_regions += asked.len();
 
@@ -997,7 +1009,9 @@ fn run_gate(
     // that survived *inside* the region from a neighbour beside it on the same
     // rows -- which was the whole reason this half's numbers could not be
     // reported as a leak rate before `ocr_gate::mask_columns` existed.
-    match ocr_gate::judge_all(service, &out.to_string_lossy(), None, &pages) {
+    match geometry.map_or_else(Judged::Refused, |()| {
+        ocr_gate::judge_all(service, &out.to_string_lossy(), None, &pages)
+    }) {
         // Not a per-region cause: the engine would not spawn, or the file would
         // not reopen. Counted as itself rather than spread over the regions,
         // because one of these is a statement about the run.

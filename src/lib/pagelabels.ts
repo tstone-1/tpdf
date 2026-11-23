@@ -164,6 +164,8 @@ export function positionsFor(
       }
     }
   }
+  const displaced = (endpoint: string) => /^\d+$/.test(endpoint) && displacedNumbers.has(Number(endpoint));
+
   const parts = raw.split(",").map((part) => part.trim());
   let candidates = [""];
   for (const part of parts) {
@@ -176,6 +178,10 @@ export function positionsFor(
       const left = part.slice(0, at).trim();
       const right = part.slice(at + 1).trim();
       if ((slotsOf.get(left)?.length ?? 0) > 64 || (slotsOf.get(right)?.length ?? 0) > 64) return null;
+      // A displaced numeric label cannot be suggested as a position. It still
+      // makes a competing printed range ambiguous, even beside a literal label.
+      if ((displaced(left) && (slotsOf.has(right) || positions(right).length > 0)) ||
+          (displaced(right) && (slotsOf.has(left) || positions(left).length > 0))) return null;
       const starts = positions(left);
       const ends = positions(right);
       if (starts.length * ends.length + choices.size > 64) return null;

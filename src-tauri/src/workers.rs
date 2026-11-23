@@ -1999,8 +1999,13 @@ impl Engine for Workers {
         }
     }
 
-    fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String> {
-        match self.ask(doc, &Request::Content { page })? {
+    fn content(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+    ) -> Result<Option<[f64; 4]>, String> {
+        match self.ask(doc, &Request::Content { page, crop })? {
             Reply::Content(found) => Ok(found),
             other => Err(mismatched("content", &other)),
         }

@@ -92,8 +92,9 @@ export function outOfCrop(quads: readonly number[], at: CropGeometry): number[] 
 export async function contentBox(
   doc: number,
   page: number,
+  crop: readonly [number, number, number, number] | null = null,
 ): Promise<[number, number, number, number] | null> {
-  return await call("page_content_box", { doc, page });
+  return await call("page_content_box", { doc, page, crop });
 }
 
 /** Where a crop box lands inside the file's own page, and how big it is. */

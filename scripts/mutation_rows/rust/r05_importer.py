@@ -19,8 +19,8 @@ ROWS += [
         # a page that had a perfectly good control on it.
         "gate: forget the word the page ends on",
         "src/ocr_gate.rs",
-        "    flush(&mut out, &mut text, &mut rect);\n    out\n}",
-        "    let _ = (&mut text, &mut rect);\n    out\n}",
+        '    flush(&mut out, &mut text, &mut rect, direction);\n    out\n}',
+        '    let _ = (&mut text, &mut rect, direction);\n    out\n}',
         "a_word_at_the_very_end_of_the_page_is_not_lost",
     ),
     Mutation(

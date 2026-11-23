@@ -335,7 +335,7 @@ impl<'a> FontScan<'a> {
                         && fonts.iter().all(|(_, font)| {
                             resolve_dict(doc, font)
                                 .ok()
-                                .and_then(|font| font.get(b"Subtype").ok()?.as_name().ok())
+                                .and_then(|font| font_kind(doc, font))
                                 .is_some_and(|kind| {
                                     matches!(kind, b"Type1" | b"MMType1" | b"TrueType" | b"Type3")
                                 })
@@ -394,7 +394,9 @@ impl<'a> FontScan<'a> {
                 }
                 "Tj" | "TJ" | "'" | "\"" => {
                     let drawn = font?;
-                    if self.seen.insert(std::ptr::from_ref(drawn)) && is_composite(drawn) {
+                    if self.seen.insert(std::ptr::from_ref(drawn))
+                        && font_kind(doc, drawn)? == b"Type0"
+                    {
                         self.result.composite += 1;
                         match guesses(doc, drawn) {
                             Some(true) => self.result.guessing += 1,
@@ -407,7 +409,11 @@ impl<'a> FontScan<'a> {
                     let obj = resource(b"XObject", op.operands.first()?)?
                         .as_stream()
                         .ok()?;
-                    if obj.dict.get(b"Subtype").and_then(Object::as_name).ok()? == b"Form" {
+                    if resolve(doc, obj.dict.get(b"Subtype").ok()?)
+                        .as_name()
+                        .ok()?
+                        == b"Form"
+                    {
                         self.forms_left = self.forms_left.checked_sub(1)?;
                         let nested = match obj.dict.get(b"Resources") {
                             Ok(value) => resolve_dict(doc, value).ok()?,
@@ -431,12 +437,14 @@ impl<'a> FontScan<'a> {
     }
 }
 
-/// Whether a font dictionary is a composite (`/Type0`) font.
-fn is_composite(font: &Dictionary) -> bool {
-    font.get(b"Subtype")
-        .and_then(Object::as_name)
-        .map(|name| name == b"Type0")
-        .unwrap_or(false)
+/// Resolve direct and indirect font subtypes before classifying drawn text.
+fn font_kind<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<&'a [u8]> {
+    let name = resolve(doc, font.get(b"Subtype").ok()?).as_name().ok()?;
+    matches!(
+        name,
+        b"Type0" | b"Type1" | b"MMType1" | b"TrueType" | b"Type3"
+    )
+    .then_some(name)
 }
 
 /// Whether this composite font leaves PDFium guessing.
@@ -449,8 +457,12 @@ fn guesses(document: &Document, font: &Dictionary) -> Option<bool> {
     // replacement characters --- but that is a different defect with a different
     // remedy, and conflating the two would report a document that states its
     // mapping badly as one that states nothing.
-    if font.get(b"ToUnicode").is_ok() {
-        return Some(false);
+    if let Ok(value) = font.get(b"ToUnicode") {
+        match resolve(document, value) {
+            Object::Stream(_) => return Some(false),
+            Object::Null => {}
+            _ => return None,
+        }
     }
 
     let descendants = font.get(b"DescendantFonts").ok()?;
@@ -469,7 +481,7 @@ fn guesses(document: &Document, font: &Dictionary) -> Option<bool> {
     let ordering = info
         .get(b"Ordering")
         .ok()
-        .and_then(|object| object.as_str().ok())
+        .and_then(|object| resolve(document, object).as_str().ok())
         .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
         .unwrap_or_default();
 
@@ -541,6 +553,11 @@ mod tests {
     /// the other two, and it needs no font program: nothing here renders.
     fn document_with_font(font: Dictionary) -> Vec<u8> {
         let mut doc = Document::with_version("1.7");
+        let mut font = font;
+        if let Ok(Object::Stream(map)) = font.get(b"ToUnicode") {
+            let id = doc.add_object(map.clone());
+            font.set("ToUnicode", id);
+        }
         let font_id = doc.add_object(font);
         let resources = doc.add_object(dictionary! { "Font" => dictionary! { "F1" => font_id } });
         let content = doc.add_object(Stream::new(
@@ -590,7 +607,10 @@ mod tests {
             "DescendantFonts" => vec![Object::Dictionary(descendant)],
         };
         if to_unicode {
-            font.set("ToUnicode", Object::Null);
+            font.set(
+                "ToUnicode",
+                Stream::new(dictionary! {}, b"begincmap endcmap".to_vec()),
+            );
         }
         font
     }
@@ -689,6 +709,31 @@ mod tests {
     fn a_tounicode_settles_it_even_over_identity_ordering() {
         let page = scan_one(composite("Identity-H", "Identity", true));
         assert_eq!(page.guessing, 0);
+    }
+
+    #[test]
+    fn indirect_font_subtype_and_null_unicode_map_leave_identity_text_guessed() {
+        let bytes = document_with_font(composite("Identity-H", "Identity", false));
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        let page = doc.get_pages()[&1];
+        let fonts = crate::pagetree::resources(&doc, page)
+            .unwrap()
+            .unwrap()
+            .get(b"Font")
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        let font = fonts.get(b"F1").unwrap().as_reference().unwrap();
+        let subtype = doc.add_object(Object::Name(b"Type0".to_vec()));
+        let null = doc.add_object(Object::Null);
+        doc.get_dictionary_mut(font)
+            .unwrap()
+            .set("Subtype", subtype);
+        assert_eq!(scan_from(&doc, 1).unwrap()[0].guessing, 1);
+        doc.get_dictionary_mut(font).unwrap().set("ToUnicode", null);
+        assert_eq!(scan_from(&doc, 1).unwrap()[0].guessing, 1);
+        doc.get_dictionary_mut(font).unwrap().set("Subtype", null);
+        assert!(scan_from(&doc, 1).unwrap()[0].truncated);
     }
 
     /// An absent `/Ordering` is the same position as `Identity`: no table.

@@ -4623,7 +4623,10 @@ Three differences from the macOS arm are worth stating rather than leaving to be
 **This narrows T5's claim rather than widening it.** OCR is the only check that can speak about
 an image carrier, since a byte scan cannot see into a `/DCTDecode` stream. `ocr.rs` therefore
 makes "clean" unreachable except through a positive control the engine had to read back from
-the same probe image, sized from the smallest box the redaction covered — a control drawn larger
+the same probe image. The control strip shows only the selected word. Its print height is
+measured across the text baseline in physical points, including after page rotation or scaling.
+A covered word whose direction is oblique or mixed has no measurable print height from its
+axis-aligned box, so the gate returns `NotVerified`. The selected control is sized from the smallest box the redaction covered — a control drawn larger
 than the redacted text proves only that the engine reads larger text. Every engine failure, and
 a missing control, produce `NotVerified`, never `Illegible`.
 
@@ -5764,8 +5767,8 @@ because the arm it ran was the one written for "any other platform".
     control to: detection catches Chinese, Japanese, Korean and Thai there, Arabic and
     Devanagari fail closed with an engine error, and Hebrew or any script Vision does not
     detect can still certify. Below macOS 13 and on Windows there is no detection, so only the
-    script rule protects. A Latin name under a Japanese control, or the reverse, is now
-    `NotVerified`: the control chooser does not prefer a control in the covered script.
+    script rule protects. The chooser prefers a size-eligible control that covers the removed
+    scripts. If the selected control lacks a script the region held, the result is `NotVerified`.
 37. **A document's signature values are read in the coordinator, and decide which certificate
     authorities it asks** (§T10), added 2026-10-10. Adding validation data to a document that
     is already signed hands each signature's CMS from the worker to the coordinator or

@@ -442,6 +442,7 @@ pub(crate) enum Job {
     Content {
         doc: u32,
         page: u32,
+        crop: Option<[f32; 4]>,
         reply: Reply<Option<[f64; 4]>>,
     },
     Pictures {
@@ -944,8 +945,23 @@ impl RenderService {
     /// One job per page, and it costs a render --- the reader asked for this
     /// page, so measuring the document would be measuring 774 pages nobody is
     /// looking at.
-    pub fn content(&self, doc: u32, page: u32, reply: Reply<Option<[f64; 4]>>) {
-        if self.tx.send(Job::Content { doc, page, reply }).is_err() {
+    pub fn content(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+        reply: Reply<Option<[f64; 4]>>,
+    ) {
+        if self
+            .tx
+            .send(Job::Content {
+                doc,
+                page,
+                crop,
+                reply,
+            })
+            .is_err()
+        {
             // Render thread is gone; nothing left to reply with.
         }
     }
@@ -1377,7 +1393,12 @@ pub(crate) trait Engine {
         options: search::Options,
         carry: Option<&search::Carry>,
     ) -> Result<PageMatches, String>;
-    fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String>;
+    fn content(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+    ) -> Result<Option<[f64; 4]>, String>;
     fn pictures(&self, doc: u32, page: u32) -> Result<f32, String>;
     fn page_copy(
         &self,
@@ -1480,7 +1501,12 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             let run: &[u32] = if pages.len() > 1 { &pages } else { &[] };
             reply(engine.search(doc, first, run, &query, options, carry.as_ref()))
         }
-        Job::Content { doc, page, reply } => reply(engine.content(doc, page)),
+        Job::Content {
+            doc,
+            page,
+            crop,
+            reply,
+        } => reply(engine.content(doc, page, crop)),
         Job::Pictures { doc, page, reply } => reply(engine.pictures(doc, page)),
         Job::PageCopy {
             doc,
@@ -1771,9 +1797,14 @@ impl Engine for InProcess {
         Ok(run_mapping(open_slot(&self.docs.borrow(), doc)?))
     }
 
-    fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String> {
+    fn content(
+        &self,
+        doc: u32,
+        page: u32,
+        crop: Option<[f32; 4]>,
+    ) -> Result<Option<[f64; 4]>, String> {
         open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.view(doc), |view| {
-            run_content(self.bindings, view, page, &CancelToken::default())
+            run_content(self.bindings, view, page, crop, &CancelToken::default())
         })
     }
 
@@ -2221,9 +2252,10 @@ pub(crate) fn run_content(
     bindings: Bindings,
     document: &OpenDocument,
     page: u32,
+    crop: Option<[f32; 4]>,
     cancel: &CancelToken,
 ) -> Result<Option<[f64; 4]>, String> {
-    content::content_box(bindings, &document.page(page)?, cancel)
+    content::content_box(bindings, &document.page_cropped(page, crop)?, cancel)
 }
 
 /// The share of one page that pictures cover, from 0 to 1

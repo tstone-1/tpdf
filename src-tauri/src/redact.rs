@@ -5050,6 +5050,7 @@ pub fn aggregate(
         None => (Vec::new(), 0.0, 0.0),
     };
     let gate = ocr_gate::GatePage {
+        unit: 1.0,
         page,
         regions: displayed,
         words,
@@ -8269,6 +8270,7 @@ mod tests {
     /// The one gate page they hand in, named by its number in the source file.
     fn gate(page: u32) -> crate::ocr_gate::GatePage {
         crate::ocr_gate::GatePage {
+            unit: 1.0,
             page,
             regions: vec![[1.0, 2.0, 3.0, 4.0]],
             words: Vec::new(),

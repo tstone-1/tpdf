@@ -7327,3 +7327,18 @@ The hidden-text CLI test reads the position of a passage from the scaled PDF's
 report. The OCR save test requests cancellation after staging and compares the
 previous destination bytes. The redaction panel test distinguishes the text
 of a tagged footer from a neighbouring empty region.
+
+## Redaction read-back and pending crops, verified 2026-11-23
+
+On macOS, the CLI removed the same drawing from two physically identical
+sheets with page units 1 and 2. Both copies passed OCR read-back. Both JSON
+reports gave the smallest readable print as 10.3 pt. On the angled-text
+fixtures the CLI verified an upright removal on each page and reported the
+angled removal as unverified because its print height could not be measured.
+The native redaction probe passed all eight checks on both the standard-font
+fixture and the wide sheet used in CI. Each run identified the word in the
+original, verified its removal and refused a copy with no control word.
+
+The render worker measured the same content bounds for a pending crop and
+for the saved crop after reopening. Clearing the pending crop restored the
+original bounds, including the drawing outside the crop.

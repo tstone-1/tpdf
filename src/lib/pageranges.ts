@@ -8,8 +8,8 @@
  * from a command argument where the only other option is to test it through a
  * window.
  *
- * **The numbers a reader types are one-based** --- they are what is printed on
- * the page and what the toolbar says --- and everything downstream addresses
+ * **The numbers a reader types are one-based file positions.** A printed label
+ * may differ from that position. Everything downstream addresses
  * pages by zero-based slot. The conversion happens here, once, for the same
  * reason `nav.goToPage` does it next to the text saying "of {pageCount}".
  *

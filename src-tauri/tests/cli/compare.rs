@@ -348,6 +348,45 @@ fn hyphenated_words(dir: &Path, report: &mut Report) {
     repeated_read(&second, report);
 }
 
+/// Exercise the selected font through the same worker the CLI uses.
+fn indirect_font_mapping(dir: &Path, fixture: &Path, report: &mut Report) {
+    for null_map in [false, true] {
+        let mut doc = Document::load(fixture).unwrap();
+        let subtype = doc.add_object(Object::Name(b"Type0".to_vec()));
+        let null = doc.add_object(Object::Null);
+        let mut changed = false;
+        for object in doc.objects.values_mut() {
+            let Ok(font) = object.as_dict_mut() else {
+                continue;
+            };
+            if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Type0")
+                && !font.has(b"ToUnicode")
+            {
+                font.set("Subtype", subtype);
+                if null_map {
+                    font.set("ToUnicode", null);
+                }
+                changed = true;
+            }
+        }
+        assert!(
+            changed,
+            "fixture must draw composite text without a Unicode map"
+        );
+        let path = dir.join(format!("indirect-font-{null_map}.pdf"));
+        doc.save(&path).unwrap();
+        let path = path.to_string_lossy();
+        let (exit, _, err) = tool(&["compare", &path, &path, "--json"], &[]);
+        report.check(
+            &format!(
+                "compare refuses page one's indirect composite font (null Unicode map {null_map})"
+            ),
+            exit == 3 && err.contains("page 1 has text with a guessed character encoding"),
+            &format!("exit {exit}: {err}"),
+        );
+    }
+}
+
 pub(super) fn finds_what_changed_in_the_words(report: &mut Report) {
     let dir = scratch("compare");
     nearby_changes_and_wordless_pages(&dir, report);
@@ -385,6 +424,7 @@ pub(super) fn finds_what_changed_in_the_words(report: &mut Report) {
     );
 
     if let Some(unmapped) = super::fixture("encodings.pdf") {
+        indirect_font_mapping(&dir, &unmapped, report);
         let (exit, out, err) = tool(
             &["compare", &old, &unmapped.to_string_lossy(), "--json"],
             &[],

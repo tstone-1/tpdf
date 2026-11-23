@@ -265,6 +265,8 @@ export default {
     "Seite {page}: die markierten Bereiche enthielten keinen Text, daher richtet sich die Prüfung nach der kleinsten Schrift, die auf der Seite übrig ist: dort ist nichts in {size} pt oder größer lesbar",
   "the removed areas could not be read back. {why}": "die entfernten Bereiche konnten nicht zurückgelesen werden. {why}",
   "A marked area extends beyond the saved page": "Ein markierter Bereich ragt über die gespeicherte Seite hinaus",
+  "The print height of angled or mixed-direction text could not be measured": "Die Schrifthöhe von schrägem Text oder Text mit wechselnder Ausrichtung konnte nicht gemessen werden",
+  "The page geometry exceeds the supported range": "Die Seitengeometrie überschreitet den unterstützten Bereich",
   "The cropped page has no measurable area": "Die zugeschnittene Seite hat keine messbare Fläche",
   "The written page dimensions differ from the geometry of its marked areas":
     "Die Maße der gespeicherten Seite weichen von den Seitenmaßen ab, auf die sich die Markierungen beziehen",

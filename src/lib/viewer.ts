@@ -171,6 +171,7 @@ import {
   onText,
   runsFor,
   TextCache,
+  type TextPlacement,
   turnQuad,
   unturnQuad,
   wordAt,
@@ -3508,7 +3509,7 @@ export class Viewer {
     // Both are told the same number of turns, which is what stops the tiles and
     // the caret disagreeing about which way a page is facing.
     const at = this.textAt(page);
-    if (at) at.cache.setPageTurns(at.page, turns);
+    if (at) at.cache.setPageTurns(at.placement, turns);
     this.scroller.setPageTurns(page, turns);
     this.destinationGeometry++;
     this.opts.onPageGeometryChanged?.(page);
@@ -3600,7 +3601,7 @@ export class Viewer {
     this.scroller.setPages([...views]);
     for (const [slot, view] of views.entries()) {
       const at = this.textAt(slot);
-      at?.cache.setPageTurns(at.page, view.turns);
+      at?.cache.setPageTurns(at.placement, view.turns);
     }
     void this.adoptCrops(after);
     this.a11y.setPages(after.length);
@@ -4356,7 +4357,7 @@ export class Viewer {
     const where = this.linkAnchor(next);
     const height = this.viewportSize().height;
     if (where.bottom < 0 || where.top > height) {
-      this.goToDestination(next.page, Math.max(0, this.linkTopPt(next)));
+      this.scrollToDestination(next.page, Math.max(0, this.linkTopPt(next)));
     }
     this.placeRing();
     this.wake();
@@ -4603,7 +4604,7 @@ export class Viewer {
       // Placed by its own top edge rather than at the top of the page: a note
       // on page 300 of a manual is somewhere *on* that page, and scrolling to
       // the page alone can leave the mark below the fold.
-      this.goToDestination(comment.page, this.topPtOf(comment));
+      this.scrollToDestination(comment.page, this.topPtOf(comment));
     }
     // Re-read after the scroll above, which moves it.
     this.popup.show(comment, this.repliesTo(id), this.anchorFor(comment), focus);
@@ -6238,7 +6239,7 @@ export class Viewer {
           : this.pages.slotOfSource(at.source, at.page);
       if (slot === undefined) continue;
       const text = this.textAt(slot);
-      if (text) text.cache.invalidatePage(text.page);
+      if (text) text.cache.invalidatePage(text.placement);
       this.scroller.invalidatePage(slot);
     }
     this.clearSelection();
@@ -6276,7 +6277,7 @@ export class Viewer {
 
   /** Scroll to a rectangle from the opened file after applying the current crop and rotation. */
   scrollToFileRect(slot: number, rect: readonly [number, number, number, number]): void {
-    this.goToDestination(slot, Math.max(0, this.viewRectOn(slot, rect).top));
+    this.scrollToDestination(slot, Math.max(0, this.viewRectOn(slot, rect).top));
   }
 
   showForm(widget: import("./forms").FormWidget): void {
@@ -6379,7 +6380,7 @@ export class Viewer {
     if (!where) return;
     const height = this.viewportSize().height;
     if (where.bottom < 0 || where.top > height) {
-      this.goToDestination(
+      this.scrollToDestination(
         this.pages.slotOfId(mark.page) ?? 0,
         this.markTopPt(mark),
       );
@@ -6648,7 +6649,12 @@ export class Viewer {
       const source = pages.addressOf(visible, this.opts.doc);
       if (source?.doc === at.doc && source.page === at.page) this.a11y.invalidatePage(visible);
     }
-    at.cache.invalidatePage(at.page);
+    for (let slot = 0; slot < pages.length; slot++) {
+      const placement = this.textAt(slot, pages);
+      if (placement?.doc === at.doc && placement.page === at.page) {
+        placement.cache.invalidatePage(placement.placement);
+      }
+    }
     this.clearSelection();
     this.searchScope = null;
     if (this.searcher.query) this.search(this.searcher.query);
@@ -6662,7 +6668,7 @@ export class Viewer {
     for (let slot = 0; slot < this.pages.length; slot++) {
       const at = this.textAt(slot);
       if (at && this.recovery.has(at.doc, at.page)) {
-        at.cache.invalidatePage(at.page);
+        at.cache.invalidatePage(at.placement);
         this.a11y.invalidatePage(slot);
       }
     }
@@ -6685,9 +6691,12 @@ export class Viewer {
   private textAt(
     slot: number,
     pages: PageMap = this.pages,
-  ): { cache: TextCache; doc: number; page: FilePage } | undefined {
+  ): { cache: TextCache; doc: number; page: FilePage; placement: TextPlacement } | undefined {
     const at = pages.addressOf(slot, this.opts.doc);
-    return at ? { cache: this.textOf(at.doc), doc: at.doc, page: at.page } : undefined;
+    const id = pages.idOf(slot);
+    return at && id !== undefined
+      ? { cache: this.textOf(at.doc), doc: at.doc, page: at.page, placement: `placement:${id}` }
+      : undefined;
   }
 
   /** The text cache of the document open under `doc`, made on first use. */
@@ -6707,7 +6716,7 @@ export class Viewer {
   /** A page's text as the view shows it, or `null` if it has not arrived. */
   textOn(slot: number): PageText | null {
     const at = this.textAt(slot);
-    return at ? at.cache.peek(at.page) : null;
+    return at ? at.cache.peek(at.placement) : null;
   }
 
   /** Each source document is checked once per comparison, including imported pages. */
@@ -6738,13 +6747,13 @@ export class Viewer {
    */
   private loadOn(slot: number): Promise<PageText | null> {
     const at = this.textAt(slot);
-    return at ? at.cache.load(at.page) : Promise.resolve(null);
+    return at ? at.cache.load(at.page, at.placement) : Promise.resolve(null);
   }
 
   /** {@link loadOn}, in the document's own space. */
   private loadUnturnedOn(slot: number): Promise<PageText | null> {
     const at = this.textAt(slot);
-    return at ? at.cache.loadUnturned(at.page) : Promise.resolve(null);
+    return at ? at.cache.loadUnturned(at.page, at.placement) : Promise.resolve(null);
   }
 
   /** Where a pointer event falls, in one page's own point space. */
@@ -7538,7 +7547,7 @@ export class Viewer {
       const want = view.crop;
       const held = this.crops.get(view.id);
       if (source === undefined) continue;
-      source.cache.setPageCrop(source.page, want);
+      source.cache.setPageCrop(source.placement, want);
       if (want === undefined && !held) continue;
       // The box this page's geometry was measured under, and if it is the box
       // the model holds now, nothing about the page changed: no question, no
@@ -7707,7 +7716,7 @@ export class Viewer {
   async unturnedText(slot: number): Promise<PageText | null> {
     const at = this.textAt(slot);
     if (!at) return null;
-    return at.cache.loadFileText(at.page);
+    return at.cache.loadFileText(at.page, at.placement);
   }
 
   /** Confines file-space overlays to their owning page, including stroke edges. */
@@ -8758,7 +8767,7 @@ export class Viewer {
     const top = first
       ? this.viewRectOn(slot, [first.x, first.top, first.x + first.width, first.top + first.height]).top
       : null;
-    this.goToDestination(slot, top === null ? null : Math.max(0, top - SOURCE_MARGIN_PT));
+    this.scrollToDestination(slot, top === null ? null : Math.max(0, top - SOURCE_MARGIN_PT));
     this.wake();
   }
 
@@ -8802,7 +8811,7 @@ export class Viewer {
   async loadText(slot: number): Promise<PageText | null> {
     const at = this.textAt(slot);
     if (!at) return null;
-    const text = await at.cache.load(at.page);
+    const text = await at.cache.load(at.page, at.placement);
     if (!text) throw new Error(TEXT().comparisonReadFailed(slot + 1));
     return text;
   }
@@ -8821,7 +8830,7 @@ export class Viewer {
     const at = Math.max(0, Math.min(index, length - 1));
     const [first] = text && length > 0 ? runsFor(text, at, at + 1) : [];
     const third = this.viewportSize().height / 3 / this.zoom;
-    this.goToDestination(clamped, first ? Math.max(0, first.top - third) : null);
+    this.scrollToDestination(clamped, first ? Math.max(0, first.top - third) : null);
     this.wake();
   }
 
@@ -9077,8 +9086,8 @@ export class Viewer {
     // because the cache is what *forgets*: a set here went stale the moment a
     // crop dropped a page's extraction, and that page was then never fetched
     // again and could not be selected on for the rest of the session.
-    if (!at.cache.worthAsking(at.page)) return;
-    void at.cache.load(at.page).then(() => this.wake());
+    if (!at.cache.worthAsking(at.placement)) return;
+    void at.cache.load(at.page, at.placement).then(() => this.wake());
   }
 
   /**

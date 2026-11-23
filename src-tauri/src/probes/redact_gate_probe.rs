@@ -205,7 +205,8 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     };
     save::write_copy(file, &plan, &out, None, &save::Here).map_err(|e| e.message)?;
 
-    let page = GatePage {
+    let mut page = GatePage {
+        unit: 1.0,
         page: 0,
         regions: vec![region],
         words: words.clone(),
@@ -213,6 +214,9 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         width_pt: text.width_pt,
         height_pt: text.height_pt,
     };
+
+    let units = wait(|reply| service.page_units(opened.id, vec![0], reply))?;
+    page.apply_unit(*units.first().ok_or("missing page unit")?)?;
 
     // Whether the gate can speak about this page at all, asked before anything
     // is measured. A page every region covers has nothing left to read a control

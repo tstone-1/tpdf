@@ -2285,8 +2285,8 @@ ROWS += [
         # does not. Only the fixture carrying one can tell.
         "encoding: ignore a /ToUnicode entirely",
         "src/encoding.rs",
-        "    if font.get(b\"ToUnicode\").is_ok() {\n        return Some(false);\n    }",
-        "",
+        'Object::Stream(_) => return Some(false),',
+        'Object::Stream(_) => {},',
         "a_tounicode_settles_it_even_over_identity_ordering",
     ),
     Mutation(
@@ -2295,11 +2295,8 @@ ROWS += [
         # as broken while every test above still passes.
         "encoding: consider simple fonts as well as composite ones",
         "src/encoding.rs",
-        "    font.get(b\"Subtype\")\n"
-        "        .and_then(Object::as_name)\n"
-        "        .map(|name| name == b\"Type0\")\n"
-        "        .unwrap_or(false)",
-        "    let _ = font;\n    true",
+        'font_kind(doc, drawn)? == b"Type0"',
+        '!font_kind(doc, drawn)?.is_empty()',
         "a_simple_font_is_not_considered",
     ),
     Mutation(

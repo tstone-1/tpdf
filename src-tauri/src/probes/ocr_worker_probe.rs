@@ -503,6 +503,7 @@ fn other_scripts(
         };
         let subject_page = document.page(index)?;
         let gate_page = GatePage {
+            unit: 1.0,
             page: index,
             regions: vec![subject.rect],
             words: vec![subject.clone()],
@@ -511,6 +512,7 @@ fn other_scripts(
             height_pt: subject_page.height_pt(),
         };
         let choice = ControlChoice {
+            sideways: false,
             crop: control.rect,
             token: control.text.clone(),
             size_pt: height(subject.rect),

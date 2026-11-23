@@ -332,6 +332,45 @@ fn cuts_pdf() -> Vec<u8> {
     bytes
 }
 
+/// The angled row has no measurable cross-baseline height. Keep a positive
+/// read-back control on the very same file with just the upright rows marked.
+fn check_angled_redaction(
+    report: &mut Report,
+    input: &Path,
+    out: &Path,
+    upright: impl Iterator<Item = &'static str>,
+    result: &(i32, serde_json::Value, String),
+) {
+    let (code, json, stderr) = result;
+    report.check(
+        "the angled text is removed and its unreadability remains unverified",
+        *code == 1
+            && json["written"] == true
+            && json["verified"] == false
+            && out.exists()
+            && json["reasons"]
+                .to_string()
+                .contains("print height of angled"),
+        &format!("exit {code}: {stderr} {json}"),
+    );
+    let mut args = vec![
+        "redact".to_string(),
+        s(input),
+        "-o".into(),
+        s(&out.with_file_name("upright.pdf")),
+        "--json".into(),
+    ];
+    for text in upright {
+        args.extend(["--text".to_string(), text.to_string()]);
+    }
+    let (code, json, stderr) = run(&args, &[]);
+    report.check(
+        "the upright removals on the same page can be verified",
+        code == 0 && json["verified"] == true && json["written"] == true,
+        &format!("exit {code}: {stderr} {json}"),
+    );
+}
+
 /// A marked part of a line goes, and the rest of the line stays where it was.
 ///
 /// The removal used to take the whole show operator, so marking an account
@@ -380,12 +419,9 @@ pub(super) fn part_of_a_line_is_removed(report: &mut Report) {
         query_args(&queries),
     ]
     .concat();
-    let (code, json, stderr) = run(&line, &[]);
-    report.check(
-        "the copy is written and verified",
-        code == 0 && json["written"] == true && json["verified"] == true && out.exists(),
-        &format!("exit {code}: {stderr} {json}"),
-    );
+    let result = run(&line, &[]);
+    check_angled_redaction(report, &input, &out, secrets.iter().copied(), &result);
+    let (_, json, _) = result;
     if !out.exists() {
         return;
     }
@@ -534,12 +570,15 @@ pub(super) fn a_whole_show_goes_and_the_rest_stays(report: &mut Report) {
         query_args(&queries),
     ]
     .concat();
-    let (code, json, stderr) = run(&line, &[]);
-    report.check(
-        "the copy is written and verified",
-        code == 0 && json["written"] == true && json["verified"] == true && out.exists(),
-        &format!("exit {code}: {stderr} {json}"),
+    let result = run(&line, &[]);
+    check_angled_redaction(
+        report,
+        &input,
+        &out,
+        secrets.iter().copied().filter(|text| *text != "SECRETH"),
+        &result,
     );
+    let (_, json, _) = result;
     if !out.exists() {
         return;
     }
@@ -871,14 +910,14 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
     );
 
     // `[x, y, width, height]` as displayed, y down from the top of a 792 pt page.
-    let redact = |name: &str, rect: &str| {
+    let redact = |source: &Path, name: &str, rect: &str| {
         let output = dir.join(format!("{name}.pdf"));
         let regions = dir.join(format!("{name}.json"));
         std::fs::write(&regions, format!(r#"[{{"page":1,"rect":{rect}}}]"#)).expect("regions");
         let (code, json, stderr) = run(
             &strings(&[
                 "redact",
-                &s(&input),
+                &s(source),
                 "-o",
                 &s(&output),
                 "--regions",
@@ -896,7 +935,7 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
     };
 
     // Around the scribble, the box and the typed name under them.
-    let (code, json, stderr, after) = redact("inside", "[190,247,110,85]");
+    let (code, json, stderr, after) = redact(&input, "inside", "[190,247,110,85]");
     report.check(
         "a region holding a name and two drawings removes all three and is verified",
         code == 0
@@ -929,7 +968,7 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
 
     // Around a box that stands alone: no word is inside the region, so the
     // read-back is sized from the smallest print left on the page and says so.
-    let (code, json, stderr, after) = redact("alone", "[95,480,20,20]");
+    let (code, json, stderr, after) = redact(&input, "alone", "[95,480,20,20]");
     let notes = json["notes"].to_string();
     report.check(
         "a region holding a drawing and no text is verified, at a size the report names",
@@ -944,6 +983,35 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
             && !after.contains("7.375")
             && after.contains(SCRIBBLE),
         &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    let mut scaled = Document::load(&input).expect("drawings input");
+    let page = scaled.get_pages()[&1];
+    scaled.get_dictionary_mut(page).unwrap().set("UserUnit", 2);
+    let scaled_input = dir.join("scaled.pdf");
+    scaled.save(&scaled_input).expect("scaled drawings input");
+    let (code, scaled_json, stderr, after) =
+        redact(&scaled_input, "scaled-alone", "[190,960,40,40]");
+    let print_height = |notes: &str| -> Option<f32> {
+        notes
+            .split_once("nothing ")?
+            .1
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    };
+    let scaled_notes = scaled_json["notes"].to_string();
+    report.check(
+        "doubling the page unit doubles the verified drawing region and reported print height",
+        code == 0
+            && scaled_json["verified"] == true
+            && scaled_json["pages"][0]["path_removals"] == 1
+            && !after.contains("7.375")
+            && print_height(&notes)
+                .zip(print_height(&scaled_notes))
+                .is_some_and(|(base, scaled)| base > 0.0 && (2.0 * base - scaled).abs() < 0.16),
+        &format!("exit {code}: {stderr}; base {notes}; scaled {scaled_json}"),
     );
 
     // What the page draws at a point, at one pixel a point: `[r, g, b]`.
@@ -976,7 +1044,7 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
 
     // Over 50 pt of the rule, which runs 467 pt across the page at y 600.25:
     // 191.75 pt from the top, so it darkens pixel rows 191 and 192.
-    let (code, json, stderr, after) = redact("rule", "[100,182,50,20]");
+    let (code, json, stderr, after) = redact(&input, "rule", "[100,182,50,20]");
     let flat = after.split_whitespace().collect::<Vec<_>>().join(" ");
     report.check(
         "a rule the region crosses is cut at both of its edges, and the copy is verified",
@@ -1020,7 +1088,7 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
 
     // Beside the rule: the region's lower edge is 0.15 pt above its ink, which
     // is 599.75 to 600.75, and inside the bounds PDFium reports for it.
-    let (code, json, stderr, after) = redact("beside", "[100,171,50,20.1]");
+    let (code, json, stderr, after) = redact(&input, "beside", "[100,171,50,20.1]");
     report.check(
         "a region that overlaps a rule's bounds and not its ink leaves it whole and unreported",
         code == 0
@@ -1064,7 +1132,7 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
 
     // Inside the grey panel, which is 300 to 500.625 across and 112 to 152 pt
     // from the top. The hole is 350 to 380 across and 122 to 142 from the top.
-    let (code, json, stderr, after) = redact("panel", "[350,122,30,20]");
+    let (code, json, stderr, after) = redact(&input, "panel", "[350,122,30,20]");
     let flat = after.split_whitespace().collect::<Vec<_>>().join(" ");
     let pixel = drawn("panel");
     let grey = whole(310, 115);
@@ -1089,7 +1157,7 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
     );
 
     // Over the first 30 pt of the scribble, which is a curve.
-    let (code, json, stderr, after) = redact("curve", "[195,252,35,40]");
+    let (code, json, stderr, after) = redact(&input, "curve", "[195,252,35,40]");
     let left = json["pages"][0]["left"].to_string();
     report.check(
         "a curve reaching beyond the region is left, said, and the copy is not called clean",
@@ -1106,7 +1174,7 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
     );
 
     // Around the square that is also a clip.
-    let (code, json, stderr, after) = redact("clip", "[395,287,30,30]");
+    let (code, json, stderr, after) = redact(&input, "clip", "[395,287,30,30]");
     let left = json["pages"][0]["left"].to_string();
     report.check(
         "a drawing that also clips is left, said, and the copy is not called clean",

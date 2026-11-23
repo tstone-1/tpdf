@@ -109,12 +109,23 @@ pub fn words_from(page: &PageText) -> Vec<ControlWord> {
     let mut text = String::new();
     let mut rect: Option<[f32; 4]> = None;
 
+    let mut direction = None;
     for (i, code) in page.codes.iter().enumerate() {
         let ch = char::from_u32(*code).unwrap_or(' ');
         if ch.is_whitespace() {
-            flush(&mut out, &mut text, &mut rect);
+            flush(&mut out, &mut text, &mut rect, direction.take());
             continue;
         }
+        let turns = page.char_turns.get(i).copied().unwrap_or(0);
+        let axis = if turns >= 4 {
+            2
+        } else {
+            (turns + page.quarter_turns) % 2
+        };
+        direction = Some(match direction {
+            Some(previous) if previous != axis => 2,
+            _ => axis,
+        });
         text.push(ch);
         let Some(b) = page.boxes.get(i * 4..i * 4 + 4) else {
             continue;
@@ -133,13 +144,19 @@ pub fn words_from(page: &PageText) -> Vec<ControlWord> {
             ],
         });
     }
-    flush(&mut out, &mut text, &mut rect);
+    flush(&mut out, &mut text, &mut rect, direction);
     out
 }
 
-fn flush(out: &mut Vec<ControlWord>, text: &mut String, rect: &mut Option<[f32; 4]>) {
+fn flush(
+    out: &mut Vec<ControlWord>,
+    text: &mut String,
+    rect: &mut Option<[f32; 4]>,
+    direction: Option<u8>,
+) {
     if let (false, Some(r)) = (text.is_empty(), *rect) {
         out.push(ControlWord {
+            sideways: direction.filter(|&axis| axis < 2).map(|axis| axis == 1),
             rect: r,
             text: text.clone(),
         });
@@ -157,6 +174,9 @@ fn flush(out: &mut Vec<ControlWord>, text: &mut String, rect: &mut Option<[f32; 
 /// [`crate::redact_document`] the file itself is gone too.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GatePage {
+    /// Physical points per native rendering unit. Geometry is in physical points
+    /// after applying the output placement and page unit.
+    pub unit: f32,
     /// The page's slot in the file the gate **reads** --- the one the removal
     /// wrote, not the one it came from.
     ///
@@ -190,6 +210,33 @@ pub struct GatePage {
 }
 
 impl GatePage {
+    /// Move the finished output geometry from native coordinates into physical points.
+    ///
+    /// # Errors
+    /// Returns an error if the scale or the resulting coordinates are invalid.
+    pub fn apply_unit(&mut self, unit: f32) -> Result<(), String> {
+        if !unit.is_finite() || unit <= 0.0 {
+            return Err(said!("the page has an invalid user unit"));
+        }
+        self.unit = unit;
+        self.width_pt *= unit;
+        self.height_pt *= unit;
+        if !self.width_pt.is_finite() || !self.height_pt.is_finite() {
+            return Err(said!("The page geometry exceeds the supported range"));
+        }
+        for rect in self
+            .regions
+            .iter_mut()
+            .chain(self.words.iter_mut().map(|word| &mut word.rect))
+        {
+            *rect = rect.map(|v| v * unit);
+            if !rect.iter().all(|v| v.is_finite()) {
+                return Err(said!("The page geometry exceeds the supported range"));
+            }
+        }
+        Ok(())
+    }
+
     /// Places source display rectangles in the saved page after its crop and turn.
     pub(crate) fn place_on_output(
         &mut self,
@@ -221,6 +268,9 @@ impl GatePage {
         }
         for word in &mut self.words {
             word.rect = place(word.rect);
+            if turns % 2 == 1 {
+                word.sideways = word.sideways.map(|sideways| !sideways);
+            }
         }
         // Keep the script and size evidence of every covered word, including
         // one clipped by the crop. Only fully visible survivors may be controls.
@@ -364,22 +414,9 @@ pub struct ProbeGeometry {
     /// of those controls failed**, 24 of 24 and 40 of 40. A control the scale
     /// rule structurally cannot serve is one the gate cannot certify against.
     pub control_px: f32,
-    /// The probe image's shape in points: width, then height.
-    ///
-    /// **The planned shape, which [`stack`] then rounds.** It rounds the margin
-    /// and the gap to whole rows and takes each strip's real row count, so the
-    /// image it builds differs from `height_pt * scale` by a few pixels. The
-    /// ratio does not move materially and the ratio is what this is for, but a
-    /// caller quoting a pixel height should quote it as planned rather than as
-    /// rendered.
-    ///
-    /// Here because a probe image a page wide and a few dozen rows tall is the
-    /// standing suspect for the gate's remaining refusals --- the engine
-    /// answering and returning no spans at all --- and until 2026-08-28 no caller
-    /// could say what shape the gate had actually asked for. `ocr-probe` swept
-    /// four fixtures from 7.0:1 to 0.9:1 and Vision returned a span at every
-    /// one, which bounds the question rather than answering it: nothing said
-    /// whether 7:1 is the shape a real page produces.
+    /// Width and height in points used to budget the full-width stacked image.
+    /// The stack rounds its margins and gap to whole pixels. Recognition then
+    /// trims blank outer columns, so its actual aspect ratio can be narrower.
     pub image_pt: (f32, f32),
 }
 
@@ -415,7 +452,8 @@ pub fn geometry_for(
         .iter()
         .map(|r| (r[3] - r[1]).abs())
         .fold(0.0f32, f32::max);
-    let control_pt = (choice.crop[3] - choice.crop[1]).abs();
+    let axis = usize::from(!choice.sideways);
+    let control_pt = (choice.crop[axis + 2] - choice.crop[axis]).abs();
     // Plus what `stack` adds: a margin at each end and the gap between them.
     let padding = 2.0 * MARGIN_PT + SEPARATION_PT;
     let capacity = crate::ocr_worker::PIXELS_CAPACITY.min(crate::worker::TILE_CAPACITY);
@@ -432,7 +470,7 @@ pub fn geometry_for(
     // be set larger than what was removed. That is enforced in
     // [`crate::ocr::control_from_page`], and this does not weaken it --- since
     // `control_pt <= size_pt`, the scale can only come out larger than before.
-    let height_pt = tallest + control_pt + padding;
+    let height_pt = tallest + (choice.crop[3] - choice.crop[1]).abs() + padding;
     // Refused before the render is sized, because this is not a question about
     // the buffer. A control under `MIN_CONTROL_PX / MAX_SCALE` cannot be brought
     // to the floor by any scale the gate may pick, and showing the engine one
@@ -591,6 +629,39 @@ pub fn stack(
         total as f32 / scale,
     ];
     Ok((out, total, placed))
+}
+
+/// Trim only white exterior columns of the stacked image. A page-wide band of
+/// whitespace can make an isolated word too small for the recogniser's input.
+/// Keep page scale and return the horizontal offset for its reported spans.
+fn trim_white_columns(pixels: &mut Vec<u8>, width: u32, scale: f32) -> (u32, f32) {
+    let width = width as usize;
+    let stride = width * 4;
+    let (mut left, mut right) = (width, 0);
+    for row in pixels.chunks_exact(stride) {
+        let has_ink = |pixel: &[u8]| pixel != [255; 4];
+        if let Some(first) = row.chunks_exact(4).position(has_ink) {
+            left = left.min(first);
+            let trailing_white = row.rchunks_exact(4).position(has_ink).unwrap_or(0);
+            right = right.max(width - trailing_white);
+        }
+    }
+    if left >= right {
+        return (width as u32, 0.0);
+    }
+    let margin = (MARGIN_PT * scale).ceil() as usize;
+    left = left.saturating_sub(margin);
+    right = (right + margin).min(width);
+    let span = (right - left) * 4;
+    let height = pixels.len() / stride;
+    if span < stride {
+        for row in 0..height {
+            let start = row * stride + left * 4;
+            pixels.copy_within(start..start + span, row * span);
+        }
+        pixels.truncate(span * height);
+    }
+    ((right - left) as u32, left as f32 / scale)
 }
 
 /// Blanks every pixel of a strip outside a rectangle's columns.
@@ -881,13 +952,22 @@ pub fn judge_all(
             }
         };
 
+    let units: Result<Vec<f32>, String> = wait(|reply| {
+        service.page_units(
+            opened.id,
+            pages.iter().map(|page| page.page).collect(),
+            reply,
+        );
+    });
     let judged = pages
         .iter()
-        .map(|page| PageVerdicts {
+        .enumerate()
+        .map(|(index, page)| PageVerdicts {
             page: page.page,
             outcome: if opened.pages.get(page.page as usize).is_some_and(|size| {
-                (size.width_pt - page.width_pt).abs() < 0.001
-                    && (size.height_pt - page.height_pt).abs() < 0.001
+                units.as_ref().ok().and_then(|values| values.get(index)) == Some(&page.unit)
+                    && (size.width_pt * page.unit - page.width_pt).abs() < 0.001
+                    && (size.height_pt * page.unit - page.height_pt).abs() < 0.001
             }) {
                 gate_one_page(service, &mut engine, opened.id, page)
             } else {
@@ -953,15 +1033,7 @@ fn gate_one_page(
     let height_px = (page.height_pt * scale).ceil() as u32;
 
     // One control strip for the page, because the choice is the page's.
-    let control = match strip(
-        service,
-        doc,
-        page.page,
-        choice.crop,
-        width_px,
-        height_px,
-        scale,
-    ) {
+    let mut control = match strip(service, doc, page, choice.crop, width_px, height_px, scale) {
         Ok(rows) => rows,
         Err(why) => {
             return PageOutcome::Whole(Legibility::NotVerified {
@@ -971,6 +1043,15 @@ fn gate_one_page(
             })
         }
     };
+
+    // A matching label elsewhere on the same row cannot establish that this word was read.
+    if let Err(why) = mask_columns(&mut control, width_px, choice.crop, scale) {
+        return PageOutcome::Whole(Legibility::NotVerified {
+            why,
+            cause: NotVerifiedCause::Mask,
+            evidence: None,
+        });
+    }
 
     PageOutcome::Regions(
         page.regions
@@ -999,7 +1080,7 @@ fn judge(
     height_px: u32,
     scale: f32,
 ) -> crate::ocr::Legibility {
-    let mut under = match strip(service, doc, page.page, region, width_px, height_px, scale) {
+    let mut under = match strip(service, doc, page, region, width_px, height_px, scale) {
         Ok(rows) => rows,
         Err(why) => {
             return crate::ocr::Legibility::NotVerified {
@@ -1019,7 +1100,7 @@ fn judge(
             evidence: None,
         };
     }
-    let (pixels, height, band) = match stack(&under, control, width_px, scale) {
+    let (mut pixels, height, band) = match stack(&under, control, width_px, scale) {
         Ok(built) => built,
         Err(why) => {
             return crate::ocr::Legibility::NotVerified {
@@ -1030,15 +1111,22 @@ fn judge(
         }
     };
     let placed = choice.placed(band);
+    let (width, left) = trim_white_columns(&mut pixels, width_px, scale);
     let image = crate::ocr::Pixels {
         rgba: &pixels,
-        width: width_px,
+        width,
         height,
         scale,
     };
     // Asked for any script, because the region is whatever the page still
     // shows there and nobody can say in advance what that is written in.
-    let answer = engine.recognise_any_script(image, &crate::ocr::Options::default());
+    let mut answer = engine.recognise_any_script(image, &crate::ocr::Options::default());
+    if let Ok((_, items)) = &mut answer {
+        for item in items {
+            item.rect[0] += left;
+            item.rect[2] += left;
+        }
+    }
     verdict(page, region, &placed, answer)
 }
 
@@ -1133,7 +1221,7 @@ pub fn unanswered(e: &crate::ocr::RecogniseError) -> Legibility {
 fn strip(
     service: &crate::render::RenderService,
     doc: u32,
-    page: u32,
+    page: &GatePage,
     rect: [f32; 4],
     width_px: u32,
     height_px: u32,
@@ -1156,8 +1244,8 @@ fn strip(
         printing: false,
         rid: 0,
         doc,
-        page,
-        scale,
+        page: page.page,
+        scale: scale * page.unit,
         turns: 0,
         invert: false,
         x: 0,
@@ -1238,9 +1326,11 @@ mod tests {
     #[test]
     fn a_crop_and_turn_place_the_control_and_the_region_on_the_output_page() {
         let original = GatePage {
+            unit: 1.0,
             page: 0,
             regions: vec![[55., 38., 75., 48.]],
             words: vec![ControlWord {
+                sideways: Some(false),
                 rect: [80., 55., 92., 62.],
                 text: "control".into(),
             }],
@@ -1259,6 +1349,22 @@ mod tests {
         assert_eq!(page.regions, [[32., 25., 42., 45.]]);
         assert_eq!(page.words[0].rect, [18., 50., 25., 62.]);
         assert_eq!((page.width_pt, page.height_pt), (60., 90.));
+        page.apply_unit(2.0).unwrap();
+        let chosen = crate::ocr::control_from_page(&page.words, &page.regions).unwrap();
+        assert_eq!(chosen.size_pt, 14.0);
+        let scale = geometry_for(&page, &chosen).unwrap();
+        assert_eq!(scale.control_px, 14.0 * scale.scale);
+        assert!(sizing_notes(&[page])[0].contains("14.0 pt"));
+
+        let mut upright = original.clone();
+        upright.place_on_output(crop, 0).unwrap();
+        upright.apply_unit(2.0).unwrap();
+        let chosen = crate::ocr::control_from_page(&upright.words, &upright.regions).unwrap();
+        assert_eq!(chosen.size_pt, 14.0);
+        assert_eq!(
+            geometry_for(&upright, &chosen).unwrap().control_px,
+            scale.control_px
+        );
         let mut cut = original;
         assert!(cut
             .place_on_output(crate::render::CropGeometry { left: 60., ..crop }, 0)
@@ -1268,10 +1374,12 @@ mod tests {
     #[test]
     fn a_page_whose_regions_held_no_text_gets_a_note_naming_the_size() {
         let word = |text: &str, rect: [f32; 4]| ControlWord {
+            sideways: Some(false),
             text: text.into(),
             rect,
         };
         let page = |regions: Vec<[f32; 4]>| GatePage {
+            unit: 1.0,
             page: 2,
             regions,
             words: vec![
@@ -1310,6 +1418,23 @@ mod tests {
         (0..width as usize)
             .filter(|x| strip[x * 4..x * 4 + 4] != [0xFF; 4])
             .collect()
+    }
+
+    #[test]
+    fn trimming_blank_columns_preserves_every_row_and_the_scale() {
+        let mut original = vec![255; 80 * 3 * 4];
+        original[25 * 4] = 254;
+        original[(2 * 80 + 49) * 4 + 2] = 0;
+        let mut pixels = original.clone();
+        let (width, left) = trim_white_columns(&mut pixels, 80, 2.0);
+        assert_eq!((width, left), (49, 6.5)); // [25, 50) plus a 12 px margin on either side.
+        let expected: Vec<_> = original
+            .chunks_exact(80 * 4)
+            .flat_map(|row| row[13 * 4..62 * 4].iter().copied())
+            .collect();
+        assert_eq!(pixels, expected);
+        pixels.fill(255);
+        assert_eq!(trim_white_columns(&mut pixels, width, 2.0), (width, 0.0));
     }
 
     #[test]
@@ -1442,10 +1567,12 @@ mod tests {
         // operation drawing it is the one being removed.
         let words = vec![
             ControlWord {
+                sideways: Some(false),
                 rect: [0.0, 0.0, 10.0, 10.0],
                 text: "keep".into(),
             },
             ControlWord {
+                sideways: Some(false),
                 rect: [0.0, 200.0, 10.0, 210.0],
                 text: "salary".into(),
             },
@@ -1462,6 +1589,7 @@ mod tests {
         // `taking`. Dropping it would leave the chooser measuring against a
         // bigger box and picking a control that proves less.
         let words = vec![ControlWord {
+            sideways: Some(false),
             rect: [0.0, 0.0, 10.0, 6.0],
             text: "tiny".into(),
         }];
@@ -1472,6 +1600,7 @@ mod tests {
     #[test]
     fn nothing_taken_leaves_every_word_standing() {
         let words = vec![ControlWord {
+            sideways: Some(false),
             rect: [0.0, 0.0, 10.0, 10.0],
             text: "keep".into(),
         }];
@@ -1490,6 +1619,7 @@ mod tests {
         // refusal in a 40-document corpus sat outside the 8:1--16:1 band, which
         // holds four fifths of the population and fails at 9.5%.
         let page = GatePage {
+            unit: 1.0,
             page: 0,
             regions: vec![[0.0, 0.0, 40.0, 10.0], [0.0, 30.0, 40.0, 36.0]],
             words: Vec::new(),
@@ -1498,6 +1628,7 @@ mod tests {
             height_pt: 800.0,
         };
         let choice = crate::ocr::ControlChoice {
+            sideways: false,
             crop: [0.0, 50.0, 40.0, 58.0],
             token: "control".into(),
             size_pt: 10.0,
@@ -1523,6 +1654,7 @@ mod tests {
         // Measured 2026-08-28: 34 of 38 regions the gate could not verify for
         // want of a readable control were below the floor for exactly this.
         let page = GatePage {
+            unit: 1.0,
             page: 0,
             regions: vec![[0.0, 0.0, 40.0, 10.0]],
             words: Vec::new(),
@@ -1531,6 +1663,7 @@ mod tests {
             height_pt: 800.0,
         };
         let choice = crate::ocr::ControlChoice {
+            sideways: false,
             crop: [0.0, 20.0, 40.0, 25.0],
             token: "control".into(),
             size_pt: 10.0,
@@ -1552,6 +1685,7 @@ mod tests {
         // including raising the floor or dropping the clamp -- and neither of
         // those is the fix.
         let page = GatePage {
+            unit: 1.0,
             page: 0,
             regions: vec![[0.0, 0.0, 40.0, 8.0]],
             words: Vec::new(),
@@ -1563,6 +1697,7 @@ mod tests {
         // 16 pt with the 32 px Windows needs.
         let size = MIN_CONTROL_PX / 2.0;
         let choice = crate::ocr::ControlChoice {
+            sideways: false,
             crop: [0.0, 20.0, 40.0, 20.0 + size],
             token: "control".into(),
             size_pt: size,
@@ -1676,6 +1811,7 @@ mod tests {
     fn tiny_control_page(control_pt: f32) -> (GatePage, crate::ocr::ControlChoice) {
         (
             GatePage {
+                unit: 1.0,
                 page: 0,
                 regions: vec![[0.0, 0.0, 40.0, 2.0]],
                 words: Vec::new(),
@@ -1684,6 +1820,7 @@ mod tests {
                 height_pt: 800.0,
             },
             crate::ocr::ControlChoice {
+                sideways: false,
                 crop: [0.0, 50.0, 40.0, 50.0 + control_pt],
                 token: "control".into(),
                 size_pt: 10.0,
@@ -1837,6 +1974,7 @@ mod tests {
         // is a second caller of the rule and must not become a second copy of
         // it, so the two are compared against the same error.
         let control = crate::ocr::ControlChoice {
+            sideways: false,
             crop: [0.0, 0.0, 10.0, 10.0],
             token: "Fixture".into(),
             size_pt: 10.0,
@@ -1867,16 +2005,19 @@ mod tests {
     fn scripted(covered: &str, control: &str) -> (GatePage, [f32; 4], crate::ocr::Control) {
         let region = [10.0, 100.0, 200.0, 112.0];
         let mut words = vec![ControlWord {
+            sideways: Some(false),
             rect: [10.0, 300.0, 90.0, 310.0],
             text: control.into(),
         }];
         if !covered.is_empty() {
             words.push(ControlWord {
+                sideways: Some(false),
                 rect: [12.0, 101.0, 80.0, 111.0],
                 text: covered.into(),
             });
         }
         let page = GatePage {
+            unit: 1.0,
             page: 0,
             regions: vec![region],
             words,
@@ -1885,6 +2026,7 @@ mod tests {
             height_pt: 800.0,
         };
         let placed = crate::ocr::ControlChoice {
+            sideways: false,
             crop: [10.0, 300.0, 90.0, 310.0],
             token: control.into(),
             size_pt: 10.0,
@@ -2004,6 +2146,7 @@ mod tests {
         // page that mixes two scripts.
         let (mut page, region, placed) = scripted("Ackerman", "quartz");
         page.words.push(ControlWord {
+            sideways: Some(false),
             rect: [10.0, 500.0, 90.0, 510.0],
             text: "\u{5f20}\u{4f1f}".into(),
         });

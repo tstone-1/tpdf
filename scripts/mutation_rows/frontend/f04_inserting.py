@@ -881,7 +881,7 @@ ROWS += [
         'this.pages.slotOf(at.page);',
         "re-extracts only the inserted page when its own text was edited"),
     Mutation("inserted text: keep the edited page's words in the cache", "src/lib/viewer.ts",
-        'if (text) text.cache.invalidatePage(text.page);',
+        'if (text) text.cache.invalidatePage(text.placement);',
         'void text;',
         "re-extracts only the inserted page when its own text was edited"),
 ]
