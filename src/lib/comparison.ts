@@ -224,8 +224,18 @@ export async function gather(
       // Same boundaries as compare.rs: a page ends its last word and a soft
       // hyphen can extend an existing word but cannot start one.
       let inWord = false;
-      for (const code of codes) {
-        if (code === 0xad) continue;
+      for (let i = 0; i < codes.length; i++) {
+        const code = codes[i]!;
+        if (code === 0xad) {
+          // Preserve a word across an explicit discretionary line break.
+          const next = i + 1;
+          const end = codes[next] === 13 && codes[next + 1] === 10 ? next + 2
+            : codes[next] === 13 || codes[next] === 10 ? next + 1 : next;
+          const suffix = codes[end];
+          if (inWord && end > next && suffix !== undefined && suffix <= 0x10ffff
+            && /[\p{Alphabetic}\p{N}]/u.test(String.fromCodePoint(suffix))) i = end - 1;
+          continue;
+        }
         if (code < 33 || code === 127 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
           || (code > 127 && /[\p{White_Space}\p{Cc}]/u.test(String.fromCodePoint(code)))) {
           inWord = false;

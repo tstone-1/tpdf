@@ -16,6 +16,13 @@ describe("regionRequest", () => {
     expect([request.width, request.height]).toEqual([200, 100]);
   });
 
+  it("samples physically equal rectangles at the same resolution on scaled pages", () => {
+    const ordinary = regionRequest(source, { left: 0, top: 0, right: 144, bottom: 72 }, 0.5);
+    const scaled = regionRequest(source, { left: 0, top: 0, right: 72, bottom: 36 }, 0.5, 2);
+    expect([scaled.width, scaled.height]).toEqual([ordinary.width, ordinary.height]);
+    expect(scaled.scale).toBe(4);
+  });
+
   it("rounds the scale down to the thousandths the wire carries, and works the pixels out from that", () => {
     const request = regionRequest(source, { left: 0, top: 0, right: 100, bottom: 100 }, 2.34567);
     expect(request.scale).toBe(2.345);

@@ -177,6 +177,15 @@ fn read(
             }
         }
     }
+    if geometry && !texts.is_empty() {
+        let units = session
+            .units_for_slots((0..count).collect())
+            .map_err(declined)?;
+        for (text, unit) in texts.iter_mut().zip(units) {
+            super::regions::physical_text(text, unit)
+                .map_err(|why| Failure::new(Exit::Refused, format!("{shown}: {why}")))?;
+        }
+    }
     Ok(Read {
         shown,
         input,

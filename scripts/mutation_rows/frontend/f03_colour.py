@@ -968,7 +968,7 @@ ROWS += [
         # anything makes the list overstate what is about to happen.
         "redactsel: mark a run with no width",
         "src/lib/selection.ts",
-        "    if (right - left < MIN_REDACTION_SIDE) continue;",
+        "    if (right - left < minimum) continue;",
         "",
         "drops a run with no width and keeps the one beside it",
     ),
@@ -976,7 +976,7 @@ ROWS += [
         # The other side, which a width-only check cannot see.
         "redactsel: mark a run with no height",
         "src/lib/selection.ts",
-        "    if (bottom - top < MIN_REDACTION_SIDE) continue;",
+        "    if (bottom - top < minimum) continue;",
         "",
         "drops a run with no height and keeps the one beside it",
     ),
@@ -986,8 +986,8 @@ ROWS += [
         # than many real words and is still nothing.
         "redactsel: bound the region's area rather than its sides",
         "src/lib/selection.ts",
-        "    if (right - left < MIN_REDACTION_SIDE) continue;",
-        "    if ((right - left) * (bottom - top) < MIN_REDACTION_SIDE) continue;",
+        "    if (right - left < minimum) continue;",
+        "    if ((right - left) * (bottom - top) < minimum) continue;",
         "measures the bound against each side rather than against the area",
     ),
     Mutation(

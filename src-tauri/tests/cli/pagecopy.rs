@@ -17,6 +17,8 @@ const EXTTEXTOUTW: u32 = 84;
 struct Read {
     words: Vec<String>,
     weights: Vec<i32>,
+    font_heights: Vec<i32>,
+    frame_size: (u32, u32),
     escapements: Vec<i32>,
     shapes: usize,
     /// Every record, of any kind: a page without one of its texts must have as
@@ -40,7 +42,13 @@ fn read(emf: &[u8]) -> Read {
         let record = &emf[at..at + size];
         seen.records += 1;
         match kind {
-            HEADER => seen.header = record.get(40..44) == Some(b" EMF"),
+            HEADER => {
+                seen.header = record.get(40..44) == Some(b" EMF");
+                seen.frame_size = (
+                    u32_at(record, 32).unwrap_or(0),
+                    u32_at(record, 36).unwrap_or(0),
+                );
+            }
             EXTTEXTOUTW => {
                 let chars = u32_at(record, 44).unwrap_or(0) as usize;
                 let offset = u32_at(record, 48).unwrap_or(0) as usize;
@@ -56,6 +64,8 @@ fn read(emf: &[u8]) -> Read {
                 seen.escapements
                     .push(u32_at(record, 20).unwrap_or(0) as i32);
                 seen.weights.push(u32_at(record, 28).unwrap_or(0) as i32);
+                seen.font_heights
+                    .push(u32_at(record, 12).unwrap_or(0) as i32);
             }
             // Fills and strokes of paths, polygons and Béziers: the page's own
             // drawing. PDFium paints an upright filled rectangle as a brush
@@ -68,8 +78,7 @@ fn read(emf: &[u8]) -> Read {
     seen
 }
 
-/// Two pages: plain, bold and invisible words over a filled box, and the same
-/// page shown turned a quarter clockwise by its own `/Rotate`.
+/// The same page upright, rotated, physically doubled and beyond the EMF frame limit.
 fn fixture(path: &Path) {
     let mut doc = Document::with_version("1.7");
     let tree = doc.new_object_id();
@@ -87,15 +96,15 @@ fn fixture(path: &Path) {
     let stream = doc.add_object(Stream::new(dictionary! {}, content));
     let resources = dictionary! { "Font" => dictionary! { "F1" => regular, "F2" => bold } };
     let mut kids = Vec::new();
-    for rotation in [0, 90] {
+    for (rotation, unit) in [(0, 1), (90, 1), (0, 2), (0, 75_000)] {
         kids.push(Object::Reference(doc.add_object(dictionary! {
             "Type"=>"Page", "Parent"=>tree, "MediaBox"=>vec![0.into(),0.into(),595.into(),842.into()],
-            "Rotate"=>rotation, "Contents"=>stream, "Resources"=>resources.clone(),
+            "Rotate"=>rotation, "UserUnit"=>unit, "Contents"=>stream, "Resources"=>resources.clone(),
         })));
     }
     doc.objects.insert(
         tree,
-        dictionary! {"Type"=>"Pages", "Kids"=>kids, "Count"=>2}.into(),
+        dictionary! {"Type"=>"Pages", "Kids"=>kids, "Count"=>4}.into(),
     );
     let catalog = doc.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>tree});
     doc.trailer.set("Root", catalog);
@@ -367,6 +376,27 @@ pub(super) fn writes_words_as_text(report: &mut Report) {
             .as_ref()
             .is_ok_and(|seen| seen.escapements == [2700, 2700]),
         &format!("{turned:?}"),
+    );
+    let scaled = copy(&mut worker, 2).map(|bytes| read(&bytes));
+    report.check(
+        "the metafile frame and font heights reflect the page unit",
+        scaled.as_ref().is_ok_and(|seen| {
+            seen.frame_size == (41981, 59408)
+                && seen.font_heights.len() == 2
+                && flat.font_heights.len() == 2
+                && seen
+                    .font_heights
+                    .iter()
+                    .zip(&flat.font_heights)
+                    .all(|(a, b)| (a - 2 * b).abs() <= 1)
+        }),
+        &format!("ordinary {flat:?}, scaled {scaled:?}"),
+    );
+    let huge = copy(&mut worker, 3);
+    report.check(
+        "an unrepresentable physical frame is refused before copying",
+        matches!(&huge, Err(why) if why.contains("Windows metafile")),
+        &format!("{:?}", huge.map(|emf| emf.len())),
     );
     let missing = copy(&mut worker, 9);
     report.check(

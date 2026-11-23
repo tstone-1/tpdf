@@ -19,6 +19,16 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Document comparison joins words split by discretionary hyphens and preserves literal hyphens.
+- Windows PowerPoint copy asks for a save when the open document has edits, so words
+  under an unsaved cover cannot enter the clipboard as editable text.
+- Scaled pages retain physical coordinates in CLI comparisons, graphic exports and
+  Windows print layouts. Search keeps the positions of small visible punctuation.
+- Python search annotations use the CLI's checked plan. Turned text accepts highlights
+  and refuses underline, strikeout and squiggly marks.
+- Reopening a file restores its latest reading position. Canceling a reopen preserves
+  it for retry, and invoking Save attachment twice keeps the chooser usable.
+
 - Marking all search results for redaction applies the entire set together. Duplicate,
   Arrange, Undo and comparison navigation keep their original document and page across views.
 - CLI edit coordinates, matching blank pages and form font sizes honor the PDF's page scale.

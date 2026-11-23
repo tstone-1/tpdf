@@ -309,7 +309,7 @@ project conventions.
   <!-- built: edit.copyGraphic file.saveGraphic -->
 - **Copy page for PowerPoint** (Windows): the page in view goes to the clipboard as a picture
   that PowerPoint's *Ungroup* turns into shapes and text boxes, so its boxes, lines and words
-  can be edited on a slide. Text the page draws with a font tpdf cannot read as characters
+  can be edited on a slide. Save any changes before copying the page. Text the page draws with a font tpdf cannot read as characters
   stays a drawing rather than becoming wrong words. Words the page hides are not in the copy:
   a word under a box, a mark or a clip is left out, because *Ungroup* makes the cover a shape
   that can be moved off it and would show a clipped word whole, and the notice says how many
@@ -1774,8 +1774,9 @@ The checkout version of `mark_matches()` searches a snapshot and writes a copy i
 If the source changes before the edit, the command refuses to publish the copy.
 `kind=` is `"highlight"` (the default), `"underline"`, `"strikeout"` or `"squiggly"`, and
 `color=` is red, green and blue from 0 to 1. It returns the edit report, or `None` when
-nothing matched; no file is written then. A match with wholly or partly missing character positions raises
-`ValueError` before anything is written.
+nothing matched. A match with wholly or partly missing character positions raises
+`ValueError` before writing. Turned text accepts highlights. Underline, strikeout and squiggly
+marks require upright text, as they do in the CLI.
 
 ```python
 marked = pdf.mark_matches("input.pdf", "marked.pdf", texts=["PRIVATE-731"], kind="underline")

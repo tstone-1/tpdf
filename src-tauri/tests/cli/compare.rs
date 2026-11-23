@@ -133,9 +133,226 @@ fn nearby_changes_and_wordless_pages(dir: &Path, report: &mut Report) {
     );
 }
 
+/// A fixed physical crop and type size; only their native coordinates vary.
+fn positioned(path: &Path, unit: i32, points: f64, shows: &str) {
+    document(path, &[&["base"]]);
+    let mut doc = Document::load(path).unwrap();
+    let page = doc.get_pages()[&1];
+    let cmap = b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Synthetic def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfrange <00> <FF> <0000> endbfrange endcmap CMapName currentdict /CMap defineresource pop end end";
+    let cmap = doc.add_object(Stream::new(dictionary! {}, cmap.to_vec()));
+    let font = doc.add_object(
+        dictionary! {"Type"=>"Font", "Subtype"=>"Type1", "BaseFont"=>"Helvetica",
+        "Encoding"=>"WinAnsiEncoding","ToUnicode"=>cmap},
+    );
+    let size = points / f64::from(unit);
+    let content = format!(
+        "BT /F1 {size} Tf {} {} Td {shows} ET",
+        80 / unit,
+        120 / unit
+    );
+    let stream = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+    let dict = doc.get_dictionary_mut(page).unwrap();
+    dict.set("Contents", stream);
+    dict.set("Resources", dictionary! {"Font"=>dictionary!{"F1"=>font}});
+    dict.set("UserUnit", unit);
+    for (key, coords) in [
+        ("MediaBox", [0, 0, 480, 640]),
+        ("CropBox", [16, 24, 416, 624]),
+    ] {
+        dict.set(
+            key,
+            Object::Array(coords.map(|n| Object::from(n / unit)).to_vec()),
+        );
+    }
+    doc.save(path).unwrap();
+}
+
+fn physical_rectangles(dir: &Path, report: &mut Report) {
+    let old = dir.join("older.pdf");
+    let new = dir.join("newer.pdf");
+    positioned(&old, 2, 12., "(,) Tj");
+    positioned(&new, 8, 12., "(.) Tj");
+    let (code, out, err) = tool(
+        &[
+            "compare",
+            old.to_str().unwrap(),
+            new.to_str().unwrap(),
+            "--json",
+        ],
+        &[],
+    );
+    let result: serde_json::Value = serde_json::from_str(&out).unwrap();
+    for (path, unit, word, key) in [(&old, 2, ",", "old_rects"), (&new, 8, ".", "new_rects")] {
+        let rects = &result["changes"][0][key];
+        let rect = &rects[0]["rect"];
+        let (found, printed, why) = tool(
+            &["search", path.to_str().unwrap(), "--text", word, "--json"],
+            &[],
+        );
+        let search: serde_json::Value = serde_json::from_str(&printed).unwrap();
+        report.check(
+            "compare and search locate the punctuation in physical points",
+            code == 1
+                && found == 0
+                && rects == &search["files"][0]["matches"][0]["rects"]
+                && rect[0].as_f64().is_some_and(|x| (63.0..68.0).contains(&x))
+                && rect[1]
+                    .as_f64()
+                    .is_some_and(|y| (499.0..505.0).contains(&y))
+                && rect[2].as_f64().is_some_and(|w| w >= 0.5),
+            &format!("unit {unit}: {rect} {err} {why}"),
+        );
+        let (planned, _, why) = tool(
+            &[
+                "search",
+                path.to_str().unwrap(),
+                "--text",
+                word,
+                "--annotate",
+                "highlight",
+            ],
+            &[],
+        );
+        report.check(
+            "search writes a highlight plan for punctuation above the physical minimum",
+            planned == 0,
+            &why,
+        );
+        if rect.is_array() {
+            let marked = dir.join(format!("marked-{unit}.pdf"));
+            let ops = serde_json::json!([{"op":"annotate","page":1,"kind":"square","rect":rect}]);
+            let (written, _, why) = super::edit::edit(path, &marked, ops, &[]);
+            let at = if written == 0 {
+                super::edit::annotations(&marked)
+            } else {
+                Vec::new()
+            };
+            report.check(
+                "edit places the reported rectangle over the glyph on the cropped sheet",
+                at.first().is_some_and(|a| {
+                    let r = &a.3;
+                    r.len() == 4
+                        && (79.0..84.0).contains(&(r[0] * unit as f32))
+                        && (116.0..122.0).contains(&(r[1] * unit as f32))
+                }),
+                &format!("{at:?} {why}"),
+            );
+        }
+    }
+    positioned(&new, 8, 1., "(.) Tj");
+    let (found, out, err) = tool(
+        &["search", new.to_str().unwrap(), "--text", ".", "--json"],
+        &[],
+    );
+    let search: serde_json::Value = serde_json::from_str(&out).unwrap();
+    report.check(
+        "a genuinely subthreshold dot still has no usable rectangle",
+        found == 0 && search["files"][0]["matches"][0]["rects"] == serde_json::json!([]),
+        &format!("{out} {err}"),
+    );
+}
+
+/// Reuse one worker and its cached page across rendering and text extraction.
+fn repeated_read(path: &Path, report: &mut Report) {
+    use tpdf_lib::worker::{Reply, Request, Worker};
+    let mut worker = Worker::spawn(path, &super::library_dir()).unwrap();
+    assert!(
+        worker
+            .call(&Request::Open {
+                lazy_geometry: true
+            })
+            .unwrap()
+            .ok
+    );
+    let picture = |worker: &mut Worker| {
+        let reply = worker
+            .call(&Request::Tile {
+                rid: 0,
+                page: 0,
+                scale: 1.,
+                turns: 0,
+                invert: false,
+                x: 32,
+                y: 464,
+                width: 200,
+                height: 96,
+                png: false,
+                crop: None,
+                annotations: false,
+                printing: false,
+            })
+            .unwrap();
+        assert!(reply.ok, "{}", reply.error);
+        worker.tile.as_slice()[..reply.bytes].to_vec()
+    };
+    let before = picture(&mut worker);
+    let expected: Vec<u32> = "discre\u{ad}tionary".chars().map(u32::from).collect();
+    let mut both = true;
+    for _ in 0..2 {
+        let response = worker
+            .call(&Request::Text {
+                page: 0,
+                crop: None,
+            })
+            .unwrap();
+        both &= matches!(response.reply, Some(Reply::Text(text)) if text.codes == expected);
+    }
+    report.check(
+        "repeated reads recover the soft hyphen and leave both printed lines intact",
+        both && before.chunks_exact(4).any(|p| p[0] < 128) && before == picture(&mut worker),
+        "",
+    );
+}
+
+fn hyphenated_words(dir: &Path, report: &mut Report) {
+    let first = dir.join("source-word.pdf");
+    let second = dir.join("reflowed-word.pdf");
+    for (source, candidate, expected) in [
+        ("(discretionary) Tj", r"(discre\255tionary) Tj", 0),
+        (
+            "(discretionary) Tj",
+            r"(discre\255) Tj 0 -16 Td (tionary) Tj",
+            0,
+        ),
+        ("(discretionary) Tj", "(discre) Tj 0 -16 Td (tionary) Tj", 1),
+        (
+            "(discretionary) Tj",
+            "(discre-) Tj 0 -16 Td (tionary) Tj",
+            1,
+        ),
+        (
+            "(discre-tionary) Tj",
+            "(discre-) Tj 0 -16 Td (tionary) Tj",
+            0,
+        ),
+    ] {
+        positioned(&first, 1, 12., source);
+        positioned(&second, 1, 12., candidate);
+        let (code, out, err) = tool(
+            &[
+                "compare",
+                first.to_str().unwrap(),
+                second.to_str().unwrap(),
+                "--json",
+            ],
+            &[],
+        );
+        let result: serde_json::Value = serde_json::from_str(&out).unwrap();
+        report.check(
+            "a discretionary wrap compares equal while hard hyphens and word boundaries survive",
+            code == expected && result["total_changes"] == expected,
+            &format!("{candidate}: {out} {err}"),
+        );
+    }
+    positioned(&second, 1, 12., r"(discre\255) Tj 0 -16 Td (tionary) Tj");
+    repeated_read(&second, report);
+}
+
 pub(super) fn finds_what_changed_in_the_words(report: &mut Report) {
     let dir = scratch("compare");
     nearby_changes_and_wordless_pages(&dir, report);
+    physical_rectangles(&dir, report);
+    hyphenated_words(&dir, report);
     let old = dir.join("old.pdf");
     let reflowed = dir.join("reflowed.pdf");
     let edited = dir.join("edited.pdf");

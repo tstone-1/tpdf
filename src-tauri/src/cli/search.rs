@@ -652,34 +652,20 @@ fn search_one(
                  fewer pages with --pages"
             ),
         ),
-        Ok(found) => {
-            let mut report = searched_for(&shown, pages.len(), empty, &found, command.annotate);
-            let slots: std::collections::BTreeSet<_> = report
-                .matches
-                .iter()
-                .flat_map(|hit| hit.rects.iter().map(|r| r.page - 1))
-                .collect();
-            if !slots.is_empty() {
-                let units = match super::pages::units_for_slots(
-                    &mut session,
-                    slots.iter().copied().collect(),
-                ) {
+        Ok(mut found) => {
+            if !found.texts.is_empty() {
+                let slots = found.texts.keys().copied().collect();
+                let units = match session.units_for_slots(slots) {
                     Ok(units) => units,
                     Err(why) => return declined(why),
                 };
-                let scale: std::collections::BTreeMap<_, _> =
-                    slots.into_iter().zip(units).collect();
-                for rect in report.matches.iter_mut().flat_map(|hit| &mut hit.rects) {
-                    rect.rect = rect.rect.map(|v| v * scale[&(rect.page - 1)]);
-                    if !rect.rect.iter().all(|v| v.is_finite()) {
-                        return failed(
-                            ErrorKind::Refused,
-                            format!("{shown}: physical match coordinates are too large"),
-                        );
+                for (text, unit) in found.texts.values_mut().zip(units) {
+                    if let Err(why) = super::regions::physical_text(text, unit) {
+                        return failed(ErrorKind::Refused, format!("{shown}: {why}"));
                     }
                 }
             }
-            report
+            searched_for(&shown, pages.len(), empty, &found, command.annotate)
         }
     }
 }

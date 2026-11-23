@@ -93,9 +93,18 @@ q /Blend gs 0 0 1 rg 246 182 24 28 re f Q"
         "Type"=>"Page", "Parent"=>tree, "MediaBox"=>vec![Object::from(0), 0.into(), 595.into(), 842.into()],
         "Contents"=>stripes, "Resources"=>dictionary! {"Pattern"=>dictionary! {"Tiles"=>tiles}},
     });
+    let mut kids = vec![Object::Reference(page), Object::Reference(patterned_page)];
+    // Equal physical rectangles, one in half as many native units.
+    for (unit, content) in [(1, "0 g 10 10 144 72 re f"), (2, "0 g 10 10 72 36 re f")] {
+        let drawing = doc.add_object(Stream::new(dictionary! {}, content.as_bytes().to_vec()));
+        kids.push(Object::Reference(doc.add_object(dictionary! {
+            "Type"=>"Page", "Parent"=>tree, "MediaBox"=>vec![Object::from(0),0.into(),595.into(),842.into()],
+            "UserUnit"=>unit, "Contents"=>drawing, "Resources"=>dictionary! {},
+        })));
+    }
     doc.objects.insert(
         tree,
-        dictionary! {"Type"=>"Pages", "Kids"=>vec![Object::Reference(page), Object::Reference(patterned_page)], "Count"=>2}.into(),
+        dictionary! {"Type"=>"Pages", "Kids"=>kids, "Count"=>4}.into(),
     );
     let catalog = doc.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>tree});
     doc.trailer.set("Root", catalog);
@@ -215,6 +224,31 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
         lazy_geometry: false,
     });
 
+    for (page, viewbox) in [(2, "144 72"), (3, "72 36")] {
+        let request = |format| GraphicRequest {
+            page,
+            ..region(5, 5, 160, 90, format)
+        };
+        let png = export(&mut worker, request(GraphicFormat::Png))
+            .and_then(|(bytes, _)| decoded(&bytes).ok_or("invalid PNG".into()));
+        let svg = export(&mut worker, request(GraphicFormat::Svg))
+            .map(|(bytes, _)| String::from_utf8_lossy(&bytes).into_owned());
+        report.check(
+            "equal physical drawings export at 600 dpi, with a native SVG viewBox",
+            png.as_ref().is_ok_and(|(w, h, rgba)| {
+                (*w, *h) == (1200, 600)
+                    && rgba.chunks_exact(4).filter(|p| p[3] == 255).count() > 700_000
+            }) && svg.as_ref().is_ok_and(|s| {
+                s.contains(&format!(
+                    "width=\"144pt\" height=\"72pt\" viewBox=\"0 0 {viewbox}\""
+                ))
+            }),
+            &format!(
+                "page {page}: PNG {:?}, SVG {svg:?}",
+                png.as_ref().map(|(w, h, _)| (w, h))
+            ),
+        );
+    }
     // The drawing: 200 x 40 points at 100, 700, plus its stroke's half width.
     let around_logo = |format| region(90, 690, 320, 750, format);
     let found = export(&mut worker, around_logo(GraphicFormat::Describe));

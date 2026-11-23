@@ -717,7 +717,7 @@ impl RawDocument {
         // `borrow_mut`, because a hit renews the entry's position --- see
         // [`PageCache`], where the reason a read mutates is written down.
         if let Some(handle) = self.pages.borrow_mut().get(index) {
-            return Ok(self.borrow_page(handle));
+            return Ok(self.borrow_page(handle, index));
         }
 
         // SAFETY: `self.handle` is non-null for the lifetime of `self`.
@@ -743,7 +743,7 @@ impl RawDocument {
             self.close_page(old);
         }
 
-        Ok(self.borrow_page(handle))
+        Ok(self.borrow_page(handle, index))
     }
 
     /// One page with the reader's crop applied, or with the file's own restored.
@@ -816,8 +816,10 @@ impl RawDocument {
         unsafe { self.bindings.FPDF_ClosePage(handle) };
     }
 
-    fn borrow_page(&self, handle: FPDF_PAGE) -> RawPage<'_> {
+    fn borrow_page(&self, handle: FPDF_PAGE, index: u32) -> RawPage<'_> {
         RawPage {
+            document: self.handle,
+            index,
             bindings: self.bindings,
             handle,
             form: self.form.as_ref().map(|form| form.handle),
@@ -848,6 +850,8 @@ impl Drop for RawDocument {
 /// that sound --- a page cannot outlive its document, and PDFium does not
 /// tolerate one that does.
 pub struct RawPage<'doc> {
+    document: FPDF_DOCUMENT,
+    index: u32,
     bindings: Bindings,
     handle: FPDF_PAGE,
     form: Option<FPDF_FORMHANDLE>,
@@ -882,6 +886,29 @@ fn normalised(ok: bool, box_pt: [f32; 4]) -> Option<[f32; 4]> {
 }
 
 impl RawPage<'_> {
+    /// Load a separate set of parsed objects for a read that needs to isolate
+    /// them. The cached page and its objects stay with the renderer.
+    pub(crate) fn with_fresh_objects<T>(&self, read: impl FnOnce(FPDF_PAGE) -> T) -> Option<T> {
+        struct Loaded(Bindings, FPDF_PAGE);
+        impl Drop for Loaded {
+            fn drop(&mut self) {
+                // SAFETY: this handle came from the independent load below.
+                unsafe { self.0.FPDF_ClosePage(self.1) };
+            }
+        }
+        // SAFETY: this page borrows the live document. The independent handle
+        // owns its parsed objects and is never placed in the page cache.
+        let fresh = unsafe {
+            self.bindings
+                .FPDF_LoadPage(self.document, self.index as c_int)
+        };
+        if fresh.is_null() {
+            return None;
+        }
+        let loaded = Loaded(self.bindings, fresh);
+        Some(read(loaded.1))
+    }
+
     /// Page width in PDF points.
     pub fn width_pt(&self) -> f32 {
         // SAFETY: `self.handle` is non-null for the lifetime of `self`.

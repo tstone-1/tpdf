@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandRegistry } from "./commands";
+import { pick, type Embedded } from "./attachments";
+import { runMenuCommand } from "./menubar";
 import { askedName, Palette } from "./palette";
 import { FakeElement, installFakeDom, type FakeDom } from "./testdom";
 
@@ -103,6 +105,41 @@ describe("leaving the palette's argument question", () => {
     palette.askFor("edit.insertPages.range");
     expect(events).toEqual(["dismissed"]);
     expect(palette.isAsking).toBe(true);
+  });
+
+  it("can save the named attachment after the native menu repeats the question", () => {
+    const commands = new CommandRegistry();
+    const palette = new Palette(commands);
+    const choice = "file.saveAttachment.choice";
+    let files: Embedded[] | null = null;
+    let request = 0;
+    const saved: string[] = [];
+    commands.register({
+      id: "file.saveAttachment", title: "Save an attachment",
+      run: () => palette.askFor(choice, () => {
+        request++;
+        files = ["first.txt", `second-${request}.txt`].map((name) => ({ name, size: null, description: "" }));
+      }),
+    }, {
+      id: choice, title: "Choose an attachment", enabled: () => files !== null,
+      argument: {
+        placeholder: "Name", problem: (raw) => "index" in pick(raw, files ?? []) ? null : "No such attachment",
+        preview: () => "", dismissed: () => { files = null; },
+        run: (raw) => {
+          const selected = pick(raw, files ?? []);
+          if (files && "index" in selected) saved.push(files[selected.index]!.name);
+        },
+      },
+    });
+    runMenuCommand(commands, palette, "file.saveAttachment");
+    runMenuCommand(commands, palette, "file.saveAttachment");
+    const body = document.body as unknown as FakeElement;
+    const input = body.querySelector("input")!;
+    input.value = "second-2";
+    input.dispatch("input", {});
+    input.dispatch("keydown", { key: "Enter" });
+    expect(saved).toEqual(["second-2.txt"]);
+    expect(palette.isOpen).toBe(false);
   });
 
   it("is not reached by a refused answer, which leaves the question open", () => {

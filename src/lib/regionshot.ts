@@ -16,6 +16,8 @@
  */
 
 import { catalog } from "./i18n";
+import { physicalPageUnit } from "./ipc";
+import { filePage } from "./pages";
 import type { TileRequest, TileSource } from "./tiles";
 
 const TEXT = catalog({
@@ -64,8 +66,8 @@ const MAX_SIDE = 65_535;
  * is shrunk by what it is over, which can land a little under, and is then
  * stepped back up to the largest scale that fits.
  */
-export function regionRequest(source: TileSource, quad: LaidQuad, screenScale: number): TileRequest {
-  const wanted = Math.floor(Math.min(Math.max(screenScale, REGION_FLOOR), MAX_SCALE) * 1000);
+export function regionRequest(source: TileSource, quad: LaidQuad, screenScale: number, pageUnit = 1): TileRequest {
+  const wanted = Math.floor(Math.min(Math.max(screenScale, REGION_FLOOR * pageUnit), MAX_SCALE) * 1000);
   let at = wanted;
   while (at > 1 && !fits(pixelsOf(quad, at / 1000))) {
     const rect = pixelsOf(quad, at / 1000);
@@ -79,6 +81,12 @@ export function regionRequest(source: TileSource, quad: LaidQuad, screenScale: n
   while (at < wanted && fits(pixelsOf(quad, (at + 1) / 1000))) at++;
   const scale = at / 1000;
   return { ...source, scale, ...pixelsOf(quad, scale), format: "png" };
+}
+
+/** A picture has a physical resolution floor. Graphic selection uses only the native rectangle. */
+export async function regionImageRequest(source: TileSource, quad: LaidQuad, screenScale: number): Promise<TileRequest> {
+  const unit = await physicalPageUnit(source.doc, filePage(source.page));
+  return regionRequest(source, quad, screenScale, unit);
 }
 
 function fits(rect: { width: number; height: number }): boolean {

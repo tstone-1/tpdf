@@ -190,7 +190,7 @@ fn ask_all(session: &mut Session) -> Result<Answers, Declined> {
         } if pages.len() == page_count => pages,
         other => return Err(unexpected("an open", &other)),
     };
-    super::pages::physical_sizes(session, &mut sizes)?;
+    session.physical_sizes(&mut sizes)?;
     // A form the worker refuses --- XFA, or past a bound --- is a fact about
     // the form and not about the document, so it is kept rather than raised.
     let form = match session.ask(Request::Form) {

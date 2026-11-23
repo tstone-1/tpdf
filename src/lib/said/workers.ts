@@ -181,8 +181,6 @@ export default {
     "die Probe {which} des Hintergrundprozesses hat {held} Bytes, und {width} mal {height} RGB-Pixel sind nicht so viele",
   "no page is chosen to print": "es ist keine Seite zum Drucken gewählt",
   "the print job could not be read: {why}": "der Druckauftrag konnte nicht gelesen werden: {why}",
-  "the worker returned incomplete page sizes for the print job":
-    "der Hintergrundprozess hat für den Druckauftrag unvollständige Seitengrößen geliefert",
   "the page could not be drawn: {e}": "die Seite konnte nicht gezeichnet werden: {e}",
   "that page is not in the print job": "diese Seite ist nicht im Druckauftrag",
   "the page is too wide": "die Seite ist zu breit",

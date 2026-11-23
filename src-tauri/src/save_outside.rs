@@ -545,6 +545,43 @@ impl InWorker {
 }
 
 impl Session {
+    /// Convert all page dimensions to physical points and retain the coordinate scales.
+    pub(crate) fn physical_sizes(
+        &mut self,
+        sizes: &mut [crate::render::PageSize],
+    ) -> Result<Vec<f32>, Declined> {
+        let count = u32::try_from(sizes.len())
+            .map_err(|_| Declined::Failed("the worker returned too many pages".into()))?;
+        let units = self.units_for_slots((0..count).collect())?;
+        for (size, unit) in sizes.iter_mut().zip(&units) {
+            size.width_pt *= unit;
+            size.height_pt *= unit;
+            if !size.width_pt.is_finite() || !size.height_pt.is_finite() {
+                return Err(Declined::Refused(
+                    "the physical page size is too large".into(),
+                ));
+            }
+        }
+        Ok(units)
+    }
+
+    /// Physical points per native unit, in the order of the zero-based slots.
+    pub(crate) fn units_for_slots(&mut self, slots: Vec<u32>) -> Result<Vec<f32>, Declined> {
+        let count = slots.len();
+        match self.ask(Request::PageUnits { pages: slots })? {
+            Reply::PageUnits(units)
+                if units.len() == count
+                    && units.iter().all(|unit| unit.is_finite() && *unit > 0.0) =>
+            {
+                Ok(units)
+            }
+            other => Err(Declined::Failed(format!(
+                "invalid page units reply: {}",
+                other.described()
+            ))),
+        }
+    }
+
     /// One question, answered within [`DEFAULT_DEADLINE`].
     ///
     /// # Errors

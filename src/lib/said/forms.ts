@@ -309,6 +309,8 @@ export default {
   "its render was abandoned.": "Seine Darstellung wurde abgebrochen.",
 
   // commands/edit.rs, pagecopy.rs: Copy page for PowerPoint
+  "Save your changes before copying this page for PowerPoint.":
+    "Vor dem Kopieren dieser Seite für PowerPoint müssen die Änderungen gespeichert werden.",
   "The page was not copied: {why}": "Die Seite wurde nicht kopiert: {why}",
   "Windows could not read the picture.": "Windows konnte das Bild nicht lesen.",
   "another program is holding the clipboard.": "Ein anderes Programm hält die Zwischenablage.",
@@ -318,6 +320,8 @@ export default {
   "the PDF engine is not loaded in this process": "Die PDF-Engine ist in diesem Prozess nicht geladen",
   "the PDF engine cannot draw a metafile": "Die PDF-Engine kann keine Metadatei zeichnen",
   "the PDF engine refused to draw a metafile": "Die PDF-Engine hat das Zeichnen einer Metadatei abgelehnt",
+  "the picture dimensions cannot be represented in a Windows metafile":
+    "Die Bildmaße lassen sich in einer Windows-Metadatei nicht darstellen.",
   "Windows would not start a picture": "Windows hat kein Bild angelegt",
   "Windows would not finish the picture": "Windows hat das Bild nicht abgeschlossen",
   "Windows would not read the picture back": "Windows hat das Bild nicht zurückgelesen",

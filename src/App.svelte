@@ -436,7 +436,6 @@
     type AppActions,
   } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
-  import { areasFrom } from "./lib/selection";
   import { completeForMarking } from "./lib/search";
   import { chooseTab, commentTarget, followStatus } from "./lib/documentmount";
   import {
@@ -528,7 +527,7 @@
   import { MarkClipboard, notCopied, shapeOf } from "./lib/markclipboard";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
   import { pastedPicture, readPicture, type PicturePixels } from "./lib/picture";
-  import { regionName, regionRequest, regionSaid } from "./lib/regionshot";
+  import { regionName, regionImageRequest, regionSaid } from "./lib/regionshot";
   import { pick as pickAttachmentIn, saved as attachmentSaved, type Embedded } from "./lib/attachments";
   import { fetchTilePng, tileSpec, type TileRequest } from "./lib/tiles";
   import { clickedBox, clickRequest, formatFor, graphicChoices, graphicName, graphicRequest, graphicSaid, saveGraphicTitle, wrongEnding, type GraphicRequest } from "./lib/graphicexport";
@@ -1371,11 +1370,7 @@
 
   /** Opens again the document closed most recently, where it was left. */
   async function reopenClosedTab(): Promise<void> {
-    const path = closedTabs.latest((one) => tabs.forPath(one) !== undefined);
-    if (path === null) return;
-    await refreshStartPage();
-    closedTabs.reopened(path);
-    await openPath(path);
+    await closedTabs.reopen(isOpenTab, openPath);
   }
 
   /**
@@ -2278,7 +2273,7 @@
    * in exactly that space. A selection spanning pages becomes regions on each,
    * because a region belongs to one page the way `/QuadPoints` does.
    *
-   * One region per run rather than one box per page --- see {@link areasFrom},
+   * One region per run rather than one box per page --- see `areasFrom`,
    * where that decision lives and can be tested. Nothing here decides anything:
    * the model accepts or refuses, and `applyEdit` has already said so.
    *
@@ -2293,12 +2288,7 @@
     const view = openView;
     const model = edits;
     await viewer?.redactSelected(async (selected) => {
-      for (const { page, quads } of selected) {
-        for (const area of areasFrom(quads)) {
-          if (!await applyEdit((e) => e.redact(page, area), view, model)) return false;
-        }
-      }
-      return true;
+      return !!await applyEdit(e => e.redactText(selected), view, model);
     }, keepArmed);
   }
 
@@ -2337,8 +2327,7 @@
     await model.trackSearchMarks(applyEdit(async (owner) => {
       const found = await searched.matchQuadsByPage();
       if (found === null) throw new Error(TEXT().matchPagesUnread);
-      const regions = found.flatMap(({ page, quads }) => areasFrom(quads).map((area) => [page, area] as const));
-      return owner.redactMany(regions);
+      return owner.redactText(found);
     }, view, model));
   }
 
@@ -2475,11 +2464,13 @@
     if (!target || openDoc < 0) return;
     const region = await target.armRegion();
     if (!region) return;
-    const request = regionRequest(region.source, region.quad, region.screenScale);
-    if (__TPDF_CHECKS__) lastRegion = request;
     try {
-      if (isMac() || isLinux()) await call("region_copy", { tile: tileSpec(request) });
-      else await navigator.clipboard.write([new ClipboardItem({ "image/png": fetchTilePng(request) })]);
+      const ready = regionImageRequest(region.source, region.quad, region.screenScale);
+      // Start the Windows clipboard write while the drag still grants access.
+      if (isMac() || isLinux()) await call("region_copy", { tile: tileSpec(await ready) });
+      else await navigator.clipboard.write([new ClipboardItem({ "image/png": ready.then(fetchTilePng) })]);
+      const request = await ready;
+      if (__TPDF_CHECKS__) lastRegion = request;
       tell(regionSaid(request));
     } catch (e) {
       say(TEXT().regionNotCopied(spokenError(e)));
@@ -2600,15 +2591,23 @@
    * (`page_copy_powerpoint`, `pagecopy.rs`). Windows only.
    */
   async function copyPageForPowerPoint(): Promise<void> {
-    const shown = viewer?.pageInView();
-    if (!shown || openDoc < 0) return;
-    const { number, doc, page, turns, crop } = shown;
-    try {
-      const leftOut = await call("page_copy_powerpoint", { doc, page, turns, crop });
-      tell(pageCopyNotice(number, leftOut));
-    } catch (e) {
-      say(spokenError(e));
-    }
+    const view = openView, model = edits, target = viewer;
+    if (!model || !target || opening || copyTaskBusy) return;
+    await documentTasks.run(async () => {
+      try {
+        await settleDrafts(model);
+        if (!stillIn(view, model, target)) return;
+        const shown = target.pageInView();
+        if (!shown) return;
+        const { number, turns, crop } = shown;
+        // Check the displayed document's journal, including when a slot draws
+        // an imported page from a different worker. Only saved slots may copy.
+        const leftOut = await call("page_copy_powerpoint", { doc: model.doc, page: number - 1, turns, crop });
+        if (stillIn(view, model, target)) tell(pageCopyNotice(number, leftOut));
+      } catch (e) {
+        if (stillIn(view, model, target)) say(spokenError(e));
+      }
+    });
   }
 
   /**
@@ -2621,10 +2620,10 @@
     if (!target || openDoc < 0 || !name) return;
     const region = await target.armRegion();
     if (!region) return;
-    const request = regionRequest(region.source, region.quad, region.screenScale);
-    if (__TPDF_CHECKS__) lastRegion = request;
     const suggested = regionName(basename(name), region.pageNumber);
     try {
+      const request = await regionImageRequest(region.source, region.quad, region.screenScale);
+      if (__TPDF_CHECKS__) lastRegion = request;
       const chosen = await saveDialog({
         title: TEXT().saveRegion,
         defaultPath: suggested,
@@ -2644,10 +2643,11 @@
    * comes with the document's properties, read in a worker.
    */
   async function saveAttachment(): Promise<void> {
-    const doc = openDoc, source = openPathName;
+    const doc = openDoc, source = openPathName, view = openView, model = edits;
     if (doc < 0 || !source) return;
     try {
       const properties = await call("document_properties", { doc });
+      if (!stillIn(view, model)) return;
       const files = properties.embedded ?? [];
       const incomplete = properties.attachments === null;
       if (incomplete) tell(TEXT().incompleteAttachments);
@@ -2660,10 +2660,9 @@
         await saveAttachmentAt(asked, 0);
         return;
       }
-      attachmentQuestion = asked;
-      palette?.askFor("file.saveAttachment.choice");
+      palette?.askFor("file.saveAttachment.choice", () => { attachmentQuestion = asked; });
     } catch (e) {
-      say(String(e));
+      if (stillIn(view, model)) say(String(e));
     }
   }
 
@@ -7218,6 +7217,13 @@
 
       // Whatever the outgoing document was owed, before its path is replaced.
       places.flush();
+      let remembered = session.places;
+      if (!retained?.place && !override && places.writes > 0) {
+        // A regular open or drop may return to a tab closed since the last
+        // recents refresh. Read its position after pending writes have landed.
+        await places.settled();
+        remembered = (await loadSession()).places;
+      }
       for (const twin of twins) {
         asDocument(twin.view, () => { if (!discard) commitPopups(); keepActiveTab(); unmountDocument(); });
       }
@@ -7233,7 +7239,7 @@
       openPageCount = doc.page_count;
       startPage.opened(path);
 
-      const resume = placeToResume(retainedPlace(retained), override, session.places, path,
+      const resume = placeToResume(retainedPlace(retained), override, remembered, path,
         retained?.edits.state.pages.length ?? doc.page_count);
       sidebarShown = resume ? resume.sidebar : sidebarShown;
 

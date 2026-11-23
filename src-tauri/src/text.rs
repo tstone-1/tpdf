@@ -45,6 +45,8 @@
 //! approximately wrong; every selection and every search highlight on a scanned
 //! page was somewhere else entirely, in tidy rectangles.
 
+mod hyphens;
+
 use std::os::raw::{c_double, c_int};
 
 use pdfium_render::prelude::*;
@@ -67,17 +69,25 @@ pub struct RawTextPage<'page> {
 impl<'page> RawTextPage<'page> {
     /// Loads the text of a page.
     pub fn load(page: &'page RawPage<'_>) -> Result<Self, String> {
-        let bindings = page.bindings();
-        // SAFETY: the handle is valid for the borrow of `page`.
-        let handle = unsafe { bindings.FPDFText_LoadPage(page.handle()) };
-        if handle.is_null() {
-            return Err(said!("could not load the page's text"));
-        }
-        Ok(Self {
+        // SAFETY: the text page borrows this live page.
+        unsafe { Self::load_handle(page.bindings(), page.handle()) }
+            .ok_or_else(|| said!("could not load the page's text"))
+    }
+
+    /// The caller keeps the page alive until this text handle has closed.
+    unsafe fn load_handle(bindings: Bindings, page: FPDF_PAGE) -> Option<Self> {
+        // SAFETY: page is live by the caller's contract.
+        let handle = unsafe { bindings.FPDFText_LoadPage(page) };
+        (!handle.is_null()).then(|| Self {
             bindings,
             handle,
             _page: std::marker::PhantomData,
         })
+    }
+
+    fn is_hyphen(&self, index: u32) -> bool {
+        // SAFETY: the live text page bounds-checks the index.
+        unsafe { self.bindings.FPDFText_IsHyphen(self.handle, index as i32) == 1 }
     }
 
     /// The raw handle, for the few callers that need a binding this does not wrap.
@@ -444,6 +454,7 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
     // count, so an exclusive end index has somewhere to land.
     let mut ours = Vec::with_capacity(count as usize + 1);
 
+    let mut line_end_hyphens = Vec::new();
     let mut index = 0;
     while index < count {
         ours.push(codes.len() as u32);
@@ -452,6 +463,9 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
             // Both halves map to the one entry they became, so a range that
             // starts or ends between them still lands on the whole character.
             ours.push(codes.len() as u32);
+        }
+        if scalar == 2 && text.is_hyphen(index) {
+            line_end_hyphens.push((index, codes.len()));
         }
         codes.push(scalar);
         char_turns.push(text.char_turn(index));
@@ -496,6 +510,7 @@ pub fn extract(page: &RawPage<'_>) -> Result<PageText, String> {
         index += units;
     }
     ours.push(codes.len() as u32);
+    hyphens::restore(page, &text, &line_end_hyphens, &mut codes);
 
     // The tags, using the text page already loaded. An untagged document ---
     // which is most of them --- pays one FFI call for this, because

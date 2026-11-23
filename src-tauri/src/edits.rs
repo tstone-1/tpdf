@@ -1201,6 +1201,20 @@ impl Edits {
         Ok(reply(open))
     }
 
+    /// Metafile export reads the saved page, so it must never run while an
+    /// unsaved cover, including a pending redaction, is visible on screen.
+    #[cfg(any(windows, test))]
+    pub(crate) fn require_saved_page_copy(&self, doc: u32) -> Result<(), String> {
+        let docs = self.docs.lock().expect("edits lock");
+        let open = docs.get(&doc).ok_or_else(|| unknown(doc))?;
+        if open.model.depth().0 != 0 {
+            return Err(said!(
+                "Save your changes before copying this page for PowerPoint."
+            ));
+        }
+        Ok(())
+    }
+
     /// Turns one page, addressed by identity.
     ///
     /// # Errors
@@ -4415,6 +4429,21 @@ mod tests {
         let edits = Edits::default();
         edits.open(7, 3, None);
         edits
+    }
+
+    #[test]
+    fn powerpoint_copy_requires_a_saved_document_even_for_a_pending_redaction() {
+        let edits = opened();
+        let page = edits.state(7).unwrap().pages[0].id;
+        edits.require_saved_page_copy(7).unwrap();
+        edits.redact(7, page, REGION).unwrap();
+        assert!(edits
+            .require_saved_page_copy(7)
+            .unwrap_err()
+            .contains("Save your changes"));
+        edits.undo(7).unwrap();
+        edits.require_saved_page_copy(7).unwrap();
+        assert!(edits.require_saved_page_copy(8).is_err());
     }
 
     /// An inserted page reaches the reply as a page with no baseline number, and

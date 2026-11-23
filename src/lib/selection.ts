@@ -228,7 +228,9 @@ export const MIN_REDACTION_SIDE = 0.5;
  */
 export function areasFrom(
   quads: readonly number[],
+  unit = 1,
 ): [number, number, number, number][] {
+  const minimum = MIN_REDACTION_SIDE / unit;
   const areas: [number, number, number, number][] = [];
   for (let at = 0; at < quads.length; at += 4) {
     const run = quads.slice(at, at + 4);
@@ -248,8 +250,8 @@ export function areasFrom(
     const right = Math.max(a, c);
     const top = Math.min(b, d);
     const bottom = Math.max(b, d);
-    if (right - left < MIN_REDACTION_SIDE) continue;
-    if (bottom - top < MIN_REDACTION_SIDE) continue;
+    if (right - left < minimum) continue;
+    if (bottom - top < minimum) continue;
     areas.push([left, top, right, bottom]);
   }
   return areas;

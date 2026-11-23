@@ -1046,7 +1046,7 @@ ROWS += [
 # application) is proved by `mark_check.py` on a Mac, which no row here can run.
 ROWS += [
     Mutation("region: copied under the floor", "src/lib/regionshot.ts",
-        "  const wanted = Math.floor(Math.min(Math.max(screenScale, REGION_FLOOR), MAX_SCALE) * 1000);",
+        "  const wanted = Math.floor(Math.min(Math.max(screenScale, REGION_FLOOR * pageUnit), MAX_SCALE) * 1000);",
         "  const wanted = Math.floor(Math.min(screenScale, MAX_SCALE) * 1000);",
         "never goes under the floor, so a region from a page zoomed out stays readable"),
     Mutation("region: past the tile mapping", "src/lib/regionshot.ts",

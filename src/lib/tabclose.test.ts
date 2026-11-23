@@ -51,6 +51,19 @@ describe("ClosedTabs", () => {
     expect(closed.latest(() => false)).toBe("/b.pdf");
   });
 
+  it("offers the same document after a cancelled reopen, then advances after success", async () => {
+    const closed = new ClosedTabs();
+    closed.closed("/earlier.pdf");
+    closed.closed("/password.pdf");
+    const asked: string[] = [];
+    const open = async (path: string) => {
+      asked.push(path);
+      return asked.length === 1 ? null : 0;
+    };
+    for (let i = 0; i < 3; i++) await closed.reopen(() => false, open);
+    expect(asked).toEqual(["/password.pdf", "/password.pdf", "/earlier.pdf"]);
+  });
+
   it("does not let one document closed many times push the others out", () => {
     const closed = new ClosedTabs();
     closed.closed("/b.pdf");

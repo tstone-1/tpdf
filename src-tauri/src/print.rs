@@ -361,6 +361,46 @@ pub fn build_update(original: &[u8], job: &Job) -> Result<Vec<u8>, String> {
     crate::save::serialise(&mut doc, "the print job")
 }
 
+/// Dimensions reported by PDFium are native page coordinates. Layout uses
+/// physical points, while tile sampling needs pixels per native coordinate.
+pub(crate) struct Geometry {
+    pub native: Vec<crate::render::PageSize>,
+    pub physical: Vec<crate::render::PageSize>,
+}
+
+impl Geometry {
+    pub fn read(session: &mut crate::save_outside::Session) -> Result<Self, String> {
+        use crate::worker_proto::{Reply, Request};
+        let reply = session
+            .ask(Request::Open {
+                lazy_geometry: false,
+            })
+            .map_err(|e| {
+                said!(
+                    "the worker could not open the print job: {why}",
+                    why = e.message()
+                )
+            })?;
+        let native = match reply {
+            Reply::Open {
+                pages, page_count, ..
+            } if pages.len() == page_count => pages,
+            Reply::Open { .. } => return Err(said!("the worker returned incomplete page sizes")),
+            other => {
+                return Err(format!(
+                    "the worker answered the print job's sizes with {}",
+                    other.described()
+                ))
+            }
+        };
+        let mut physical = native.clone();
+        session
+            .physical_sizes(&mut physical)
+            .map_err(|e| said!("the print job could not be read: {why}", why = e.message()))?;
+        Ok(Self { native, physical })
+    }
+}
+
 /// Checks a built job against what was asked for, before it reaches paper.
 ///
 /// `found` comes from an independent parser, never from the writer that

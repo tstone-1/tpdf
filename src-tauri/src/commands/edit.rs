@@ -705,12 +705,14 @@ async fn graphic(
 #[tauri::command]
 pub async fn page_copy_powerpoint(
     window: tauri::WebviewWindow,
+    edits: tauri::State<'_, edits::Edits>,
     service: tauri::State<'_, crate::render::RenderService>,
     doc: u32,
     page: u32,
     crop: Option<[f32; 4]>,
     turns: u8,
 ) -> Result<u32, String> {
+    edits.require_saved_page_copy(doc)?;
     let (reply, rx) = super::reply_channel();
     service.page_copy(doc, page, crop, turns, reply);
     let (emf, left_out) = super::await_reply::<_, String>("page copy", rx)

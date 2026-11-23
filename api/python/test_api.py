@@ -310,15 +310,34 @@ class ClientTests(unittest.TestCase):
         self.assertIs(refused.exception.result, error.result)
         self.assertEqual(output.read_bytes(), b'previous')
 
+    def test_mark_matches_rejects_an_older_search_plan_without_a_digest(self):
+        old_plan = json.dumps({'schema': 1, 'operations': [{'op': 'annotate'}]}).encode()
+        output = self.root / 'marked.pdf'
+        with patch.object(self.pdf, '_invoke', return_value=(0, old_plan, '')):
+            with self.assertRaisesRegex(ProtocolError, 'revision-checked'):
+                self.pdf.mark_matches(self.source, output, texts=['ORIGINAL'])
+        self.assertFalse(output.exists())
+
     def test_mark_matches_refuses_partial_geometry(self):
         output = self.root / 'marked.pdf'
         output.write_bytes(b'previous output')
-        report = self.pdf.search(self.source, texts=['ORIGINAL'])
-        report['files'][0]['matches'][0]['partial_geometry'] = True
-        with patch.object(self.pdf, 'search', return_value=report):
-            with self.assertRaisesRegex(ValueError, 'only in part'):
-                self.pdf.mark_matches(self.source, output, texts=['ORIGINAL'], force=True)
+        # The match spans two lines. Its full stop is smaller than the minimum
+        # mark size, so only the first line can be located.
+        fixture(self.source, content=b'BT /F1 12 Tf 40 200 Td (A) Tj /F1 1 Tf 0 -30 Td (.) Tj ET')
+        with self.assertRaisesRegex(ValueError, 'only in part'):
+            self.pdf.mark_matches(self.source, output, patterns=[r'A\s*\.'], force=True)
         self.assertEqual(output.read_bytes(), b'previous output')
+
+    def test_mark_matches_refuses_turned_line_marks_but_allows_highlight(self):
+        fixture(self.source, content=b'BT /F1 12 Tf 0 1 -1 0 100 100 Tm (TURNED) Tj ET')
+        output = self.root / 'marked.pdf'
+        output.write_bytes(b'previous output')
+        for kind in ('underline', 'strikeout', 'squiggly'):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, 'turned text'):
+                self.pdf.mark_matches(self.source, output, texts=['TURNED'], kind=kind, force=True)
+            self.assertEqual(output.read_bytes(), b'previous output')
+        self.pdf.mark_matches(self.source, output, texts=['TURNED'], kind='highlight', force=True)
+        self.assertEqual([c['kind'] for c in self.pdf.comments(output)['comments']], ['highlight'])
 
     def test_cli_highlight_plan_binds_the_bytes_searched(self):
         import hashlib
@@ -342,19 +361,18 @@ class ClientTests(unittest.TestCase):
 
     def test_mark_matches_refuses_a_different_revision_at_the_same_path(self):
         client = Tpdf(BINARY, cwd=self.root, timeout=30)
-        search = client.search
+        edit = client.edit
         output = self.root / 'marked.pdf'
         output.write_bytes(b'prior output')
 
-        def replace_after_search(*args, **kwargs):
-            result = search(*args, **kwargs)
+        def replace_before_edit(*args, **kwargs):
             before = self.source.stat()
             fixture(self.source, content=b'BT /F1 12 Tf 90 260 Td (SYNTHETIC ORIGINAL) Tj ET')
             os.utime(self.source, ns=(before.st_atime_ns, before.st_mtime_ns))
             self.assertEqual(self.source.stat().st_size, before.st_size)
-            return result
+            return edit(*args, **kwargs)
 
-        with patch.object(client, 'search', side_effect=replace_after_search):
+        with patch.object(client, 'edit', side_effect=replace_before_edit):
             with self.assertRaisesRegex(CommandError, 'searched revision'):
                 client.mark_matches(self.source.name, output.name, texts=['ORIGINAL'], force=True)
         self.assertEqual(output.read_bytes(), b'prior output')

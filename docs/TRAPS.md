@@ -25810,6 +25810,14 @@ returns **U+0002** for the hyphen. The page content holds `-`. U+0002 is a contr
 so the filter that was there to drop a stray `\r` or a form feed dropped it too, and the page
 read back one character short. `ocr_layer::LINE_END_HYPHEN` counts it as the hyphen.
 
+The same marker also stands for U+00AD. When a word wraps at an explicit soft hyphen,
+`FPDFText_IsHyphen` returns 1 for both the soft glyph and a literal hyphen. The compare
+fixtures exercise both, a genuine word boundary and a subsequent render in the same worker.
+`text/hyphens.rs` reads the marked object by itself on an independently loaded page of the
+same document revision. It restores the mapped glyph only when the rest of the object's
+text agrees. Ambiguous readings and pages beyond the repeated-walk budget keep PDFium's
+original marker.
+
 Three things about how it stayed hidden:
 
 - **The fixtures have no hyphenated line end.** `text-base14.pdf` and the German control word
@@ -27406,6 +27414,12 @@ the slide then has 7 shapes. A picture check compares the layout the program lef
 thing is hidden only if no shape on the slide carries it, so list the shapes. The control in
 `tests/cli/pagecopy.rs` is a page beside the same page without its hidden word: equal record
 counts (15 against 405 with the outlines left in).
+
+The Windows exporter reopens the saved bytes. A picture placed over a word in the editor
+only covers that word in the working document until saved. Settle pending edits, then check
+the displayed document's journal before requesting a metafile. A tile's handle can belong
+to another file after page import. A pending redaction also counts as an edit here, even
+though it is excluded from the ordinary annotation save plan.
 
 ### `FPDFImageObj_GetRenderedBitmap` draws a picture at its size on the page, not at its own pixels
 

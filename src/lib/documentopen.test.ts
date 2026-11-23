@@ -63,10 +63,10 @@ describe("where an open puts the reader", () => {
   });
 });
 
-it("reads the settled session before opening the last closed document", () => {
-  const reopen = functionIn(app, "async function reopenClosedTab(");
-  expect(reopen).toMatch(/await refreshStartPage\(\);[\s\S]*await openPath\(path\)/);
-  expect(functionIn(app, "async function refreshStartPage(")).toContain("await behindWrites(places, refreshRecents)");
+it("uses the settled session on a fresh open and the same open path for closed tabs", () => {
+  const open = functionIn(app, "async function openDocument(");
+  expect(open).toMatch(/places\.flush\(\);[\s\S]*await places\.settled\(\);\s*remembered = \(await loadSession\(\)\)\.places;/);
+  expect(functionIn(app, "async function reopenClosedTab(")).toContain("await closedTabs.reopen(isOpenTab, openPath)");
 });
 
 it("applies an external location to the view found by the shared path lookup", () => {
@@ -585,12 +585,18 @@ describe("edits requested in a mounted view", () => {
     expect(viewer).toContain("nextGesture: () => model.nextGesture()");
   });
 
+  it("shows the attachment chooser for the document that requested it after dismissing the previous question", () => {
+    const saving = functionIn(app, "async function saveAttachment(");
+    expect(saving).toMatch(/await call\("document_properties", \{ doc \}\);\s*if \(!stillIn\(view, model\)\) return;/);
+    expect(saving).toContain('palette?.askFor("file.saveAttachment.choice", () => { attachmentQuestion = asked; });');
+  });
+
   it("sends both window routes through the gesture's commit, with the palette requesting a rearm", () => {
     expect(functionIn(app, "function buildViewer(")).toContain("onRedactSelection: () => void redactSelection()");
     expect(withoutComments(app)).toContain("redactSelection: () => void redactSelection(true)");
     const body = functionIn(app, "async function redactSelection(");
     expect(body).toContain("viewer?.redactSelected(");
-    expect(body).toContain("applyEdit((e) => e.redact(page, area), view, model)");
+    expect(body).toContain("applyEdit(e => e.redactText(selected), view, model)");
     expect(body).toContain("}, keepArmed)");
   });
 });
@@ -618,7 +624,7 @@ describe("the open's wiring in App.svelte", () => {
   it("asks this module for each decision, in the function that needs it", () => {
     expect(missingFrom(functionIn(app, "async function openDocument("), [
       "const pages = pageTable(doc);",
-      "const resume = placeToResume(retainedPlace(retained), override, session.places, path, retained?.edits.state.pages.length ?? doc.page_count);",
+      "const resume = placeToResume(retainedPlace(retained), override, remembered, path, retained?.edits.state.pages.length ?? doc.page_count);",
       "const written = afterWrite ? tabs.forPath(path, tabs.active) : undefined;",
       "if (written) endComparison(written.view);",
       "const left = abandonedBy(tabs.all, written, replaced, twins);",

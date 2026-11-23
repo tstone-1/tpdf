@@ -931,38 +931,16 @@ fn append_bgra(bmp: &mut Vec<u8>, rgba: &[u8]) {
 struct Painter {
     session: crate::save_outside::Session,
     /// Each page's size in points, after its `/Rotate`.
-    sizes: Vec<crate::render::PageSize>,
+    geometry: crate::print::Geometry,
 }
 
 impl Painter {
     /// Starts a worker over `bytes` and asks it for every page's size.
     fn start(bytes: &[u8], library_dir: &std::path::Path) -> Result<Self, String> {
-        use crate::worker_proto::{Reply, Request};
         let mut session =
             crate::save::InWorker::at(library_dir.to_path_buf()).session_over(bytes)?;
-        let reply = session
-            .ask(Request::Open {
-                lazy_geometry: false,
-            })
-            .map_err(|e| {
-                said!(
-                    "the worker could not open the print job: {why}",
-                    why = e.message()
-                )
-            })?;
-        match reply {
-            Reply::Open {
-                pages, page_count, ..
-            } if pages.len() == page_count => Ok(Self {
-                session,
-                sizes: pages,
-            }),
-            Reply::Open { .. } => Err(said!("the worker returned incomplete page sizes")),
-            other => Err(format!(
-                "the worker answered the print job's sizes with {}",
-                other.described()
-            )),
-        }
+        let geometry = crate::print::Geometry::read(&mut session)?;
+        Ok(Self { session, geometry })
     }
 
     /// The window of page `index` that `cut` names, as a top-down 32-bit BMP
@@ -1167,7 +1145,7 @@ fn spool_planned(
     stopped()?;
     let mut painter = ours(beat, || Painter::start(bytes, library_dir))?;
     let paper = paper_of(dc);
-    let sheets = plan(&painter.sizes, &paper)?;
+    let sheets = plan(&painter.geometry.physical, &paper)?;
 
     // Both `HSTRING`s are bound to locals rather than built inline, because
     // `DOCINFOW` holds borrowed pointers and a temporary would be dropped at the
@@ -1229,7 +1207,7 @@ fn spool_planned(
             ));
         }
         for placed in sheet {
-            let size = painter.sizes[placed.page as usize];
+            let size = painter.geometry.native[placed.page as usize];
             let Some(cut) = cut(placed, size, area, density) else {
                 continue;
             };

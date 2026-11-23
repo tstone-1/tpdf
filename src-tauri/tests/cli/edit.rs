@@ -8,7 +8,12 @@ use lopdf::Document;
 use serde_json::{json, Value};
 use std::path::Path;
 
-fn edit(source: &Path, output: &Path, ops: Value, flags: &[&str]) -> (i32, Value, String) {
+pub(super) fn edit(
+    source: &Path,
+    output: &Path,
+    ops: Value,
+    flags: &[&str],
+) -> (i32, Value, String) {
     let source = source.display().to_string();
     let output = output.display().to_string();
     let mut args = vec!["edit", &source, "--plan", "-", "-o", &output, "--json"];
@@ -24,7 +29,7 @@ fn edit(source: &Path, output: &Path, ops: Value, flags: &[&str]) -> (i32, Value
         stderr,
     )
 }
-fn annotations(path: &Path) -> Vec<(usize, String, String, Vec<f32>)> {
+pub(super) fn annotations(path: &Path) -> Vec<(usize, String, String, Vec<f32>)> {
     let document = Document::load(path).unwrap();
     let mut found = Vec::new();
     for (page, id) in document.get_pages() {

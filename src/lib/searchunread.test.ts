@@ -137,7 +137,7 @@ describe("the window's wiring", () => {
       "unread: searched.searchUnread,",
       "count: searched.matchCount,",
       "model.trackSearchMarks(applyEdit(",
-      "return owner.redactMany(regions);",
+      "return owner.redactText(found);",
     ])).toEqual([]);
     // Asked before the quads are read: a refusal after them would mark nothing
     // either, but would cost the round trips first.

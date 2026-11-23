@@ -49,6 +49,7 @@ CHECKS: list[tuple[str, str, str, list[str]]] = [
     # One embedded file: *Save an attachment* saves it with no question.
     ("marks on an attachment", "mark_check.py", "testdata/hostile-attachment.pdf", []),
     ("tabs", "tabs_check.py", TEXT, ["--phase", "tabs"]),
+    ("closing tabs", "tabs_check.py", "testdata/links.pdf", ["--phase", "closing"]),
     ("tab positions", "tabs_check.py", TEXT, ["--phase", "tabs-position"]),
     ("sides", "tabs_check.py", TEXT, ["--phase", "sides"]),
     ("views", "tabs_check.py", TEXT, ["--phase", "views"]),

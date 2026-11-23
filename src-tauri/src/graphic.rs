@@ -346,12 +346,19 @@ impl Svg {
         ));
     }
 
-    /// The finished document.
+    /// The finished document when native coordinates are points.
     pub fn finish(self) -> String {
+        self.finish_with_unit(1.0)
+    }
+
+    /// Keep native coordinates in the viewBox and scale the physical dimensions.
+    fn finish_with_unit(self, unit: f64) -> String {
         let [left, bottom, right, top] = self.bounds;
         let (width, height) = (right - left, top - bottom);
         format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}pt\" height=\"{h}pt\" viewBox=\"0 0 {w} {h}\">\n<g transform=\"matrix(1 0 0 -1 {x} {y})\">\n{body}</g>\n</svg>\n",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{physical_w}pt\" height=\"{physical_h}pt\" viewBox=\"0 0 {w} {h}\">\n<g transform=\"matrix(1 0 0 -1 {x} {y})\">\n{body}</g>\n</svg>\n",
+            physical_w = num(width * unit),
+            physical_h = num(height * unit),
             w = num(width),
             h = num(height),
             x = num(-left),
@@ -546,7 +553,19 @@ mod engine {
                     said!("it holds a gradient, which the SVG cannot draw yet; save it as PNG")
                 }
             });
-            let scale = scale_for(around[2] - around[0], around[3] - around[1]);
+            // The SVG viewBox and PDFium bounds use native coordinates. Only
+            // the physical SVG dimensions and the raster density take UserUnit.
+            // A lone raster keeps its stored pixels.
+            let unit = if single.is_none() || request.format == GraphicFormat::Svg {
+                f64::from(document.page_units(&[request.page])?[0])
+            } else {
+                1.0
+            };
+            let scale = unit
+                * scale_for(
+                    (around[2] - around[0]) * unit,
+                    (around[3] - around[1]) * unit,
+                );
             let (width, height) = match single {
                 Some(image) => {
                     native_size(bindings, image).map_or((0, 0), |(w, h)| super::picture_size(w, h))
@@ -605,7 +624,7 @@ mod engine {
                     for &object in &chosen {
                         draw(bindings, &copy, &page, object, IDENTITY, &mut svg)?;
                     }
-                    svg.finish().into_bytes()
+                    svg.finish_with_unit(unit).into_bytes()
                 }
             };
             Ok((bytes, found))

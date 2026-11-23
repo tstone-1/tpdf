@@ -725,10 +725,19 @@ fn anchored(
     }
     let compiled = crate::search::Prepared::new(&anchor.text, ANCHOR_SEARCH).map_err(refused)?;
     let queries = [(SearchKind::Text, anchor.text.clone(), compiled)];
-    let found = search_pages(&queries, &[page], |at| {
+    let mut found = search_pages(&queries, &[page], |at| {
         wait(|reply| service.text(info.id, at, None, reply))
     })
     .map_err(|why| refused(format!("{shown}: {why}, so the anchor could not be found")))?;
+    let units =
+        wait(|reply| service.page_units(info.id, vec![page - 1], reply)).map_err(refused)?;
+    let unit = match units.as_slice() {
+        [unit] if unit.is_finite() && *unit > 0.0 => *unit,
+        _ => return Err(refused("the page has no usable physical scale".into())),
+    };
+    if let Some(text) = found.texts.get_mut(&(page - 1)) {
+        super::regions::physical_text(text, unit).map_err(refused)?;
+    }
     // Each match's first box: where its text starts.
     let boxes: Vec<[f32; 4]> = found
         .matches
@@ -765,13 +774,6 @@ fn anchored(
             ))
         })?,
     };
-    let units =
-        wait(|reply| service.page_units(info.id, vec![page - 1], reply)).map_err(refused)?;
-    let unit = match units.as_slice() {
-        [unit] if unit.is_finite() && *unit > 0.0 => *unit,
-        _ => return Err(refused("the page has no usable physical scale".into())),
-    };
-    let chosen = chosen.map(|native| native * unit);
     let [dx, dy] = anchor.offset;
     let [w, h] = anchor.size;
     let physical = rectangle_of(chosen[0] + dx, chosen[1] + dy, w, h).ok_or_else(|| {

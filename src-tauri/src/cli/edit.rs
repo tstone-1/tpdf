@@ -761,10 +761,9 @@ impl Subcommand for Edit {
                 ));
             }
         }
-        let units =
-            super::pages::physical_sizes(&mut session, &mut before.sizes).map_err(|why| {
-                super::text::declined(&self.input.display().to_string(), why, key.is_some())
-            })?;
+        let units = session.physical_sizes(&mut before.sizes).map_err(|why| {
+            super::text::declined(&self.input.display().to_string(), why, key.is_some())
+        })?;
         let (plan, fonts) = apply(&request, &before, &units, env.now, |request| {
             session.ask(request)
         })?;
@@ -789,7 +788,7 @@ impl Subcommand for Edit {
                                 format!("staged output could not be read: {}", e.message),
                             )
                         })?;
-                    super::pages::physical_sizes(&mut session, &mut after.sizes).map_err(|e| {
+                    session.physical_sizes(&mut after.sizes).map_err(|e| {
                         Failure::new(
                             Exit::Internal,
                             format!("staged page units could not be read: {e:?}"),

@@ -786,7 +786,13 @@ export function call<K extends keyof Commands>(
 
 /** Physical points per native unit on the addressed file page. */
 export async function physicalPageUnit(doc: DocHandle, page: FilePage): Promise<number> {
-  const [unit] = await call("page_units", { doc, pages: [page] });
-  if (unit === undefined || !Number.isFinite(unit) || unit <= 0) throw new Error("the page has an invalid user unit");
-  return unit;
+  return (await physicalPageUnits(doc, [page]))[0]!;
+}
+
+export async function physicalPageUnits(doc: DocHandle, pages: FilePage[]): Promise<number[]> {
+  const units = await call("page_units", { doc, pages });
+  if (units.length !== pages.length || units.some(unit => !Number.isFinite(unit) || unit <= 0)) {
+    throw new Error("the page has an invalid user unit");
+  }
+  return units;
 }

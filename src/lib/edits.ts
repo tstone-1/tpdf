@@ -14,10 +14,12 @@
  * is to have skipped a reply.
  */
 
-import { call, physicalPageUnit } from "./ipc";
+import { areasFrom } from "./selection";
+import { call, physicalPageUnit, physicalPageUnits } from "./ipc";
 import {
   PageMap,
   unedited,
+  type FilePage,
   type MarkKind,
   type MarkView,
   type PageId,
@@ -866,7 +868,26 @@ export class Edits {
     );
   }
 
-  async redactMany(regions: readonly (readonly [PageId, [number, number, number, number]])[]): Promise<EditState> {
+  /** Filter text runs in physical points, then journal them in their source page's coordinates. */
+  async redactText(groups: readonly { page: PageId; quads: readonly number[] }[]): Promise<EditState> {
+    const byDoc = new Map<number, { id: PageId; file: FilePage }[]>();
+    for (const { page } of groups) {
+      const slot = this.pageMap.slotOfId(page);
+      const source = slot === undefined ? undefined : this.pageMap.addressOf(slot, this.doc);
+      if (!source) throw new Error("The page is no longer available");
+      const batch = byDoc.get(source.doc);
+      const entry = { id: page, file: source.page };
+      if (batch) batch.push(entry);
+      else byDoc.set(source.doc, [entry]);
+    }
+    const units = new Map<PageId, number>();
+    for (const [doc, batch] of byDoc) {
+      const values = await physicalPageUnits(doc, batch.map(entry => entry.file));
+      batch.forEach((entry, index) => units.set(entry.id, values[index]!));
+    }
+    const regions = groups.flatMap(({ page, quads }) =>
+      areasFrom(quads, units.get(page)!).map(area => [page, area] as const)
+    );
     return this.adopt(await call("redact_marks", { doc: this.doc, regions }));
   }
 

@@ -58,6 +58,25 @@ pub struct Half {
     pub to: Option<u32>,
 }
 
+/// Use physical points for reported rectangles and the minimum mark size.
+/// A worker's boxes and displayed dimensions are both in native page units.
+pub(super) fn physical_text(text: &mut PageText, unit: f32) -> Result<(), String> {
+    if unit == 1.0 {
+        return Ok(());
+    }
+    for value in text
+        .boxes
+        .iter_mut()
+        .chain([&mut text.width_pt, &mut text.height_pt])
+    {
+        *value *= unit;
+        if !value.is_finite() {
+            return Err("physical text coordinates are too large".into());
+        }
+    }
+    Ok(())
+}
+
 /// `matchHalves`: each hit as one half per page it covers.
 #[must_use]
 pub fn halves(matches: &[Match]) -> Vec<Half> {

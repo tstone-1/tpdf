@@ -220,6 +220,15 @@ describe("gather", () => {
     expect(asked).toEqual([0, 1]);
   });
 
+  it("counts a discretionary wrap as one word, and an ordinary break as two", async () => {
+    const load = (word: string) => async () => ({
+      codes: Array.from(word, c => c.codePointAt(0)!), boxes: [], width_pt: 1, height_pt: 1,
+      quarter_turns: 0, extract_ms: 0,
+    });
+    await expect(gather("wrapped", 1, load("discre\u00ad\r\ntionary"), 100, 1)).resolves.toHaveLength(1);
+    await expect(gather("separate", 1, load("discre\r\ntionary"), 100, 1)).rejects.toThrow("word limit");
+  });
+
   it("stops requesting pages when a side exceeds the character budget", async () => {
     const asked: number[] = [];
     const load = async (slot: number) => {

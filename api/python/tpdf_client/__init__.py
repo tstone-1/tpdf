@@ -20,14 +20,12 @@ rollback and must never be interpreted as proof that nothing was written.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import signal
 import subprocess
-import tempfile
 from typing import Any, Mapping, Sequence
 
 from . import reports
@@ -64,6 +62,10 @@ class CommandError(RuntimeError):
         message = error.get('message') if isinstance(error, dict) else None
         reason = message or result.stderr.strip() or f'tpdf exited {result.exit_code}'
         super().__init__(f'{reason}. {advice}' if advice else reason)
+
+
+class _AnnotationRefused(CommandError, ValueError):
+    """An unusable annotation plan, including matches without usable geometry."""
 
 
 class ProtocolError(RuntimeError):
@@ -133,6 +135,28 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
             pass
 
 
+def _search_options(
+    texts: Sequence[str], patterns: Sequence[str], pages: str | None,
+    case_sensitive: bool, whole_word: bool,
+) -> list[str]:
+    args = []
+    for flag, queries in [('--text', texts), ('--pattern', patterns)]:
+        if isinstance(queries, (str, bytes)):
+            raise TypeError(f'{flag} queries must be a sequence of strings, not one string')
+        for query in queries:
+            if not isinstance(query, str):
+                raise TypeError(f'{flag} queries must be strings')
+            args += [flag, query]
+    if not args:
+        raise ValueError('search needs something to find: texts= or patterns=')
+    if pages is not None:
+        args += ['--pages', pages]
+    for enabled, flag in [(case_sensitive, '--case-sensitive'), (whole_word, '--whole-word')]:
+        if enabled:
+            args.append(flag)
+    return args
+
+
 class Tpdf:
     """A stateless client. Each call runs an isolated CLI process and its workers.
 
@@ -196,17 +220,44 @@ class Tpdf:
         flags = args[:args.index('--')] if '--' in args else args
         if command == 'text' and any(arg in ('-o', '--output') for arg in flags):
             raise ValueError('text output must remain on stdout for the API')
+        payload = None if input_json is None else json.dumps(
+            input_json, ensure_ascii=False, allow_nan=False, separators=(',', ':'),
+        ).encode('utf-8')
+        exit_code, stdout, said = self._invoke(command, ['--json', *args], password, new_password, payload)
+        try:
+            report = json.loads(stdout.decode('utf-8'))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ProtocolError(
+                f'tpdf {command} exited {exit_code} without a valid JSON report',
+                stderr=said, exit_code=exit_code,
+            ) from error
+        if not isinstance(report, dict) or type(report.get('schema')) is not int or report['schema'] != 1:
+            raise ProtocolError('unsupported or missing tpdf report schema; expected 1',
+                                stderr=said, exit_code=exit_code)
+        help_only = (exit_code == 0 and any(arg in ('--help', '-h') for arg in args)
+                     and password is None and new_password is None
+                     and all(arg in ('--help', '-h', '--json') for arg in args))
+        if report.get('command') != ('help' if help_only else command):
+            raise ProtocolError(f'tpdf report command does not match {command}',
+                                stderr=said, exit_code=exit_code)
+        result = Result(report, exit_code, said)
+        if check and result.exit_code != 0:
+            raise CommandError(result)
+        return result
+
+    def _invoke(
+        self, command: str, args: list[str], password: str | None,
+        new_password: str | None = None, payload: bytes | None = None,
+    ) -> tuple[int, bytes, str]:
+        """Run a native command with the client's password, timeout and cleanup rules."""
         env = os.environ.copy()
-        options = ['--json']
+        options = []
         if password is not None:
             env['TPDF_API_DOCUMENT_PASSWORD'] = password
             options += ['--password-env', 'TPDF_API_DOCUMENT_PASSWORD']
         if new_password is not None:
             env['TPDF_API_NEW_PASSWORD'] = new_password
             options += ['--new-password-env', 'TPDF_API_NEW_PASSWORD']
-        payload = None if input_json is None else json.dumps(
-            input_json, ensure_ascii=False, allow_nan=False, separators=(',', ':'),
-        ).encode('utf-8')
         process = subprocess.Popen(
             [self.executable, command, *options, *args],
             stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
@@ -241,25 +292,7 @@ class Tpdf:
                 f'tpdf {command} exceeded {self.timeout} seconds; outputs may already exist'
             ) from None
         said = stderr.decode('utf-8', errors='replace')
-        try:
-            report = json.loads(stdout.decode('utf-8'))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ProtocolError(
-                f'tpdf {command} exited {process.returncode} without a valid JSON report',
-                stderr=said, exit_code=process.returncode,
-            ) from error
-        if not isinstance(report, dict) or type(report.get('schema')) is not int or report['schema'] != 1:
-            raise ProtocolError('unsupported or missing tpdf report schema; expected 1',
-                                stderr=said, exit_code=process.returncode)
-        help_only = (process.returncode == 0 and any(arg in ('--help', '-h') for arg in args)
-                     and all(arg in ('--help', '-h', '--json') for arg in options + args))
-        if report.get('command') != ('help' if help_only else command):
-            raise ProtocolError(f'tpdf report command does not match {command}',
-                                stderr=said, exit_code=process.returncode)
-        result = Result(report, process.returncode, said)
-        if check and result.exit_code != 0:
-            raise CommandError(result)
-        return result
+        return process.returncode, stdout, said
 
     def help(self, command: str | None = None) -> reports.HelpReport:
         """Discover the executable's commands and application version.
@@ -298,21 +331,7 @@ class Tpdf:
         """
         if not paths:
             raise ValueError('search needs at least one document')
-        args = []
-        for flag, queries in [('--text', texts), ('--pattern', patterns)]:
-            if isinstance(queries, (str, bytes)):
-                raise TypeError(f'{flag} queries must be a sequence of strings, not one string')
-            for query in queries:
-                if not isinstance(query, str):
-                    raise TypeError(f'{flag} queries must be strings')
-                args += [flag, query]
-        if not args:
-            raise ValueError('search needs something to find: texts= or patterns=')
-        if pages is not None:
-            args += ['--pages', pages]
-        for enabled, flag in [(case_sensitive, '--case-sensitive'), (whole_word, '--whole-word')]:
-            if enabled:
-                args.append(flag)
+        args = _search_options(texts, patterns, pages, case_sensitive, whole_word)
         result = self.run('search', *args, '--', *paths, password=password, check=False)
         if result.exit_code not in (0, 1):
             raise CommandError(result)
@@ -608,13 +627,13 @@ class Tpdf:
     ) -> reports.EditReport | None:
         """Highlight, underline, strike out or squiggle every match, into output.
 
-        search() finds the matches and edit() marks each of their rectangles.
+        The CLI prepares a revision-checked search annotation plan for edit().
         Returns the edit report, or None when nothing matched. A zero-match
         search leaves an existing output untouched.
         color is red, green and blue from 0 to 1; without it edit's default applies.
 
         A match with wholly or partly missing character positions raises ValueError
-        before anything is written.
+        before anything is written. Turned text can only be highlighted.
         """
         if kind not in ('highlight', 'underline', 'strikeout', 'squiggly'):
             raise ValueError('kind must be highlight, underline, strikeout or squiggly')
@@ -622,37 +641,29 @@ class Tpdf:
             color = [float(channel) for channel in color]
             if len(color) != 3 or not all(0 <= channel <= 1 for channel in color):
                 raise ValueError('color must be red, green and blue from 0 to 1')
-        # Search a stable revision. The edit validates its digest against the handle
-        # opened by the CLI, retaining the ordinary source/output alias guards.
-        digest = hashlib.sha256()
-        with tempfile.TemporaryDirectory() as directory:
-            snapshot = Path(directory) / 'source.pdf'
-            source_path = Path(self.cwd or '.') / source
-            with source_path.open('rb') as original, snapshot.open('wb') as copy:
-                while chunk := original.read(1024 * 1024):
-                    digest.update(chunk)
-                    copy.write(chunk)
-            found = self.search(snapshot, texts=texts, patterns=patterns, pages=pages,
-                                case_sensitive=case_sensitive, whole_word=whole_word,
-                                password=password)['files'][0]
-        operations = []
-        for match in found['matches']:
-            if not match['rects']:
-                raise ValueError(
-                    f"page {match['page']}: {match['hit']!r} matched and has no position, "
-                    'so it cannot be marked'
-                )
-            if match.get('partial_geometry'):
-                raise ValueError(f"page {match['page']}: {match['hit']!r} could be marked only in part")
-            for area in match['rects']:
-                operation = {'op': 'annotate', 'page': area['page'], 'kind': kind, 'rect': area['rect']}
-                if color is not None:
-                    operation['color'] = color
-                operations.append(operation)
-        if not operations:
+        args = _search_options(texts, patterns, pages, case_sensitive, whole_word)
+        args += ['--annotate', kind]
+        if color is not None:
+            args += ['--color', ','.join(map(str, color))]
+        # This method accepts a source file. Bare '-' means stdin to search.
+        path = os.fspath(source)
+        args += ['--', os.path.join('.', path) if path == '-' else path]
+        exit_code, stdout, stderr = self._invoke('search', args, password)
+        if exit_code == 1 and not stdout:
             return None
+        if exit_code:
+            error = _AnnotationRefused if exit_code == 3 else CommandError
+            raise error(Result({}, exit_code, stderr))
         try:
-            return self.edit(source, output, operations, force=force, source_sha256=digest.hexdigest(),
+            plan = json.loads(stdout)
+        except (ValueError, UnicodeDecodeError) as error:
+            raise ProtocolError('invalid search annotation plan', stderr=stderr, exit_code=exit_code) from error
+        if (not isinstance(plan, dict) or type(plan.get('schema')) is not int or plan['schema'] != 1
+                or not isinstance(plan.get('operations'), list) or not plan['operations']
+                or not isinstance(plan.get('source_sha256'), str) or len(plan['source_sha256']) != 64):
+            raise ProtocolError('expected a revision-checked annotation plan; use a CLI built from the same checkout')
+        try:
+            return self.edit(source, output, plan['operations'], force=force, source_sha256=plan['source_sha256'],
                              invalidate_signatures=invalidate_signatures, password=password)
         except CommandError as error:
             if 'unknown field `source_sha256`' in str(error):

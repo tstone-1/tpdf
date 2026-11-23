@@ -192,6 +192,19 @@ fn upright(points: &[(f64, f64)]) -> Option<Bounds> {
         .then_some([left, bottom, right, top])
 }
 
+/// A positive GDI length. Rust float casts otherwise saturate oversized
+/// frames, pixel dimensions and font heights to LONG_MAX.
+#[cfg(any(windows, test))]
+fn gdi_length(value: f64) -> Result<i32, String> {
+    let rounded = value.round();
+    if !(value > 0.0 && rounded <= f64::from(i32::MAX)) {
+        return Err(said!(
+            "the picture dimensions cannot be represented in a Windows metafile"
+        ));
+    }
+    Ok(rounded.max(1.0) as i32)
+}
+
 #[cfg(windows)]
 pub(crate) use platform::emf;
 
@@ -252,7 +265,7 @@ mod platform {
     };
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 
-    use super::{clip_shows, escapement, hides, movable, style, Bounds, Words};
+    use super::{clip_shows, escapement, gdi_length, hides, movable, style, Bounds, Words};
     use crate::document::OpenDocument;
     use crate::progressive::{Bindings, RawPage};
 
@@ -318,7 +331,11 @@ mod platform {
         let raw = copy.page_cropped(page, crop, &|index| document.graph().sheet(index, pages))?;
         let (words, left_out) = take_words(bindings, &raw);
         let turns = turns % 4;
-        let (mut width, mut height) = (f64::from(raw.width_pt()), f64::from(raw.height_pt()));
+        let unit = f64::from(document.page_units(&[page])?[0]);
+        let (mut width, mut height) = (
+            f64::from(raw.width_pt()) * unit,
+            f64::from(raw.height_pt()) * unit,
+        );
         if turns % 2 == 1 {
             std::mem::swap(&mut width, &mut height);
         }
@@ -329,8 +346,8 @@ mod platform {
             let frame = RECT {
                 left: 0,
                 top: 0,
-                right: (width / 72.0 * 2540.0).round() as i32,
-                bottom: (height / 72.0 * 2540.0).round() as i32,
+                right: gdi_length((width / 72.0 * 2540.0).round())?,
+                bottom: gdi_length((height / 72.0 * 2540.0).round())?,
             };
             let dc = CreateEnhMetaFileW(
                 std::ptr::null_mut(),
@@ -341,24 +358,31 @@ mod platform {
             if dc.is_null() {
                 return Err(said!("Windows would not start a picture"));
             }
-            let dpi = f64::from(GetDeviceCaps(dc, LOGPIXELSX as _).max(1));
-            let px = (width / 72.0 * dpi).round().max(1.0) as c_int;
-            let py = (height / 72.0 * dpi).round().max(1.0) as c_int;
-            if print_mode(PRINTMODE_EMF) == 0 {
-                CloseEnhMetaFile(dc);
-                return Err(said!("the PDF engine refused to draw a metafile"));
-            }
-            render(dc, raw.handle(), 0, 0, px, py, c_int::from(turns), FLAGS);
-            // The words turn with the page's own `/Rotate` as well as the
-            // reader's; the drawing and `FPDF_PageToDevice` apply both.
-            let device = Device {
-                size: (px, py),
-                dpi,
-                turns,
-                shown: (raw.quarter_turns() + turns) % 4,
-            };
-            write_words(bindings, &raw, dc, &words, &device);
+            let drawn = (|| {
+                let dpi = f64::from(GetDeviceCaps(dc, LOGPIXELSX as _).max(1));
+                let px = gdi_length(width / 72.0 * dpi)?;
+                let py = gdi_length(height / 72.0 * dpi)?;
+                if print_mode(PRINTMODE_EMF) == 0 {
+                    return Err(said!("the PDF engine refused to draw a metafile"));
+                }
+                render(dc, raw.handle(), 0, 0, px, py, c_int::from(turns), FLAGS);
+                // The words turn with the page's own `/Rotate` as well as the
+                // reader's; the drawing and `FPDF_PageToDevice` apply both.
+                let device = Device {
+                    size: (px, py),
+                    pixels_per_unit: dpi * unit / 72.0,
+                    turns,
+                    shown: (raw.quarter_turns() + turns) % 4,
+                };
+                write_words(bindings, &raw, dc, &words, &device)
+            })();
             let picture = CloseEnhMetaFile(dc);
+            if let Err(why) = drawn {
+                if !picture.is_null() {
+                    DeleteEnhMetaFile(picture);
+                }
+                return Err(why);
+            }
             if picture.is_null() {
                 return Err(said!("Windows would not finish the picture"));
             }
@@ -728,7 +752,7 @@ mod platform {
     #[derive(Clone, Copy)]
     struct Device {
         size: (c_int, c_int),
-        dpi: f64,
+        pixels_per_unit: f64,
         turns: u8,
         shown: u8,
     }
@@ -739,10 +763,10 @@ mod platform {
         dc: HDC,
         words: &[Words],
         device: &Device,
-    ) {
+    ) -> Result<(), String> {
         let Device {
             size: (px, py),
-            dpi,
+            pixels_per_unit,
             turns,
             shown,
         } = *device;
@@ -769,7 +793,7 @@ mod platform {
             face.push(0);
             let tilt = escapement(word.angle, shown);
             let font = CreateFontW(
-                -((word.size * dpi / 72.0).round().max(1.0) as i32),
+                -gdi_length(word.size * pixels_per_unit)?,
                 0,
                 tilt,
                 tilt,
@@ -802,6 +826,7 @@ mod platform {
             SelectObject(dc, before);
             DeleteObject(font);
         }
+        Ok(())
     }
 }
 
@@ -811,6 +836,22 @@ mod tests {
 
     fn utf16(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
+    }
+
+    #[test]
+    fn metafile_dimensions_refuse_saturation() {
+        assert_eq!(gdi_length(f64::from(i32::MAX)), Ok(i32::MAX));
+        assert_eq!(gdi_length(0.25), Ok(1));
+        for dimension in [
+            f64::NAN,
+            f64::INFINITY,
+            -1.0,
+            0.0,
+            f64::from(i32::MAX) + 1.0,
+            1500.0 * 75_000.0 / 72.0 * 2540.0,
+        ] {
+            assert!(gdi_length(dimension).is_err(), "{dimension}");
+        }
     }
 
     #[test]

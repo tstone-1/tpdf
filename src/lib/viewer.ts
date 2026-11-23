@@ -2800,21 +2800,17 @@ export class Viewer {
   }
 
   /**
-   * The page in view as the renderer addresses it: its document, its page
-   * there, the turn it is shown at and the reader's crop. What *Copy page for
-   * PowerPoint* draws, and `undefined` while no document is shown. `number`
-   * is the page number the reader sees, from 1.
+   * The displayed page number (from 1), rotation and crop for PowerPoint
+   * copy. The command checks the working document before exporting this slot.
    */
   pageInView():
-    | { number: number; doc: number; page: number; turns: number; crop: [number, number, number, number] | null }
+    | { number: number; turns: number; crop: [number, number, number, number] | null }
     | undefined {
     const slot = this.currentPage();
     const source = this.scroller.tileSource(slot);
     if (!source) return undefined;
     return {
       number: slot + 1,
-      doc: source.doc,
-      page: source.page,
       turns: source.turns ?? 0,
       crop: source.crop ? [...source.crop] : null,
     };

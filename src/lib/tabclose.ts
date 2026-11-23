@@ -51,6 +51,12 @@ export class ClosedTabs {
     return null;
   }
 
+  /** A failed open or a cancelled password prompt leaves the same tab available for retry. */
+  async reopen(isOpen: (path: string) => boolean, open: (path: string) => Promise<number | null>): Promise<void> {
+    const path = this.latest(isOpen);
+    if (path !== null && await open(path) !== null) this.reopened(path);
+  }
+
   /** Takes a document off the list once it is reopened. */
   reopened(path: string): void {
     this.paths = this.paths.filter((one) => one !== path);

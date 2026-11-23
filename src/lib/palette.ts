@@ -294,9 +294,16 @@ export class Palette {
    * one implementation of "ask for a value": two would drift, and the one
    * reached by the shortcut is the one nobody checks.
    */
-  askFor(id: string): void {
+  askFor(id: string, prepare?: () => void): void {
     const command = this.registry.find(id);
-    if (!command?.argument || !(command.enabled?.() ?? true)) return;
+    if (!command?.argument) return;
+    if (prepare) {
+      // The previous question's dismissal releases its list. Install the new
+      // list afterwards, before checking the command that needs it.
+      this.close();
+      prepare();
+    }
+    if (!(command.enabled?.() ?? true)) return;
     if (!this.isOpen) this.open();
     this.ask(command);
   }

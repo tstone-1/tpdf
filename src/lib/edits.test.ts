@@ -733,6 +733,24 @@ describe("Edits", () => {
     expect(edits.state.marks).toEqual([]);
   });
 
+  it("uses physical side lengths for text redactions and sends native rectangles in page order", async () => {
+    const baseline = state(3);
+    core.invoke.mockResolvedValueOnce(baseline);
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockResolvedValueOnce([2, 0.5]).mockResolvedValueOnce(baseline);
+    const quads = [1, 2, 1.25, 3, 4, 5, 6, 7];
+    await edits.redactText([{ page: pageId(3), quads }, { page: pageId(1), quads }]);
+    expect(core.invoke).toHaveBeenCalledWith("page_units", { doc: 9, pages: [2, 0] });
+    expect(core.invoke).toHaveBeenLastCalledWith("redact_marks", {
+      doc: 9, regions: [[3, [1, 2, 1.25, 3]], [3, [4, 5, 6, 7]], [1, [4, 5, 6, 7]]],
+    });
+    core.invoke.mockClear().mockResolvedValueOnce([2]);
+    await expect(edits.redactText([{ page: pageId(3), quads }, { page: pageId(1), quads }]))
+      .rejects.toThrow("invalid user unit");
+    expect(core.invoke).toHaveBeenCalledTimes(1);
+  });
+
   it("does not send a redaction for a page the model has never mentioned", async () => {
     // `Edits.mark`'s guard for the redaction door, and the consequence is
     // sharper: a region is placed by coordinates, so a page the model has lost

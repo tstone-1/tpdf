@@ -22,7 +22,7 @@ use crate::edits::Plan;
 use crate::fingerprint::Fingerprint;
 use crate::render::PageSize;
 use crate::save;
-use crate::save_outside::{Declined, Session};
+use crate::save_outside::Session;
 use crate::worker_proto::{Reply, Request};
 
 const MAX_OUTPUTS: usize = 10_000;
@@ -247,47 +247,9 @@ pub(super) fn page_units(
     path: &Path,
     has_password: bool,
 ) -> Result<Vec<f32>, Failure> {
-    units_for_slots(session, pages.iter().map(|page| page - 1).collect())
+    session
+        .units_for_slots(pages.iter().map(|page| page - 1).collect())
         .map_err(|why| declined(&path.display().to_string(), why, has_password))
-}
-
-/// Convert all page dimensions to physical points and retain the coordinate scales.
-pub(super) fn physical_sizes(
-    session: &mut Session,
-    sizes: &mut [PageSize],
-) -> Result<Vec<f32>, Declined> {
-    let count = u32::try_from(sizes.len())
-        .map_err(|_| Declined::Failed("the worker returned too many pages".into()))?;
-    let units = units_for_slots(session, (0..count).collect())?;
-    for (size, unit) in sizes.iter_mut().zip(&units) {
-        size.width_pt *= unit;
-        size.height_pt *= unit;
-        if !size.width_pt.is_finite() || !size.height_pt.is_finite() {
-            return Err(Declined::Refused(
-                "the physical page size is too large".into(),
-            ));
-        }
-    }
-    Ok(units)
-}
-
-/// Physical points per native unit, in the order of the zero-based slots.
-pub(super) fn units_for_slots(
-    session: &mut Session,
-    slots: Vec<u32>,
-) -> Result<Vec<f32>, Declined> {
-    let count = slots.len();
-    match session.ask(Request::PageUnits { pages: slots })? {
-        Reply::PageUnits(units)
-            if units.len() == count && units.iter().all(|unit| unit.is_finite() && *unit > 0.0) =>
-        {
-            Ok(units)
-        }
-        other => Err(Declined::Failed(format!(
-            "invalid page units reply: {}",
-            other.described()
-        ))),
-    }
 }
 
 pub(super) fn read_input(

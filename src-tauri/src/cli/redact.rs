@@ -966,25 +966,34 @@ fn run_redact(
         ));
     }
 
-    let found = limited_search(&queries, &pages, MAX_MATCHES_TO_MARK, |at| {
+    let mut found = limited_search(&queries, &pages, MAX_MATCHES_TO_MARK, |at| {
         wait(|reply| service.text(doc, at, None, reply))
     }).map_err(|why| match why {
         WalkError::Page(why) => Failure::new(Exit::Refused, format!("{shown}: {why}, so nothing was marked and nothing was written")),
         WalkError::Limit => Failure::new(Exit::Refused, format!("more than {MAX_MATCHES_TO_MARK} matches; nothing was written --- narrow the search, or redact fewer pages at a time with --pages")),
     })?;
 
-    // The window's model, marked the way the window marks it.
-    let mut marked: std::collections::BTreeMap<u32, Vec<[f32; 4]>> = match_regions(&found);
-    if !rects.is_empty() {
-        let slots = rects.iter().map(|(page, _)| page - 1).collect();
-        let units = wait(|reply| service.page_units(doc, slots, reply))
+    // Match and validate in physical points, including the minimum side of a
+    // mark. The edit journal receives native coordinates for each page.
+    let slots: std::collections::BTreeSet<_> = found
+        .texts
+        .keys()
+        .copied()
+        .chain(rects.iter().map(|(page, _)| page - 1))
+        .collect();
+    let mut units = std::collections::BTreeMap::new();
+    if !slots.is_empty() {
+        let scales = wait(|reply| service.page_units(doc, slots.iter().copied().collect(), reply))
             .map_err(|why| Failure::new(Exit::Refused, why))?;
-        for ((page, area), unit) in rects.iter().zip(units) {
-            marked
-                .entry(page - 1)
-                .or_default()
-                .push(area.map(|v| v / unit));
-        }
+        units.extend(slots.into_iter().zip(scales));
+    }
+    for (slot, text) in &mut found.texts {
+        regions::physical_text(text, units[slot])
+            .map_err(|why| Failure::new(Exit::Refused, why))?;
+    }
+    let mut marked = match_regions(&found);
+    for (page, area) in &rects {
+        marked.entry(page - 1).or_default().push(*area);
     }
     let edits = crate::edits::Edits::default();
     edits.open(
@@ -998,7 +1007,11 @@ fn run_redact(
     for (page, areas) in &marked {
         for area in areas {
             edits
-                .redact(doc, u64::from(*page) + 1, *area)
+                .redact(
+                    doc,
+                    u64::from(*page) + 1,
+                    area.map(|value| value / units[page]),
+                )
                 .map_err(|why| {
                     Failure::new(
                         Exit::Internal,

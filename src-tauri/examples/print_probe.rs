@@ -690,6 +690,7 @@ mod imp {
 
         turned(&bytes, printer, expected, &sent, report)?;
 
+        scaled_pages(printer, report)?;
         marks(printer, report)?;
 
         stop(&bytes, printer, expected, report)?;
@@ -1048,6 +1049,53 @@ mod imp {
             matches!(&spooled, Err(e) if e == print_win::STOPPED) && !written,
             &format!("{spooled:?}, file written: {written}"),
         );
+        Ok(())
+    }
+
+    fn scaled_pages(printer: &str, report: &mut Report) -> Result<(), String> {
+        use lopdf::{dictionary, Document, Object, Stream};
+        use tpdf_lib::print_layout::{Layout, Scale};
+        let mut doc = Document::with_version("1.7");
+        let tree = doc.new_object_id();
+        let mut kids = Vec::new();
+        for unit in [1, 2] {
+            // A 3x2-inch sheet with a centred 2x1-inch black rectangle.
+            let content = format!(
+                "0 g {} {} {} {} re f",
+                36 / unit,
+                36 / unit,
+                144 / unit,
+                72 / unit
+            );
+            let stream = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+            kids.push(Object::Reference(doc.add_object(dictionary! {
+                "Type"=>"Page", "Parent"=>tree,
+                "MediaBox"=>vec![Object::from(0),0.into(),(216/unit).into(),(144/unit).into()],
+                "UserUnit"=>unit, "Contents"=>stream, "Resources"=>dictionary!{},
+            })));
+        }
+        doc.objects.insert(
+            tree,
+            dictionary! {"Type"=>"Pages","Kids"=>kids,"Count"=>2}.into(),
+        );
+        let root = doc.add_object(dictionary! {"Type"=>"Catalog","Pages"=>tree});
+        doc.trailer.set("Root", root);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).map_err(|e| e.to_string())?;
+        let actual = Layout {
+            scale: Scale::Actual,
+            ..Layout::PLAIN
+        };
+        let output = print_laid_out(&bytes, printer, "scaled", &[0, 1], actual, false)?;
+        for (index, page) in printed_pages(&output, 2)?.into_iter().enumerate() {
+            let (w, h) = page.inches();
+            let (w, h) = (page.width_span * w, page.height_span * h);
+            report.check(
+                "actual size preserves physical ink dimensions across page units",
+                (w - 2.0).abs() < 0.1 && (h - 1.0).abs() < 0.1,
+                &format!("page {} ink {w:.2} x {h:.2} inches", index + 1),
+            );
+        }
         Ok(())
     }
 

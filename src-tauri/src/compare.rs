@@ -430,10 +430,35 @@ fn intern<'w>(ids: &mut HashMap<&'w str, u32>, side: &'w [Word]) -> Vec<u32> {
         .collect()
 }
 
+fn wrapped_separator(codes: &[u32], index: usize) -> bool {
+    let (start, end) = match codes[index] {
+        13 => (
+            index,
+            index + 1 + usize::from(codes.get(index + 1) == Some(&10)),
+        ),
+        10 => (
+            index.saturating_sub(usize::from(index > 0 && codes[index - 1] == 13)),
+            index + 1,
+        ),
+        _ => return false,
+    };
+    start > 0
+        && codes[start - 1] == u32::from(SOFT_HYPHEN)
+        && codes
+            .get(end)
+            .and_then(|&c| char::from_u32(c))
+            .is_some_and(char::is_alphanumeric)
+}
+
 /// The words of one side, in page order as given.
 fn append_words(out: &mut Vec<Word>, page: u32, codes: &[u32], which: &str) -> Result<(), String> {
     let mut current: Option<Word> = None;
     for (index, code) in codes.iter().enumerate() {
+        // Some producers include a line separator even at a discretionary
+        // break. Leave its original index in the span when the word continues.
+        if current.is_some() && wrapped_separator(codes, index) {
+            continue;
+        }
         let index = u32::try_from(index).unwrap_or(u32::MAX);
         // A code that is not a scalar value separates words, as whitespace
         // does: it has no character to compare.
@@ -793,6 +818,25 @@ mod tests {
     fn a_soft_hyphen_is_not_part_of_the_word_but_is_inside_its_span() {
         let c = run(&[(0, "exam\u{ad}ple x")], &[(0, "example y")]);
         assert_eq!(summary(&c), vec![(Kind::Replaced, "x", "y")]);
+    }
+
+    #[test]
+    fn only_an_explicit_discretionary_wrap_joins_the_next_line() {
+        for end in ["\n", "\r", "\r\n"] {
+            let soft = format!("discre\u{ad}{end}tionary");
+            let separate = format!("discre{end}tionary");
+            assert!(run(&[(0, &soft)], &[(0, "discretionary")])
+                .changes
+                .is_empty());
+            assert_eq!(
+                run(&[(0, &separate)], &[(0, "discretionary")]).total_changes,
+                1
+            );
+            assert_eq!(
+                run(&[(0, &soft)], &[(0, "replaced")]).changes[0].left[0].end as usize,
+                soft.chars().count()
+            );
+        }
     }
 
     #[test]

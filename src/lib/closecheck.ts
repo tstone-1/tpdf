@@ -38,8 +38,10 @@ export async function closingCheck(host: OpenCheckHost, expected: string, report
 
   await host.openings();
   await host.idle();
-  host.run("file.reopenClosedTab");
-  report.check("Reopen closed tab opens it again", await until("1,2,3"), names());
+  // The ordinary open path (also used for a drop) must restore the closed
+  // tab's latest place while the first two documents remain open.
+  await host.open(third);
+  report.check("Open restores the third tab alongside the other two", await until("1,2,3"), names());
   await host.openings();
   report.check("reopening restores the page and offset left in the closed tab",
     await settle(() => {

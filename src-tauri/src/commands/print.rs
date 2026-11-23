@@ -362,7 +362,7 @@ pub async fn print_prepare(
 ) -> Result<Preview, save::Refusal> {
     let built = build_job(&app, &edits, &service, path, doc, pages, turns).await?;
     let library = crate::pdfium_library_dir(&app);
-    let (built, session, sizes) =
+    let (built, session, geometry) =
         tauri::async_runtime::spawn_blocking(move || open_preview(built, &library))
             .await
             .map_err(|e| save::Refusal::from(said!("the print preview could not start: {e}")))?
@@ -372,16 +372,19 @@ pub async fn print_prepare(
     let job = shown.last;
     let preview = Preview {
         job,
-        pages: sizes.clone(),
+        pages: geometry.physical.clone(),
     };
     shown.job = Some(job);
     shown.built = Some(built);
-    shown.sizes = sizes.clone();
+    shown.sizes = geometry.physical;
     #[cfg(windows)]
     {
         shown.printer = None;
     }
-    shown.drawer = Some(Drawer { session, sizes });
+    shown.drawer = Some(Drawer {
+        session,
+        sizes: geometry.native,
+    });
     Ok(preview)
 }
 
@@ -594,36 +597,11 @@ fn chosen_pages(
 fn open_preview(
     built: Built,
     library: &Path,
-) -> Result<
-    (
-        Built,
-        crate::save_outside::Session,
-        Vec<crate::render::PageSize>,
-    ),
-    String,
-> {
+) -> Result<(Built, crate::save_outside::Session, print::Geometry), String> {
     let mut session = save::InWorker::at(library.to_path_buf()).session_over(&built.bytes)?;
-    let reply = session
-        .ask(crate::worker_proto::Request::Open {
-            lazy_geometry: false,
-        })
-        .map_err(|e| said!("the print job could not be read: {why}", why = e.message()))?;
-    let crate::worker_proto::Reply::Open {
-        pages, page_count, ..
-    } = reply
-    else {
-        return Err(format!(
-            "the worker answered the print job with {}",
-            reply.described()
-        ));
-    };
-    if pages.len() != page_count {
-        return Err(said!(
-            "the worker returned incomplete page sizes for the print job"
-        ));
-    }
-    print::expect_pages(page_count, built.expected)?;
-    Ok((built, session, pages))
+    let geometry = print::Geometry::read(&mut session)?;
+    print::expect_pages(geometry.native.len(), built.expected)?;
+    Ok((built, session, geometry))
 }
 
 /// One sheet of the held job as a PNG `data:` URL, `width` pixels wide at

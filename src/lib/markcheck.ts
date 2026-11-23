@@ -54,7 +54,7 @@ import { tileUrl, type TileRequest } from "./tiles";
 import { pause, Report, settle as settleFor } from "./checkreport";
 import type { MarkView, PageView } from "./pages";
 import type { Viewer } from "./viewer";
-import { isMac } from "./keys";
+import { isLinux, isMac } from "./keys";
 
 /** How long any single wait may take before the check gives up. */
 const TIMEOUT_MS = 30_000;
@@ -593,6 +593,13 @@ async function run(host: MarkCheckHost): Promise<void> {
       covered,
       shown ? `${((inked(viewer, shown) ?? 0) * 100).toFixed(1)}% of its box inked` : "the picture has no anchor",
     );
+    if (!isMac() && !isLinux()) {
+      const asked = host.run("edit.copyPageForPowerPoint");
+      check("PowerPoint copy refuses the page with an unsaved picture",
+        picture?.kind === "picture" && asked
+          && await settle(() => host.said()?.includes("Save your changes before copying") === true),
+        host.said() ?? "no refusal");
+    }
     if (picture) {
       viewer.showMark(picture.id);
       const copied = await settle(() => viewer.markOpen === picture.id) && host.run("edit.copyMark")
