@@ -162,6 +162,32 @@ pub(super) fn makes_a_document_from_pictures(report: &mut Report) {
     );
 
     let kept = std::fs::read(&out).unwrap();
+    // A valid picture with an unavailable worker engine is an internal failure.
+    // A bad picture with a working engine is an actionable input refusal.
+    for (input, library_dir, status, kind) in [
+        (&photo, dir.join("missing-engine"), 4, "failed"),
+        (&source, super::library_dir(), 3, "refused"),
+    ] {
+        let env = super::Env {
+            library_dir,
+            store: &super::cli::OsStore,
+            now: super::now(),
+            program: "tpdf".into(),
+            anchors: tpdf_lib::trust::Anchors::System,
+        };
+        let args = super::strings(&["images", input, "-o", &out, "--force", "--json"]);
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let code = super::cli::run(&args, &env, &mut stdout, &mut stderr);
+        let json: serde_json::Value = serde_json::from_slice(&stdout).unwrap_or_default();
+        report.check(
+            "images classifies the writing failure and preserves the existing file",
+            code == status
+                && json["error"]["kind"] == kind
+                && json["error"]["exit_code"] == status
+                && std::fs::read(&out).unwrap() == kept,
+            &format!("expected {kind}; exit {code}; {json}"),
+        );
+    }
     let refused = at("refused.pdf");
     for (args, status, sentence) in [
         (vec!["images", &picture, "-o", &out], 3, "--force"),

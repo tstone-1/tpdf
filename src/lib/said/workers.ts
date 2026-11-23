@@ -294,6 +294,8 @@ export default {
   "Vision refused the image: {e}": "Vision hat das Bild abgelehnt: {e}",
 
   // commands/ocr.rs
+  "The original file could not be verified. Reopen it before recognising text.":
+    "Die Originaldatei konnte nicht überprüft werden. Für die Texterkennung muss sie erneut geöffnet werden.",
   "Text recognition stopped: {e}": "Die Texterkennung wurde beendet: {e}",
   "This page is too large to recognise.": "Diese Seite ist zu groß für die Texterkennung.",
   "The page render was abandoned.": "Die Darstellung der Seite wurde abgebrochen.",

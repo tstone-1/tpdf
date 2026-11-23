@@ -88,6 +88,7 @@ struct Picture {
     /// `DeviceGray` or `DeviceRGB`.
     gray: bool,
     profile: Option<Vec<u8>>,
+    intent: Option<png::SrgbRenderingIntent>,
     calibration: Option<Object>,
     /// `DCTDecode` or `FlateDecode`.
     jpeg: bool,
@@ -123,6 +124,13 @@ fn bounded(width: u32, height: u32) -> Result<(), String> {
 /// A resolution worth using, or none.
 fn plausible(x: f64, y: f64) -> Option<(f64, f64)> {
     (PLAUSIBLE_DPI.contains(&x) && PLAUSIBLE_DPI.contains(&y)).then_some((x, y))
+}
+
+/// A unitless density specifies shape only. Set the wider pixel dimension to
+/// one point, as for a picture with no physical resolution.
+fn relative_density(x: f64, y: f64) -> Option<(f64, f64)> {
+    let least = x.min(y);
+    (least > 0.0 && x != y).then(|| (DEFAULT_DPI * x / least, DEFAULT_DPI * y / least))
 }
 
 #[derive(Default)]
@@ -217,6 +225,7 @@ pub(crate) fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts<'_>, String> {
         dpi: None,
     };
     let mut exif_dpi = None;
+    let mut relative = None;
     let mut offset = 2;
     loop {
         if bytes.get(offset) != Some(&0xff) {
@@ -239,6 +248,10 @@ pub(crate) fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts<'_>, String> {
                     f64::from(u16::from_be_bytes([payload[10], payload[11]])),
                 );
                 facts.dpi = match payload[7] {
+                    0 => {
+                        relative = relative_density(x, y);
+                        None
+                    }
                     1 => plausible(x, y),
                     2 => plausible(x * 2.54, y * 2.54),
                     _ => None,
@@ -286,7 +299,7 @@ pub(crate) fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts<'_>, String> {
                 ));
             }
             0xda if facts.components != 0 => {
-                facts.dpi = facts.dpi.or(exif_dpi);
+                facts.dpi = facts.dpi.or(exif_dpi).or(relative);
                 return Ok(facts);
             }
             0xda | 0xd9 => return Err(broken()),
@@ -353,6 +366,7 @@ fn jpeg(bytes: &[u8]) -> Result<Picture, String> {
         jpeg: true,
         calibration: None,
         profile,
+        intent: None,
         data: bytes.to_vec(),
         mask: None,
         orientation: facts.orientation,
@@ -474,6 +488,22 @@ pub(crate) fn png_orientation(info: &png::Info<'_>) -> u8 {
         .unwrap_or(1)
 }
 
+fn srgb_profile(gray: bool) -> Vec<u8> {
+    let srgb = moxcms::ColorProfile::new_srgb();
+    let profile = if gray {
+        // Grayscale PNG samples use the same piecewise sRGB transfer curve.
+        let mut mono = moxcms::ColorProfile::new_gray_with_gamma(1.0);
+        mono.gray_trc = srgb.red_trc;
+        mono.description = srgb.description;
+        mono
+    } else {
+        srgb
+    };
+    profile
+        .encode()
+        .expect("the built-in sRGB profile can be encoded")
+}
+
 fn png(bytes: &[u8]) -> Result<Picture, String> {
     let undecodable = |e: png::DecodingError| said!("it does not decode: {e}");
     let be32 = |at: usize| -> Option<u32> {
@@ -495,9 +525,12 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
     if reader.info().width != width || reader.info().height != height {
         return Err(said!("its header and its picture disagree about its size"));
     }
-    let dpi = reader.info().pixel_dims.and_then(|dims| match dims.unit {
-        png::Unit::Meter => plausible(f64::from(dims.xppu) * 0.0254, f64::from(dims.yppu) * 0.0254),
-        png::Unit::Unspecified => None,
+    let (dpi, relative) = reader.info().pixel_dims.map_or((None, None), |dims| {
+        let (x, y) = (f64::from(dims.xppu), f64::from(dims.yppu));
+        match dims.unit {
+            png::Unit::Meter => (plausible(x * 0.0254, y * 0.0254), None),
+            png::Unit::Unspecified => (None, relative_density(x, y)),
+        }
     });
     let size = reader
         .output_buffer_size()
@@ -527,9 +560,13 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
         .and_then(exif_properties)
         .unwrap_or_default();
     let orientation = exif.orientation.unwrap_or(1);
-    let dpi = dpi.or(exif.dpi);
-    let profile = reader.info().icc_profile.as_deref();
-    validate_profile(profile, gray, "PNG")?;
+    let dpi = dpi.or(exif.dpi).or(relative);
+    let embedded = reader.info().icc_profile.as_deref();
+    validate_profile(embedded, gray, "PNG")?;
+    let intent = reader.info().srgb.filter(|_| embedded.is_none());
+    let profile = embedded
+        .map(<[u8]>::to_vec)
+        .or_else(|| intent.map(|_| srgb_profile(gray)));
     let (data, mask) = if alpha {
         let colour = channels - 1;
         let mut samples = Vec::with_capacity(pixels * colour);
@@ -550,7 +587,8 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
         gray,
         jpeg: false,
         calibration: png_calibration(reader.info(), gray)?.map(|cal| cal.pdf_space()),
-        profile: profile.map(<[u8]>::to_vec),
+        profile,
+        intent,
         data: deflated(&data)?,
         mask: mask.as_deref().map(deflated).transpose()?,
         orientation,
@@ -717,12 +755,21 @@ pub fn document(images: &[(&[u8], &str)], options: Options) -> Result<Document, 
         if let Some(mask) = mask {
             image.set("SMask", mask);
         }
+        if let Some(intent) = found.intent {
+            let name = match intent {
+                png::SrgbRenderingIntent::Perceptual => "Perceptual",
+                png::SrgbRenderingIntent::RelativeColorimetric => "RelativeColorimetric",
+                png::SrgbRenderingIntent::Saturation => "Saturation",
+                png::SrgbRenderingIntent::AbsoluteColorimetric => "AbsoluteColorimetric",
+            };
+            image.set("Intent", name);
+        }
         // `Stream::new` would mark it for compression; these bytes are final.
         let mut stream = Stream::new(image, found.data);
         stream.allows_compression = false;
         let image = doc.add_object(stream);
         let [a, b, c, d, e, f] = at.matrix;
-        let content = format!("q {a:.2} {b:.2} {c:.2} {d:.2} {e:.2} {f:.2} cm /Im0 Do Q");
+        let content = format!("q {a} {b} {c} {d} {e} {f} cm /Im0 Do Q");
         let content = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
         kids.push(Object::Reference(doc.add_object(dictionary! {
             "Type" => "Page",

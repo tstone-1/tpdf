@@ -741,6 +741,8 @@ fn source_changed() -> Failure {
 pub(super) fn refused(why: save::Refusal) -> Failure {
     if why.changed {
         source_changed()
+    } else if why.internal {
+        Failure::new(Exit::Internal, why.message)
     } else {
         Failure::new(Exit::Refused, why.message)
     }
@@ -1114,10 +1116,7 @@ mod tests {
             "the source changed while writing; no output was published"
         );
         // Every other refusal of the writer's is passed on as it is.
-        let failure = refused(save::Refusal {
-            message: "the document cannot be rewritten".into(),
-            changed: false,
-        });
+        let failure = refused(save::Refusal::from("the document cannot be rewritten"));
         assert_eq!(
             (failure.exit, failure.message.as_str()),
             (Exit::Refused, "the document cannot be rewritten")

@@ -9,7 +9,8 @@
 //!
 //! - **PNG**: those objects drawn alone, nothing behind them, at
 //!   [`GRAPHIC_DPI`]; a region holding one picture and nothing else gives that
-//!   picture at its own pixel size, with its transparency mask.
+//!   picture at its own pixel size, with its transparency mask. Both raster paths
+//!   are capped at [`MAX_PIXELS`], including the PNG embedded in an SVG.
 //! - **Original**: one picture as stored, a JPEG as its own bytes.
 //! - **SVG**: the drawing as vector paths, with its colours, transparency and
 //!   stroke settings, and pictures inside it embedded as PNG. Text and

@@ -862,6 +862,9 @@ impl InWorker {
         if answered.locked {
             return Err(Declined::Locked(answered.error));
         }
+        if answered.internal {
+            return Err(Declined::Failed(answered.error));
+        }
         if !answered.ok {
             return Err(Declined::Refused(answered.error));
         }
@@ -1022,34 +1025,36 @@ impl Rewriter for InWorker {
         // A worker is started over a document. This request reads none, so it
         // gets the one tpdf ships for warming a worker up.
         let seed = crate::worker_child::WARM_DOCUMENT;
-        let mut mapped = Shm::create(seed.len())?;
+        let mut mapped = Shm::create(seed.len()).map_err(Refusal::failed)?;
         mapped.as_mut_slice()[..seed.len()].copy_from_slice(seed);
         let worker = Worker::spawn_merging(
             std::sync::Arc::new(mapped),
             inputs.whole,
             out,
             &self.library_dir,
-        )?;
+        )
+        .map_err(Refusal::failed)?;
         let pid = worker.pid();
         let incoming = inputs.each.to_vec();
         let rx = asked_on_a_thread(worker, move |worker| {
-            let answered = worker.call(&Request::Images { incoming, options })?;
+            let answered = worker
+                .call(&Request::Images { incoming, options })
+                .map_err(Refusal::failed)?;
             if !answered.ok {
-                return Err(Refusal::from(answered.error));
+                return Err(answered.into());
             }
             match answered.reply {
                 Some(Reply::Merged { bytes, pages }) => Ok((bytes, pages)),
-                other => Err(said!(
+                other => Err(Refusal::failed(said!(
                     "the worker answered the pictures with {reply}",
                     reply =
                         other.map_or_else(|| said!("no payload at all"), |reply| reply.described())
-                )
-                .into()),
+                ))),
             }
         });
         // The pictures' segment is the caller's and outlives the wait, as a
         // merge's does.
-        awaited(&rx, DEFAULT_DEADLINE, pid)?
+        awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Refusal::failed)?
     }
 
     fn picture(&self, bytes: &[u8]) -> Result<crate::signature::Image, Refusal> {
@@ -1166,12 +1171,7 @@ impl InWorker {
             incoming: incoming.to_vec(),
         })?;
         if !answered.ok {
-            // The one bit that has to survive the pipe: whether Reload is the
-            // answer. See `Response::changed`.
-            return Err(Refusal {
-                message: answered.error,
-                changed: answered.changed,
-            });
+            return Err(answered.into());
         }
         match answered.reply {
             Some(Reply::Rewrote(bytes)) => Ok(bytes),
@@ -1221,10 +1221,7 @@ impl InWorker {
             incoming: incoming.to_vec(),
         })?;
         if !answered.ok {
-            return Err(Refusal {
-                message: answered.error,
-                changed: answered.changed,
-            });
+            return Err(answered.into());
         }
         match answered.reply {
             Some(Reply::Merged { bytes, pages }) => Ok((bytes, pages)),
@@ -1283,10 +1280,7 @@ impl InWorker {
     fn ask_print_range(worker: &mut Worker, job: &crate::print::Job) -> Result<usize, Refusal> {
         let answered = worker.call(&Request::PrintRange { job: job.clone() })?;
         if !answered.ok {
-            return Err(Refusal {
-                message: answered.error,
-                changed: answered.changed,
-            });
+            return Err(answered.into());
         }
         match answered.reply {
             Some(Reply::Rewrote(bytes)) => Ok(bytes),

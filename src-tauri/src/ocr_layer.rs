@@ -395,7 +395,7 @@ pub fn reads_back(written: &Layer, before: &PageText, read: &PageText) -> bool {
     let mut got: Vec<char> = characters(read).collect();
     wanted.sort_unstable();
     got.sort_unstable();
-    if !rtl_words_read_back(written, read) {
+    if !rtl_words_read_back(written, before, read) {
         return false;
     }
     wanted == got
@@ -403,7 +403,7 @@ pub fn reads_back(written: &Layer, before: &PageText, read: &PageText) -> bool {
 
 /// On a bidirectional page PDFium can reverse even a neighbouring Latin word.
 /// Verify logical order and glyph positions in every written word on such a page.
-fn rtl_words_read_back(layer: &Layer, read: &PageText) -> bool {
+fn rtl_words_read_back(layer: &Layer, before: &PageText, read: &PageText) -> bool {
     use unicode_bidi::{bidi_class, BidiClass, ParagraphBidiInfo};
     if !layer.words.iter().any(|word| {
         word.text
@@ -412,6 +412,16 @@ fn rtl_words_read_back(layer: &Layer, read: &PageText) -> bool {
     }) {
         return true;
     }
+    // A typed stamp can overlap a scanned word. Remove the pre-existing
+    // occurrences by character and full glyph box, leaving the new glyphs
+    // in PDFium's extraction order for the per-word comparisons below.
+    let key = |ch: char, b: &[f32]| (ch, [b[0], b[1], b[2], b[3]].map(f32::to_bits));
+    let mut original = std::collections::HashMap::new();
+    for (&code, b) in before.codes.iter().zip(before.boxes.chunks_exact(4)) {
+        if let Some(ch) = read_character(code) {
+            *original.entry(key(ch, b)).or_insert(0usize) += 1;
+        }
+    }
     let mut glyphs: Vec<_> = read
         .codes
         .iter()
@@ -419,6 +429,10 @@ fn rtl_words_read_back(layer: &Layer, read: &PageText) -> bool {
         .enumerate()
         .filter_map(|(i, (&code, b))| {
             let ch = read_character(code)?;
+            if let Some(count) = original.get_mut(&key(ch, b)).filter(|count| **count > 0) {
+                *count -= 1;
+                return None;
+            }
             Some(((b[1] + b[3]) * 0.5, (b[0] + b[2]) * 0.5, i, ch))
         })
         .collect();
@@ -684,6 +698,34 @@ mod tests {
             read.codes.reverse();
             assert!(!reads_back(&layer, &none(), &read));
         }
+    }
+
+    #[test]
+    fn a_bilingual_layer_reads_back_under_a_typed_stamp() {
+        let stamped = [0., 0., 80., 10.];
+        let hebrew = [0., 20., 20., 30.];
+        let before = typed("RECEIVED", stamped);
+        let items = vec![word("JOURNAL", stamped), word("אב", hebrew)];
+        let Outcome::Layer(layer) = outcome_of(0, Ok(items), &before).unwrap() else {
+            panic!("the scan needs both words");
+        };
+        assert_eq!(layer.words.len(), 2);
+        let mut read = typed("JOURNAL", stamped);
+        let mut rtl = typed("אב", hebrew);
+        rtl.boxes.rotate_left(4);
+        read.codes.extend(rtl.codes);
+        read.boxes.extend(rtl.boxes);
+        read.codes.extend_from_slice(&before.codes);
+        read.boxes.extend_from_slice(&before.boxes);
+        assert!(reads_back(&layer, &before, &read));
+
+        // The stamp must not exempt the word beneath it from verification.
+        read.codes[..7].reverse();
+        assert!(!reads_back(&layer, &before, &read));
+        read.codes[..7].reverse();
+        read.codes.remove(0);
+        read.boxes.drain(..4);
+        assert!(!reads_back(&layer, &before, &read));
     }
 
     #[test]

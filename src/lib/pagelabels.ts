@@ -91,6 +91,17 @@ export function withPrinted(preview: string, printed: string): string {
   return preview === "" ? printed : `${preview} · ${printed}`;
 }
 
+/** Go to page accepts one position, so punctuation in a label is always literal. */
+export function positionForLabel(raw: string, count: number, labelOf: (slot: number) => string | null): string | null {
+  let position: number | null = null;
+  for (let slot = 0; slot < count; slot++) {
+    if (labelOf(slot) !== raw) continue;
+    if (position !== null) return null;
+    position = slot + 1;
+  }
+  return position === null ? null : TEXT().typePositions(raw, String(position));
+}
+
 /**
  * What to type instead of printed numbers, for a value the page-number parser
  * refused: `Printed as ii, App-A: type 2,7`, or `null` when the value is not

@@ -218,6 +218,147 @@ fn own() -> Options {
     Options::default()
 }
 
+fn read_back_picture(bytes: &[u8], options: Options) -> Document {
+    let mut pdf = document(&[(bytes, "picture")], options).unwrap();
+    Document::load_mem(&crate::save::serialise(&mut pdf, "picture").unwrap()).unwrap()
+}
+
+#[test]
+fn unitless_density_preserves_the_picture_and_page_proportions() {
+    assert_eq!(&RGB[6..11], b"JFIF\0");
+    for (x, y, expected) in [
+        (2u16, 1u16, [4.0, 8.0]),
+        (1, 2, [8.0, 4.0]),
+        (1, 1, [8.0, 8.0]),
+    ] {
+        let mut jpeg = RGB.to_vec();
+        jpeg[13] = 0;
+        jpeg[14..16].copy_from_slice(&x.to_be_bytes());
+        jpeg[16..18].copy_from_slice(&y.to_be_bytes());
+        let mut info = png::Info::with_size(8, 8);
+        info.pixel_dims = Some(png::PixelDimensions {
+            unit: png::Unit::Unspecified,
+            xppu: u32::from(x),
+            yppu: u32::from(y),
+        });
+        let mut png = Vec::new();
+        png::Encoder::with_info(&mut png, info)
+            .unwrap()
+            .write_header()
+            .unwrap()
+            .write_image_data(&[128; 64])
+            .unwrap();
+        for bytes in [&png, &jpeg] {
+            for (dpi, dimensions) in [(None, expected), (Some(144), [4.0, 4.0])] {
+                let pdf = read_back_picture(bytes, Options { dpi, ..own() });
+                let page = pdf.get_pages()[&1];
+                let media = pdf
+                    .get_dictionary(page)
+                    .unwrap()
+                    .get(b"MediaBox")
+                    .unwrap()
+                    .as_array()
+                    .unwrap();
+                assert_eq!(
+                    [media[2].as_float().unwrap(), media[3].as_float().unwrap()],
+                    dimensions
+                );
+                let ops = lopdf::content::Content::decode(&pdf.get_page_content(page)).unwrap();
+                let matrix = &ops
+                    .operations
+                    .iter()
+                    .find(|op| op.operator == "cm")
+                    .unwrap()
+                    .operands;
+                assert_eq!(
+                    [matrix[0].as_float().unwrap(), matrix[3].as_float().unwrap()],
+                    dimensions
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn tagged_pngs_emit_an_srgb_profile_and_the_declared_rendering_intent() {
+    use png::SrgbRenderingIntent::*;
+    let srgb = moxcms::ColorProfile::new_srgb().encode().unwrap();
+    let expected = moxcms::ColorProfile::new_from_slice(&srgb).unwrap();
+    for (color, samples, device) in [
+        (
+            png::ColorType::Rgb,
+            &[89u8, 32, 90][..],
+            b"DeviceRGB".as_slice(),
+        ),
+        (
+            png::ColorType::Grayscale,
+            &[89][..],
+            b"DeviceGray".as_slice(),
+        ),
+    ] {
+        for (intent, name) in [
+            (None, ""),
+            (Some(Perceptual), "Perceptual"),
+            (Some(RelativeColorimetric), "RelativeColorimetric"),
+            (Some(Saturation), "Saturation"),
+            (Some(AbsoluteColorimetric), "AbsoluteColorimetric"),
+        ] {
+            let mut info = png::Info::with_size(1, 1);
+            info.color_type = color;
+            info.srgb = intent;
+            let mut bytes = Vec::new();
+            png::Encoder::with_info(&mut bytes, info)
+                .unwrap()
+                .write_header()
+                .unwrap()
+                .write_image_data(samples)
+                .unwrap();
+            let pdf = read_back_picture(&bytes, own());
+            let image = pdf
+                .objects
+                .values()
+                .filter_map(|o| o.as_stream().ok())
+                .find(|s| s.dict.has(b"ColorSpace"))
+                .unwrap();
+            let space = image.dict.get(b"ColorSpace").unwrap();
+            if intent.is_none() {
+                assert_eq!(space.as_name().unwrap(), device);
+                assert!(!image.dict.has(b"Intent"));
+                continue;
+            }
+            assert_eq!(
+                image.dict.get(b"Intent").unwrap().as_name().unwrap(),
+                name.as_bytes()
+            );
+            let space = space.as_array().unwrap();
+            assert_eq!(space[0].as_name().unwrap(), b"ICCBased");
+            let profile = pdf
+                .get_object(space[1].as_reference().unwrap())
+                .unwrap()
+                .as_stream()
+                .unwrap();
+            assert_eq!(
+                profile.dict.get(b"N").unwrap().as_i64().unwrap(),
+                samples.len() as i64
+            );
+            let icc = moxcms::ColorProfile::new_from_slice(&profile.content).unwrap();
+            if color == png::ColorType::Grayscale {
+                assert_eq!(icc.color_space, moxcms::DataColorSpace::Gray);
+                assert!(icc.gray_trc.is_some());
+                assert_eq!(icc.gray_trc, expected.red_trc);
+            } else {
+                assert_eq!(icc.color_space, moxcms::DataColorSpace::Rgb);
+                assert_eq!(icc.red_trc, expected.red_trc);
+                assert_eq!(icc.green_trc, expected.green_trc);
+                assert_eq!(icc.blue_trc, expected.blue_trc);
+                assert_eq!(icc.red_colorant, expected.red_colorant);
+                assert_eq!(icc.green_colorant, expected.green_colorant);
+                assert_eq!(icc.blue_colorant, expected.blue_colorant);
+            }
+        }
+    }
+}
+
 /// Where the unit square's corner `(u, v)` lands on the page.
 fn lands(at: &Placement, u: f64, v: f64) -> (f64, f64) {
     let [a, b, c, d, e, f] = at.matrix;

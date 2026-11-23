@@ -159,15 +159,26 @@ pub struct Refusal {
     pub message: String,
     /// The source changed on disk since the reader opened it.
     pub changed: bool,
+    /// The writer or its channel failed independently of the input.
+    #[serde(skip)]
+    pub(crate) internal: bool,
 }
 
 impl Refusal {
+    pub(crate) fn failed(message: impl Into<String>) -> Self {
+        Self {
+            internal: true,
+            ..Self::from(message.into())
+        }
+    }
+
     /// A refusal because the file is not the file that was opened.
     #[must_use]
     pub fn changed(message: impl Into<String>) -> Refusal {
         Refusal {
             message: message.into(),
             changed: true,
+            internal: false,
         }
     }
 }
@@ -212,6 +223,7 @@ impl From<String> for Refusal {
         Refusal {
             message,
             changed: false,
+            internal: false,
         }
     }
 }
@@ -996,7 +1008,7 @@ pub fn write_split(
                 written = written.len(),
                 total = plans.len()
             ),
-            changed: why.changed,
+            ..why
         });
         landed?;
         written.push(target.display().to_string());
@@ -1321,7 +1333,7 @@ fn concatenated_within(others: &[PathBuf], ceiling: u64) -> Result<(Shm, Vec<Inc
             "the documents to merge are larger than this machine can map"
         ))
     })?;
-    let mut carried = Shm::create(total.max(1))?;
+    let mut carried = Shm::create(total.max(1)).map_err(Refusal::failed)?;
 
     let mut incoming = Vec::with_capacity(others.len());
     let mut at = 0;
@@ -1589,11 +1601,10 @@ fn landed_is(out: &std::fs::File, wrote: usize) -> Result<usize, Refusal> {
         .map_err(|e| said!("could not measure the staged file: {e}"))?
         .len();
     if landed != wrote as u64 {
-        return Err(said!(
+        return Err(Refusal::failed(said!(
             "the rewritten document was reported as {wrote} bytes and the staged file is \
              {landed} --- the save was not completed"
-        )
-        .into());
+        )));
     }
     Ok(wrote)
 }

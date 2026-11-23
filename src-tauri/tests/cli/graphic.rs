@@ -49,6 +49,14 @@ fn fixture(path: &Path) {
         },
         [0u8, 200, 0].repeat(8),
     ));
+    // Above the SVG raster limit, even though the page placement is small.
+    let large = doc.add_object(Stream::new(
+        dictionary! {
+            "Type"=>"XObject", "Subtype"=>"Image", "Width"=>2048, "Height"=>2048,
+            "ColorSpace"=>"DeviceGray", "BitsPerComponent"=>1,
+        },
+        vec![0xaa; 2048 * 256],
+    ));
     let photo = doc.add_object(Stream::new(
         dictionary! {
             "Type"=>"XObject", "Subtype"=>"Image", "Width"=>8, "Height"=>8,
@@ -59,7 +67,7 @@ fn fixture(path: &Path) {
     let content = b"1 1 1 rg 0 0 595 842 re f \
 q 1 0 0 1 100 700 cm /Logo Do Q \
 q 80 0 0 40 100 500 cm /Pic Do Q \
-q 64 0 0 64 300 480 cm /Photo Do Q \
+q 64 0 0 64 400 480 cm /Large Do Q q 64 0 0 64 300 480 cm /Photo Do Q \
 BT /F1 14 Tf 0 0 0 rg 100 300 Td (Words) Tj ET \
 q 30 180 m 70 180 l 30 220 l h W n 0 g 30 180 40 40 re f Q \
 q 0 G 0 w 100 180 m 140 220 l S Q \
@@ -74,7 +82,7 @@ q /Blend gs 0 0 1 rg 246 182 24 28 re f Q"
             "Font"=>dictionary! {"F1"=>font},
             "Pattern"=>dictionary! {},
             "ExtGState"=>dictionary! {"Blend"=>dictionary! {"BM"=>"Multiply"}},
-            "XObject"=>dictionary! {"Logo"=>logo, "Pic"=>picture, "Photo"=>photo},
+            "XObject"=>dictionary! {"Logo"=>logo, "Pic"=>picture, "Photo"=>photo, "Large"=>large},
         },
     });
     let tiles = doc.add_object(Stream::new(
@@ -327,6 +335,27 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
         &format!("{:?} {pixels:?}", picture.as_ref().map(|(_, f)| f)),
     );
 
+    let large = export(&mut worker, region(395, 475, 470, 550, GraphicFormat::Svg));
+    let embedded = large.as_ref().ok().and_then(|(bytes, _)| {
+        use base64::Engine as _;
+        let (_, data) = std::str::from_utf8(bytes)
+            .ok()?
+            .split_once("data:image/png;base64,")?;
+        let (data, _) = data.split_once('"')?;
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .ok()?;
+        let reader = png::Decoder::new(std::io::Cursor::new(png))
+            .read_info()
+            .ok()?;
+        Some(reader.info().size())
+    });
+    report.check(
+        "an SVG embeds the 2048-square picture at the 3.5-million-pixel limit",
+        embedded == Some((1870, 1870)),
+        &format!("embedded PNG size {embedded:?}"),
+    );
+
     // The JPEG: 64 points square at 300, 480.
     let around_photo = |format| region(295, 475, 370, 550, format);
     let photo = export(&mut worker, around_photo(GraphicFormat::Original));
@@ -464,9 +493,9 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
 
     let page = export(&mut worker, region(0, 0, 595, 842, GraphicFormat::Describe));
     report.check(
-        "a region around the whole page takes all nine objects, the page white included",
+        "a region around the whole page takes all ten objects, the page white included",
         page.as_ref()
-            .is_ok_and(|(_, found)| found.objects == 9 && found.original.is_none()),
+            .is_ok_and(|(_, found)| found.objects == 10 && found.original.is_none()),
         &format!("{page:?}"),
     );
 }

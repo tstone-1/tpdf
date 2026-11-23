@@ -19,6 +19,15 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Merge and Reverse preserve artwork inherited through a null page attribute. Merge
+  and Insert Pages refuse to flatten a field whose stored appearance may show an old
+  answer. Extract preserves bookmarks whose final sibling link references null.
+- OCR checks the opening fingerprint before recognition and verifies bilingual text
+  layers even when a typed stamp overlaps a scanned word.
+- Picture-to-PDF conversion preserves unitless pixel proportions and PNG sRGB rendering
+  intent. The images command reports a worker failure with exit 4 and invalid input with exit 3.
+- Go to Page shows the position of a unique printed label containing a comma.
+
 - Protected copies are reopened before publication. Compatible Unicode spellings open
   revision-6 PDFs, and unsupported new passwords can be corrected before choosing a file.
   Password changes use the bounded PDF loader throughout.

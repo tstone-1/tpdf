@@ -118,6 +118,46 @@ describe("NewPasswordDialog", () => {
     await expect(answer).resolves.toBe("corrected");
   });
 
+  it("ignores a successful validation after either field changes", async () => {
+    const { dialog, first, second, save, problem } = open();
+    const answer = dialog.ask("report.pdf");
+    for (const field of [first, second]) {
+      first.value = second.value = "original";
+      let resolve!: () => void;
+      validate.mockReturnValueOnce(new Promise<void>((done) => { resolve = done; }));
+      save.dispatch("click", {});
+      field.value = "edited";
+      resolve();
+      await Promise.resolve();
+      expect(dialog.isOpen).toBe(true);
+      expect(field.value).toBe("edited");
+      expect(problem.textContent).toBe("");
+    }
+    first.value = second.value = "confirmed";
+    save.dispatch("click", {});
+    await expect(answer).resolves.toBe("confirmed");
+  });
+
+  it("ignores a refusal from a previous dialog even with identical fields", async () => {
+    const { dialog, first, second, save, cancel, problem } = open();
+    const old = dialog.ask("first.pdf");
+    let reject!: (reason: string) => void;
+    validate.mockReturnValueOnce(new Promise<void>((_, fail) => { reject = fail; }));
+    first.value = second.value = "original";
+    save.dispatch("click", {});
+    cancel.dispatch("click", {});
+    await expect(old).resolves.toBeNull();
+    const current = dialog.ask("second.pdf");
+    first.value = second.value = "original";
+    reject("Old refusal");
+    await Promise.resolve();
+    expect(dialog.isOpen).toBe(true);
+    expect(problem.textContent).toBe("");
+    expect([first.value, second.value]).toEqual(["original", "original"]);
+    save.dispatch("click", {});
+    await expect(current).resolves.toBe("original");
+  });
+
   it("does not save with nothing typed", () => {
     const { dialog, save, problem } = open();
     void dialog.ask("report.pdf");

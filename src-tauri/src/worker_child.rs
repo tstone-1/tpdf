@@ -164,7 +164,9 @@ fn serve(args: &[String]) -> Result<(), String> {
             let _ = establish_boundary();
             let (requests, queue) = start_reader();
             return refuse(
-                &said!("tpdf could not load its PDF engine. Reinstalling should fix it. ({e})"),
+                &Response::failed(said!(
+                    "tpdf could not load its PDF engine. Reinstalling should fix it. ({e})"
+                )),
                 &requests,
                 &queue,
             );
@@ -248,7 +250,7 @@ fn serve(args: &[String]) -> Result<(), String> {
         // Reported 2026-08-21 against 26.8.6 on Windows and reproduced here on
         // macOS in one command, with two different causes --- so it was never a
         // platform defect, only a platform where the message is invisible.
-        Err(refusal) => return refuse(&refusal.reason, &requests, &queue),
+        Err(refusal) => return refuse(&Response::err(refusal.reason), &requests, &queue),
     };
 
     let mut out = std::io::stdout();
@@ -484,11 +486,15 @@ fn unlock(
 /// Returns `Ok`, because a document PDFium refuses is a fact about the document
 /// and not a failure of this process. Exiting 0 is what keeps the two apart in
 /// the epitaph if anything ever does read it.
-fn refuse(reason: &str, requests: &Receiver<Request>, queue: &SharedQueue) -> Result<(), String> {
+fn refuse(
+    response: &Response,
+    requests: &Receiver<Request>,
+    queue: &SharedQueue,
+) -> Result<(), String> {
     let mut out = std::io::stdout();
     for request in requests {
         forget_tile(queue, &request);
-        reply(&mut out, &Response::err(reason))?;
+        reply(&mut out, response)?;
     }
     Ok(())
 }
@@ -939,12 +945,12 @@ fn images(
     options: crate::imagepages::Options,
 ) -> Response {
     let Some(out) = out else {
-        return Response::err(
+        return Response::failed(
             "this worker was not started with anywhere to write, so it cannot make a document",
         );
     };
     let Some(inputs) = inputs else {
-        return Response::err(
+        return Response::failed(
             "this worker was not started with the pictures, so it cannot make a document of them",
         );
     };

@@ -295,6 +295,26 @@ fn highest(doc: &Document) -> u32 {
         .max(doc.max_id)
 }
 
+/// The form-wide request to regenerate widget appearances. Missing and null
+/// entries have the PDF default of false; a broken reference has no known value.
+fn needs_appearances(from: &Document) -> lopdf::Result<bool> {
+    let catalog = from.catalog()?;
+    let Ok(form) = catalog.get(b"AcroForm") else {
+        return Ok(false);
+    };
+    let (_, form) = from.dereference(form)?;
+    if matches!(form, Object::Null) {
+        return Ok(false);
+    }
+    let Ok(flag) = form.as_dict()?.get(b"NeedAppearances") else {
+        return Ok(false);
+    };
+    match from.dereference(flag)?.1 {
+        Object::Null => Ok(false),
+        value => value.as_bool(),
+    }
+}
+
 /// Convert every imported widget to a stamp before walking the page graph.
 /// Its appearance remains reachable without pulling in a field's parent, kids,
 /// actions or answers on pages outside the selection.
@@ -308,12 +328,16 @@ fn detached_widgets(
     from: &Document,
     pages: &mut BTreeMap<ObjectId, Dictionary>,
 ) -> Result<BTreeMap<ObjectId, Dictionary>, String> {
+    let redraw = needs_appearances(from);
     let prepare = |annot: &Dictionary| {
         if annot
-            .get(b"Subtype")
+            .get_deref(b"Subtype", from)
             .and_then(Object::as_name)
             .is_ok_and(|s| s == b"Widget")
         {
+            if !matches!(redraw, Ok(false)) {
+                return Err(said!("The imported form field cannot be flattened with a verified current appearance"));
+            }
             return static_widget(from, annot).map(Some);
         }
         Ok(None)
@@ -1019,6 +1043,52 @@ mod tests {
     }
 
     #[test]
+    fn null_page_attributes_take_the_sources_inheritance_and_defaults() {
+        for indirect in [false, true] {
+            let mut from = inheriting();
+            let page = from.get_pages()[&1];
+            let null = if indirect {
+                Object::Reference(from.add_object(Object::Null))
+            } else {
+                Object::Null
+            };
+            for key in [b"Resources".as_slice(), b"MediaBox", b"CropBox", b"Rotate"] {
+                from.get_dictionary_mut(page)
+                    .unwrap()
+                    .set(key, null.clone());
+            }
+            let mut into = flat("base");
+            append(&mut into, &from).unwrap();
+            let page = into.get_dictionary(into.get_pages()[&2]).unwrap();
+            let fonts = page
+                .get_deref(b"Resources", &into)
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get_deref(b"Font", &into)
+                .unwrap()
+                .as_dict()
+                .unwrap();
+            assert_eq!(
+                fonts
+                    .get_deref(b"F9", &into)
+                    .unwrap()
+                    .as_dict()
+                    .unwrap()
+                    .get(b"BaseFont")
+                    .unwrap()
+                    .as_name()
+                    .unwrap(),
+                b"Courier"
+            );
+            let media = page.get(b"MediaBox").unwrap().as_array().unwrap();
+            assert_eq!(media[2].as_i64().unwrap(), 200);
+            assert_eq!(page.get(b"CropBox").unwrap().as_array().unwrap(), media);
+            assert_eq!(page.get(b"Rotate").unwrap().as_i64().unwrap(), 90);
+        }
+    }
+
+    #[test]
     fn an_incoming_page_hangs_off_the_destinations_root() {
         let mut into = flat("first");
         append(&mut into, &flat("second")).expect("append");
@@ -1602,6 +1672,50 @@ mod tests {
         import(&mut into, &from, &[0]).expect("the import");
 
         assert!(holds(&mut into, b"BT (CHARLIE) Tj ET"));
+    }
+
+    #[test]
+    fn importing_a_widget_refuses_an_appearance_the_source_requests_redrawn() {
+        for regenerate in [false, true] {
+            let mut from = form_across_pages(false, false);
+            let page = from.get_pages()[&1];
+            let field = widget_on(&from, page)
+                .get(b"Parent")
+                .unwrap()
+                .as_reference()
+                .unwrap();
+            from.get_dictionary_mut(field)
+                .unwrap()
+                .set("V", Object::string_literal("CURRENT"));
+            let flag = from.add_object(Object::Boolean(regenerate));
+            from.catalog_mut()
+                .unwrap()
+                .get_mut(b"AcroForm")
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set("NeedAppearances", flag);
+            for merge_all in [false, true] {
+                let mut into = flat("base");
+                let before = into.objects.clone();
+                let result = if merge_all {
+                    append(&mut into, &from).map(|_| ())
+                } else {
+                    import(&mut into, &from, &[0]).map(|_| ())
+                };
+                if regenerate {
+                    assert!(result.unwrap_err().contains("appearance"));
+                    assert_eq!(into.objects, before);
+                } else {
+                    result.unwrap();
+                    assert!(holds(&mut into, b"BT (ALPHA) Tj ET"));
+                }
+            }
+            if regenerate {
+                from.get_dictionary_mut(page).unwrap().remove(b"Annots");
+                import(&mut flat("base"), &from, &[0]).expect("the selected page has no widgets");
+            }
+        }
     }
 
     #[test]

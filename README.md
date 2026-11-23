@@ -300,10 +300,12 @@ project conventions.
   <!-- built: edit.copyRegionAsPicture file.saveRegionAsPicture -->
 - **Copy a graphic** and **Save a graphic...**: drag around a logo, a figure or a photo, and
   the pictures and drawings lying wholly inside the drag come out on their own, without the
-  page behind them. The copy is a PNG on a transparent background, for pasting into a picture
-  editor, at 600 dpi up to about 63 cm² (9.7 square inches); a larger graphic is held to
-  3.5 million pixels, so a figure the size of half an A4 page comes out at about 270 dpi. The saved file is an SVG (vectors scale and embedded pictures keep their resolution), a PNG, or,
-  for a JPEG photo, the JPEG the document stores. Drawings with text, patterns, gradients, unsupported transparency or mitered stroke joins
+  page behind them. Copy produces a PNG on a transparent background. A single bitmap keeps
+  its source pixel dimensions up to a limit of 3.5 million pixels. Drawings are rasterized at
+  600 dpi up to the same limit, about 63 cm² (9.7 square inches) at that resolution.
+  Save as SVG to keep vector paths scalable. Each bitmap embedded in the SVG is capped at
+  3.5 million pixels. You can also save as PNG or, for an eligible JPEG photo, save the
+  original JPEG bytes. Drawings with text, patterns, gradients, unsupported transparency or mitered stroke joins
   can be saved as PNG when SVG cannot preserve their appearance. A click on a picture or drawing selects it, and Ctrl+C or either command
   then takes that one without a drag.
   <!-- built: edit.copyGraphic file.saveGraphic -->

@@ -1386,9 +1386,9 @@ describe("the page operations", () => {
     // of only refusing (`pagelabels.ts`, `positionsFor`); the value is still
     // refused, so nothing runs on a printed number.
     const LABELS = ["i", "ii", null];
-    function problem(id: string, raw: string) {
+    function problem(id: string, raw: string, labels = LABELS) {
       const { registry } = harness(true, {}, {}, false, false, false, {}, false, false, false, false, false, false,
-        null, null, null, { printedOf: (slot) => LABELS[slot] ?? null });
+        null, null, null, { printedOf: (slot) => labels[slot] ?? null });
       return registry.all().find((c) => c.id === id)?.argument?.problem(raw);
     }
 
@@ -1401,6 +1401,14 @@ describe("the page operations", () => {
         expect(problem(id, "i-ii")).not.toContain("type 1-2");
       }
       expect(problem("file.extractPages", "1-2")).toBeNull();
+    });
+
+    it("offers an unambiguous Go to page hint for a whole label containing a comma", () => {
+      const label = "Appendix A, continued";
+      const labels = [null, label, null];
+      expect(problem("nav.goToPage", label, labels)).toBe(`Printed as ${label}: type 2`);
+      expect(problem("nav.goToPage", label, [label, label, null])).not.toContain("type ");
+      expect(problem("file.extractPages", label, labels)).not.toContain("type ");
     });
 
     it("and leaves a value that is not a label to the parser's own refusal", () => {

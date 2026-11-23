@@ -75,20 +75,51 @@ fn inherited_value<'a>(
     page: ObjectId,
     key: &[u8],
 ) -> lopdf::Result<Option<&'a Object>> {
+    Ok(inherited_entry(doc, page, key)?.map(|(_, value)| value))
+}
+
+/// Keep the owning node so a writer need only copy values inherited from a parent.
+fn inherited_entry<'a>(
+    doc: &'a Document,
+    page: ObjectId,
+    key: &[u8],
+) -> lopdf::Result<Option<(ObjectId, &'a Object)>> {
     let mut at = page;
     for _ in 0..MAX_PARENTS {
         let node = doc.get_dictionary(at)?;
         if let Ok(value) = node.get(key) {
             if !matches!(doc.dereference(value)?.1, Object::Null) {
-                return Ok(Some(value));
+                return Ok(Some((at, value)));
             }
         }
         let Ok(parent) = node.get(b"Parent") else {
             return Ok(None);
         };
+        if matches!(doc.dereference(parent)?.1, Object::Null) {
+            return Ok(None);
+        }
         at = parent.as_reference()?;
     }
     Err(lopdf::Error::ReferenceLimit)
+}
+
+/// Read before reparenting: an unreadable reference is not an absent key, and a
+/// missing media box has no default that can safely travel with the page.
+fn moving_attribute<'a>(
+    doc: &'a Document,
+    page: ObjectId,
+    key: &[u8],
+) -> Result<Option<(ObjectId, &'a Object)>, String> {
+    let entry = inherited_entry(doc, page, key).map_err(|e| {
+        said!(
+            "Cannot read the page attribute /{key}: {e}",
+            key = String::from_utf8_lossy(key)
+        )
+    })?;
+    if key == b"MediaBox" && entry.and_then(|(_, media)| box_value(doc, media)).is_none() {
+        return Err(said!("The page has no usable media box"));
+    }
+    Ok(entry)
 }
 
 /// Every page's quarter-turns, in page order.
@@ -811,23 +842,23 @@ pub fn reorder_pages(doc: &mut Document, order: &[ObjectId]) -> Result<(), Strin
 
     let mut pushes: Vec<(ObjectId, &[u8], Object)> = Vec::new();
     for &page in order {
-        let Ok(dictionary) = doc.get_object(page).and_then(Object::as_dict) else {
-            continue;
-        };
         for (at, key) in INHERITABLE.iter().enumerate() {
-            if dictionary.has(key) {
-                continue;
-            }
-            let now = inherited(doc, page, key);
+            let now = match moving_attribute(doc, page, key)? {
+                Some((owner, _)) if owner == page => continue,
+                Some((_, value)) => Some(value.clone()),
+                None => None,
+            };
             // Equal means the move changes nothing, so writing it would only
-            // make an untouched page differ from its source. `None` means the
-            // page has no value for this key anywhere above it, and the root
-            // supplying one is a page *gaining* an attribute --- only reachable
-            // on a document whose `/Parent` chain does not reach its own root,
-            // and not something to synthesise from here.
+            // make an untouched page differ from its source. A page gaining
+            // a root value had a disconnected parent chain.
             match now {
                 Some(value) if Some(&value) != from_root[at].as_ref() => {
                     pushes.push((page, key, value));
+                }
+                None if from_root[at].is_some() => {
+                    return Err(said!(
+                        "The page would inherit a different value after moving"
+                    ));
                 }
                 _ => {}
             }
@@ -896,11 +927,12 @@ pub fn detached_page(doc: &Document, page: ObjectId) -> Result<Dictionary, Strin
         .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?
         .clone();
     for key in INHERITABLE {
-        if dictionary.has(key) {
-            continue;
-        }
-        if let Some(value) = inherited(doc, page, key) {
-            dictionary.set(key.to_vec(), value);
+        match moving_attribute(doc, page, key)? {
+            Some((owner, _)) if owner == page => {}
+            Some((_, value)) => dictionary.set(key.to_vec(), value.clone()),
+            None => {
+                dictionary.remove(key);
+            }
         }
     }
     page_defaults(&mut dictionary);
@@ -1095,6 +1127,7 @@ mod tests {
                 "Type" => "Pages",
                 "Kids" => kids.iter().map(|id| (*id).into()).collect::<Vec<Object>>(),
                 "Count" => 3,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
             }),
         );
         // One bookmark per page, chained, so a deletion has one to remove and
@@ -1769,6 +1802,57 @@ mod tests {
             "and a page that inherited from the root still does"
         );
         assert_eq!(effective_rotation(&doc, a), 0);
+    }
+
+    #[test]
+    fn reordering_preserves_resources_behind_local_nulls() {
+        let (mut doc, _, [a, b, c, d]) = nested_pages();
+        let parent = doc
+            .get_dictionary(c)
+            .unwrap()
+            .get(b"Parent")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let resources =
+            doc.add_object(dictionary! { "Font" => dictionary! { "F9" => dictionary! {} } });
+        doc.get_dictionary_mut(parent)
+            .unwrap()
+            .set("Resources", resources);
+        let null = doc.add_object(Object::Null);
+        doc.get_dictionary_mut(c).unwrap().set("Resources", null);
+        doc.get_dictionary_mut(d)
+            .unwrap()
+            .set("Resources", Object::Null);
+        reorder_pages(&mut doc, &[d, c, b, a]).unwrap();
+        for page in [c, d] {
+            assert_eq!(
+                doc.get_dictionary(page)
+                    .unwrap()
+                    .get(b"Resources")
+                    .unwrap()
+                    .as_reference()
+                    .unwrap(),
+                resources
+            );
+        }
+    }
+
+    #[test]
+    fn missing_media_or_unreadable_resources_refuse_before_reparenting() {
+        for key in [b"MediaBox".as_slice(), b"Resources"] {
+            let (mut doc, root, [a, b, c, d]) = nested_pages();
+            if key == b"MediaBox" {
+                doc.get_dictionary_mut(root).unwrap().remove(key);
+            } else {
+                let missing = doc.new_object_id();
+                doc.get_dictionary_mut(a).unwrap().set(key, missing);
+            }
+            let before = doc.objects.clone();
+            assert!(detached_page(&doc, a).is_err());
+            assert!(reorder_pages(&mut doc, &[d, c, b, a]).is_err());
+            assert_eq!(doc.objects, before);
+        }
     }
 
     /// The control for the check above: a page that loses nothing gains nothing.

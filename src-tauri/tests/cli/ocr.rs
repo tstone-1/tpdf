@@ -251,10 +251,13 @@ fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
 const ENOUGH: f64 = if cfg!(windows) { 0.79 } else { 0.9 };
 
 #[derive(Clone, Copy, PartialEq)]
-enum Ask {
+enum Ask<'a> {
     Plain,
     /// The reader turned the first page and has not saved.
     Unsaved,
+    /// The renderer still holds this scan, but its opening hash failed and
+    /// the source name now identifies a different scan.
+    UnverifiedOpen(&'a Path),
     /// The reader pressed Stop before the first page.
     Stopped,
     /// The reader pressed Stop while the last page was being read.
@@ -271,23 +274,27 @@ const NOT_OFFERED: &str = "tlh-Latn";
 /// The window's *Recognise text*, in this process: the document opened in a
 /// render service with an edit model beside it, as the application holds it.
 /// Returns the answer and the pages progress was reported for.
-fn app_path(path: &Path, out: &Path, ask: Ask) -> (Result<Recognised, String>, Vec<Progress>) {
+fn app_path(path: &Path, out: &Path, ask: Ask<'_>) -> (Result<Recognised, String>, Vec<Progress>) {
     let service = RenderService::start_with(library_dir(), Backend::Worker);
-    let file = std::fs::File::open(path).unwrap();
-    let hashing = file.try_clone().unwrap();
+    let rendered = match ask {
+        Ask::UnverifiedOpen(original) => original,
+        _ => path,
+    };
+    let file = std::fs::File::open(rendered).unwrap();
+    let hashing = if matches!(ask, Ask::UnverifiedOpen(_)) {
+        None
+    } else {
+        Some(tpdf_lib::fingerprint::Opened::new(
+            file.try_clone().unwrap(),
+            path.to_path_buf(),
+        ))
+    };
     let info = wait(|r| service.open_handed(path.to_path_buf(), Some(file), true, None, r))
         .map_err(|refusal| refusal.reason)
         .expect("the scan opens");
     let count = u32::try_from(info.page_count).unwrap();
     let edits = tpdf_lib::edits::Edits::default();
-    edits.open(
-        info.id,
-        count,
-        Some(tpdf_lib::fingerprint::Opened::new(
-            hashing,
-            path.to_path_buf(),
-        )),
-    );
+    edits.open(info.id, count, hashing);
     if ask == Ask::Unsaved {
         edits.rotate(info.id, 1, 1).expect("the page turns");
     }
@@ -946,6 +953,32 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
         return;
     }
     scan(Path::new(&picture), Path::new(&scanned));
+    // Both files have one picture-only page of the same size. Their visible
+    // contents differ, which a text-only check of the added layer cannot see.
+    let replacement = dir.join("replacement.pdf");
+    scan_drawing(
+        Path::new(&picture),
+        &replacement,
+        b" 0 g 0 0 300 300 re f",
+        0,
+    );
+    let existing = dir.join("existing.pdf");
+    let prior = b"previous destination";
+    std::fs::write(&existing, prior).unwrap();
+    let (answer, seen) = app_path(
+        &replacement,
+        &existing,
+        Ask::UnverifiedOpen(Path::new(&scanned)),
+    );
+    report.check(
+        "OCR without an opening fingerprint preserves the destination after the scan is replaced",
+        answer
+            .as_ref()
+            .is_err_and(|why| why.contains("original file could not be verified"))
+            && seen.is_empty()
+            && std::fs::read(&existing).unwrap() == prior,
+        &format!("{answer:?}; {seen:?}"),
+    );
     search_recovery(report, Path::new(&scanned), "quartz");
     if let Some(encoded) = fixture("encodings.pdf") {
         search_recovery(report, &encoded, "Encoding");

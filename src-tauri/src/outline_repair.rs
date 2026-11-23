@@ -280,8 +280,12 @@ fn tree_of(doc: &Document, root: ObjectId) -> Option<Tree> {
         at += 1;
         let mut under: Vec<ObjectId> = Vec::new();
         let link = |dict: &Dictionary, key: &[u8]| match dict.get(key) {
-            Ok(Object::Null) | Err(_) => Some(None),
-            Ok(value) => value.as_reference().ok().map(Some),
+            Err(_) => Some(None),
+            Ok(value) => match doc.dereference(value).ok()? {
+                (_, Object::Null) => Some(None),
+                (Some(id), Object::Dictionary(_)) => Some(Some(id)),
+                _ => None,
+            },
         };
         let mut next = link(doc.get_dictionary(node).ok()?, b"First")?;
         while let Some(id) = next {
@@ -658,6 +662,37 @@ mod tests {
         let kept = keep_for(&mut doc, &doomed(&[kids[1]])).expect("repair");
         assert_eq!(shape(&doc), before);
         assert_eq!(kept, Kept::default());
+    }
+
+    #[test]
+    fn extracting_a_page_preserves_a_bookmark_with_null_optional_links() {
+        for spelling in 0..3 {
+            let (mut doc, kids) = pages(2);
+            let root = outline(&mut doc, vec![entry("retained", to(kids[0]), vec![])]);
+            let bookmark = redact::first_child(&doc, root).unwrap();
+            let null = doc.add_object(Object::Null);
+            if spelling != 0 {
+                let value = if spelling == 1 {
+                    Object::Null
+                } else {
+                    Object::Reference(null)
+                };
+                let item = doc.get_dictionary_mut(bookmark).unwrap();
+                item.set("Next", value.clone());
+                item.set("First", value);
+            }
+            pagetree::materialise(&mut doc, &[2], None, [Some(0)]).unwrap();
+            assert_eq!(redact::outline_root(&doc), Some(root));
+            assert_eq!(redact::first_child(&doc, root), Some(bookmark));
+            let item = doc.get_dictionary(bookmark).unwrap();
+            assert_eq!(item.get(b"Title").unwrap().as_str().unwrap(), b"retained");
+            assert_eq!(
+                item.get(b"Dest").unwrap().as_array().unwrap()[0]
+                    .as_reference()
+                    .unwrap(),
+                doc.get_pages()[&1]
+            );
+        }
     }
 
     /// A name in the `/Names` tree is followed like one in `/Dests`, in both of

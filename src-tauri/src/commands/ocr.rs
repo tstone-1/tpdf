@@ -542,6 +542,13 @@ pub fn ocr_copy_asked(
     if !plan.is_identity() {
         return Err(UNSAVED.into());
     }
+    // These words come from the open renderer. A checked copy can compare
+    // its on-disk source with that document only if the opening hash exists.
+    if plan.opened_as.is_none() {
+        return Err(said!(
+            "The original file could not be verified. Reopen it before recognising text."
+        ));
+    }
     let pages = plan.baseline;
     // A language the machine has stopped offering is not sent to the engine.
     let choice = ocr_layer::choose(language, offered);

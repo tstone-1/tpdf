@@ -817,6 +817,9 @@ pub struct Response {
     pub ok: bool,
     #[serde(default)]
     pub error: String,
+    /// The worker failed independently of the document it was given.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub internal: bool,
     /// Bytes written into the tile mapping, for a payload-bearing reply.
     #[serde(default)]
     pub bytes: usize,
@@ -870,6 +873,16 @@ pub struct Response {
     pub encode_us: u64,
 }
 
+impl From<Response> for crate::save::Refusal {
+    fn from(response: Response) -> Self {
+        Self {
+            message: response.error,
+            changed: response.changed,
+            internal: response.internal,
+        }
+    }
+}
+
 impl Response {
     /// A failure carrying a diagnosable message.
     #[must_use]
@@ -878,6 +891,15 @@ impl Response {
             ok: false,
             error: message.into(),
             ..Default::default()
+        }
+    }
+
+    /// A failure of the worker or its configuration.
+    #[must_use]
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self {
+            internal: true,
+            ..Self::err(message)
         }
     }
 
@@ -902,6 +924,7 @@ impl Response {
             ok: false,
             error: why.message.clone(),
             changed: why.changed,
+            internal: why.internal,
             ..Default::default()
         }
     }

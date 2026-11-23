@@ -430,7 +430,10 @@ it. `worker-probe` writes one document both ways and compares byte for byte.
 `Job` carries what a print does not share with a save, so `staged_rewrite` is one function.
 For every base document, incoming widgets keep their normal appearance
 as static stamp annotations. A stateful widget uses its selected appearance.
-An incoming widget without a usable appearance stops the operation before publication.
+Merge and Insert Pages refuse a selected widget when its appearance is unusable or its
+source AcroForm requests regeneration. Its stored appearance can show an earlier answer.
+When moving pages, a null inheritable attribute, including a reference to null, takes
+its value from the original parent chain.
 The original fields remain in the base field tree and can still be filled.
 
 **The page-range print and the merge followed on 2026-09-01**, through
@@ -574,8 +577,10 @@ segments. A PNG with gamma or chromaticity metadata uses CalGray or CalRGB when
 it carries neither an ICC profile nor an sRGB declaration. Untagged pictures use
 DeviceGray or DeviceRGB. Both picture placement and document creation apply PNG
 eXIf orientation. Physical pHYs density takes precedence over EXIF resolution. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
-A page is the picture at its stated resolution, 72 DPI
-when it states none, held between 3 and 14,400 points a side.
+Without physical resolution, a unitless PNG or JFIF density ratio sets the pixel
+proportions at a default scale of one point along the longer pixel dimension.
+A PNG with an sRGB declaration gets an ICCBased colour space and its declared PDF
+rendering intent. The page size is held between 3 and 14,400 points a side.
 
 Not done: CMYK JPEG, which needs `/Decode [1 0 ...]` for Adobe's inverted samples; TIFF, HEIC
 and WebP; a paper size from the window; and stripping EXIF, which passing a JPEG through
@@ -660,14 +665,14 @@ cache refuses another page instead of silently invalidating an active search.
 which pages get a layer and what the engine is asked; `cli/ocr.rs` is the tool's command and
 `commands/ocr.rs` the window's. The two differ in who renders: the tool holds a worker
 session and asks for 1024 px tiles, the window asks the render service for the page as one
-tile. The window's copy goes through `save::write_checked_copy`, which shows the staged file
+tile. The window requires the opening fingerprint before starting recognition. Its copy goes through `save::write_checked_copy`, which shows the staged file
 to a check before the rename and refuses a source that changed; the check opens the staged
 file in the render service and compares each layer with `ocr_layer::reads_back`. Both OCR render paths exclude
 annotations and editable widgets. The CLI hidden-text check shares the tile renderer and explicitly
 includes overlays to detect text covered by a comment. Each OCR layer maps only the Unicode scalars
 it writes. Right-to-left words are laid out in visual order. On a page with such a word the check
-verifies extracted text and character positions for every written word, since the reader may reverse
-a neighbouring Latin word too. The writer refuses a layer on a page object shared by multiple slots. Progress is
+removes the original page's positioned characters from the comparison, then verifies
+the order and positions of every written word, including neighbouring Latin words. The writer refuses a layer on a page object shared by multiple slots. Progress is
 the event `tpdf://ocr-progress`, and `ocr_cancel` sets a flag read between pages. On the
 frontend the sentences are `src/lib/recognise.ts`; `App.svelte` keeps the save panel, the
 Stop button and the open of the copy. The plan

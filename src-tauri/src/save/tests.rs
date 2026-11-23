@@ -7488,6 +7488,7 @@ fn a_picture_writer_that_overstates_what_it_wrote_is_refused() {
     )
     .expect_err("must refuse");
     assert!(why.message.contains("was not completed"), "{}", why.message);
+    assert!(why.internal);
     assert!(!out.exists());
 }
 

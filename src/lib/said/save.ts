@@ -12,6 +12,11 @@ const n = (count: string | undefined, one: string, many: string): string =>
 
 export default {
   "Invalid text size in save plan": "Ungültige Schriftgröße im Speicherplan",
+  "Cannot read the page attribute /{key}: {e}": "Das Seitenattribut /{key} kann nicht gelesen werden: {e}",
+  "The page has no usable media box": "Die Seite hat keinen verwendbaren Medienrahmen",
+  "The page would inherit a different value after moving": "Die Seite würde nach dem Verschieben einen anderen Wert erben",
+  "The imported form field cannot be flattened with a verified current appearance":
+    "Die aktuelle Darstellung des importierten Formularfelds kann beim Umwandeln in statischen Inhalt nicht bestätigt werden",
   "An imported form field has no usable appearance to preserve":
     "Für ein importiertes Formularfeld ist keine verwendbare Darstellung vorhanden.",
   "Page {number}: the removed area could not be checked on the written page: {why}":

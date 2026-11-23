@@ -2,14 +2,12 @@
  * The prompt for a new password, typed twice.
  *
  * `passworddialog.ts` asks for the password a document has; this asks for the
- * one a copy is about to get. What is acceptable is decided by `judge` in
- * `protect.ts`, and a refusal is shown here with the dialog left open, so a
- * mistyped repeat costs one field and not the whole command.
+ * new password for a copy. After the local checks pass, the native writer
+ * validates the password. Either refusal leaves both fields editable.
  *
  * The password lives in the two inputs and in the promise this resolves with.
- * Both fields are cleared on every close. Every string shown is this module's
- * or `protect.ts`'s, and the file's own name; all of it goes in through
- * `textContent`.
+ * Both fields are cleared on every close. The file name and validation
+ * messages are displayed with `textContent`.
  */
 
 import { call } from "./ipc";

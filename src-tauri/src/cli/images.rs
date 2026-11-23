@@ -9,7 +9,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use super::args::{lexically_same, unknown, value};
-use super::pages::{check_target, publish_copy, read_input};
+use super::pages::{check_target, publish_copy, read_input, refused};
 use super::report::{self, SCHEMA};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::imagepages::{Options, Paper};
@@ -108,7 +108,7 @@ impl Images {
             |staged| {
                 save::write_images(&self.inputs, staged, self.options, &env.worker())
                     .map(|made| (false, made))
-                    .map_err(|why| Failure::new(Exit::Refused, why.message))
+                    .map_err(refused)
             },
             // The staged file, in a fresh worker that did not write it.
             |staged, made| {

@@ -46,7 +46,7 @@ import {
   parsePageRange,
   parseSplitPoints,
 } from "./pageranges";
-import { positionsFor, runsOf, withPrinted } from "./pagelabels";
+import { positionForLabel, positionsFor, runsOf, withPrinted } from "./pagelabels";
 import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
 import type { CloseWhich } from "./tabclose";
@@ -3310,7 +3310,7 @@ export function registerAppCommands(
           const trimmed = raw.trim();
           if (trimmed === "") return TEXT(locale).pageNumberRange(pages);
           if (!/^[0-9]+$/.test(trimmed))
-            return orPositions(trimmed, TEXT(locale).notAPageNumber(trimmed), (p) => /^[0-9]+$/.test(p) && Number(p) >= 1 && Number(p) <= pages);
+            return positionForLabel(trimmed, pages, (slot) => actions.printedOf(slot)) ?? TEXT(locale).notAPageNumber(trimmed);
           const page = Number(trimmed);
           if (page < 1 || page > pages) {
             return TEXT(locale).documentPages(pages);
