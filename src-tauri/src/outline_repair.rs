@@ -307,7 +307,11 @@ fn tree_of(doc: &Document, root: ObjectId) -> Option<Tree> {
 /// Where an entry leads. An action wins over a `/Dest` beside it, which is the
 /// order `links.rs` reads them in and records the reason for.
 fn aim_of(doc: &Document, names: &links::Destinations<'_>, item: &Dictionary) -> Aim {
-    if let Ok(action) = item.get(b"A") {
+    if let Some(action) = item
+        .get(b"A")
+        .ok()
+        .filter(|value| !matches!(resolve(doc, value), Object::Null))
+    {
         let Ok(action) = resolve(doc, action).as_dict() else {
             return Aim::Other;
         };
@@ -662,6 +666,42 @@ mod tests {
         let kept = keep_for(&mut doc, &doomed(&[kids[1]])).expect("repair");
         assert_eq!(shape(&doc), before);
         assert_eq!(kept, Kept::default());
+    }
+
+    #[test]
+    fn a_null_action_does_not_hide_an_excluded_bookmark_destination() {
+        for indirect in [false, true] {
+            let (mut doc, kids) = pages(2);
+            let mut dest = to(kids[1]);
+            let null = doc.add_object(Object::Null);
+            dest.set(
+                "A",
+                if indirect {
+                    Object::Reference(null)
+                } else {
+                    Object::Null
+                },
+            );
+            let root = outline(
+                &mut doc,
+                vec![
+                    entry("kept", to(kids[0]), vec![]),
+                    entry("excluded", dest, vec![]),
+                ],
+            );
+            pagetree::materialise(&mut doc, &[2], None, [Some(0)]).unwrap();
+            let only = redact::first_child(&doc, root).unwrap();
+            assert_eq!(
+                doc.get_dictionary(only)
+                    .unwrap()
+                    .get(b"Title")
+                    .unwrap()
+                    .as_str()
+                    .unwrap(),
+                b"kept"
+            );
+            assert!(!doc.get_dictionary(only).unwrap().has(b"Next"));
+        }
     }
 
     #[test]

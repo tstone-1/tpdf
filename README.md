@@ -303,7 +303,7 @@ project conventions.
   page behind them. Copy produces a PNG on a transparent background. A single bitmap keeps
   its source pixel dimensions up to a limit of 3.5 million pixels. Drawings are rasterized at
   600 dpi up to the same limit, about 63 cm² (9.7 square inches) at that resolution.
-  Save as SVG to keep vector paths scalable. Each bitmap embedded in the SVG is capped at
+  Save as SVG to keep vector paths scalable. When the selection uses optional layers or their visibility cannot be resolved, save as PNG to preserve what is shown. Each bitmap embedded in the SVG is capped at
   3.5 million pixels. You can also save as PNG or, for an eligible JPEG photo, save the
   original JPEG bytes. Drawings with text, patterns, gradients, unsupported transparency or mitered stroke joins
   can be saved as PNG when SVG cannot preserve their appearance. A click on a picture or drawing selects it, and Ctrl+C or either command

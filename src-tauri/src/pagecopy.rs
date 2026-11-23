@@ -24,9 +24,7 @@
 //! The copy is a second PDFium document over the same bytes
 //! (`DocumentGraph::reopen`), because removing an object changes the page for
 //! everyone holding it and the viewer's pages are cached
-//! (*Two handles to one cached page are aliases*). Removed objects are left to
-//! that document to free, never destroyed (*Destroying an object removed from
-//! a page segfaults*).
+//! (*Two handles to one cached page are aliases*). Deactivated objects stay owned by the private page.
 //!
 //! Text inside a Form XObject is not moved: it is drawn as outlines.
 
@@ -329,7 +327,7 @@ mod platform {
         let copy = document.graph().reopen(bindings)?;
         let pages = copy.page_count() as usize;
         let raw = copy.page_cropped(page, crop, &|index| document.graph().sheet(index, pages))?;
-        let (words, left_out) = take_words(bindings, &raw);
+        let (words, left_out) = take_words(bindings, &raw)?;
         let turns = turns % 4;
         let unit = f64::from(document.page_units(&[page])?[0]);
         let (mut width, mut height) = (
@@ -445,7 +443,7 @@ mod platform {
     /// too: neither an upright clip rectangle nor the quarter-height cover
     /// rule tells "all hidden" from "partly", so the copy can lose letters the
     /// page showed, and the window says so.
-    fn take_words(bindings: Bindings, page: &RawPage<'_>) -> (Vec<Words>, u32) {
+    fn take_words(bindings: Bindings, page: &RawPage<'_>) -> Result<(Vec<Words>, u32), String> {
         let handle = page.handle();
         let mut found = Vec::new();
         let mut taken = Vec::new();
@@ -456,7 +454,7 @@ mod platform {
         unsafe {
             let text_page = bindings.FPDFText_LoadPage(handle);
             if text_page.is_null() {
-                return (found, left_out);
+                return Ok((found, left_out));
             }
             let mut seen = Vec::new();
             for index in 0..bindings.FPDFPage_CountObjects(handle).max(0) {
@@ -535,11 +533,12 @@ mod platform {
             // Walked from the last object back; written in page order.
             found.reverse();
             for object in taken {
-                // Not destroyed: see the module note.
-                bindings.FPDFPage_RemoveObject(handle, object);
+                if bindings.FPDFPageObj_SetIsActive(object, 0) == 0 {
+                    return Err(said!("could not isolate the selected artwork"));
+                }
             }
         }
-        (found, left_out)
+        Ok((found, left_out))
     }
 
     /// An object's bounds in page space, when PDFium reports finite ones.

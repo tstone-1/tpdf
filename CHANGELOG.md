@@ -19,6 +19,16 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Graphic export preserves drawing bounds on rotated pages. Selections with optional layers use PNG
+  to preserve visibility, and repeated drawing exports keep objects owned by the worker page.
+- Page extraction removes excluded bookmark titles even with a null action.
+  Local links with numeric destinations keep their targets when pages move.
+- Comparison checks the fonts that draw text inside placed pages and stops if
+  it cannot verify their character mapping. Unused fonts do not prevent comparison.
+- Startup honors successive requests for different locations in the same PDF.
+  Out-of-range session numbers recover on load. Updates wait for session writes
+  before exiting and display preflight errors. Right-clicking a bookmark leaves it in place.
+
 - Removing a form field clears its calculation-order entry. Removing a radio button
   preserves the selected answer when the remaining widget stores its state indirectly.
   Changing options or a character limit now accounts for the field's reset value.

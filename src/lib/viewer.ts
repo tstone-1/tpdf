@@ -203,6 +203,7 @@ const TEXT = catalog({
     noWordsRecognised: "No words could be recognized on this page.",
     notMarked: "The entire selection could not be read. No marks were added.",
     notCopied: "Some of the selected pages' text could not be read, so nothing was copied.",
+    comparisonUnknown: (page: number) => `The character encoding on page ${page} could not be verified. The comparison stopped.`,
     comparisonGuessed: (page: number) => `Page ${page} has text with a guessed character encoding. The comparison stopped.`,
     comparisonReadFailed: (page: number) => `Could not read the text on page ${page}. The comparison stopped.`,
   },
@@ -222,6 +223,7 @@ const TEXT = catalog({
     noWordsRecognised: "Auf dieser Seite konnten keine Wörter erkannt werden.",
     notMarked: "Die Auswahl konnte nicht vollständig gelesen werden. Es wurden keine Markierungen hinzugefügt.",
     notCopied: "Der Text einiger ausgewählter Seiten konnte nicht gelesen werden, daher wurde nichts kopiert.",
+    comparisonUnknown: (page: number) => `Die Zeichenkodierung auf Seite ${page} konnte nicht geprüft werden. Der Vergleich wurde abgebrochen.`,
     comparisonGuessed: (page: number) => `Auf Seite ${page} ist die Zeichenkodierung unsicher. Der Vergleich wurde abgebrochen.`,
     comparisonReadFailed: (page: number) => `Der Text auf Seite ${page} konnte nicht gelesen werden. Der Vergleich wurde abgebrochen.`,
   },
@@ -6720,7 +6722,9 @@ export class Viewer {
           mapping = await call("document_mapping", { doc: at.doc });
           mappings.set(at.doc, mapping);
         }
-        if ((mapping[at.page]?.guessing ?? 0) > 0) throw new Error(TEXT().comparisonGuessed(slot + 1));
+        const verdict = mapping[at.page];
+        if (!verdict || verdict.truncated) throw new Error(TEXT().comparisonUnknown(slot + 1));
+        if (verdict.guessing > 0) throw new Error(TEXT().comparisonGuessed(slot + 1));
       }
       return text;
     };

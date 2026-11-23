@@ -533,6 +533,8 @@ export interface FinishEffects {
    * the question never saw, which the installer's exit then throws away.
    */
   hold(): () => void;
+  /** Drain outstanding session writes before an action that exits. */
+  settled(): Promise<void>;
 }
 
 /**
@@ -573,30 +575,24 @@ export async function finishUpdate(
 ): Promise<FinishOutcome> {
   const wanted = step === "install" ? "available" : "ready";
   if (state.kind !== wanted) return "withheld";
-  if (!ends) return attempt(effects);
-  const unsaved = await effects.unsaved();
-  // Raised in the same turn the answer arrives in, so no input can land between
-  // the reading and the hold; released whatever happens, because a step that
-  // comes back at all has not ended the process.
-  const release = effects.hold();
-  try {
-    const prompt = finishPrompt(step, unsaved);
-    if (prompt && !await effects.confirm(prompt)) return "cancelled";
-    return await attempt(effects);
-  } finally {
-    release();
-  }
-}
 
-/** Runs the step itself, telling the reader when it fails. */
-async function attempt(effects: FinishEffects): Promise<FinishOutcome> {
+  let release: (() => void) | undefined;
   try {
+    if (ends) {
+      const unsaved = await effects.unsaved();
+      release = effects.hold();
+      const prompt = finishPrompt(step, unsaved);
+      if (prompt && !await effects.confirm(prompt)) return "cancelled";
+      await effects.settled();
+    }
     await effects.act();
+    return "acted";
   } catch (e) {
     effects.say(String(e));
     return "failed";
+  } finally {
+    release?.();
   }
-  return "acted";
 }
 
 /**

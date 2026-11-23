@@ -221,6 +221,18 @@ describe("Reading a page's text, and asking for it again", () => {
     }
   });
 
+  it("stops comparison when the mapping inspection is incomplete", async () => {
+    const viewer = build();
+    try {
+      const previous = core.invoke.getMockImplementation()!;
+      core.invoke.mockImplementation((command, args) => command === "document_mapping"
+        ? Promise.resolve([{ guessing: 0, truncated: true }]) : previous(command, args));
+      await expect(viewer.comparisonText()(0)).rejects.toThrow("could not be verified");
+    } finally {
+      viewer.destroy();
+    }
+  });
+
   /** Presses inside a slot's first glyph, left of its midpoint. */
   function press(viewer: Viewer, slot: number): void {
     const at = viewer.screenPoint(slot, 12, 15);

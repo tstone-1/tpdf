@@ -411,10 +411,14 @@ export default {
     "Diese Transparenz oder Füllmethode lässt sich als SVG nicht erhalten. Speichere die Grafik als PNG.",
   "SVG export cannot preserve this stroke; save as PNG":
     "Diese Linie lässt sich als SVG nicht erhalten; speichere sie als PNG.",
+  "save layered artwork as PNG to preserve visibility":
+    "Als PNG bleiben die sichtbaren Ebenen erhalten.",
   "SVG export cannot rule out patterned paint; save as PNG":
     "Die Grafik kann ein Muster enthalten. Speichere sie als PNG.",
   "the region holds more than one picture, or a drawing":
     "Der Bereich enthält mehr als ein Bild oder eine Zeichnung",
+  "could not resolve a local link destination": "Ein lokales Linkziel konnte nicht bestimmt werden.",
+  "could not isolate the selected artwork": "Die ausgewählte Grafik konnte nicht isoliert werden.",
   "the picture has no size": "Das Bild hat keine Größe",
   "the selected graphic is no longer on the page": "Die gewählte Grafik ist nicht mehr auf der Seite",
   "the picture came back in a form tpdf does not read": "Das Bild kam in einer Form zurück, die tpdf nicht liest",

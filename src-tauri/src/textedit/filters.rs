@@ -8,7 +8,7 @@ use lopdf::{Object, Stream};
 // leaves room for the encoding overhead around a MAX_CONTENT-sized stream.
 const MAX_ENCODED: usize = 2 * super::MAX_CONTENT;
 
-pub(super) fn decode(stream: &Stream, limit: usize) -> Result<Vec<u8>, String> {
+pub(crate) fn decode(stream: &Stream, limit: usize) -> Result<Vec<u8>, String> {
     if stream.dict.has(b"DecodeParms") {
         return Err(said!(
             "external or parameterised content streams are not editable yet"

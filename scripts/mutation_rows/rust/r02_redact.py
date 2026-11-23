@@ -2308,7 +2308,7 @@ ROWS += [
         # lie the module was written one level up to stop.
         "encoding: treat a font that cannot be judged as clean",
         "src/encoding.rs",
-        "            None => mapping.truncated = true,",
+        "            None => self.result.truncated = true,",
         "            None => {}",
         "a_font_that_cannot_be_judged_is_reported_as_unknown",
     ),

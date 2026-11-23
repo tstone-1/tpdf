@@ -61,18 +61,15 @@
 //!
 //! ## What it costs
 //!
-//! Measured in release over the fixtures, because the first design here was
-//! built on a guess: **0.1 ms** on a small document, **5.8 ms** on the 775-page
-//! one, **11.9 ms** on the 337 MB scan. `lopdf` parses the cross-reference table
-//! and object headers rather than every content stream, so the cost tracks the
-//! **object count** and barely notices the byte count --- the 337 MB file is
-//! mostly image data in very few objects.
+//! Mapping is computed lazily, off the first-paint path. The original
+//! dictionary-only scan took 0.1 ms on a small document and 11.9 ms on a
+//! 337 MB scan. Those measurements predate inspection of text operators and
+//! placed forms. Image payloads are never decoded to inspect a text mapping.
 //!
-//! That is cheap enough that the original justification for computing it lazily
-//! ("the dominant cost of opening a document") was simply false. It is still
-//! computed lazily, for a reason that survives measurement: warm startup is
-//! ~276 ms against a 300 ms target, so ~25 ms is the entire margin and 6--12 ms
-//! of it is a quarter. Off the critical path this is free.
+//! A font listed in a shared resource dictionary may be unused, and text in
+//! a placed form can use a font absent from the page dictionary. Follow text
+//! shows with their selected font, including graphics-state restores and
+//! form-local resources. An incomplete inspection is reported separately.
 //!
 //! ## Hostile input
 //!
@@ -122,11 +119,8 @@ pub(crate) fn icc_header_matches(bytes: &[u8], space: &[u8; 4]) -> bool {
 /// enforced.
 pub(crate) const MAX_DECODE: usize = 64 * 1024 * 1024;
 
-/// Deepest the `/Resources` inheritance walk will follow `/Parent`.
-///
-/// A page tree is a few levels in any real document. This bounds a `/Parent`
-/// cycle, which `lopdf` will happily follow forever.
-const MAX_INHERIT: usize = 32;
+/// Maximum nesting of a placed form during a mapping scan.
+const MAX_FORM_DEPTH: usize = 32;
 
 /// Most fonts a single page's resource dictionary may declare.
 const MAX_FONTS: usize = 4096;
@@ -142,7 +136,7 @@ const MAPPABLE_ORDERINGS: [&str; 5] = ["Japan1", "GB1", "CNS1", "Korea1", "KR"];
 /// What a page's fonts say about whether its text means anything.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PageMapping {
-    /// Composite fonts the page declares.
+    /// Distinct composite fonts encountered when the page shows text.
     pub composite: usize,
     /// Of those, how many leave PDFium guessing.
     pub guessing: usize,
@@ -293,85 +287,148 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Vec<PageMappi
     Ok(pages)
 }
 
-/// Examines one page's fonts.
-fn page_mapping(document: &Document, page: ObjectId) -> PageMapping {
-    let mut mapping = PageMapping::default();
-
-    let Some(fonts) = font_dictionary(document, page, &mut mapping) else {
-        return mapping;
+/// Classify the fonts that actually show text, including text in placed forms.
+fn page_mapping(doc: &Document, page: ObjectId) -> PageMapping {
+    let mut scan = FontScan {
+        doc,
+        seen: HashSet::new(),
+        bytes_left: 8 * 1024 * 1024,
+        forms_left: MAX_FONTS,
+        result: PageMapping::default(),
     };
-
-    for (index, (_, font)) in fonts.iter().enumerate() {
-        if index >= MAX_FONTS {
-            mapping.truncated = true;
-            break;
-        }
-        let Ok(font) = resolve_dict(document, font) else {
-            // A font entry that does not resolve is a font we cannot judge.
-            // Unknown, not clean.
-            mapping.truncated = true;
-            continue;
-        };
-        if !is_composite(font) {
-            continue;
-        }
-        mapping.composite += 1;
-        match guesses(document, font) {
-            Some(true) => mapping.guessing += 1,
-            Some(false) => {}
-            None => mapping.truncated = true,
-        }
+    if scan.page(page).is_none() {
+        scan.result.truncated = true;
     }
-
-    mapping
+    scan.result
 }
 
-/// The page's `/Font` resource dictionary, following `/Resources` inheritance.
-///
-/// `/Resources` is inheritable, so a page may carry none and take its parent's.
-/// `lopdf` has `get_inherited_page_property`, and it is not used here because it
-/// does not bound the walk --- a `/Parent` cycle is a hostile document's cheapest
-/// trick and this is the walk it would spin.
-fn font_dictionary(
-    document: &Document,
-    page: ObjectId,
-    mapping: &mut PageMapping,
-) -> Option<Dictionary> {
-    let mut node = page;
-    let mut seen: HashSet<ObjectId> = HashSet::new();
+struct FontScan<'a> {
+    doc: &'a Document,
+    seen: HashSet<*const Dictionary>,
+    bytes_left: usize,
+    forms_left: usize,
+    result: PageMapping,
+}
 
-    for _ in 0..MAX_INHERIT {
-        if !seen.insert(node) {
-            // A cycle. Stop, and say the answer is partial.
-            mapping.truncated = true;
-            return None;
+impl<'a> FontScan<'a> {
+    fn page(&mut self, page: ObjectId) -> Option<()> {
+        let doc = self.doc;
+        if !doc.get_dictionary(page).ok()?.has(b"Contents") {
+            return Some(());
         }
-        let Ok(dict) = document.get_dictionary(node) else {
-            mapping.truncated = true;
-            return None;
-        };
-
-        if let Ok(resources) = dict.get(b"Resources") {
-            if let Ok(resources) = resolve_dict(document, resources) {
-                if let Ok(fonts) = resources.get(b"Font") {
-                    return resolve_dict(document, fonts).ok().cloned();
-                }
-                // Resources with no /Font: the page draws no text with a font it
-                // names here. Not a truncation.
-                return None;
-            }
-            mapping.truncated = true;
-            return None;
+        let empty = Dictionary::new();
+        let resources = crate::pagetree::resources(doc, page)
+            .ok()?
+            .unwrap_or(&empty);
+        // When the only available fonts are simple, no text operator can
+        // select an unmapped composite. Avoid decoding every page of a book
+        // for this common case. Forms and graphics states can supply fonts
+        // outside this dictionary and therefore require the content walk.
+        if !resources.has(b"XObject")
+            && !resources.has(b"ExtGState")
+            && resources
+                .get(b"Font")
+                .ok()
+                .and_then(|fonts| resolve_dict(doc, fonts).ok())
+                .is_some_and(|fonts| {
+                    fonts.len() <= MAX_FONTS
+                        && fonts.iter().all(|(_, font)| {
+                            resolve_dict(doc, font)
+                                .ok()
+                                .and_then(|font| font.get(b"Subtype").ok()?.as_name().ok())
+                                .is_some_and(|kind| {
+                                    matches!(kind, b"Type1" | b"MMType1" | b"TrueType" | b"Type3")
+                                })
+                        })
+                })
+        {
+            return Some(());
         }
-
-        match dict.get(b"Parent") {
-            Ok(Object::Reference(parent)) => node = *parent,
-            _ => return None,
-        }
+        let content = crate::textedit::page_content(doc, page).ok()?;
+        self.content(resources, content, None, 0)
     }
 
-    mapping.truncated = true;
-    None
+    fn content<'r>(
+        &mut self,
+        resources: &'r Dictionary,
+        mut bytes: Vec<u8>,
+        mut font: Option<&'r Dictionary>,
+        depth: usize,
+    ) -> Option<()>
+    where
+        'a: 'r,
+    {
+        self.bytes_left = self.bytes_left.checked_sub(bytes.len())?;
+        if depth > MAX_FORM_DEPTH
+            || resources
+                .get(b"Font")
+                .ok()
+                .and_then(|f| resolve_dict(self.doc, f).ok())
+                .is_some_and(|f| f.len() > MAX_FONTS)
+        {
+            return None;
+        }
+        let doc = self.doc;
+        let resource = |kind: &[u8], name: &Object| {
+            let dict = resolve_dict(doc, resources.get(kind).ok()?).ok()?;
+            Some(resolve(doc, dict.get(name.as_name().ok()?).ok()?))
+        };
+        let mut stack = Vec::new();
+        bytes.push(b'\n'); // Delimit a final operator or comment at EOF.
+        for op in lopdf::content::Content::decode_strict(&bytes)
+            .ok()?
+            .operations
+        {
+            match op.operator.as_str() {
+                "q" => stack.push(font),
+                "Q" => font = stack.pop()?,
+                "Tf" => font = Some(resource(b"Font", op.operands.first()?)?.as_dict().ok()?),
+                "gs" => {
+                    let state = resource(b"ExtGState", op.operands.first()?)?
+                        .as_dict()
+                        .ok()?;
+                    if let Ok(value) = state.get(b"Font") {
+                        let pair = resolve(doc, value).as_array().ok()?;
+                        font = Some(resolve_dict(doc, pair.first()?).ok()?);
+                    }
+                }
+                "Tj" | "TJ" | "'" | "\"" => {
+                    let drawn = font?;
+                    if self.seen.insert(std::ptr::from_ref(drawn)) && is_composite(drawn) {
+                        self.result.composite += 1;
+                        match guesses(doc, drawn) {
+                            Some(true) => self.result.guessing += 1,
+                            Some(false) => {}
+                            None => self.result.truncated = true,
+                        }
+                    }
+                }
+                "Do" => {
+                    let obj = resource(b"XObject", op.operands.first()?)?
+                        .as_stream()
+                        .ok()?;
+                    if obj.dict.get(b"Subtype").and_then(Object::as_name).ok()? == b"Form" {
+                        self.forms_left = self.forms_left.checked_sub(1)?;
+                        let nested = match obj.dict.get(b"Resources") {
+                            Ok(value) => resolve_dict(doc, value).ok()?,
+                            Err(_) => resources,
+                        };
+                        if obj.content.is_empty() && !obj.dict.has(b"F") {
+                            continue;
+                        }
+                        let data = crate::textedit::decode_content_stream(
+                            obj,
+                            self.bytes_left.min(1024 * 1024),
+                        )
+                        .ok()?;
+                        self.content(nested, data, font, depth + 1)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some(())
+    }
 }
 
 /// Whether a font dictionary is a composite (`/Type0`) font.
@@ -543,6 +600,46 @@ mod tests {
         let pages = scan(&bytes, 1, None).expect("the fixture must parse");
         assert_eq!(pages.len(), 1, "the fixture is one page");
         pages[0]
+    }
+
+    #[test]
+    fn only_shown_fonts_count_in_a_placed_form() {
+        let bytes = document_with_font(composite("Identity-H", "Identity", false));
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        let page = doc.get_pages()[&1];
+        let mut resources = crate::pagetree::resources(&doc, page)
+            .unwrap()
+            .unwrap()
+            .clone();
+        let plain = doc.add_object(
+            dictionary! { "Type"=>"Font", "Subtype"=>"Type1", "BaseFont"=>"Helvetica" },
+        );
+        let mut fonts = resolve_dict(&doc, resources.get(b"Font").unwrap())
+            .unwrap()
+            .clone();
+        fonts.set("Body", plain);
+        resources.set("Font", fonts);
+        let form = doc.add_object(Stream::new(
+            dictionary! { "Subtype"=>"Form", "Resources"=>resources },
+            Vec::new(),
+        ));
+        let paint = doc.add_object(Stream::new(dictionary! {}, b"/Placed Do".to_vec()));
+        let dict = doc.get_dictionary_mut(page).unwrap();
+        dict.set("Contents", paint);
+        dict.set(
+            "Resources",
+            dictionary! { "XObject"=>dictionary! { "Placed"=>form } },
+        );
+        for (name, guesses) in [("Body", 0), ("F1", 1)] {
+            doc.get_object_mut(form)
+                .unwrap()
+                .as_stream_mut()
+                .unwrap()
+                .set_plain_content(format!("BT /{name} 12 Tf (example) Tj ET").into_bytes());
+            let mapping = page_mapping(&doc, page);
+            assert!(mapping.certain());
+            assert_eq!(mapping.guessing, guesses);
+        }
     }
 
     /// The case the whole module exists for: Identity ordering, no `/ToUnicode`.

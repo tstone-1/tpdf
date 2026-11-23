@@ -22,8 +22,7 @@
 //!
 //! The work happens in the document's worker, on a second PDFium document over
 //! the same bytes (`DocumentGraph::reopen`), because the objects outside the
-//! selection are taken off its page before it is drawn (`pagecopy.rs` has the
-//! same reason and the same rule never to destroy a removed object).
+//! selection are deactivated on its page before it is drawn.
 
 use serde::{Deserialize, Serialize};
 
@@ -448,7 +447,7 @@ mod engine {
         })?;
         let region = region_pt(bindings, &page, request);
         // SAFETY: every object handle below belongs to `page`, which outlives
-        // this function's use of them; removed objects are never destroyed.
+        // this function's use of them and retains ownership of inactive objects.
         unsafe {
             let handle = page.handle();
             let mut listed = Vec::new();
@@ -518,11 +517,28 @@ mod engine {
                 let nested = chosen
                     .iter()
                     .any(|&o| bindings.FPDFPageObj_GetType(o) == FORM);
-                if !pattern_free(document, request.page, pages, nested) {
+                if !resources_allow(
+                    document,
+                    request.page,
+                    pages,
+                    nested,
+                    ResourceCheck::Pattern,
+                ) {
                     problems.push(Unsupported::Pattern);
                 }
             }
-            let single = (chosen.len() == 1
+            // A Form or Image may also carry /OC on its stream dictionary,
+            // which PDFium's marked-content API does not expose.
+            if chosen
+                .iter()
+                .any(|&o| matches!(bindings.FPDFPageObj_GetType(o), IMAGE | FORM))
+                && !resources_allow(document, request.page, pages, true, ResourceCheck::Layers)
+            {
+                problems.push(Unsupported::Layers);
+            }
+            let layered = problems.iter().any(|p| matches!(p, Unsupported::Layers));
+            let single = (!layered
+                && chosen.len() == 1
                 && matches!(rectangular_clip(bindings, chosen[0]), Ok(None))
                 && bindings.FPDFPageObj_GetType(chosen[0]) == IMAGE)
                 .then_some(chosen[0]);
@@ -541,6 +557,7 @@ mod engine {
                 Unsupported::Clip => {
                     said!("SVG export cannot preserve this clipping path; save as PNG")
                 }
+                Unsupported::Layers => said!("save layered artwork as PNG to preserve visibility"),
                 Unsupported::Transparency => {
                     said!("SVG export cannot preserve this transparency or blend mode; save as PNG")
                 }
@@ -567,7 +584,7 @@ mod engine {
                     (around[2] - around[0]) * unit,
                     (around[3] - around[1]) * unit,
                 );
-            let (width, height) = match single {
+            let (mut width, mut height) = match single {
                 Some(image) => {
                     native_size(bindings, image).map_or((0, 0), |(w, h)| super::picture_size(w, h))
                 }
@@ -576,6 +593,9 @@ mod engine {
                     ((around[3] - around[1]) * scale).round().max(1.0) as u32,
                 ),
             };
+            if single.is_none() && page.quarter_turns() % 2 == 1 {
+                std::mem::swap(&mut width, &mut height);
+            }
             let mut found = GraphicFound {
                 objects: chosen.len() as u32,
                 original: original.map(str::to_owned),
@@ -600,6 +620,9 @@ mod engine {
                     found.extension = "png".to_owned();
                     native_png(bindings, &copy, &page, image)?
                 }
+                (GraphicFormat::Original, None) if layered => {
+                    return Err(said!("save layered artwork as PNG to preserve visibility"));
+                }
                 (GraphicFormat::Original, None) => {
                     return Err(said!(
                         "the region holds more than one picture, or a drawing"
@@ -609,9 +632,11 @@ mod engine {
                     found.extension = "png".to_owned();
                     for index in (0..bindings.FPDFPage_CountObjects(handle).max(0)).rev() {
                         let object = bindings.FPDFPage_GetObject(handle, index);
-                        if !object.is_null() && !chosen.contains(&object) {
-                            // Not destroyed: see the module note.
-                            bindings.FPDFPage_RemoveObject(handle, object);
+                        if !object.is_null()
+                            && !chosen.contains(&object)
+                            && bindings.FPDFPageObj_SetIsActive(object, 0) == 0
+                        {
+                            return Err(said!("could not isolate the selected artwork"));
                         }
                     }
                     alone_png(bindings, &page, around, scale, width, height)?
@@ -747,9 +772,21 @@ mod engine {
         [m.a, m.b, m.c, m.d, m.e, m.f].map(f64::from)
     }
 
+    #[derive(Clone, Copy)]
+    enum ResourceCheck {
+        Pattern,
+        Layers,
+    }
+
     /// Paths have no color-space accessor. Check the page's effective resources
     /// and, for a form selection, the resources its children can use.
-    fn pattern_free(document: &OpenDocument, page: u32, pages: usize, nested: bool) -> bool {
+    fn resources_allow(
+        document: &OpenDocument,
+        page: u32,
+        pages: usize,
+        nested: bool,
+        check: ResourceCheck,
+    ) -> bool {
         let Ok(doc) = document.graph().parsed() else {
             return false;
         };
@@ -769,8 +806,9 @@ mod engine {
         let mut budget = 4096usize;
         while let Some(resources) = pending.pop() {
             if let Ok(patterns) = resources.get(b"Pattern") {
-                if !crate::encoding::resolve_dict(doc, patterns)
-                    .is_ok_and(lopdf::Dictionary::is_empty)
+                if matches!(check, ResourceCheck::Pattern)
+                    && !crate::encoding::resolve_dict(doc, patterns)
+                        .is_ok_and(lopdf::Dictionary::is_empty)
                 {
                     return false;
                 }
@@ -799,6 +837,9 @@ mod engine {
                     return false;
                 };
                 let dict = &stream.dict;
+                if matches!(check, ResourceCheck::Layers) && dict.has(b"OC") {
+                    return false;
+                }
                 if dict.get(b"Subtype").and_then(lopdf::Object::as_name).ok() == Some(b"Image") {
                     continue;
                 }
@@ -821,6 +862,7 @@ mod engine {
         Clip,
         Stroke,
         Transparency,
+        Layers,
     }
 
     // PDFium returns clip coordinates in the containing form or page's space.
@@ -905,12 +947,32 @@ mod engine {
         false
     }
 
+    /// PDFium applies optional-content visibility while painting a marked object.
+    /// Other mark names (structure tags, for example) do not control visibility.
+    unsafe fn may_be_layered(bindings: Bindings, object: FPDF_PAGEOBJECT) -> bool {
+        let count = bindings.FPDFPageObj_CountMarks(object);
+        if !(0..=4096).contains(&count) {
+            return true;
+        }
+        (0..count).any(|index| {
+            let mark = bindings.FPDFPageObj_GetMark(object, index as c_ulong);
+            let mut name = [0u16; 3]; // UTF-16LE "OC" and its terminator
+            let mut len = 0;
+            mark.is_null()
+                || bindings.FPDFPageObjMark_GetName(mark, name.as_mut_ptr(), 6, &mut len) == 0
+                || (len == 6 && name == [0x4f, 0x43, 0])
+        })
+    }
+
     /// What in `object`, at any depth, the SVG cannot draw.
     unsafe fn cannot_draw(
         bindings: Bindings,
         object: FPDF_PAGEOBJECT,
         problems: &mut Vec<Unsupported>,
     ) {
+        if may_be_layered(bindings, object) {
+            problems.push(Unsupported::Layers);
+        }
         if rectangular_clip(bindings, object).is_err() {
             problems.push(Unsupported::Clip);
         }

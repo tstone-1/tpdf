@@ -677,6 +677,7 @@ export class Sidebar {
     if (row.hasChildren) {
       twisty.style.cursor = "pointer";
       twisty.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
         // Stops the row's own handler from also navigating: clicking the
         // twisty is a request to unfold, not to go there.
         event.preventDefault();
@@ -700,6 +701,7 @@ export class Sidebar {
     }
 
     element.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
       event.preventDefault();
       this.focus(row.id);
       this.activate(row.id);

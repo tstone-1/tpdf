@@ -187,6 +187,8 @@ describe("Sidebar keyboard activation", () => {
     // Not disabled: a row that does something must not be drawn as one that
     // does not.
     expect(row!.getAttribute("aria-disabled")).toBeNull();
+    row!.dispatch("pointerdown", { button: 2 });
+    expect(webbed).toEqual([]);
 
     row!.parent.dispatch("keydown", { key: "Enter", target: row });
 

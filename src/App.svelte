@@ -5993,15 +5993,15 @@
       offerFavourites();
       recognitionLanguage.restore(session.ocr_language);
       restoreTabs = session.restore_tabs ?? false;
-      const plan = launchPlan(session, handed.map((opening) => opening.path));
+      const plan = launchPlan(session, handed);
       // Held until the last tab is back, so that quitting halfway through does
       // not record the half that had opened as the whole list.
       if (plan.behind.length) tabRecorder.hold();
       const refusedFront: string[] = [];
-      for (const path of plan.show) {
+      for (const given of plan.show) {
+        const path = given.path;
         if (await openPath(path, plan.resuming) === null) refusedFront.push(path);
-        const given = handed.find((each) => each.path === path);
-        if (given) await placeOpened(given);
+        await placeOpened(given);
       }
       // After the document the reader is waiting for has been asked for, and
       // not awaited: until it answers, both of the tool's commands are offered.
@@ -6188,6 +6188,11 @@
         okLabel: prompt.okLabel,
         cancelLabel: prompt.cancelLabel,
       }),
+      settled: async () => {
+        await places.settled();
+        await tabRecorder.settled();
+        await sessionWrites.settled();
+      },
       act: async () => {
         // `install` never rejects: a failed download comes back as the
         // `failed` state, which the header shows as nothing at all. So the
@@ -6197,14 +6202,6 @@
           if (failure) say(failure);
           return;
         }
-        // The place is issued by `settleDocument` above and **awaited** here,
-        // which `flush()` on its own does not do. The process ends inside the
-        // next call, so an unanswered write is a lost reading position ---
-        // restoring after an update has to land where an ordinary restart
-        // lands, and this is the only step in the path that can wait.
-        await places.settled();
-        await tabRecorder.settled();
-        await sessionWrites.settled();
         const { relaunch } = await import("@tauri-apps/plugin-process");
         await relaunch();
       },

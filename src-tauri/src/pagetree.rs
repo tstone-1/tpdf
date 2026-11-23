@@ -1099,6 +1099,7 @@ pub fn materialise(
         // Before the pages go: `drop_pages` takes the page out of every
         // destination array, and the repair reads those arrays.
         let doomed = doomed_pages(&doc.get_pages(), dropped);
+        crate::links::bind_numeric_links(doc, &doomed)?;
         crate::outline_repair::keep_for(doc, &doomed)?;
         drop_pages(doc, dropped)?;
     }
@@ -1325,6 +1326,50 @@ mod tests {
             ["page 1", "page 2", "page 3"],
             "a move removes no page object, so every destination still names one"
         );
+    }
+
+    #[test]
+    fn numeric_local_links_keep_their_page_identity() {
+        for remove in [false, true] {
+            let (mut doc, kids) = three_pages_with_outline();
+            let action = doc.add_object(
+                dictionary! { "S"=>"GoTo", "D"=>vec![Object::Integer(2), "Fit".into()] },
+            );
+            let link = doc.add_object(dictionary! { "Subtype"=>"Link", "A"=>action });
+            doc.get_dictionary_mut(kids[0])
+                .unwrap()
+                .set("Annots", vec![Object::Reference(link)]);
+            if remove {
+                materialise(&mut doc, &[3], None, [Some(0), Some(1)]).unwrap();
+            } else {
+                materialise(
+                    &mut doc,
+                    &[],
+                    Some(&[kids[0], kids[2], kids[1]]),
+                    [Some(0), Some(2), Some(1)],
+                )
+                .unwrap();
+            }
+            let mut saved = Vec::new();
+            doc.save_to(&mut saved).unwrap();
+            let reopened = Document::load_mem(&saved).unwrap();
+            let annotation = reopened.get_dictionary(link).unwrap();
+            if remove {
+                assert!(!annotation.has(b"A") && !annotation.has(b"Dest"));
+            } else {
+                let action = annotation
+                    .get_deref(b"A", &reopened)
+                    .unwrap()
+                    .as_dict()
+                    .unwrap();
+                assert_eq!(
+                    action.get(b"D").unwrap().as_array().unwrap()[0]
+                        .as_reference()
+                        .unwrap(),
+                    reopened.get_pages()[&2]
+                );
+            }
+        }
     }
 
     #[test]

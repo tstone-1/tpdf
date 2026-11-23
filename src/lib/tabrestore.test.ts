@@ -19,9 +19,13 @@ const session = (extra: Partial<Session> = {}): Session => ({
   ...extra,
 });
 
+function request(path: string, page: string | null = null) {
+  return { path, page, zoom: null, forward: null };
+}
+
 describe("what a launch opens", () => {
   it("reopens only the last document unless every tab was asked for", () => {
-    const plan = { show: ["/c.pdf"], resuming: true, behind: [], order: [], sides: null };
+    const plan = { show: [request("/c.pdf")], resuming: true, behind: [], order: [], sides: null };
     expect(launchPlan(session({ restore_tabs: false }), [])).toEqual(plan);
     // A session file written before the preference existed.
     const { restore_tabs: _, ...older } = session();
@@ -33,7 +37,7 @@ describe("what a launch opens", () => {
 
   it("shows the tab that was showing and opens the others behind it, in tab order", () => {
     expect(launchPlan(session(), [])).toEqual({
-      show: ["/b.pdf"],
+      show: [request("/b.pdf")],
       resuming: true,
       behind: ["/a.pdf", "/c.pdf"],
       order: ["/a.pdf", "/b.pdf", "/c.pdf"],
@@ -46,37 +50,44 @@ describe("what a launch opens", () => {
     expect(launchPlan(session({ sides }), []).sides).toEqual(sides);
     expect(launchPlan(session({ sides, restore_tabs: false }), []).sides).toBeNull();
     // What the launcher handed over is not in the record, and gets the window.
-    expect(launchPlan(session({ sides }), ["/new.pdf"]).sides).toBeNull();
+    expect(launchPlan(session({ sides }), [request("/new.pdf")]).sides).toBeNull();
   });
 
   it("falls back to the tab read most recently, then to the first", () => {
     for (const active_tab of [null, "/closed.pdf"]) {
-      expect(launchPlan(session({ active_tab }), []).show, String(active_tab)).toEqual(["/c.pdf"]);
+      expect(launchPlan(session({ active_tab }), []).show, String(active_tab)).toEqual([request("/c.pdf")]);
     }
     const { active_tab: _, ...older } = session();
-    expect(launchPlan(older, []).show).toEqual(["/c.pdf"]);
+    expect(launchPlan(older, []).show).toEqual([request("/c.pdf")]);
     const unread = session({ active_tab: null, places: [place("/closed.pdf")] });
-    expect(launchPlan(unread, [])).toMatchObject({ show: ["/a.pdf"], behind: ["/b.pdf", "/c.pdf"] });
+    expect(launchPlan(unread, [])).toMatchObject({ show: [request("/a.pdf")], behind: ["/b.pdf", "/c.pdf"] });
   });
 
   it("falls back to the last document when no tab was recorded", () => {
-    const plan = { show: ["/c.pdf"], resuming: true, behind: [], order: [], sides: null };
+    const plan = { show: [request("/c.pdf")], resuming: true, behind: [], order: [], sides: null };
     expect(launchPlan(session({ tabs: [] }), [])).toEqual(plan);
     const { tabs: _, ...older } = session();
     expect(launchPlan(older, [])).toEqual(plan);
   });
 
+  it("keeps both destinations when two startup requests open the same document", () => {
+    const requests = [request("/new.pdf", "1"), request("/new.pdf", "8")];
+    const plan = launchPlan(session(), requests);
+    expect(plan.show).toEqual(requests);
+    expect(plan.order.filter(path => path === "/new.pdf")).toHaveLength(1);
+  });
+
   it("shows what the launcher handed over, with the tabs behind it", () => {
-    expect(launchPlan(session(), ["/new.pdf", "/b.pdf"])).toEqual({
-      show: ["/new.pdf", "/b.pdf"],
+    expect(launchPlan(session(), [request("/new.pdf"), request("/b.pdf")])).toEqual({
+      show: [request("/new.pdf"), request("/b.pdf")],
       resuming: false,
       behind: ["/a.pdf", "/c.pdf"],
       order: ["/a.pdf", "/b.pdf", "/c.pdf", "/new.pdf"],
       sides: null,
     });
     // With the preference off a handed file is all that opens, as before.
-    expect(launchPlan(session({ restore_tabs: false }), ["/new.pdf"])).toEqual({
-      show: ["/new.pdf"], resuming: false, behind: [], order: [], sides: null,
+    expect(launchPlan(session({ restore_tabs: false }), [request("/new.pdf")])).toEqual({
+      show: [request("/new.pdf")], resuming: false, behind: [], order: [], sides: null,
     });
   });
 });
@@ -384,7 +395,7 @@ describe("tabs from last time that a launch could not open", () => {
     const handed = session({ restore_tabs: false });
     expect(unopenedAtLaunch(handed, ["/new.pdf"], () => false)).toEqual([]);
     const alone = session({ tabs: [] });
-    expect(unopenedAtLaunch(alone, launchPlan(alone, []).show, () => false)).toEqual([]);
+    expect(unopenedAtLaunch(alone, launchPlan(alone, []).show.map(r => r.path), () => false)).toEqual([]);
   });
 
   it("are said, by name for one and counted for several", () => {

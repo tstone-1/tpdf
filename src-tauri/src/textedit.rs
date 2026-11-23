@@ -13,6 +13,7 @@ mod centred;
 mod clipping;
 mod colors;
 mod filters;
+pub(crate) use filters::decode as decode_content_stream;
 mod fonts;
 mod forms;
 mod graphics;

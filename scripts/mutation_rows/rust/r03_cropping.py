@@ -175,8 +175,8 @@ ROWS += [
         # another file's numbering instead of being refused.
         "links: take /Dest before the action that overrides it",
         "src/links.rs",
-        '    if let Ok(action) = annot.get(b"A") {',
-        '    if let Ok(dest) = annot.get(b"Dest") {\n        return destination(dest, document, numbers, geometry, limits, names);\n    }\n    if let Ok(action) = annot.get(b"A") {',
+        '    if let Some(action) = annot',
+        '    if let Ok(dest) = annot.get(b"Dest") {\n        return destination(dest, document, numbers, geometry, limits, names);\n    }\n    if let Some(action) = annot',
         "an_action_beats_a_dest_sitting_beside_it",
     ),
     Mutation(

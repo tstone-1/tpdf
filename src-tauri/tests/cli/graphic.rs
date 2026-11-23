@@ -214,8 +214,93 @@ fn pending_caption(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Read the PNG back so sizing, painting and layer visibility are checked together.
+fn layered_and_rotated(dir: &Path, angle: i64, visible: bool) -> Result<(), String> {
+    let mut doc = Document::with_version("1.7");
+    let tree = doc.new_object_id();
+    let layer = doc
+        .add_object(dictionary! { "Type"=>"OCG", "Name"=>Object::string_literal("Alternative") });
+    let body = doc.add_object(Stream::new(
+        dictionary! {},
+        b"0 0 1 rg 20 30 120 24 re f /OC /Alt BDC 1 0 0 rg 20 30 120 24 re f EMC".to_vec(),
+    ));
+    let page = doc.add_object(
+        dictionary! { "Type"=>"Page", "Parent"=>tree, "Rotate"=>angle,
+        "MediaBox"=>vec![Object::from(0),0.into(),200.into(),200.into()], "Contents"=>body,
+        "Resources"=>dictionary! { "Properties"=>dictionary! { "Alt"=>layer } } },
+    );
+    doc.objects.insert(
+        tree,
+        dictionary! { "Type"=>"Pages", "Kids"=>vec![Object::Reference(page)], "Count"=>1 }.into(),
+    );
+    let mut default = dictionary! {};
+    default.set(
+        if visible { "ON" } else { "OFF" },
+        vec![Object::Reference(layer)],
+    );
+    let root = doc.add_object(dictionary! { "Type"=>"Catalog", "Pages"=>tree,
+    "OCProperties"=>dictionary! { "OCGs"=>vec![Object::Reference(layer)], "D"=>default } });
+    doc.trailer.set("Root", root);
+    let path = dir.join(format!("layer-{angle}-{visible}.pdf"));
+    doc.save(&path).map_err(|e| e.to_string())?;
+    let mut worker = Worker::spawn(&path, &library_dir())?;
+    worker.call(&Request::Open {
+        lazy_geometry: false,
+    })?;
+    let request = |format| GraphicRequest {
+        rect: [0, 0, 200, 200],
+        ..region(0, 0, 1, 1, format)
+    };
+    let (bytes, found) = export(&mut worker, request(GraphicFormat::Png))?;
+    let (w, h, pixels) = decoded(&bytes).ok_or("invalid image")?;
+    let size = if angle % 180 == 0 {
+        (1000, 200)
+    } else {
+        (200, 1000)
+    };
+    let color = if visible {
+        [255, 0, 0, 255]
+    } else {
+        [0, 0, 255, 255]
+    };
+    if (w, h) != size
+        || (found.width, found.height) != size
+        || pixels.chunks_exact(4).any(|px| px != color)
+    {
+        return Err(format!(
+            "wrong dimensions or layer pixels for {angle} degrees"
+        ));
+    }
+    if found.no_svg.is_none() || export(&mut worker, request(GraphicFormat::Svg)).is_ok() {
+        return Err("offered raw SVG despite optional content".into());
+    }
+    // The underlying blue path has no optional-content mark. Selecting it
+    // alone must still offer vector export on this very same layered page.
+    let (svg, _) = export(
+        &mut worker,
+        GraphicRequest {
+            object: Some(0),
+            ..request(GraphicFormat::Svg)
+        },
+    )?;
+    if !String::from_utf8_lossy(&svg).contains("#0000ff") {
+        return Err("unmarked vector selection lost its blue drawing".into());
+    }
+    Ok(())
+}
+
 pub(super) fn exports_what_the_region_holds(report: &mut Report) {
     let dir = scratch("graphic");
+    for angle in [0, 90, 180, 270] {
+        for visible in [true, false] {
+            let result = layered_and_rotated(&dir, angle, visible);
+            report.check(
+                "the rotated graphic preserves every visible pixel and refuses layered SVG",
+                result.is_ok(),
+                &format!("{result:?}"),
+            );
+        }
+    }
     let caption = pending_caption(&dir);
     report.check(
         "export draws the accepted caption before saving",

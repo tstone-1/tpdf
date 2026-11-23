@@ -4,6 +4,31 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Graphic export, page destinations and text mapping (2026-11-23)
+
+On macOS arm64, a 120 by 24 point rectangle exported at 600 DPI contained
+200,000 painted pixels at all four page rotations. A blue rectangle under a
+red optional layer exported blue with the layer off and red with it on.
+The graphic worker tests read the PNG pixels and exercise the SVG selection.
+
+One worker exported the same icon 31 times from a page with 1,000 other paths.
+Between exports 1 and 31, resident memory grew by 10,400 KiB with object removal
+and 512 KiB with object deactivation. These are process measurements from
+`ps`, including allocator overhead.
+
+For numeric local links, the save test reloads the PDF and resolves the target
+against its new page order. A separate `tpdf extract` check with qpdf confirmed
+that the excluded bookmark title disappears for both direct and indirect null
+actions.
+
+Two copies of the same page, one placed inside a Form XObject, rendered
+identically with Poppler. With a Unicode map on both, comparison returned 0.
+With guessed text inside the form it returned 3. A directly referenced unused
+font did not change the result for a fully mapped page. For `tpdf text --pages 1`
+on the 775-page `incr-xrefstream.pdf`, alternating debug binaries six times
+each gave median times of 53.9 ms before and 54.2 ms after the change, with
+identical output. Inspecting every content stream had taken 2.2 seconds.
+
 ### Search redaction, delayed form input, colours and OCR (2026-11-23)
 
 The two-line Python annotation fixture contains an A and a full stop on separate lines.

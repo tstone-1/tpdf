@@ -288,7 +288,42 @@ impl Session {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(error) => return Err(error),
         };
-        let session: Self = serde_json::from_slice(&raw)?;
+        let session: Self = match serde_json::from_slice(&raw) {
+            Ok(session) => session,
+            Err(original) => {
+                // Older or hand-edited disk records can exceed the IPC integer types.
+                // Strip only out-of-range numbers so serde supplies the field's default.
+                let mut record: serde_json::Value = serde_json::from_slice(&raw)?;
+                let mut repaired = false;
+                for group in ["places", "favourites"] {
+                    for entry in record
+                        .get_mut(group)
+                        .and_then(|v| v.as_array_mut())
+                        .into_iter()
+                        .flatten()
+                    {
+                        let Some(fields) = entry.as_object_mut() else {
+                            continue;
+                        };
+                        fields.retain(|key, value| {
+                            let max = match key.as_str() {
+                                "page" | "page_count" => u64::from(u32::MAX),
+                                "turns" | "columns" => u64::from(u8::MAX),
+                                _ => return true,
+                            };
+                            let valid =
+                                !value.is_number() || value.as_u64().is_some_and(|n| n <= max);
+                            repaired |= !valid;
+                            valid
+                        });
+                    }
+                }
+                if !repaired {
+                    return Err(original.into());
+                }
+                serde_json::from_value(record)?
+            }
+        };
         Ok(Self {
             places: session
                 .places
@@ -521,6 +556,20 @@ mod tests {
         fn file(&self) -> PathBuf {
             self.join("session.json")
         }
+    }
+
+    #[test]
+    fn narrow_numeric_fields_recover_without_losing_other_places_or_preferences() {
+        let dir = TempDir::new("session-range");
+        let path = dir.file();
+        std::fs::write(&path, br#"{"places":[{"path":"a","turns":256,"page":-1},{"path":"b","page":7}],"invert_pages":true}"#).unwrap();
+        let mut session = Session::read_for_update(&path).unwrap();
+        assert_eq!((session.places[0].page, session.places[0].turns), (0, 0));
+        assert_eq!(session.places[1].page, 7);
+        assert!(session.invert_pages);
+        session.remember(place("c"));
+        session.save(&path).unwrap();
+        assert_eq!(Session::load(&path).places.len(), 3);
     }
 
     #[test]

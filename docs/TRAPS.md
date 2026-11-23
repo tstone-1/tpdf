@@ -989,8 +989,9 @@ regeneration changes exactly zero pixels and leaves the original string in the s
 the destroy happens immediately, after `regenerate_content()`, or after the save. The fault
 is a bad vtable dereference, i.e. the handle is already dead.
 
-`std::mem::forget` on the returned object is the only safe route through this binding; the
-memory is reclaimed when the document closes. Removal is redaction's primitive, so this is
+`std::mem::forget` on the returned object is the only safe route through this binding; the caller owns the detached object and closing the document does not reclaim it.
+On private copies used for rendering, deactivate excluded objects with
+`FPDFPageObj_SetIsActive` so that the page retains ownership. Removal is redaction's primitive, so this is
 not an edge case — it is on the main path.
 
 `src-tauri/examples/remove_probe.rs` is the minimal repro, kept as a standing regression:

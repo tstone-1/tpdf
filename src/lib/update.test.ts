@@ -606,6 +606,7 @@ describe("finishing an update", () => {
           log.push("hold");
           return () => log.push("release");
         },
+        settled: async () => {},
       } satisfies FinishEffects,
     };
   }
@@ -624,6 +625,32 @@ describe("finishing an update", () => {
     expect(prompts[0]?.message).toContain("notes.pdf");
   });
 
+  it("drains a pending session write before starting the Windows installer", async () => {
+    const { effects: e, log } = effects();
+    let finish!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const draining = new Promise<void>(resolve => { started = resolve; });
+    const done = finishUpdate("install", available, true, { ...e, settled: () => {
+      started();
+      return pending;
+    } });
+    await draining;
+    expect(log).not.toContain("act");
+    finish();
+    expect(await done).toBe("acted");
+    expect(log).toContain("act");
+  });
+
+  it("shows the preflight refusal and leaves the update pending", async () => {
+    const { effects: e, log } = effects();
+    const outcome = await finishUpdate("restart", ready, true, { ...e, unsaved: async () => {
+      throw new Error("Invalid field value");
+    } });
+    expect(outcome).toBe("failed");
+    expect(log).toEqual(["say:Error: Invalid field value"]);
+  });
+
   it("an_install_that_ends_the_process_holds_edits_until_it_acts", async () => {
     // The Windows install is the whole download, and the process ends inside
     // it. Nothing is unsaved at the press, so nothing is asked; a note added
@@ -635,6 +662,7 @@ describe("finishing an update", () => {
     let held = false;
     let heldDuringAct: boolean | null = null;
     const e: FinishEffects = {
+      settled: async () => {},
       unsaved: async () => { order.push(`unsaved:${held}`); return []; },
       confirm: async () => { order.push("confirm"); return true; },
       act: async () => {

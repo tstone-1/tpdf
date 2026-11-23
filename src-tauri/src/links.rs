@@ -387,7 +387,11 @@ fn target_of(
     urls: &mut Vec<String>,
     names: &Destinations<'_>,
 ) -> Target {
-    if let Ok(action) = annot.get(b"A") {
+    if let Some(action) = annot
+        .get(b"A")
+        .ok()
+        .filter(|a| !matches!(resolve(document, a), Object::Null))
+    {
         let Ok(action) = resolve(document, action).as_dict() else {
             return Target::Broken;
         };
@@ -620,6 +624,113 @@ fn named_array<'a>(document: &'a Document, value: &'a Object) -> Option<&'a [Obj
         _ => value,
     };
     array.as_array().ok().map(Vec::as_slice)
+}
+
+/// Bind local numeric link targets before the page order changes. Rewrite only
+/// the link's destination, since its action or named destination may be shared
+/// with a remote action whose page number belongs to another document.
+pub(crate) fn bind_numeric_links(
+    doc: &mut Document,
+    doomed: &std::collections::HashSet<ObjectId>,
+) -> Result<(), String> {
+    let pages = crate::pagetree::ordered_pages(doc);
+    let names = Destinations::of(doc);
+    let mut changes = Vec::new();
+    for &page in &pages {
+        if doomed.contains(&page) {
+            continue;
+        }
+        let Ok(annots) = doc.get_dictionary(page).and_then(|d| d.get(b"Annots")) else {
+            continue;
+        };
+        let Ok((array_id, Object::Array(entries))) = doc.dereference(annots) else {
+            continue;
+        };
+        for (slot, entry) in entries.iter().enumerate() {
+            let Ok((annot_id, Object::Dictionary(annot))) = doc.dereference(entry) else {
+                continue;
+            };
+            if annot.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Link") {
+                continue;
+            }
+            let action = annot
+                .get(b"A")
+                .ok()
+                .map(|a| resolve(doc, a))
+                .filter(|a| !matches!(a, Object::Null));
+            let dest = match action {
+                Some(Object::Dictionary(a))
+                    if a.get(b"S")
+                        .map(|s| resolve(doc, s))
+                        .and_then(Object::as_name)
+                        .ok()
+                        == Some(b"GoTo") =>
+                {
+                    a.get(b"D")
+                }
+                Some(_) => continue,
+                None => annot.get(b"Dest"),
+            };
+            let Ok(dest) = dest else { continue };
+            let value = match resolve(doc, dest) {
+                key @ (Object::Name(_) | Object::String(_, _)) => {
+                    let Some(value) = names
+                        .lookup(key)
+                        .map_err(|_| said!("could not resolve a local link destination"))?
+                    else {
+                        continue;
+                    };
+                    value
+                }
+                value => value,
+            };
+            let Some(array) = named_array(doc, value) else {
+                continue;
+            };
+            let Some(Object::Integer(index)) = array.first() else {
+                continue;
+            };
+            let target = usize::try_from(*index)
+                .ok()
+                .and_then(|i| pages.get(i))
+                .filter(|id| !doomed.contains(id));
+            let replacement = target.map(|id| {
+                let mut array = array.to_vec();
+                array[0] = Object::Reference(*id);
+                Object::Array(array)
+            });
+            let mut fixed = annot.clone();
+            if let (Some(Object::Dictionary(a)), Some(dest)) = (action, &replacement) {
+                let mut a = a.clone();
+                a.set("D", dest.clone());
+                fixed.set("A", a);
+            } else {
+                fixed.remove(b"A");
+                if let Some(dest) = replacement {
+                    fixed.set("Dest", dest);
+                } else {
+                    fixed.remove(b"Dest");
+                }
+            }
+            changes.push((page, array_id, slot, annot_id, Object::Dictionary(fixed)));
+        }
+    }
+    for (page, array_id, slot, annot_id, fixed) in changes {
+        if let Some(id) = annot_id {
+            doc.objects.insert(id, fixed);
+        } else {
+            let array = match array_id {
+                Some(id) => doc.get_object_mut(id),
+                None => doc
+                    .get_dictionary_mut(page)
+                    .and_then(|d| d.get_mut(b"Annots")),
+            }
+            .and_then(Object::as_array_mut)
+            .map_err(|e| e.to_string())?;
+            array[slot] = fixed;
+        }
+    }
+    Ok(())
 }
 
 /// Turns a destination array into a page and an offset down it.

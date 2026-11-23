@@ -17,6 +17,7 @@
  * opened without a viewer and take their places in the strip afterwards.
  */
 
+import type { Opening } from "./launchplace";
 import { catalog } from "./i18n";
 import { call } from "./ipc";
 import type { Session, Sides } from "./session";
@@ -27,7 +28,7 @@ export interface LaunchPlan {
    * Opened one after the other, each shown as it opens. The last is the
    * document the reader is left looking at.
    */
-  show: string[];
+  show: Opening[];
   /**
    * Whether {@link show} is the application's own idea rather than the
    * reader's. A document that no longer opens is then no error to report.
@@ -44,6 +45,10 @@ export interface LaunchPlan {
   sides: Sides | null;
 }
 
+function restored(path: string): Opening {
+  return { path, page: null, zoom: null, forward: null };
+}
+
 /** The tabs a session recorded, when it recorded any. */
 function recorded(session: Session): string[] {
   return session.tabs ?? [];
@@ -56,15 +61,16 @@ function recorded(session: Session): string[] {
  *               icon, an argument. They are what the reader asked for, so they
  *               are shown whatever else comes back.
  */
-export function launchPlan(session: Session, handed: readonly string[]): LaunchPlan {
+export function launchPlan(session: Session, handed: readonly Opening[]): LaunchPlan {
   const tabs = session.restore_tabs ? recorded(session) : [];
   if (handed.length) {
+    const paths = new Set(handed.map(request => request.path));
     return {
       show: [...handed],
       resuming: false,
-      behind: tabs.filter((path) => !handed.includes(path)),
+      behind: tabs.filter((path) => !paths.has(path)),
       // The reader's tabs where they were, and what they just asked for after.
-      order: tabs.length ? [...tabs, ...handed.filter((path) => !tabs.includes(path))] : [],
+      order: tabs.length ? [...tabs, ...[...paths].filter((path) => !tabs.includes(path))] : [],
       // What was handed over is what the reader came for, and it is not in
       // the record of the sides. It gets the whole window.
       sides: null,
@@ -72,11 +78,11 @@ export function launchPlan(session: Session, handed: readonly string[]): LaunchP
   }
   if (!tabs.length) {
     const last = session.places[0];
-    return { show: last ? [last.path] : [], resuming: true, behind: [], order: [], sides: null };
+    return { show: last ? [restored(last.path)] : [], resuming: true, behind: [], order: [], sides: null };
   }
   const front = frontTab(session, tabs);
   return {
-    show: [front],
+    show: [restored(front)],
     resuming: true,
     behind: tabs.filter((path) => path !== front),
     order: [...tabs],
