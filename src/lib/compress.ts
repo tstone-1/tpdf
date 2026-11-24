@@ -34,7 +34,7 @@ const TEXT = catalog({
     fromTo: (now: string, after: string) => `From ${now} to about ${after}.`,
     sampleWhere: (page: number, zoom: number) =>
       `Part of page ${page} at ${zoom}%: now on the left, the copy on the right.`,
-    sampleDpi: (before: number, after: number) => `Its largest picture goes from ${before} to ${after} pixels an inch.`,
+    sampleDpi: (before: number, after: number) => `On this page, an image or opacity mask goes from ${before} to ${after} pixels an inch.`,
     smallerName: (stem: string) => `${stem} smaller.pdf`,
     savedSmaller: (name: string, after: string, before: string) =>
       `Saved ${name}, about ${after} where the document is ${before}.`,
@@ -62,7 +62,7 @@ const TEXT = catalog({
     sampleWhere: (page: number, zoom: number) =>
       `Ausschnitt von Seite ${page} bei ${zoom} %: links wie jetzt, rechts die Kopie.`,
     sampleDpi: (before: number, after: number) =>
-      `Das größte Bild darin geht von ${before} auf ${after} Pixel pro Zoll.`,
+      `Auf dieser Seite geht ein Bild oder eine Deckkraftmaske von ${before} auf ${after} Pixel pro Zoll.`,
     smallerName: (stem: string) => `${stem} kleiner.pdf`,
     savedSmaller: (name: string, after: string, before: string) =>
       `${name} gespeichert: etwa ${after} statt ${before}.`,

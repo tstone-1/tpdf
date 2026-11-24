@@ -104,6 +104,8 @@ export default {
   "A radio button has ambiguous appearance states": "Ein Optionsfeld hat mehrdeutige Zustände für sein Erscheinungsbild",
   "A radio button is missing an appearance": "Einem Optionsfeld fehlt ein Erscheinungsbild",
   "A radio button appearance is not a stream": "Das Erscheinungsbild eines Optionsfelds ist kein Stream",
+  "Could not read the document catalog: {e}": "Der Dokumentkatalog konnte nicht gelesen werden: {e}",
+  "Could not read the form dictionary: {e}": "Das Formularverzeichnis konnte nicht gelesen werden: {e}",
   "XFA forms are not supported": "XFA-Formulare werden nicht unterstützt",
   "This form exceeds the field-tree limit": "Der Feldbaum dieses Formulars ist größer, als tpdf liest",
   "This form exceeds the annotation limit": "Dieses Formular hat mehr Anmerkungen, als tpdf liest",

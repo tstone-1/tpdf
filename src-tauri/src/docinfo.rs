@@ -1291,10 +1291,7 @@ fn read_signatures(
             return fields::Flow::Leaf;
         };
 
-        // A node with kids is a group; a node with `/FT /Sig` is a field. Both
-        // at once is legal and means a field that also has widget children, so
-        // this reads the field *and* descends.
-        if name_of(document, field, b"FT") == "Sig" {
+        if terminal_signature(document, field) {
             found.push((node.name, field.clone()));
         }
         fields::Flow::Descend
@@ -1378,11 +1375,9 @@ pub(crate) fn signature_values(document: &Document) -> Values {
             complete = false;
             return fields::Flow::Leaf;
         };
-        if name_of(document, field, b"FT") == "Sig" {
-            if let Some(sig) = field
-                .get(b"V")
-                .ok()
-                .and_then(|o| resolve(document, o).as_dict().ok())
+        if terminal_signature(document, field) {
+            if let Some(sig) =
+                inherited(document, field, b"V").and_then(|o| resolve(document, o).as_dict().ok())
             {
                 // Only a signed value past the bound is one left out: a form
                 // of exactly that many signatures and other fields after
@@ -1422,10 +1417,7 @@ struct Archive {
 /// range that does not start at the file's first byte, which covers nothing
 /// before it and so can archive nothing.
 fn signed_reach(document: &Document, field: &Dictionary) -> Option<(bool, u64)> {
-    let sig = field
-        .get(b"V")
-        .ok()
-        .and_then(|o| resolve(document, o).as_dict().ok())?;
+    let sig = inherited(document, field, b"V").and_then(|o| resolve(document, o).as_dict().ok())?;
     let end = range_end(document, sig)?;
     Some((name_of(document, sig, b"SubFilter") == "ETSI.RFC3161", end))
 }
@@ -1542,10 +1534,8 @@ fn read_signature(
     // one. Reported rather than dropped: "this document has an unsigned
     // signature field" is a fact about it, and an empty list would say the
     // opposite.
-    let Some(sig) = field
-        .get(b"V")
-        .ok()
-        .and_then(|o| resolve(document, o).as_dict().ok())
+    let Some(sig) =
+        inherited(document, field, b"V").and_then(|o| resolve(document, o).as_dict().ok())
     else {
         return out;
     };
@@ -3521,9 +3511,11 @@ fn values_judged(document: &Document) -> std::collections::BTreeSet<lopdf::Objec
         let Some(field) = node.dict else {
             return fields::Flow::Leaf;
         };
-        if name_of(document, field, b"FT") == "Sig" {
+        if terminal_signature(document, field) {
             fields_met += 1;
-            if let Ok(value) = field.get(b"V").and_then(Object::as_reference) {
+            if let Some(value) =
+                inherited(document, field, b"V").and_then(|v| v.as_reference().ok())
+            {
                 values.insert(value);
             }
         }
@@ -3575,6 +3567,26 @@ fn inherited<'a>(
 fn is_signature_field(document: &Document, widget: &lopdf::Dictionary) -> bool {
     inherited(document, widget, b"FT").and_then(|o| resolve(document, o).as_name().ok())
         == Some(b"Sig".as_slice())
+}
+
+/// A terminal field has either no children or widget annotations as children.
+/// A separate widget has no field attributes of its own. A merged field/widget
+/// does, and must itself be counted.
+fn terminal_signature(document: &Document, field: &Dictionary) -> bool {
+    let widget_only = |dict: &Dictionary| {
+        is_widget(document, dict) && !dict.has(b"T") && !dict.has(b"FT") && !dict.has(b"V")
+    };
+    if widget_only(field) || !is_signature_field(document, field) {
+        return false;
+    }
+    // In a field tree the children of one node are all fields or all widgets.
+    field
+        .get(b"Kids")
+        .ok()
+        .and_then(|kids| resolve(document, kids).as_array().ok())
+        .and_then(|kids| kids.first())
+        .and_then(|kid| resolve(document, kid).as_dict().ok())
+        .is_none_or(widget_only)
 }
 
 /// Whether two objects are the same, for the purpose of "did the append rewrite
@@ -6134,6 +6146,43 @@ mod tests {
             "and its certificate is read like any other"
         );
         assert_eq!(properties.limits.unreadable, 0, "nothing was walked past");
+    }
+
+    #[test]
+    fn inherited_signature_is_counted_once_and_prevents_a_form_rewrite() {
+        let (mut doc, _, _) = crate::forms::tests::fixture();
+        let value = doc.add_object(
+            dictionary! { "Type" => "Sig", "Contents" => Object::string_literal(vec![0x30, 0x00]) },
+        );
+        let group = doc.add_object(
+            dictionary! { "FT" => "Sig", "T" => Object::string_literal("Approval"), "V" => value },
+        );
+        let field = doc.add_object(
+            dictionary! { "T" => Object::string_literal("Signature"), "Parent" => group },
+        );
+        let widget = doc.add_object(dictionary! { "Subtype" => "Widget", "Parent" => field });
+        let second = doc.add_object(dictionary! { "Subtype" => "Widget", "Parent" => field });
+        doc.get_dictionary_mut(field)
+            .unwrap()
+            .set("Kids", vec![Object::Reference(widget), second.into()]);
+        doc.get_dictionary_mut(group)
+            .unwrap()
+            .set("Kids", vec![Object::Reference(field)]);
+        let form = doc.add_object(dictionary! { "Fields" => vec![Object::Reference(group)] });
+        doc.catalog_mut().unwrap().set("AcroForm", form);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let properties = scan(&bytes, 0, None).unwrap();
+        assert_eq!(properties.signatures.len(), 1);
+        assert_eq!(properties.signatures[0].field, "Approval.Signature");
+        assert!(properties.signatures[0].signed);
+        assert!(crate::cli::fill::signed_refusal("form.pdf", &properties).is_some());
+        let retained = super::signature_values(&doc);
+        assert_eq!(
+            retained.values,
+            [("Approval.Signature".to_owned(), vec![0x30, 0])]
+        );
+        assert!(super::values_judged(&doc).contains(&value));
     }
 
     /// Builds a document whose `/AcroForm /Fields` is the tree described --- one

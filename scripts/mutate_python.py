@@ -120,10 +120,10 @@ class Mutation:
 
 
 #: The `run: |` step in `ci.yml` whose interior these mutations plant into. The
-#: `run:` key sits at eight columns, so a line at twelve is inside the block and
+#: `run:` key sits at eight columns, so a line at ten is inside the block and
 #: one at eight is not --- which is the whole of the distinction the last of the
 #: three tests.
-CI_BLOCK = "            brew install qpdf\n"
+CI_BLOCK = "          openssl version\n"
 
 
 def _workflow_paths() -> int:
@@ -201,8 +201,8 @@ MUTATIONS = [
         "fixtures: a line dedented out of the block must not be read",
         "fixtures",
         ".github/workflows/ci.yml",
-        CI_BLOCK,
-        CI_BLOCK + "        ./dedented testdata/no-such-fixture.pdf\n",
+        " --key p256\n",
+        " --key p256\n        ./dedented testdata/no-such-fixture.pdf\n",
         red=False,
         says=f"all {WORKFLOW_PATHS} workflow fixture path(s)",
     ),
@@ -221,6 +221,12 @@ MUTATIONS = [
         "    # " + ENTRY.strip(),
         red=True,
         says="testdata/text-wide.pdf",
+    ),
+    Mutation(
+        "fixtures: the signing probes need a producer with signed fixtures enabled",
+        "fixtures", ".github/workflows/ci.yml",
+        "scripts/ci_fixtures.py --signed --hostile", "scripts/ci_fixtures.py --hostile",
+        red=True, says="testdata/incr-signed.pdf",
     ),
     # --- the trap index, in both directions ----------------------------------
     # **Both rows aimed at `AGENTS.md` until 2026-09-06**, which is where the
@@ -441,8 +447,8 @@ MUTATIONS = [
         "anchors: a mutation anchor that no longer occurs in the file it names",
         "anchors",
         "scripts/mutate_python.py",
-        'CI_BLOCK = "            brew install qpdf\\n"',
-        'CI_BLOCK = "            brew install a package that is not there\\n"',
+        'CI_BLOCK = "          openssl version\\n"',
+        'CI_BLOCK = "          openssl no-such-command\\n"',
         red=True,
         says="anchor occurs",
     ),

@@ -31,6 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "BUILD.md"
 CORPUS = ROOT / "docs" / "build"
+REQUIRED_INDEXES = {"docs/build/windows-viewer.md", "docs/build/running.md"}
 MARKER = re.compile(r"^<!-- build-index: (docs/build/[A-Za-z0-9._-]+\.md) -->$")
 
 
@@ -71,6 +72,8 @@ def check(build: str, corpus: dict[str, str]) -> list[str]:
     if not corpus:
         return ["docs/build/ holds no file, so nothing was compared"]
     found = indexes(build)
+    for missing in sorted(REQUIRED_INDEXES - found.keys()):
+        wrong.append(f"BUILD.md is missing its index of {missing}")
     if not found:
         wrong.append("BUILD.md has no `<!-- build-index: ... -->` line, so no list was compared")
     for rel, bullets in found.items():
@@ -100,10 +103,10 @@ def check(build: str, corpus: dict[str, str]) -> list[str]:
 
 
 def self_test() -> int:
-    corpus = {"docs/build/a.md": "# A\n\n### One\n\ntext\n\n```\n### not a heading\n```\n\n### Two\n",
-              "docs/build/b.md": "# B\n\nrecords\n"}
-    good = ("[a](docs/build/a.md) [b](docs/build/b.md)\n\n<!-- build-index: docs/build/a.md -->\n"
-            "- One\n- Two\n\nmore\n")
+    corpus = {"docs/build/windows-viewer.md": "# A\n\n### One\n\ntext\n\n```\n### not a heading\n```\n\n### Two\n",
+              "docs/build/running.md": "# B\n\n### Records\n"}
+    good = ("[a](docs/build/windows-viewer.md) [b](docs/build/running.md)\n\n<!-- build-index: docs/build/windows-viewer.md -->\n"
+            "- One\n- Two\n\nmore\n<!-- build-index: docs/build/running.md -->\n- Records\n")
     cases = [
         ("the index as it should be passes", good, corpus, False),
         ("a missing title fails", good.replace("- Two\n", ""), corpus, True),
@@ -111,10 +114,10 @@ def self_test() -> int:
         ("another order fails", good.replace("- One\n- Two\n", "- Two\n- One\n"), corpus, True),
         ("a duplicate bullet fails", good.replace("- Two\n", "- Two\n- Two\n"), corpus, True),
         ("a heading in fenced code is not indexed", good.replace("- Two\n", "- Two\n- not a heading\n"), corpus, True),
-        ("a file nothing links fails", good.replace("[b](docs/build/b.md)", ""), corpus, True),
-        ("no marker fails", good.replace("<!-- build-index: docs/build/a.md -->\n", ""), corpus, True),
-        ("a marker naming a missing file fails", good.replace("a.md -->", "c.md -->"), corpus, True),
-        ("an indexed file with no heading fails", good.replace("a.md -->", "b.md -->"), corpus, True),
+        ("a file nothing links fails", good.replace("[b](docs/build/running.md)", ""), corpus, True),
+        ("removing one required index fails even with both links intact", good.replace("<!-- build-index: docs/build/windows-viewer.md -->\n", ""), corpus, True),
+        ("a marker naming a missing file fails", good.replace("windows-viewer.md -->", "c.md -->"), corpus, True),
+        ("an indexed file with no heading fails", good, {**corpus, "docs/build/running.md": "# No sections"}, True),
         ("an empty corpus fails", good, {}, True),
     ]
     bad = 0

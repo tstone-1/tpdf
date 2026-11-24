@@ -110,6 +110,7 @@ describe("CompressDialog", () => {
     expect(d.save.disabled).toBe(false);
     d.save.dispatch("click", {});
     await expect(d.answer).resolves.toEqual({ pictures: null, shrinkage: answerFor(null) });
+    expect(d.dialog["estimate"]).toBeNull();
     expect(d.dialog.isOpen).toBe(false);
   });
 
@@ -243,6 +244,21 @@ describe("CompressDialog", () => {
     expect(d.dialog.isOpen).toBe(false);
     // The pictures of the reader's document are not kept.
     expect(d.before.getAttribute("src")).toBeNull();
+    expect(d.dialog["estimate"]).toBeNull();
+  });
+
+  it("keeps palette shortcuts and Tab inside the open dialog", async () => {
+    const d = open();
+    await settle(60);
+    let stopped = false;
+    d.backdrop.dispatch("keydown", { key: "k", ctrlKey: true, stopPropagation() { stopped = true; } });
+    expect(stopped).toBe(true);
+    d.radio(0).focused = false;
+    d.backdrop.dispatch("keydown", { key: "Tab", target: d.save });
+    expect(d.radio(0).focused).toBe(true);
+    d.backdrop.dispatch("keydown", { key: "Tab", shiftKey: true, target: d.radio(0) });
+    expect(d.save.focused).toBe(true);
+    d.dialog.close();
   });
 
   it("puts nothing in a picture but a PNG the backend encoded", async () => {

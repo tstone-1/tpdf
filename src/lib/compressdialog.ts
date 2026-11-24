@@ -213,15 +213,22 @@ export class CompressDialog {
       if (event.target === this.backdrop) this.settle(null);
     });
     this.backdrop.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Tab") {
+        const first = this.radios.get(this.selected);
+        const last = this.save.disabled ? cancel : this.save;
+        if (first && event.target === (event.shiftKey ? first : last)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        }
+      }
       if (event.key === "Escape") {
         event.preventDefault();
-        event.stopPropagation();
         this.settle(null);
         return;
       }
       // Stopped as well as defaulted away: the window's key handler binds Enter.
       if (event.key === "Enter") {
-        event.stopPropagation();
         if (event.target === cancel || event.target === this.save) return;
         event.preventDefault();
         if (event.target === this.dpi || event.target === this.quality) {
@@ -398,6 +405,7 @@ export class CompressDialog {
   private settle(chosen: Chosen | null): void {
     const pending = this.pending;
     this.pending = null;
+    this.estimate = null;
     if (this.shown) {
       this.shown = false;
       this.backdrop.style.display = "none";

@@ -1268,8 +1268,8 @@ ROWS += [
     Mutation(
         "cli: read a backwards page range as nothing",
         "src/cli/text.rs",
-        "                if from > to {",
-        "                if false {",
+        "    if first > last {",
+        "    if false {",
         "a_page_list_is_read_as_the_palette_reads_one",
     ),
     Mutation(

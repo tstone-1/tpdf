@@ -723,9 +723,10 @@ impl InWorker {
     ///
     /// The file could not be mapped, the worker could not be started, PDFium
     /// refused the job, or no answer came within [`DEFAULT_DEADLINE`].
-    pub fn printed_pages(&self, file: &std::fs::File, len: usize) -> Result<usize, String> {
-        let mapped = Shm::map_open_file(file, len)?;
-        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+    pub fn printed_pages(&self, file: &std::fs::File, len: usize) -> Result<usize, Declined> {
+        let mapped = Shm::map_open_file(file, len).map_err(Declined::Failed)?;
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)
+            .map_err(Declined::Failed)?;
         let pid = worker.pid();
         let rx = asked_on_a_thread(worker, |worker| {
             match Self::asked(
@@ -735,18 +736,18 @@ impl InWorker {
                 },
             ) {
                 Ok(Reply::Open { page_count, .. }) => Ok(page_count),
-                Ok(other) => Err(said!(
+                Ok(other) => Err(Declined::Failed(said!(
                     "the worker answered the print job's read-back with {reply}",
                     reply = other.described()
-                )),
-                Err(why) => Err(why.message().to_string()),
+                ))),
+                Err(why) => Err(why),
             }
         });
         awaited(&rx, DEFAULT_DEADLINE, pid).map_err(|_| {
-            said!(
+            Declined::Failed(said!(
                 "the worker reading the print job back did not answer within {seconds} s",
                 seconds = DEFAULT_DEADLINE.as_secs()
-            )
+            ))
         })?
     }
 
@@ -1128,13 +1129,14 @@ impl Rewriter for InWorker {
         // than the pathnames, a worker spawned for this one answer, and the ask
         // on a thread so a document that sends `lopdf` round in circles cannot
         // hold the blocking pool for ever.
-        let mapped = Shm::map_open_file(source, len)?;
-        let worker = Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir)?;
+        let mapped = Shm::map_open_file(source, len).map_err(Refusal::failed)?;
+        let worker = Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir)
+            .map_err(Refusal::failed)?;
 
         let pid = worker.pid();
         let job = job.clone();
         let rx = asked_on_a_thread(worker, move |worker| Self::ask_print_range(worker, &job));
-        awaited(&rx, DEFAULT_DEADLINE, pid)?
+        awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Refusal::failed)?
     }
 }
 
@@ -1278,20 +1280,21 @@ impl InWorker {
     }
 
     fn ask_print_range(worker: &mut Worker, job: &crate::print::Job) -> Result<usize, Refusal> {
-        let answered = worker.call(&Request::PrintRange { job: job.clone() })?;
+        let answered = worker
+            .call(&Request::PrintRange { job: job.clone() })
+            .map_err(Refusal::failed)?;
         if !answered.ok {
             return Err(answered.into());
         }
         match answered.reply {
             Some(Reply::Rewrote(bytes)) => Ok(bytes),
-            other => Err(said!(
+            other => Err(Refusal::failed(said!(
                 "the worker answered the print job with {reply}",
                 reply = match other {
                     Some(reply) => reply.described(),
                     None => said!("no payload at all"),
                 }
-            )
-            .into()),
+            ))),
         }
     }
 }

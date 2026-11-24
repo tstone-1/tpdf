@@ -119,7 +119,7 @@ describe("what a smaller copy comes to, in words", () => {
   it("says what the two pictures are and how far the picture is reduced", () => {
     expect(caption(sample)).toBe(
       "Part of page 3 at 200%: now on the left, the copy on the right. " +
-        "Its largest picture goes from 520 to 110 pixels an inch.",
+        "On this page, an image or opacity mask goes from 520 to 110 pixels an inch.",
     );
     // A picture only stored differently has no resolution to report.
     const same = "Part of page 3 at 200%: now on the left, the copy on the right.";

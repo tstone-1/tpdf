@@ -13,8 +13,9 @@ use std::path::PathBuf;
 
 use super::args::{unknown, value};
 use super::report::{self, SCHEMA};
-use super::text::page_list;
+use super::text::page_range;
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
+use crate::save_outside::Declined;
 use crate::{print, printer, save};
 
 pub const COMMAND: Registered = Registered {
@@ -30,6 +31,18 @@ struct Print {
     printer: String,
     pages: Option<Vec<u32>>,
     json: bool,
+}
+
+fn ordered_pages(raw: &str) -> Result<Vec<u32>, String> {
+    let mut pages = Vec::new();
+    for part in raw.split(',') {
+        let range = page_range(raw, part)?;
+        if pages.len() + (*range.end() - *range.start()) as usize + 1 > 100_000 {
+            return Err("--pages selects too many pages; at most 100000 per command".into());
+        }
+        pages.extend(range);
+    }
+    Ok(pages)
 }
 
 fn parse(args: &[String]) -> Result<Print, String> {
@@ -50,7 +63,7 @@ fn parse(args: &[String]) -> Result<Print, String> {
         match arg.as_str() {
             "--" => positional = true,
             "--printer" => command.printer = value(arg, &mut rest)?.to_string(),
-            "--pages" => command.pages = Some(page_list(value(arg, &mut rest)?)?),
+            "--pages" => command.pages = Some(ordered_pages(value(arg, &mut rest)?)?),
             "--json" => command.json = true,
             flag if flag.starts_with('-') => return Err(unknown("print", flag)),
             path => paths.push(path.into()),
@@ -64,6 +77,13 @@ fn parse(args: &[String]) -> Result<Print, String> {
     }
     command.input = paths.remove(0);
     Ok(command)
+}
+
+fn range_job(pages: &[u32]) -> print::Job {
+    print::Job {
+        pages: print::select(None, Some(pages.to_vec())),
+        turns: 0,
+    }
 }
 
 impl Subcommand for Print {
@@ -80,21 +100,12 @@ impl Subcommand for Print {
             None => std::fs::read(&self.input)
                 .map_err(|e| refused(format!("could not read {}: {e}", self.input.display())))?,
             Some(pages) => {
-                let job = print::Job {
-                    pages: print::Pages::Only(
-                        pages
-                            .iter()
-                            .map(|&number| print::PagePlan { number, turns: 0 })
-                            .collect(),
-                    ),
-                    turns: 0,
-                };
+                let job = range_job(pages);
                 save::print_range_bytes(&self.input, &job, &env.worker())
-                    .map_err(|e| refused(e.message))?
+                    .map_err(super::pages::refused)?
             }
         };
-        let found = read_back(env, &bytes)?;
-        print::expect_pages(found, self.pages.as_ref().map(Vec::len)).map_err(refused)?;
+        let found = checked_pages(read_back(env, &bytes), self.pages.as_ref().map(Vec::len))?;
         let title = self.input.file_name().map_or_else(
             || "Document".to_owned(),
             |name| name.to_string_lossy().into_owned(),
@@ -131,14 +142,31 @@ impl Subcommand for Print {
     }
 }
 
+/// An invalid input is a refusal. Once the writer has built a range, a
+/// refusal by the independent reader means the generated output failed.
+fn checked_pages(
+    reading: Result<usize, Declined>,
+    expected: Option<usize>,
+) -> Result<usize, Failure> {
+    let exit = if expected.is_some() {
+        Exit::Internal
+    } else {
+        Exit::Refused
+    };
+    let found = reading.map_err(|why| match why {
+        Declined::Failed(_) => Failure::from(why),
+        _ => Failure::new(exit, why.message()),
+    })?;
+    print::expect_pages(found, expected).map_err(|why| Failure::new(exit, why))?;
+    Ok(found)
+}
+
 /// How many pages the platform's reader finds in the job: PDFKit on macOS,
 /// `Windows.Data.Pdf` on Windows, PDFium in a worker on Linux.
-fn read_back(env: &Env<'_>, bytes: &[u8]) -> Result<usize, Failure> {
+fn read_back(env: &Env<'_>, bytes: &[u8]) -> Result<usize, Declined> {
+    #[cfg(any(windows, target_os = "macos"))]
     let unread = || {
-        Failure::new(
-            Exit::Refused,
-            "the print job could not be read back, so it will not be printed",
-        )
+        Declined::Refused("the print job could not be read back, so it will not be printed".into())
     };
     #[cfg(target_os = "macos")]
     {
@@ -156,11 +184,73 @@ fn read_back(env: &Env<'_>, bytes: &[u8]) -> Result<usize, Failure> {
     }
     #[cfg(target_os = "linux")]
     {
-        let (path, file) =
-            crate::print_linux::stage(bytes).map_err(|e| Failure::new(Exit::Internal, e))?;
+        let (path, file) = crate::print_linux::stage(bytes).map_err(Declined::Failed)?;
         let counted = env.worker().printed_pages(&file, bytes.len());
         drop(file);
         let _ = std::fs::remove_file(&path);
-        counted.map_err(|_| unread())
+        counted
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn print_refuses_unreadable_input_and_reports_worker_or_writer_failure() {
+        assert_eq!(
+            checked_pages(Err(Declined::Refused("unreadable".into())), None)
+                .unwrap_err()
+                .exit,
+            Exit::Refused
+        );
+        assert_eq!(
+            checked_pages(Err(Declined::Refused("unreadable".into())), Some(2))
+                .unwrap_err()
+                .exit,
+            Exit::Internal
+        );
+        assert_eq!(
+            checked_pages(Err(Declined::Failed("timeout".into())), None)
+                .unwrap_err()
+                .exit,
+            Exit::Internal
+        );
+        assert_eq!(
+            checked_pages(Ok(1), Some(2)).unwrap_err().exit,
+            Exit::Internal
+        );
+        assert_eq!(checked_pages(Ok(2), Some(2)).unwrap(), 2);
+    }
+
+    #[test]
+    fn print_range_keeps_page_identity_order_and_repetitions() {
+        let args = ["doc.pdf", "--printer", "Office", "--pages", "2,1-2"].map(String::from);
+        let command = parse(&args).unwrap();
+        let (mut doc, _, _) = crate::forms::tests::fixture();
+        for (page, id) in doc.get_pages() {
+            doc.get_dictionary_mut(id)
+                .unwrap()
+                .set("TestPageNumber", i64::from(page));
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let job = range_job(command.pages.as_ref().unwrap());
+        let output = print::build_update(&bytes, &job).unwrap();
+        let written = lopdf::Document::load_mem(&output).unwrap();
+        let labels: Vec<_> = written
+            .get_pages()
+            .values()
+            .map(|id| {
+                written
+                    .get_dictionary(*id)
+                    .unwrap()
+                    .get(b"TestPageNumber")
+                    .unwrap()
+                    .as_i64()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(labels, [2, 1, 2]);
+        assert!(ordered_pages("1-100000,1").is_err());
     }
 }

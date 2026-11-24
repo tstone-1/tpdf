@@ -222,7 +222,7 @@ pub(crate) fn sized_appearance(appearance: Option<&[u8]>, size: f32) -> Vec<u8> 
 /// inherits, or the form's.
 pub(crate) fn default_appearance(doc: &Document, field: ObjectId) -> Option<Vec<u8>> {
     inherited(doc, field, b"DA")
-        .or_else(|| acroform(doc)?.get(b"DA").ok())
+        .or_else(|| acroform(doc).ok()??.get(b"DA").ok())
         .and_then(|da| da.as_str().ok())
         .map(<[u8]>::to_vec)
 }
@@ -303,9 +303,18 @@ pub(crate) fn integer(doc: &Document, id: ObjectId, key: &[u8]) -> i64 {
         .unwrap_or(0)
 }
 
-fn acroform(doc: &Document) -> Option<&Dictionary> {
-    let o = doc.catalog().ok()?.get(b"AcroForm").ok()?;
-    doc.dereference(o).ok()?.1.as_dict().ok()
+fn acroform(doc: &Document) -> Result<Option<&Dictionary>, String> {
+    let catalog = doc
+        .catalog()
+        .map_err(|e| said!("Could not read the document catalog: {e}"))?;
+    let Ok(entry) = catalog.get(b"AcroForm") else {
+        return Ok(None);
+    };
+    let unreadable = |e| said!("Could not read the form dictionary: {e}");
+    match doc.dereference(entry).map_err(unreadable)?.1 {
+        Object::Null => Ok(None),
+        form => form.as_dict().map(Some).map_err(unreadable),
+    }
 }
 
 const MAX_ANSWER_BYTES: usize = 16 * 1024;
@@ -553,7 +562,7 @@ pub(crate) fn button_state(doc: &Document, id: ObjectId) -> Result<Vec<u8>, Stri
 
 /// Reads widgets in page and annotation order without loading a PDFium page.
 pub fn scan(doc: &Document) -> Result<Form, String> {
-    let Some(form) = acroform(doc) else {
+    let Some(form) = acroform(doc)? else {
         return Ok(Form::default());
     };
     if form.has(b"XFA") {
@@ -1608,6 +1617,24 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn distinguishes_an_absent_form_from_an_unreadable_form() {
+        let (mut doc, _, _) = fixture();
+        for page in doc.get_pages().values() {
+            doc.get_dictionary_mut(*page).unwrap().remove(b"Annots");
+        }
+        doc.catalog_mut().unwrap().remove(b"AcroForm");
+        assert!(scan(&doc).unwrap().widgets.is_empty());
+        doc.catalog_mut()
+            .unwrap()
+            .set("AcroForm", dictionary! { "Fields" => Vec::<Object>::new() });
+        assert!(scan(&doc).unwrap().widgets.is_empty());
+        for unreadable in [Object::Integer(7), Object::Reference((9999, 0))] {
+            doc.catalog_mut().unwrap().set("AcroForm", unreadable);
+            assert!(scan(&doc).unwrap_err().contains("form dictionary"));
+        }
+    }
 
     /// Mixed controls with export/label pairs and duplicate exports, on two pages.
     pub(crate) fn mixed_fixture() -> (Document, ObjectId, ObjectId, ObjectId) {

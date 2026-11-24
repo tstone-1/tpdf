@@ -1912,7 +1912,8 @@ font fallback and rasterization can differ across OS or PDFium versions.
 
 **Printing.** `tpdf print report.pdf --printer Office --pages 1-3` prints to the
 printer named, with no dialog. Without `--pages` the file goes to the printer as it is;
-with it, a sandboxed worker writes those pages into the job, as *Print* with a page range
+with it, a sandboxed worker writes pages in the order requested, including repetitions.
+For example, `--pages 4,2,4` prints three pages, as *Print* with that page range
 does in the window. The job is read back and its pages counted before anything is sent:
 by the operating system's own PDF reader on macOS and Windows, and by the sandboxed
 renderer on Linux. macOS and Linux hand the PDF to CUPS; Windows draws each page on the

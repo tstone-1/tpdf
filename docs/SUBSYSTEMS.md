@@ -213,6 +213,9 @@ Text uses Helvetica with the same supported character set as `textbox.rs`.
 `FormLayer` commits and drains validation before a tab transition or save.
 `tabs_check.py --phase forms` drives the application on disposable synthetic forms;
 `form_pdfkit_check.swift` independently reads and renders the saved result.
+Signature reporting, long-term validation and rewrite preflight use the terminal field's
+inherited type and value. A field with separate widget annotations counts once. An
+unreadable form dictionary must surface as a read error in the field listing.
 When writing inherited fields, materialise `/FT` and `/Ff` on the terminal field:
 PDFKit reads `/V` through the parent chain but did not render our fixture's text
 when `/FT` existed only on its grandparent. The unit test pins this compatibility

@@ -5667,7 +5667,7 @@
    * gives: ⌘K was unreachable by any check while it lived in this file.
    */
   function onWindowKey(event: KeyboardEvent) {
-    if (printPreviewDialog?.isOpen) return;
+    if (printPreviewDialog?.isOpen || compressDialog?.isOpen) return;
     // First, and it has to be: Escape closes the menu rather than the find bar,
     // and the arrows walk its rows rather than scrolling the document under it.
     // A closed menu consumes nothing, so this costs one boolean per keystroke.

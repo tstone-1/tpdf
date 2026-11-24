@@ -72,6 +72,10 @@ def check_case(directory: Path) -> dict:
     require((lists > 0 and responses == 0) if directory.name == 'crl'
             else (responses > 0 and lists == 0), 'revocation evidence does not match the fixture case')
     require(all(s.intact and s.valid and s.trusted for s in statuses), 'a signed revision is not intact and trusted')
+    signer_chain = list(statuses[0].validation_path.iter_certs(include_root=True))
+    expected_length = 3 if directory.name == 'intermediate' else 2
+    require(len(signer_chain) == expected_length and signer_chain[0].dump() == roots[0].dump(),
+            'document signer path does not match the fixture case')
     require(statuses[0].docmdp_ok and statuses[0].coverage.name == 'ENTIRE_REVISION'
             and statuses[1].coverage.name == 'ENTIRE_FILE', 'signed revision coverage or permitted changes differ')
     timestamp = statuses[0].timestamp_validity

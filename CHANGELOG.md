@@ -19,6 +19,13 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Signature reporting and form-fill preflight recognise signatures in hierarchical fields.
+  The CLI reports a damaged form dictionary as unreadable.
+- CLI printing preserves the requested order and repeated pages and distinguishes a failed
+  worker or print-job read-back from a refused input.
+- The compression dialog keeps keyboard focus, releases the document when dismissed and
+  describes resolution changes to image opacity masks.
+
 - Cut and copy now refuse threaded replies so they stay attached to their comments. Paste reports when
   a group of annotations cannot fit on the destination page.
 - Page favourites work when reopening a PDF through an equivalent path. A refreshed

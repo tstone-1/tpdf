@@ -142,6 +142,18 @@ pub(crate) fn variable(name: &str) -> Result<String, String> {
 ///
 /// The sentence for exit code 2.
 pub fn page_list(raw: &str) -> Result<Vec<u32>, String> {
+    let mut pages = std::collections::BTreeSet::new();
+    for range in raw.split(',') {
+        pages.extend(page_range(raw, range)?);
+        if pages.len() > 100_000 {
+            return Err("--pages selects too many pages; at most 100000 per command".into());
+        }
+    }
+    Ok(pages.into_iter().collect())
+}
+
+/// A single one-based inclusive interval shared by ordered and unordered selections.
+pub(super) fn page_range(raw: &str, part: &str) -> Result<std::ops::RangeInclusive<u32>, String> {
     let number = |part: &str| -> Result<u32, String> {
         match part.trim().parse::<u32>() {
             Ok(n) if n >= 1 => Ok(n),
@@ -151,31 +163,23 @@ pub fn page_list(raw: &str) -> Result<Vec<u32>, String> {
             )),
         }
     };
-    let mut pages = std::collections::BTreeSet::new();
-    for part in raw.split(',') {
-        if part.trim().is_empty() {
-            return Err(format!("`--pages {raw}` has an empty part"));
-        }
-        match part.split_once('-') {
-            None => {
-                pages.insert(number(part)?);
-            }
-            Some((from, to)) => {
-                let (from, to) = (number(from)?, number(to)?);
-                if from > to {
-                    return Err(format!("`--pages {raw}`: {from}-{to} runs backwards"));
-                }
-                if to - from >= 100_000 {
-                    return Err("--pages selects too many pages; at most 100000 per command".into());
-                }
-                pages.extend(from..=to);
-            }
-        }
-        if pages.len() > 100_000 {
-            return Err("--pages selects too many pages; at most 100000 per command".into());
-        }
+    if part.trim().is_empty() {
+        return Err(format!("`--pages {raw}` has an empty part"));
     }
-    Ok(pages.into_iter().collect())
+    let (first, last) = match part.split_once('-') {
+        Some((from, to)) => (number(from)?, number(to)?),
+        None => {
+            let n = number(part)?;
+            (n, n)
+        }
+    };
+    if first > last {
+        return Err(format!("`--pages {raw}`: {first}-{last} runs backwards"));
+    }
+    if last - first >= 100_000 {
+        return Err("--pages selects too many pages; at most 100000 per command".into());
+    }
+    Ok(first..=last)
 }
 
 impl Subcommand for Text {

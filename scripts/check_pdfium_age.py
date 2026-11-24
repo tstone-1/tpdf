@@ -74,7 +74,12 @@ class Unanswered(Exception):
 
 def pinned(text: str) -> tuple[int, str]:
     """The branch and the commit `pdfium_build.json` names."""
-    pins = json.loads(text)
+    try:
+        pins = json.loads(text)
+    except ValueError as error:
+        raise Unanswered(f"{PINS.name} contains invalid JSON") from error
+    if not isinstance(pins, dict):
+        raise Unanswered(f"{PINS.name} must contain an object")
     branch = re.fullmatch(r"(\d+)-tpdf\.\d+", str(pins.get("version", "")))
     commit = str(pins.get("pdfium", ""))
     if not branch or not re.fullmatch(r"[0-9a-f]{40}", commit):
@@ -113,7 +118,7 @@ def stable_branch(text: str) -> tuple[int, str]:
 def branch_head(text: str) -> str:
     """The commit a branch ends at, from gitiles' answer."""
     # Gitiles puts `)]}'` in front of its JSON, against a page that includes it.
-    body = text.split("\n", 1)[1] if text.startswith(")]}'") else text
+    body = text.partition("\n")[2] if text.startswith(")]}'") else text
     try:
         commit = str(json.loads(body)["commit"])
     except (ValueError, LookupError, TypeError) as error:
@@ -213,6 +218,9 @@ def self_test() -> int:
     for name, text, reader in (
         ("a repin to a branch name is refused", pins, lambda text: repinned(text, "8078-tpdf.1", "main")),
         ("a repin to a version with no build is refused", pins, lambda text: repinned(text, "8078", later)),
+        ("invalid pin JSON is not read", "{", pinned),
+        ("a non-object pin is not read", "[]", pinned),
+        ("a Gitiles prefix without a body is not read", ")]}'", branch_head),
         ("a pin with no branch is not read", json.dumps({"version": "latest", "pdfium": commit}), pinned),
         ("an empty chromiumdash answer is not read", "[]", stable_branch),
         ("a version of three numbers is not read", json.dumps([{"version": "156.0.8078"}]), stable_branch),

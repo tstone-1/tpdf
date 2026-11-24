@@ -519,7 +519,7 @@ fn into_scratch(
     let (at, mut into) = job_scratch()?;
     let built = build(&mut reading, len, &mut into).and_then(|wrote| {
         read_whole(&mut into, wrote)
-            .map_err(|e| Refusal::from(said!("the print job could not be read back: {e}")))
+            .map_err(|e| Refusal::failed(said!("the print job could not be read back: {e}")))
     });
     // Whatever happened. The scratch file holds a decrypted, reordered copy of
     // the reader's document, so leaving one behind on a refusal would be worse
@@ -595,14 +595,14 @@ fn job_scratch() -> Result<(PathBuf, std::fs::File), Refusal> {
             Ok(file) => return Ok((at, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => {
-                return Err(Refusal::from(said!(
+                return Err(Refusal::failed(said!(
                     "the print job needs somewhere to be built and {at:?} could not be \
                      created: {e}"
                 )))
             }
         }
     }
-    Err(Refusal::from(said!(
+    Err(Refusal::failed(said!(
         "could not find an unused temporary name in {dir:?} after {STAGING_ATTEMPTS} tries"
     )))
 }

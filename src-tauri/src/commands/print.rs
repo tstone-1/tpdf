@@ -1031,7 +1031,12 @@ fn present_job(
     let (path, file) = crate::print_linux::stage(&bytes)?;
     let checked = save::InWorker::at(crate::pdfium_library_dir(app))
         .printed_pages(&file, bytes.len())
-        .map_err(|e| said!("the print job could not be read back, so it will not be printed: {e}"))
+        .map_err(|e| {
+            said!(
+                "the print job could not be read back, so it will not be printed: {e}",
+                e = e.message()
+            )
+        })
         .and_then(|pages| print::expect_pages(pages, expected));
     drop(file);
     if let Err(why) = checked {

@@ -1678,13 +1678,13 @@ ROWS += [
         "            complete = false;\n"
         "            return fields::Flow::Leaf;\n"
         "        };\n"
-        '        if name_of(document, field, b"FT") == "Sig" {\n'
-        "            if let Some(sig) = field",
+        '        if terminal_signature(document, field) {\n'
+        "            if let Some(sig) =",
         "        let Some(field) = node.dict else {\n"
         "            return fields::Flow::Leaf;\n"
         "        };\n"
-        '        if name_of(document, field, b"FT") == "Sig" {\n'
-        "            if let Some(sig) = field",
+        '        if terminal_signature(document, field) {\n'
+        "            if let Some(sig) =",
         "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
     ),
     Mutation(
@@ -2016,8 +2016,8 @@ ROWS += [
         "            complete = false;\n"
         "            return fields::Flow::Leaf;\n"
         "        };\n"
-        '        if name_of(document, field, b"FT") == "Sig" {\n'
-        "            if let Some(sig) = field",
+        '        if terminal_signature(document, field) {\n'
+        "            if let Some(sig) =",
         "        if values.len() >= MAX_SIGNATURES {\n"
         "            complete = false;\n"
         "            return fields::Flow::Leaf;\n"
@@ -2026,8 +2026,8 @@ ROWS += [
         "            complete = false;\n"
         "            return fields::Flow::Leaf;\n"
         "        };\n"
-        '        if name_of(document, field, b"FT") == "Sig" {\n'
-        "            if let Some(sig) = field",
+        '        if terminal_signature(document, field) {\n'
+        "            if let Some(sig) =",
         "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
     ),
     Mutation(
