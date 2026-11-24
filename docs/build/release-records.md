@@ -2,7 +2,37 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
-**26.11.14 release verification, 2026-11-24.** All 39 local gates passed, including
+**26.11.14 verification and publication, 2026-11-24.** The release tag points to
+`2ad7be2b`. Three-platform CI (45425401677) and Audit (45425401521) passed.
+The release rehearsal (45440725156) and stable build (45448051374) each passed
+the packaged CLI and Python API checks on macOS, Windows and Linux.
+
+All eight draft downloads matched their SHA-256 digests. The updater signatures
+verified against the packaged files, and all four manifest entries matched their
+signature files. The stapled, notarized macOS app displayed the test page. The
+timestamped Windows installer passed all 26 install, launch and uninstall checks.
+After publication, all eight download URLs returned HTTP 200 without credentials,
+and the public updater manifest matched the draft byte for byte.
+
+Immediately after publication, the first 26.11.13 launch reported `current` on
+both platforms (289 ms on macOS, 246 ms on Windows). Both offered 26.11.14 on
+the second launch, installed it and reopened the document. macOS passed 12/12.
+On Windows, four cleanup checks failed after that first upgrade. The harness
+discarded the uninstaller while Windows still listed the scratch installation.
+Reinstalling and uninstalling the signed package restored the original PDF
+association and registry state. A fresh run offered the update on its first
+launch and passed 18/18. The harness now reports a nonzero uninstaller exit and
+preserves the uninstaller if the registration or payload remains.
+
+The Windows interrupted-download check passed 33/33. It retained the edits and
+installed 26.11.14 on the second attempt. Its control detected both deliberately
+applied rotations, and every other check passed.
+
+The Homebrew cask at `ac4c654` passed its online audit and livecheck reported
+26.11.14. The WinGet manifests passed validation and were submitted at `113c182e`
+in [pull request 445804](https://github.com/microsoft/winget-pkgs/pull/445804).
+
+All 39 local gates passed, including
 3,678 Rust library tests and 756 CLI checks on macOS. Windows passed 3,692 library
 tests and 755 CLI checks, with 12 library tests ignored and four CLI checks skipped.
 The macOS disk image and Windows installer each passed all 70 packaged

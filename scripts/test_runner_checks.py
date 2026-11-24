@@ -24,6 +24,27 @@ import stray
 
 
 class Observations(unittest.TestCase):
+    def test_uninstall_preserves_recovery_files_until_the_installation_is_gone(self):
+        for registered, payload, code in [(True, False, 7), (False, True, 0), (False, False, 0)]:
+            with self.subTest(registered=registered, payload=payload), tempfile.TemporaryDirectory() as temp:
+                folder = Path(temp) / "install"
+                folder.mkdir()
+                remover = folder / "uninstall.exe"
+                remover.touch()
+                if payload:
+                    (folder / "tpdf.exe").touch()
+                registry = {installed_check.UNINSTALL_KEY: "installed" if registered else None}
+                before = {installed_check.APP_KEY: None, installed_check.PDF_CLASS: None}
+                checks = installed_check.Checks()
+                with patch.object(installed_check, "bounded", return_value=code), \
+                     patch.object(installed_check, "registry", side_effect=registry.get), \
+                     patch.object(installed_check, "restore_app_key"), redirect_stdout(io.StringIO()) as output:
+                    installed_check.uninstall(checks, folder, before, run_it=True)
+                self.assertEqual(remover.is_file(), registered or payload)
+                self.assertEqual("the uninstaller succeeds" in checks.failed, bool(code))
+                if code:
+                    self.assertIn(f"exit {code}", output.getvalue())
+
     def test_engine_mappings_must_all_name_the_installed_file(self):
         engine = r"C:\Program Files\tpdf\pdfium\pdfium.dll"
         correct = win_modules.mapped_engines(["\\\\?\\" + engine.upper(), r"C:\pdfium-old\app.exe"])

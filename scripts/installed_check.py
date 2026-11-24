@@ -463,7 +463,9 @@ def uninstall(checks: Checks, folder: Path, before: dict[str, str | None], run_i
         if remover.is_file():
             # `_?=` keeps the uninstaller in place and makes it wait; without it
             # it copies itself to the temporary folder and returns at once.
-            bounded(f'"{remover}" /S _?={folder}', "the uninstaller", 180)
+            code = bounded(f'"{remover}" /S _?={folder}', "the uninstaller", 180)
+            if code:
+                checks.note(False, "the uninstaller succeeds", f"exit {code}")
 
     try:
         if run_it:
@@ -501,6 +503,13 @@ def uninstall(checks: Checks, folder: Path, before: dict[str, str | None], run_i
             remove()
     except RanOut as e:
         checks.note(False, "the uninstall ends within its time limit", str(e))
+        return
+    # Keep the uninstaller available for recovery when Windows still lists
+    # the installation or its payload is still on disk.
+    if registry(UNINSTALL_KEY) is not None or any(
+            path.is_file() and path != remover for path in folder.rglob("*")):
+        print(f"[INFO] preserving the incomplete uninstall in {folder}")
+        return
     shutil.rmtree(folder, ignore_errors=True)
 
 
