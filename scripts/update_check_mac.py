@@ -63,7 +63,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from update_log import SECOND_START_S, UpdateAttempt, explain, last_launch, served_old
+from update_log import isolated_session, log_timestamp, relaunched_answer, SECOND_START_S, UpdateAttempt, explain, last_launch, served_old
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 NAME = re.compile(r"^tpdf_(\d+\.\d+\.\d+)_aarch64\.dmg$")
@@ -206,6 +206,7 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
             checks.note(False, "Install update is chosen", "not chosen")
         ready = wait_for(pid, "Restart to finish update", "enabled", wait * 3 if press else 10)
         checks.note(ready == "enabled", "Restart to finish update becomes available", ready)
+        restart_after = log_timestamp()
         if ready == "enabled":
             menu(pid, "Restart to finish update", press=True)
 
@@ -229,10 +230,11 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
         checks.note(bool(named), "the document is open again, from under a folder with a space",
                     str(document))
         if again:
-            # Long enough for the new copy's own check for updates to answer.
-            time.sleep(15)
+            default_log = Path.home() / "Library/Logs/com.timostein.tpdf/tpdf.log"
+            completed = relaunched_answer((log, default_log), restart_after, again[0], wait)
             now = menu(again[0], "Install update")
-            checks.note(now == "disabled", "the new copy offers no update", now)
+            checks.note(completed == "current" and now == "disabled", "the new copy offers no update",
+                        f"launch check: {completed or 'no answer'}; menu: {now}")
         else:
             checks.note(False, "the new copy offers no update", "no new copy to ask")
         gate = run("spctl", "-a", "-vv", str(app))
@@ -302,34 +304,28 @@ def main() -> int:
     checks = Checks()
     attempt = UpdateAttempt()
     # Resolved, because `ps` prints the path without the `/var` link in it.
-    scratch = Path(tempfile.mkdtemp(prefix="tpdf-update-check-")).resolve()
-    kept = scratch / "session-as-it-was.json"
-    if REAL_SESSION.is_file():
-        shutil.move(str(REAL_SESSION), str(kept))
-    mount = scratch / "image"
     try:
-        spaced = scratch / "a folder with a space"
-        spaced.mkdir()
-        document = spaced / pdf.name
-        shutil.copyfile(pdf, document)
-        print(f"--- latest.json offers {new}; taking {old} out of {dmg.name} ---")
-        attached = run("hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount), str(dmg),
-                       timeout=120)
-        app = scratch / "tpdf.app"
-        copied = attached.returncode == 0 and run("ditto", str(mount / "tpdf.app"), str(app),
-                                                   timeout=120).returncode == 0
-        run("hdiutil", "detach", "-quiet", str(mount))
-        if checks.note(copied, "the application is copied out of the disk image",
-                       "" if copied else attached.stderr.strip()):
-            update(checks, app, document, scratch, old, new, args.wait, press=control != "no-press",
-                   attempt=attempt)
-    finally:
-        if REAL_SESSION.is_file():
-            REAL_SESSION.unlink()
-        if kept.is_file():
-            REAL_SESSION.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(kept), str(REAL_SESSION))
-        shutil.rmtree(scratch, ignore_errors=True)
+        with isolated_session(REAL_SESSION), tempfile.TemporaryDirectory(prefix="tpdf-update-check-") as tmp:
+            scratch = Path(tmp).resolve()
+            mount = scratch / "image"
+            spaced = scratch / "a folder with a space"
+            spaced.mkdir()
+            document = spaced / pdf.name
+            shutil.copyfile(pdf, document)
+            print(f"--- latest.json offers {new}; taking {old} out of {dmg.name} ---")
+            attached = run("hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount), str(dmg),
+                           timeout=120)
+            app = scratch / "tpdf.app"
+            copied = attached.returncode == 0 and run("ditto", str(mount / "tpdf.app"), str(app),
+                                                       timeout=120).returncode == 0
+            run("hdiutil", "detach", "-quiet", str(mount))
+            if checks.note(copied, "the application is copied out of the disk image",
+                           "" if copied else attached.stderr.strip()):
+                update(checks, app, document, scratch, old, new, args.wait, press=control != "no-press",
+                       attempt=attempt)
+    except (OSError, RuntimeError) as exc:
+        print(f"[ERROR] {exc}")
+        return 2
 
     print()
     first = attempt.summary()

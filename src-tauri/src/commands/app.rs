@@ -122,7 +122,11 @@ pub fn update_check_line(check: &UpdateCheck, ms: u32, launch: bool) -> String {
 /// same bounded, rotated sink every other diagnostic uses.
 #[tauri::command]
 pub fn note_update_check(check: UpdateCheck, ms: u32, launch: bool) {
-    crate::diag::note(&update_check_line(&check, ms, launch));
+    crate::diag::note(&format!(
+        "[pid {}] {}",
+        std::process::id(),
+        update_check_line(&check, ms, launch)
+    ));
 }
 
 /// Hands over documents that arrived from outside, and starts listening.

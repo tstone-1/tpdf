@@ -369,6 +369,22 @@ describe("tabs from last time that a launch could not open", () => {
     expect(sent).toEqual([["/b.pdf", "/a.pdf"], ["/b.pdf"]]);
   });
 
+  it("forgets a reopened Windows path across spellings and distinguishes POSIX case", async () => {
+    for (const [retained, reopened, remains] of [
+      ["D:\\Docs\\A.pdf", "d:/docs/a.pdf", false],
+      ["/Docs/A.pdf", "/docs/a.pdf", true],
+    ] as const) {
+      const sent: string[][] = [];
+      const tabs = new TabRecorder(async (paths) => { sent.push(paths); });
+      tabs.keepUnopened([retained], [retained, "/b.pdf"]);
+      tabs.note([reopened, "/b.pdf"], reopened);
+      tabs.note(["/b.pdf"], "/b.pdf");
+      await tabs.settled();
+      expect(sent[0]).toEqual(remains ? [retained, reopened, "/b.pdf"] : [reopened, "/b.pdf"]);
+      expect(sent.at(-1)).toEqual(remains ? [retained, "/b.pdf"] : ["/b.pdf"]);
+    }
+  });
+
   it("goes back after the tab before it, or first when none is open", () => {
     const order = ["/a.pdf", "/b.pdf", "/c.pdf", "/d.pdf"];
     expect(withUnopened(["/a.pdf", "/d.pdf"], ["/b.pdf", "/c.pdf"], order))

@@ -57,7 +57,6 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-from contextlib import contextmanager
 import json
 import os
 import shutil
@@ -73,7 +72,7 @@ from installed_check import (APP_KEY, NAME, PDF_CLASS, UNINSTALL_KEY, WM_CLOSE, 
                              registry, tool, uninstall, window_titles)
 from live_output import stream_results
 from win_modules import mapped_engines
-from update_log import SECOND_START_S, UpdateAttempt, explain, has_open_tab, last_launch, offered_button, served_old
+from update_log import isolated_session, log_timestamp, relaunched_answer, SECOND_START_S, UpdateAttempt, explain, has_open_tab, last_launch, offered_button, served_old
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 
@@ -180,35 +179,6 @@ def close(pids: list[int]) -> list[int]:
     return killed
 
 
-@contextmanager
-def isolated_session(real: Path):
-    """Keep the original beside the session until it can be restored atomically."""
-    backup_dir = real.parent.with_name(real.parent.name + ".updater-check-backup")
-    real.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        backup_dir.mkdir()
-    except FileExistsError as exc:
-        raise RuntimeError(f"Another check or an unrestored session owns {backup_dir}") from exc
-    kept = backup_dir / real.name
-    try:
-        if real.is_file():
-            real.replace(kept)
-        try:
-            yield
-        finally:
-            if kept.exists():
-                try:
-                    real.parent.mkdir(parents=True, exist_ok=True)
-                    kept.replace(real)
-                except OSError as exc:
-                    raise OSError(f"Could not restore {real}. The original remains at {kept}") from exc
-            else:
-                real.unlink(missing_ok=True)
-    finally:
-        if not kept.exists():
-            backup_dir.rmdir()
-
-
 def start(folder: Path, pdf: Path, env: dict[str, str], scratch: Path, old: str,
           wait: float) -> tuple[subprocess.Popen[bytes], int]:
     """Starts the installed old copy on the document; its window, or 0 when none came."""
@@ -273,6 +243,7 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
         if not offer:
             print(f"[INFO] the application's own update checks: {explain(scratch / 'tpdf.log')}")
             return
+        restart_after = log_timestamp()
         if not press:
             checks.note(False, "the button is pressed", "not pressed")
             time.sleep(15)
@@ -291,14 +262,15 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
         title = f"tpdf v{new}"
         engine = str(folder / "pdfium" / "pdfium.dll")
         again: list[int] = []
-        windows: list[tuple[int, str]] = []
+        windows: list[tuple[int, int]] = []
         workers: dict[int, set[str]] = {}
         named = False
         deadline = time.monotonic() + (wait * 3 if ended else 5)
         while time.monotonic() < deadline:
             again = [pid for pid in copies(folder) if pid != app.pid]
             started.extend(pid for pid in again if pid not in started)
-            windows = [w for pid in again for w in window_titles(pid) if w[1].startswith(title)]
+            windows = [(hwnd, pid) for pid in again for hwnd, caption in window_titles(pid)
+                       if caption.startswith(title)]
             for root in again:
                 for pid in descendants(root):
                     if paths := mapped_engines(modules_of(pid)):
@@ -320,8 +292,8 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
         checks.note(said.endswith(new), f"the installed tool is version {new}", said)
 
         if windows:
-            # Long enough for a check for updates to have answered.
-            time.sleep(12)
+            default_log = Path(os.environ["LOCALAPPDATA"]) / "com.timostein.tpdf/logs/tpdf.log"
+            completed = relaunched_answer((log, default_log), restart_after, windows[0][1], wait)
             now = []
             asked_until = time.monotonic() + 30
             # The first question to a new window's automation tree is often
@@ -329,10 +301,10 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
             while not now and time.monotonic() < asked_until:
                 now = buttons(script, windows[0][0])
                 time.sleep(1)
-            checks.note(any(line.startswith("BUTTON ") for line in now) and not any(
+            checks.note(completed == "current" and any(line.startswith("BUTTON ") for line in now) and not any(
                             line.startswith(("BUTTON Update to ", "BUTTON Update auf ")) for line in now),
                         "the new copy offers no update",
-                        f"{len(now)} buttons read" if now else "no button could be read")
+                        f"launch check: {completed or 'no answer'}; {len(now)} buttons read")
     finally:
         running = [pid for pid in copies(folder)]
         close(sorted(set(running) | ({app.pid} if app.poll() is None else set())))

@@ -12,8 +12,41 @@ as the old copy gets the second sentence of `explain` instead.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import re
+import time
 from pathlib import Path
+
+
+@contextmanager
+def isolated_session(real: Path):
+    """Keep the original beside the session until it can be restored atomically."""
+    backup_dir = real.parent.with_name(real.parent.name + ".updater-check-backup")
+    real.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        backup_dir.mkdir()
+    except FileExistsError as exc:
+        raise RuntimeError(f"Another check or an unrestored session owns {backup_dir}") from exc
+    kept = backup_dir / real.name
+    try:
+        if real.is_file():
+            real.replace(kept)
+        try:
+            yield
+        finally:
+            if kept.exists():
+                try:
+                    real.parent.mkdir(parents=True, exist_ok=True)
+                    kept.replace(real)
+                except OSError as exc:
+                    raise OSError(f"Could not restore {real}. The original remains at {kept}") from exc
+            else:
+                real.unlink(missing_ok=True)
+    finally:
+        if not kept.exists():
+            backup_dir.rmdir()
 
 
 def update_lines(log: Path) -> list[str]:
@@ -55,6 +88,32 @@ def last_launch(log: Path) -> str | None:
     if not launches:
         return None
     return launches[-1].rstrip().partition(": ")[2] or None
+
+
+def log_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def relaunched_answer(logs: tuple[Path, ...], since: str, pid: int, wait: float) -> str | None:
+    """The completed launch check written since restart, including a failed answer.
+
+    An installer can drop TPDF_LOG_FILE when it restarts the app. Read both the
+    test log and the platform log after the previous copy accepted the update.
+    Newer versions also name the PID. Older releases rely on the timestamp and
+    the exclusive check session.
+    """
+    deadline = time.monotonic() + wait
+    while True:
+        for log in logs:
+            for line in reversed(update_lines(log)):
+                match = re.fullmatch(
+                    r"(\S+) (?:\[pid (\d+)\] )?\[update\] launch check after \d+ ms: (.+)", line)
+                if match and match[1] >= since and match[2] in (None, str(pid)):
+                    return match[3]
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        time.sleep(min(0.25, remaining))
 
 
 @dataclass

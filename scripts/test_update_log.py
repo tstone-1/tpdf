@@ -9,7 +9,10 @@ brings back the manual rerun the second start replaced. The lines are the ones
 
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+from io import StringIO
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from update_log import UpdateAttempt, has_open_tab, offered_button, last_launch, served_old  # noqa: E402
+from update_log import UpdateAttempt, has_open_tab, offered_button, last_launch, relaunched_answer, served_old  # noqa: E402
 
 CURRENT = "2026-11-15T16:21:42.719Z [update] launch check after 519 ms: current"
 AVAILABLE = "2026-11-15T16:31:12.101Z [update] launch check after 610 ms: available 26.11.9"
@@ -52,6 +55,47 @@ class ServedOld(unittest.TestCase):
     def test_no_line_and_no_log_are_findings(self) -> None:
         self.assertFalse(self.answer())
         self.assertFalse(served_old(Path(tempfile.gettempdir()) / "no-such-tpdf.log"))
+
+
+class Relaunch(unittest.TestCase):
+    def test_waits_for_the_new_process_to_finish_its_launch_check(self):
+        since = "2026-11-15T16:30:00.000Z"
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch, fallback = (Path(tmp) / name for name in ("scratch.log", "default.log"))
+            scratch.write_text(CURRENT + "\n")
+            for answer in ("current", "available 26.11.9", "failed: timed out"):
+                other = AVAILABLE.replace("[update]", "[pid 41] [update]")
+                fallback.write_text(other + "\n" + MANUAL)
+                self.assertIsNone(relaunched_answer((scratch, fallback), since, 42, 0))
+                completed = other.replace("pid 41", "pid 42").replace("available 26.11.9", answer)
+                with patch("update_log.time.sleep", side_effect=lambda _: fallback.write_text(completed)):
+                    self.assertEqual(relaunched_answer((scratch, fallback), since, 42, 1), answer)
+            # Already published versions wrote the timestamp but no PID.
+            fallback.write_text(AVAILABLE)
+            self.assertEqual(relaunched_answer((scratch, fallback), since, 42, 0), "available 26.11.9")
+
+    def test_mac_check_refuses_overlap_and_restores_after_a_mount_failure(self):
+        import update_check_mac as mac
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            session = root / "config" / "session.json"
+            session.parent.mkdir()
+            session.write_bytes(b"reader tabs")
+            dmg, pdf = root / "tpdf_26.10.1_aarch64.dmg", root / "input.pdf"
+            dmg.touch()
+            pdf.touch()
+            def external(*args, **kwargs):
+                if args[:2] == ("hdiutil", "attach"):
+                    self.assertFalse(session.exists())
+                    self.assertEqual(mac.main(), 2)
+                    return subprocess.CompletedProcess(args, 1, "", "synthetic mount failure")
+                return subprocess.CompletedProcess(args, 0, "", "")
+            with patch.object(mac, "REAL_SESSION", session), patch.object(mac, "run", side_effect=external), \
+                 patch.object(mac, "offered", return_value="26.10.2"), patch.object(sys, "platform", "darwin"), \
+                 patch.object(sys, "argv", ["check", str(dmg), str(pdf)]):
+                with redirect_stdout(StringIO()):
+                    self.assertEqual(mac.main(), 1)
+            self.assertEqual(session.read_bytes(), b"reader tabs")
 
 
 class FirstAttempt(unittest.TestCase):
@@ -157,6 +201,15 @@ class WindowsUpdateChecks(unittest.TestCase):
             self.assertEqual(backup.read_bytes(), b"reader session")
             with self.assertRaisesRegex(RuntimeError, "unrestored"), isolated_session(real):
                 self.fail("second run claimed the first run's backup")
+
+    def test_edit_after_requires_both_turns_at_each_readback(self):
+        from update_edit_check import Checks, EDIT_AFTER, check_rotation
+        for step in (False, True):
+            for angle in ("90", "180", "270"):
+                checks = Checks()
+                with redirect_stdout(StringIO()):
+                    check_rotation(checks, angle, step, "edit-after")
+                self.assertEqual(checks.failed == [EDIT_AFTER[int(step)]], angle == "270")
 
     def test_localized_edit_save_and_confirmation_controls(self) -> None:
         import update_edit_check as check

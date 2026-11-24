@@ -252,8 +252,19 @@ class Tpdf:
         if not command or command.startswith('-'):
             raise ValueError('command must be a subcommand name, such as info or edit')
         args = [os.fspath(arg) for arg in arguments]
-        flags = args[:args.index('--')] if '--' in args else args
-        if command == 'text' and any(arg in ('-o', '--output') for arg in flags):
+        flags = set()
+        if command in ('search', 'text'):
+            # These parsers accept any next token as an option value, including
+            # '--'. Only a separator in option position introduces paths.
+            rest = iter(args)
+            for arg in rest:
+                if arg == '--':
+                    break
+                flags.add(arg)
+                if arg in ('--text', '--pattern', '--pages', '--password-env', '--annotate',
+                           '--color', '-o', '--output', '--page'):
+                    next(rest, None)
+        if command == 'text' and flags.intersection(('-o', '--output')):
             raise ValueError('text output must remain on stdout for the API')
         payload = None if input_json is None else json.dumps(
             input_json, ensure_ascii=False, allow_nan=False, separators=(',', ':'),

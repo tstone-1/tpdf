@@ -383,7 +383,7 @@ ROWS += [
         '  const assets = Array.isArray(release?.assets) ? release.assets : [];',
         '  const assets = release.assets;',
         "answer nothing for a reply that is not a release"),
-    Mutation("tabs: a network share is not a Windows path", "src/lib/documenttabs.ts",
+    Mutation("tabs: a network share is not a Windows path", "src/lib/paths.ts",
         '/^[a-z]:[\\\\/]|^\\\\\\\\/i.test(value)',
         '/^[a-z]:[\\\\/]/i.test(value)',
         "finds a document on a network share however the share is spelt"),

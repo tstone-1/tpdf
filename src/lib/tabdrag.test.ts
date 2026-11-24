@@ -98,13 +98,13 @@ describe("following a pressed tab on the window", () => {
     };
     return { target, listening: () => listening };
   }
-  const pointer = (type: string, x = 0, y = 0) => Object.assign(new Event(type), { clientX: x, clientY: y });
+  const pointer = (type: string, x = 0, y = 0, pointerId = 7) => Object.assign(new Event(type), { clientX: x, clientY: y, pointerId });
   const key = (name: string) => Object.assign(new Event("keydown", { cancelable: true }), { key: name });
 
   function follow(carrying = false) {
     const win = counted();
     const said: string[] = [];
-    followPress(win.target, {
+    followPress(win.target, 7, {
       move: (x, y) => said.push(`move ${x},${y}`),
       end: (drop) => said.push(drop ? "drop" : "cancel"),
       carrying: () => carrying,
@@ -123,6 +123,16 @@ describe("following a pressed tab on the window", () => {
     target.dispatchEvent(pointer("pointermove", 30, 40));
     expect(said).toEqual(["move 10,20", "drop"]);
     expect(listening()).toBe(0);
+  });
+
+  it("ignores another contact until the original pointer drops", () => {
+    const { target, said } = follow();
+    for (const type of ["pointermove", "pointerup", "pointercancel"]) {
+      target.dispatchEvent(pointer(type, 20, 30, 8));
+    }
+    target.dispatchEvent(pointer("pointermove", 10, 20));
+    target.dispatchEvent(pointer("pointerup"));
+    expect(said).toEqual(["move 10,20", "drop"]);
   });
 
   it("ends without a drop on a cancel and on a lost focus", () => {

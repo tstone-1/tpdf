@@ -816,6 +816,53 @@ class ClientTests(unittest.TestCase):
         size, = self.pdf.info(saved)['files'][0]['document']['page_sizes']
         self.assertEqual((size['width_pt'], size['height_pt']), (300, 400))
 
+    def test_low_dpi_and_fitted_stdout_preserve_size(self):
+        source = self.root / 'scaled.pdf'
+        write_pdf(source, [
+            b'<< /Type /Catalog /Pages 2 0 R >>',
+            b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+            b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 306 396] /UserUnit 2 /Resources << >> >>',
+        ])
+        for name, options in [('low', ['--dpi', '24']), ('fit', ['--fit', '612x792'])]:
+            png = self.root / (name + '.png')
+            args = [str(BINARY), 'render', str(source), *options, '-o']
+            subprocess.run([*args, str(png)], check=True, capture_output=True)
+            piped = subprocess.check_output([*args, '-'])
+            self.assertEqual(png.read_bytes(), piped)
+            report = self.pdf.images([png], self.root / (name + '.pdf'))
+            page, = report['pages']
+            self.assertEqual((page['width_pt'], page['height_pt']), (612, 792))
+
+    def test_tagged_merge_refuses_before_publishing(self):
+        base = self.root / 'tagged.pdf'
+        incoming = self.root / 'other.pdf'
+        output = self.root / 'merged.pdf'
+        powerpoint_fixture(base)
+        incoming.write_bytes(base.read_bytes().replace(b'SYNTHETIC ORIGINAL', b'SYNTHETIC INCOMING'))
+        output.write_bytes(b'previous destination')
+        with self.assertRaisesRegex(CommandError, 'tagged PDF'):
+            self.pdf.merge([base, incoming], output, force=True)
+        self.assertEqual(output.read_bytes(), b'previous destination')
+        # A damaged catalog can leave valid-looking local structure indices behind.
+        incoming.write_bytes(incoming.read_bytes().replace(b'/StructTreeRoot 6 0 R', b'/DetachedStruct 6 0 R'))
+        with self.assertRaisesRegex(CommandError, 'tagged PDF'):
+            self.pdf.merge([base, incoming], output, force=True)
+        self.assertEqual(output.read_bytes(), b'previous destination')
+        self.pdf.merge([base, self.source], output, force=True)
+        self.assertEqual(self.pdf.text(output)['pages'][0]['order'], 'tagged')
+
+    def test_annotation_options_after_double_dash_search_value(self):
+        client = Tpdf(BINARY, cwd=self.root)
+        special = self.root / '--annotate'
+        for text, status in [(b'--', 0), (b'X', 1)]:
+            fixture(special, content=b'BT /F1 12 Tf 30 100 Td (' + text + b') Tj ET')
+            result = client.run('search', '--text', '--', '--annotate', 'highlight',
+                                  '--', special.name, check=False)
+            self.assertEqual(result.exit_code, status)
+            self.assertEqual(bool(result.report.get('operations')), status == 0)
+        ordinary = client.run('search', '--text', '--annotate', '--', special.name, check=False)
+        self.assertEqual(ordinary.report['command'], 'search')
+
     def test_raw_search_annotation_returns_plan_or_no_match(self):
         for word, status in [('SYNTHETIC', 0), ('unmatched-string', 1)]:
             result = self.pdf.run('search', '--annotate', 'highlight', '--text', word,

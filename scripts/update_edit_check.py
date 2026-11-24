@@ -314,6 +314,14 @@ def turn(script: Path, window: int, labels: Labels) -> str:
     return found or f"{labels.rotate} not found; page controls: {[l for l in pressed if labels.rotate in l][:12]}"
 
 
+def check_rotation(checks: Checks, angle: str, after_update: bool, control: str | None) -> None:
+    name = EDIT_AFTER[int(after_update)]
+    checks.note(angle == "90", name, f"/Rotate {angle}")
+    if control == "edit-after":
+        stage = "after the update" if after_update else "when saved"
+        checks.note(angle == "270", f"both control rotations survive {stage}", f"/Rotate {angle}")
+
+
 def edit(script: Path, window: int, name: str, labels: Labels) -> tuple[bool, str]:
     """Turns the page once; whether the tab then marks it unsaved, and what the press said.
 
@@ -483,17 +491,15 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
         told = [line for line in shown if labels.failure in line]
         checks.note(bool(told), SAYS_FAILURE, told[0] if told else "nothing names the failure")
         if control == "edit-after":
-            for _ in range(2):
-                print(f"[INFO] control: {turn(everything, window, labels)}")
+            for n in range(2):
+                pressed = turn(everything, window, labels)
+                checks.note(pressed.startswith("PRESSED|"), f"control rotation {n + 1} is pressed", pressed)
 
         print("--- the reader saves ---")
         written, said = save(everything, window, pdf, labels)
         checks.note(written, "Save writes the document", said)
         time.sleep(1)
-        turned = rotation(pdf)
-        checks.note(turned == "90", "the saved page reads /Rotate 90",
-                    f"/Rotate {turned}: one turn kept from before the question, "
-                    "the two pressed during the download refused" if turned == "90" else f"/Rotate {turned}")
+        check_rotation(checks, rotation(pdf), False, control)
 
         print("--- the proxy passes everything; the copy is started again and updated ---")
         proxy.mode = "open"
@@ -525,8 +531,7 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
         said = tool(folder / "tpdf-cli.exe", "--version").stdout.strip()
         checks.note(said.endswith(new), f"the installed tool is version {new}", said)
         result["eventual"] = f"installed {new} on the second attempt" if windows else "not installed"
-        checks.note(rotation(pdf) == "90", "after the update the saved page still reads /Rotate 90",
-                    f"/Rotate {rotation(pdf)}")
+        check_rotation(checks, rotation(pdf), True, control)
     finally:
         running = copies(folder)
         close(sorted(set(running) | ({app.pid} if app.poll() is None else set())))

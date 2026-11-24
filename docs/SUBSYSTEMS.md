@@ -391,6 +391,8 @@ the installed application may be running alongside the test build.
 
 ## What the worker writes and reads, and the password
 
+Page import refuses a source with a structure tree. Its parent-tree indices belong to that document, and copying the page dictionaries alone can bind their marked content to the destination’s tags. A tagged first document can still receive ordinary untagged pages.
+
 Page import refuses an incoming catalog with optional-content settings. Imported local
 links with named destinations are disabled and the base document's last label range ends
 at an append. Partial insertion prunes unused XObjects on imported pages after placement
@@ -589,7 +591,7 @@ segments. A PNG with gamma or chromaticity metadata uses CalGray or CalRGB when
 it carries neither an ICC profile nor an sRGB declaration. Untagged pictures use
 DeviceGray or DeviceRGB. Both picture placement and document creation apply PNG
 eXIf orientation. Physical pHYs density takes precedence over EXIF resolution.
-CLI renders record pixels per metre in pHYs. Import recovers the original integer
+CLI renders record pixels per metre in pHYs for named files and stdout. PNG import accepts positive physical densities below 30 DPI for low-resolution renders. Import recovers the original integer
 DPI when it rounds to the stored density, so a 72 DPI render imports at one point
 per pixel. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
 Without physical resolution, a unitless PNG or JFIF density ratio sets the pixel

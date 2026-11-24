@@ -18,6 +18,7 @@
  */
 
 import type { Opening } from "./launchplace";
+import { pathKey } from "./paths";
 import { catalog } from "./i18n";
 import { call } from "./ipc";
 import type { Session, Sides } from "./session";
@@ -216,10 +217,13 @@ export function withUnopened(
   order: readonly string[],
 ): string[] {
   const out = [...paths];
+  const retained = new Set(unopened.map(pathKey));
+  let previous = -1;
   for (const path of order) {
-    if (!unopened.includes(path) || out.includes(path)) continue;
-    const before = order.slice(0, order.indexOf(path)).reverse().find((other) => out.includes(other));
-    out.splice(before === undefined ? 0 : out.indexOf(before) + 1, 0, path);
+    const key = pathKey(path);
+    const existing = out.findIndex((other) => pathKey(other) === key);
+    if (existing >= 0) previous = existing;
+    else if (retained.has(key)) out.splice(++previous, 0, path);
   }
   return out;
 }
@@ -285,7 +289,8 @@ export class TabRecorder {
       return;
     }
     // One that has since opened is a tab like any other, and goes when it is closed.
-    this.unopened = this.unopened.filter((path) => !paths.includes(path));
+    const opened = new Set(paths.map(pathKey));
+    this.unopened = this.unopened.filter((path) => !opened.has(pathKey(path)));
     const list = withUnopened(paths, this.unopened, this.order);
     const key = JSON.stringify([list, active, sides]);
     if (key === this.last) return;

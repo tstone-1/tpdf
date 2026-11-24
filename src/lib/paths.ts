@@ -30,3 +30,9 @@ export function pathSeparators(path: string): RegExp {
 export function basename(path: string): string {
   return path.split(pathSeparators(path)).at(-1) || path;
 }
+
+/** Windows drive and UNC paths may differ in case and separator spelling. */
+export function pathKey(value: string): string {
+  return /^[a-z]:[\\/]|^\\\\/i.test(value)
+    ? value.replaceAll("\\", "/").toLowerCase() : value;
+}

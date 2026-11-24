@@ -86,7 +86,7 @@ UNMUTATED = {
     "src/lib/backoff.test.ts": "no mutation aims at src/lib/backoff.ts",
     "src/lib/degraded.test.ts": "no mutation aims at src/lib/degraded.ts",
     "src/lib/lifetime.test.ts": "no mutation aims at src/lib/lifetime.ts",
-    "src/lib/paths.test.ts": "no mutation aims at src/lib/paths.ts",
+    "src/lib/paths.test.ts": "the basename suite has no mutation; path comparisons are exercised by documenttabs",
     "src/lib/serial.test.ts": "no mutation aims at src/lib/serial.ts",
     "src/lib/tiles.test.ts": "no mutation aims at src/lib/tiles.ts",
     # A different shape from those above, and the reason is worth stating

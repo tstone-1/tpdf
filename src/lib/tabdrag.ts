@@ -88,6 +88,7 @@ export interface PressEvents {
  */
 export function followPress(
   target: Pick<EventTarget, "addEventListener" | "removeEventListener">,
+  pointerId: number,
   events: PressEvents,
 ): void {
   const end = (drop: boolean) => {
@@ -95,10 +96,13 @@ export function followPress(
     events.end(drop);
   };
   const listeners: [string, (event: Event) => void][] = [
-    ["pointermove", (moved) => events.move((moved as PointerEvent).clientX, (moved as PointerEvent).clientY)],
-    ["pointerup", () => end(true)],
-    ["pointercancel", () => end(false)],
-    ["blur", () => end(false)],
+    ["pointermove", (event) => {
+      const moved = event as PointerEvent;
+      if (moved.pointerId === pointerId) events.move(moved.clientX, moved.clientY);
+    }],
+    ["pointerup", (event) => { if ((event as PointerEvent).pointerId === pointerId) end(true); }],
+    ["pointercancel", (event) => { if ((event as PointerEvent).pointerId === pointerId) end(false); }],
+    ["blur", (event) => { if (event.target === event.currentTarget) end(false); }],
     ["keydown", (key) => {
       if ((key as KeyboardEvent).key !== "Escape" || !events.carrying()) return;
       key.preventDefault();

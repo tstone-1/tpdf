@@ -1961,7 +1961,10 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         if (!tab) throw new Error(`no tab ${id} to drag`);
         const box = tab.getBoundingClientRect();
         const from = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
+        // Deliver the focus transfer a real mouse press causes after pointerdown.
+        document.querySelector<HTMLButtonElement>(`button[role="tab"]:not([id="${tab.id}"])`)?.focus();
         tab.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ...from }));
+        tab.focus();
         window.dispatchEvent(new PointerEvent("pointermove", { ...from, clientX: from.clientX + 3 }));
         await pause(50);
         const nearly = dropMark();

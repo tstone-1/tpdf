@@ -540,7 +540,14 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
                         measured
                     }
                 };
-                (plausible(dpi(x), dpi(y)), None)
+                let density = (dpi(x), dpi(y));
+                // The CLI also emits fitted thumbnails below one DPI. The PNG
+                // unit is explicit; page geometry is bounded during placement.
+                let supported = |d: f64| d > 0.0 && d <= *PLAUSIBLE_DPI.end();
+                (
+                    (supported(density.0) && supported(density.1)).then_some(density),
+                    None,
+                )
             }
             png::Unit::Unspecified => (None, relative_density(x, y)),
         }

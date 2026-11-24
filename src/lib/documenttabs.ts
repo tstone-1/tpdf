@@ -1,3 +1,4 @@
+import { pathKey } from "./paths";
 import { CoveredWords } from "./coveredwords";
 import { Measurements } from "./measure";
 import type { DocumentInfo } from "./ipc";
@@ -233,10 +234,7 @@ export class DocumentTabs<T extends { view: number; path: string }> {
    * row otherwise.
    */
   forPath(path: string, prefer?: T["view"]): T | undefined {
-    // Windows dialogs and launch events can spell the same drive path differently.
-    const key = (value: string) => /^[a-z]:[\\/]|^\\\\/i.test(value)
-      ? value.replaceAll("\\", "/").toLowerCase() : value;
-    const showing = this.entries.filter((tab) => key(tab.path) === key(path));
+    const showing = this.entries.filter((tab) => pathKey(tab.path) === pathKey(path));
     return showing.find((tab) => tab.view === prefer) ?? showing[0];
   }
 

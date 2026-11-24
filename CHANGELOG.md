@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Merging or inserting pages from a tagged PDF refuses the import before replacing the output, preserving accessibility structure ownership.
+- Fitted PNGs retain physical scale when written to stdout. Low-resolution PNGs also retain it on import.
+- Tab drags follow the initiating pointer across focus changes. Closing a recovered Windows tab removes it from the next session across alternate path spellings.
+- Annotation-plan searches accept a literal double dash as the search text. Release checks protect the saved session and verify the relaunched updater's answer and both control rotations.
 - Thumbnail menu edits use the selected page in facing-page layouts. Blank thumbnails
   keep their paper colour after scrolling, and split-view tabs label their own panels.
 - OCR refuses unreadable page geometry and handles scans with null font resources.

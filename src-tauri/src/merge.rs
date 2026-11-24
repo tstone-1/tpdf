@@ -174,6 +174,15 @@ pub fn import(
         .map_err(|e| said!("no page tree: {e}"))?;
 
     let catalog = from.catalog().map_err(|e| e.to_string())?;
+    // Structure parent indices are local to the incoming catalog. Importing
+    // them without its parent tree can attach a page to another page's tags.
+    if catalog.has(b"StructTreeRoot")
+        && !matches!(catalog.get_deref(b"StructTreeRoot", from), Ok(Object::Null))
+    {
+        return Err(said!(
+            "pages from a tagged PDF cannot be imported with their accessibility structure"
+        ));
+    }
     if let Ok(entry) = catalog.get(b"OCProperties") {
         let (_, value) = from.dereference(entry).map_err(|e| e.to_string())?;
         if !matches!(value, Object::Null) {
@@ -255,6 +264,7 @@ pub fn import(
     let mut needed: Vec<ObjectId> = copied.iter().copied().collect();
     needed.sort_unstable();
 
+    let mut imported = Vec::with_capacity(needed.len());
     for id in needed {
         let object = match detached.get(&id) {
             Some(dictionary) => {
@@ -271,9 +281,10 @@ pub fn import(
                 None => shifted(from, &from.objects[&id], by, &copied, 0)?,
             },
         };
-        into.objects.insert(shifted_id(id, by)?, object);
+        imported.push((shifted_id(id, by)?, object));
     }
 
+    into.objects.extend(imported);
     into.max_id = highest(into);
 
     taking
@@ -622,6 +633,13 @@ fn shifted_dictionary(
     copied: &HashSet<ObjectId>,
     depth: usize,
 ) -> Result<Dictionary, String> {
+    // Some producers leave structure indices even without a catalog tree.
+    // An imported page, annotation or XObject must not acquire a foreign owner.
+    if dictionary.has(b"StructParent") || dictionary.has(b"StructParents") {
+        return Err(said!(
+            "pages from a tagged PDF cannot be imported with their accessibility structure"
+        ));
+    }
     let mut out = Dictionary::new();
     for (key, value) in dictionary.iter() {
         // A local named destination would bind to the destination document's

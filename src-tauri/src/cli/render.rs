@@ -213,12 +213,9 @@ impl Subcommand for Render {
                 ))
             }
         };
-        let unit = if self.fit.is_some() && stdout {
-            // A pixel box needs no physical scale when no DPI report is written.
-            1.0
-        } else {
-            super::pages::page_units(&mut session, &[self.page], &self.input, key.is_some())?[0]
-        };
+        // Output density needs the physical scale even for a fitted PNG on stdout.
+        let unit =
+            super::pages::page_units(&mut session, &[self.page], &self.input, key.is_some())?[0];
         let scale = self.scale(size, unit);
         let (width, height) = dimensions(size, scale)?;
         if let Some((w, h)) = self.fit {

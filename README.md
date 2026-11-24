@@ -1601,7 +1601,9 @@ the page as it is displayed:
   given.
 
 **Page operations.** `merge` takes two or more inputs and preserves argument order.
-When the first PDF has a form, its fields stay editable. Fields on appended pages
+A tagged PDF can be the first input. Merging or inserting pages from another
+tagged PDF stops before publication because the incoming accessibility structure
+cannot yet be carried across. When the first PDF has a form, its fields stay editable. Fields on appended pages
 keep their saved appearance as static annotations. If an incoming widget lacks a
 usable appearance, the merge stops and preserves any existing output.
 `extract --pages` selects pages in document order, each once: `3,1,1` means pages 1

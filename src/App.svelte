@@ -695,7 +695,7 @@
   function tabPress(event: PointerEvent, id: ViewId): void {
     if (event.button !== 0 || opening || documentBusy || tabDrag.pressed) return;
     tabDrag.press(id, event.clientX, event.clientY);
-    followPress(window, {
+    followPress(window, event.pointerId, {
       move: (x, y) => { tabCarried = tabDrag.move(x, y, dropLayout(id)); },
       carrying: () => tabCarried !== null,
       end: (drop) => {
