@@ -208,17 +208,56 @@ pub fn apply(install: bool) -> Result<String, String> {
         }
         Step::Create | Step::Repoint(_) | Step::Remove | Step::Present | Step::Absent => {}
     }
-    let both = changes(install, link, alias, &tool);
-    if both
-        .iter()
-        .any(|path| unprivileged(install, path, &tool).is_err())
-    {
+    change_links(
+        install,
+        link,
+        alias,
+        &tool,
+        |path| unprivileged(install, path, &tool),
+        |paths| privileged(install, &tool, paths),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn change_links(
+    install: bool,
+    link: &Path,
+    alias: &Path,
+    tool: &Path,
+    mut as_user: impl FnMut(&Path) -> std::io::Result<()>,
+    as_admin: impl FnOnce(&[&Path]) -> Result<(), String>,
+) -> Result<String, String> {
+    let both = changes(install, link, alias, tool);
+    let prompt = if both.iter().any(|path| as_user(path).is_err()) {
         // Asked again: what the unprivileged attempt managed is not redone.
-        privileged(install, &tool, &changes(install, link, alias, &tool))?;
+        as_admin(&changes(install, link, alias, tool))
+    } else {
+        Ok(())
+    };
+    if let Err(why) = prompt {
+        let status = |path: &Path| match plan(true, path, tool) {
+            Step::Create | Step::Absent => said!("no link at {path}", path = path.display()),
+            Step::Foreign(reason) => reason,
+            Step::Repoint(target) => said!(
+                "{path} links to {target}",
+                path = path.display(),
+                target = target.display()
+            ),
+            Step::Present | Step::Remove => said!(
+                "{path} links to {target}",
+                path = path.display(),
+                target = tool.display()
+            ),
+        };
+        return Err(said!(
+            "{why} Link status: {primary}; {secondary}.",
+            primary = status(link),
+            secondary = status(alias)
+        ));
     }
-    let after = plan(install, link, &tool);
-    let alias_after = plan(install, alias, &tool);
-    let mut text = outcome(install, &after, &alias_after, &tool);
+    let after = plan(install, link, tool);
+    let alias_after = plan(install, alias, tool);
+    let mut text = outcome(install, &after, &alias_after, tool);
     if let Some(also) = alias_outcome(install, &alias_after) {
         text.push(' ');
         text.push_str(&also);
@@ -373,11 +412,12 @@ fn privileged(install: bool, tool: &Path, paths: &[&Path]) -> Result<(), String>
     }
     let said = String::from_utf8_lossy(&out.stderr);
     if said.contains("-128") {
-        return Err(said!(
-            "Nothing was changed: the administrator prompt was cancelled."
-        ));
+        return Err(said!("The administrator prompt was cancelled."));
     }
-    Err(said!("Nothing was changed: {why}", why = said.trim()))
+    Err(said!(
+        "The administrator command failed: {why}",
+        why = said.trim()
+    ))
 }
 
 /// The AppleScript that makes or removes `paths` behind the administrator
@@ -647,6 +687,44 @@ mod tests {
             .expect("said")
             .contains("still there"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cancellation_reports_the_partial_removal() {
+        let dir = scratch("partial");
+        let tool = dir.join("tpdf.app/Contents/MacOS").join(TOOL);
+        let (link, alias) = (dir.join("tpdf"), dir.join("tpdf-cli"));
+        std::os::unix::fs::symlink(&tool, &link).unwrap();
+        std::os::unix::fs::symlink(&tool, &alias).unwrap();
+        let message = change_links(
+            false,
+            &link,
+            &alias,
+            &tool,
+            |path| {
+                if path == link {
+                    std::fs::remove_file(path)
+                } else {
+                    Err(std::io::ErrorKind::PermissionDenied.into())
+                }
+            },
+            |paths| {
+                assert_eq!(paths, [alias.as_path()]);
+                Err("The administrator prompt was cancelled.".into())
+            },
+        )
+        .unwrap_err();
+        assert!(message.contains("cancelled"), "{message}");
+        assert!(
+            message.contains(&format!("no link at {}", link.display())),
+            "{message}"
+        );
+        assert!(
+            message.contains(&format!("{} links to {}", alias.display(), tool.display())),
+            "{message}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Every name in `dir` and what it holds, so a read can be shown to have

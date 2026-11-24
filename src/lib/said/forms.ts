@@ -330,6 +330,8 @@ export default {
     "Die Bildmaße lassen sich in einer Windows-Metadatei nicht darstellen.",
   "Windows would not start a picture": "Windows hat kein Bild angelegt",
   "Windows would not finish the picture": "Windows hat das Bild nicht abgeschlossen",
+  "Windows could not draw the page text": "Windows konnte den Seitentext nicht zeichnen.",
+  "could not inspect the page text for copying": "Der Seitentext konnte vor dem Kopieren nicht geprüft werden.",
   "Windows would not read the picture back": "Windows hat das Bild nicht zurückgelesen",
   "the page is too detailed to copy as a picture": "Die Seite ist zu detailreich, um sie als Bild zu kopieren",
   "the worker claimed more bytes than its mapping holds":

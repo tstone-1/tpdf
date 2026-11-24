@@ -147,8 +147,8 @@ describe("what the command-line tool's commands are greyed by", () => {
   it("shows what the backend said and then looks again, after a change and after a refusal", async () => {
     for (const [answer, said] of [
       [async () => "Installed.", "say:Installed."],
-      [async () => { throw "Nothing was changed: the administrator prompt was cancelled."; },
-        "say:Nothing was changed: the administrator prompt was cancelled."],
+      [async () => { throw "The administrator prompt was cancelled."; },
+        "say:The administrator prompt was cancelled."],
     ] as const) {
       const { tool, read, log, answerWith, offered } = harness();
       answerWith(answer);

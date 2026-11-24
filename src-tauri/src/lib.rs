@@ -739,18 +739,6 @@ pub fn run() {
     let args = launch::desktop_args(std::env::args_os(), |arg| {
         eprintln!("tpdf: ignoring an argument that is not valid Unicode: {arg:?}");
     });
-    // The Linux single-instance plugin reads argv again when it hands a launch
-    // to D-Bus. Give it the same Unicode arguments the cold launch received.
-    #[cfg(target_os = "linux")]
-    if std::env::args_os().any(|arg| arg.to_str().is_none()) {
-        use std::os::unix::process::CommandExt;
-        let error = std::process::Command::new("/proc/self/exe")
-            .arg0(args.first().map_or("tpdf", String::as_str))
-            .args(args.iter().skip(1))
-            .exec();
-        eprintln!("[FAIL] could not forward the validated launch arguments: {error}");
-        std::process::exit(1);
-    }
     // The OCR worker, checked first because it is the narrower marker and
     // because it shares nothing with the parser worker but this dispatch: it
     // maps no PDF library, opens no document, and applies a different profile.
@@ -781,6 +769,52 @@ pub fn run() {
         std::process::exit(2);
     }
 
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let wire_args = launch::args_for_handoff(&args, &cwd);
+    // The Linux single-instance plugin reads argv again when it hands a launch
+    // to D-Bus. Give it the same Unicode arguments the cold launch received.
+    #[cfg(target_os = "linux")]
+    if wire_args != args || std::env::args_os().any(|arg| arg.to_str().is_none()) {
+        use std::os::unix::process::CommandExt;
+        let error = std::process::Command::new("/proc/self/exe")
+            .arg0(wire_args.first().map_or("tpdf", String::as_str))
+            .args(wire_args.iter().skip(1))
+            .exec();
+        eprintln!("[FAIL] could not forward the validated launch arguments: {error}");
+        std::process::exit(1);
+    }
+    // The Windows plugin also rereads the native command line. Start the
+    // normal sender with only representable arguments and a representable cwd.
+    #[cfg(windows)]
+    if cwd.to_str().is_none()
+        || std::env::args_os()
+            .skip(1)
+            .any(|arg| arg.to_str().is_none())
+    {
+        let result = std::env::current_exe().and_then(|exe| {
+            let mut sender = std::process::Command::new(exe);
+            sender.args(wire_args.iter().skip(1));
+            if cwd.to_str().is_none() {
+                let temporary = std::env::temp_dir();
+                let safe = cwd
+                    .ancestors()
+                    .chain(std::iter::once(temporary.as_path()))
+                    .find(|p| p.is_absolute() && p.to_str().is_some())
+                    .ok_or_else(|| {
+                        std::io::Error::other("no Unicode working directory for document handoff")
+                    })?;
+                sender.current_dir(safe);
+            }
+            sender.spawn()
+        });
+        match result {
+            Ok(_) => return,
+            Err(error) => {
+                eprintln!("[FAIL] could not forward the validated launch arguments: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     // A launch asking for a page or a zoom goes to the window already running,
     // and this process ends here having started nothing. Before the watchdog,
     // which would otherwise outlive the decision by a thread. `secondlaunch.rs`
@@ -789,12 +823,9 @@ pub fn run() {
     let second_launch_socket = second_launch_socket();
     #[cfg(target_os = "macos")]
     if let Some(socket) = &second_launch_socket {
-        if !launch::split_place(&args).1.is_empty() {
-            let cwd = std::env::current_dir()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
-            if secondlaunch::hand_over(socket, &cwd, &args) {
+        if !launch::split_place(&wire_args).1.is_empty() {
+            // With an unrepresentable cwd, wire_args contains only absolute paths.
+            if secondlaunch::hand_over(socket, cwd.to_str().unwrap_or(""), &wire_args) {
                 return;
             }
         }
@@ -820,7 +851,6 @@ pub fn run() {
     // Queued here for the same reason: on Windows a double-click arrives in
     // `argv`, long before there is a webview to tell about it.
     let launch = launch::Launch::default();
-    let cwd = std::env::current_dir().unwrap_or_default();
     for opening in launch::openings_from_launch(&args, &cwd, |path| path.is_file()) {
         launch.deliver(opening);
     }

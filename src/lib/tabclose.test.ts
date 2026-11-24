@@ -4,7 +4,16 @@
 
 import { describe, expect, it } from "vitest";
 
-import { CLOSED_KEPT, ClosedTabs, tabsToClose } from "./tabclose";
+import { CLOSED_KEPT, ClosedTabs, needsDiscardApproval, tabsToClose } from "./tabclose";
+
+it("protects an answer entered after the batch checked which tabs were dirty", () => {
+  const original = { dirty: true };
+  const approved = new Set([original]);
+  expect(needsDiscardApproval(original, approved)).toBe(false);
+  expect(needsDiscardApproval({ dirty: false }, approved)).toBe(false);
+  expect(needsDiscardApproval({ dirty: true }, approved)).toBe(true);
+  expect(needsDiscardApproval({ dirty: true }, new Set())).toBe(true);
+});
 
 describe("tabsToClose", () => {
   const all = [1, 2, 3, 4, 5];

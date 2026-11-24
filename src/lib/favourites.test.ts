@@ -61,6 +61,16 @@ describe("Favourites", () => {
     expect(list.all.map(({ page, name }) => [name, page])).toEqual([["B", 1], ["C", 0], ["other", 1]]);
   });
 
+  it("rebases every spelling of a saved file and leaves a distinct file alone", async () => {
+    const list = new Favourites();
+    for (const path of ["/docs/a.pdf", "/docs/sub/../a.pdf", "/old-link.pdf"]) list.add(path, 1, "B");
+    const saved = "/docs/./a.pdf";
+    const aliases = new Set(["/docs/a.pdf", "/docs/sub/../a.pdf"]);
+    expect(await list.rebaseAliases(saved, (page) => 1 - page,
+      async (paths) => paths.find((path) => aliases.has(path)) ?? null)).toBe(true);
+    expect(list.all.map((entry) => entry.page)).toEqual([0, 0, 1]);
+  });
+
   it("steps to the nearest favourite page of the same document, either way", () => {
     const list = new Favourites();
     for (const page of [9, 2, 5]) list.add("/a.pdf", page, "");

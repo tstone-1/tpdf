@@ -67,7 +67,7 @@ it("uses the settled session on a fresh open and the same open path for closed t
   const open = functionIn(app, "async function openDocument(");
   expect(open).toMatch(/places\.flush\(\);[\s\S]*await places\.settled\(\);\s*remembered = \(await loadSession\(\)\)\.places;/);
   expect(open).toMatch(/await loadSession\(\)[\s\S]*settlingOpen = !discard;[\s\S]*await settleDocument\([\s\S]*keepActiveTab\(\);[\s\S]*unmountDocument\(\);/);
-  expect(app).toContain("inert={settlingOpen}");
+  expect(app).toContain("inert={settlingOpen || updateExitHeld}");
   expect(functionIn(app, "async function reopenClosedTab(")).toContain("await closedTabs.reopen(isOpenTab, openPath)");
 });
 
@@ -156,7 +156,7 @@ describe("a search confined to a selection, when the file is opened again", () =
   it("rebases the saved order only after a successful in-place write", () => {
     for (const method of ["saveDocument", "redactAnyway"]) {
       const body = functionIn(app, `async function ${method}(`);
-      expect(body).toMatch(/return;\s*}\s*rebaseAfterSave\(path, model\);/);
+      expect(body).toMatch(/return;\s*}\s*await rebaseAfterSave\(path, model\);/);
       const afterRebase = body.slice(body.indexOf("rebaseAfterSave(path, model);"));
       if (method === "saveDocument") expect(afterRebase).toContain("await reopenAfterWrite(");
       else {

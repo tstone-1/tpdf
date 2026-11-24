@@ -19,6 +19,20 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Copy page for PowerPoint omits words that cross the visible crop or an unsupported clip,
+  and words on optional layers. Labels with accessibility descriptions keep their painted
+  glyphs. A failed Windows text write stops the copy.
+- Back and Reveal current keep their place as document scans finish. A newer page request
+  supersedes an earlier source jump, and a TeX rebuild cannot mix two source maps.
+- Cancelling administrator approval on macOS reports the state of both command-line links.
+
+- Closing several tabs protects edits entered after the first discard prompt. A Windows
+  update holds comment editing during installation. Checking again on macOS keeps the
+  installed update ready to restart.
+- Clicking layered artwork selects the visible drawing. SVG export follows the saved page
+  rotation, and favourites follow a saved reorder when a file is reopened through an alias.
+- Desktop launches skip document paths the window cannot represent exactly.
+
 - Long-term signing checks the final archive timestamp after reopening the file. Signature
   reports identify the signing certificate by its SHA-256 fingerprint.
 - Page import keeps a private preview copy and detects changes to its source before saving.

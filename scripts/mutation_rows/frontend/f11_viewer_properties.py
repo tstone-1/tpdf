@@ -30,9 +30,7 @@ ROWS = [
     # --- viewer.ts: the page order changes under a gesture --------------------------
     Mutation("viewer: a new page order keeps Back and Forward", "src/lib/viewer.ts",
         "    this.moveDrag.cancel();\n"
-        "    // Back and Forward hold slots as well. `setLinks` forgets them when the\n"
-        "    // caller translates the links after this, and that is a reason the caller\n"
-        "    // has, not one this method should depend on.\n"
+        "    // Saved jumps name slots in the previous page order.\n"
         "    this.history.clear();\n",
         "    this.moveDrag.cancel();\n",
         "forgets Back and Forward, which name slots the edit renumbered"),

@@ -18,9 +18,9 @@ describe("pageCopyNotice", () => {
 
   it("tells one from many in English", () => {
     expect(pageCopyNotice(3, 1, "en-US")).toMatch(
-      /Ungroup to edit its shapes and text\. One piece of text is left out: the page hides some or all of it,/,
+      /Ungroup to edit its shapes and text\. One piece of text is left out: tpdf could not confirm that the whole text was visible/,
     );
-    expect(pageCopyNotice(3, 2, "en-US")).toMatch(/text\. 2 pieces of text are left out: the page hides some or all of them,/);
+    expect(pageCopyNotice(3, 2, "en-US")).toMatch(/text\. 2 pieces of text are left out: tpdf could not confirm that each was fully visible/);
   });
 
   it("tells one from many in German, and the formal German addresses the reader as Sie", () => {

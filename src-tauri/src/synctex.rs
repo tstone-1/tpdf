@@ -115,10 +115,23 @@ pub fn forward(pdf: &Path, source: &Path, line: u32) -> Result<Forward, String> 
             path = pdf.display()
         )
     })?;
-    let folder = map.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
-    let inputs = inputs(&mut open(&map)?)?;
-    let tags = source_tags(&inputs, &folder, source)?;
-    scan(&mut open(&map)?, &tags, line)?.ok_or_else(|| {
+    search_map(&map, &snapshot(&map)?, source, line)
+}
+
+fn search_map(map: &Path, bytes: &[u8], source: &Path, line: u32) -> Result<Forward, String> {
+    let folder = map.parent().unwrap_or_else(|| Path::new(""));
+    let reader = || {
+        let text: Box<dyn Read> = if map.extension().is_some_and(|ext| ext == "gz") {
+            Box::new(flate2::read::MultiGzDecoder::new(bytes))
+        } else {
+            Box::new(bytes)
+        };
+        BufReader::new(text.take(MAX_TEXT + 1))
+    };
+    let inputs = inputs(&mut reader())?;
+    let tags = source_tags(&inputs, folder, source)?;
+    let found = scan(&mut reader(), &tags, line)?;
+    found.ok_or_else(|| {
         said!(
             "nothing on any page came from {name}",
             name = source.file_name().map_or_else(
@@ -129,26 +142,29 @@ pub fn forward(pdf: &Path, source: &Path, line: u32) -> Result<Forward, String> 
     })
 }
 
-/// The file's text, decompressed when it ends in `.gz`, held to the bounds.
-fn open(map: &Path) -> Result<Box<dyn BufRead>, String> {
-    let file = std::fs::File::open(map)
-        .map_err(|e| said!("could not read {path}: {e}", path = map.display()))?;
-    let size = file.metadata().map(|meta| meta.len()).unwrap_or(0);
-    if size > MAX_FILE {
-        return Err(said!(
-            "{path} is {size} MB, more than the {most} MB tpdf reads",
+/// Both passes use the same bytes even if a compiler replaces the map between them.
+fn snapshot(map: &Path) -> Result<Vec<u8>, String> {
+    let read_error = |e: std::io::Error| said!("could not read {path}: {e}", path = map.display());
+    let file = std::fs::File::open(map).map_err(read_error)?;
+    let too_large = || {
+        said!(
+            "{path} exceeds the {most} MB SyncTeX file limit",
             path = map.display(),
-            size = size / 1_048_576,
             most = MAX_FILE / 1_048_576
-        ));
-    }
-    let raw = file.take(MAX_FILE);
-    let text: Box<dyn Read> = if map.extension().is_some_and(|ext| ext == "gz") {
-        Box::new(flate2::read::MultiGzDecoder::new(raw))
-    } else {
-        Box::new(raw)
+        )
     };
-    Ok(Box::new(BufReader::new(text.take(MAX_TEXT + 1))))
+    let size = file.metadata().map_err(read_error)?.len();
+    if size > MAX_FILE {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.take(MAX_FILE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(read_error)?;
+    if bytes.len() as u64 > MAX_FILE {
+        return Err(too_large());
+    }
+    Ok(bytes)
 }
 
 /// Calls `each` with every line, held to [`MAX_LINE`] and [`MAX_TEXT`].
@@ -574,6 +590,27 @@ mod tests {
             .join("testdata")
             .join("synctex")
             .join(name)
+    }
+
+    #[test]
+    fn replacing_the_map_cannot_reassign_a_source_tag_in_an_ongoing_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let map = dir.path().join("main.synctex");
+        let source = dir.path().join("chapter.tex");
+        let boxes = "{1\n(1,7:10,20:30,5,1\n)\n}1\n{2\n(2,7:10,20:30,5,1\n)\n}2\n";
+        let make = |one: &str, two: &str| format!("Input:1:{one}\nInput:2:{two}\n{boxes}");
+        std::fs::write(&map, make("chapter.tex", "other.tex")).unwrap();
+        let old = super::snapshot(&map).unwrap();
+        let replacement = dir.path().join("replacement");
+        std::fs::write(&replacement, make("other.tex", "chapter.tex")).unwrap();
+        std::fs::rename(replacement, &map).unwrap();
+        assert_eq!(super::search_map(&map, &old, &source, 7).unwrap().page, 1);
+        assert_eq!(
+            forward(&map.with_extension("pdf"), &source, 7)
+                .unwrap()
+                .page,
+            2
+        );
     }
 
     fn near(a: f64, b: f64) -> bool {

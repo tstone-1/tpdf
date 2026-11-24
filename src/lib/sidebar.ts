@@ -203,6 +203,7 @@ export class Sidebar {
   private destinationGeometry = -1;
   private readonly elements = new Map<string, HTMLElement>();
   /** Last position asked about, so an unchanged frame costs one comparison. */
+  private lastPosition: { page: number; top: number; geometry: number } | null = null;
   private asked = { page: -1, top: -1 };
 
   /** Row the roving tabindex is on. */
@@ -554,6 +555,10 @@ export class Sidebar {
     this.current = null;
     this.asked = { page: -1, top: -1 };
     this.paint();
+    if (this.lastPosition) {
+      const { page, top, geometry } = this.lastPosition;
+      this.setPosition(page, top, geometry);
+    }
   }
 
   /**
@@ -566,6 +571,7 @@ export class Sidebar {
   setPosition(page: number, top: number, geometry = 0): void {
     // Before the outline guard, and not inside it: the page strip has to follow
     // the reader on a document with no outline at all, which is most of them.
+    this.lastPosition = { page, top, geometry };
     this.strip?.setCurrentPage(page);
     if (!this.outline) return;
     if (this.destinationGeometry !== geometry) {

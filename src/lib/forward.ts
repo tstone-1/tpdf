@@ -10,6 +10,10 @@ import { catalog } from "./i18n";
 export class ForwardRequests {
   private latest = new WeakMap<object, symbol>();
 
+  cancel(viewer: object): void {
+    this.latest.delete(viewer);
+  }
+
   start(viewer: object, stillHere: () => boolean): () => boolean {
     const request = Symbol();
     this.latest.set(viewer, request);

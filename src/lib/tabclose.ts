@@ -23,6 +23,11 @@ export function tabsToClose<T>(all: readonly T[], row: readonly T[], id: T, whic
   return which === "left" ? row.slice(0, at) : row.slice(at + 1);
 }
 
+/** Approval covers the edit snapshot shown in the batch prompt. Each later edit produces a new snapshot. */
+export function needsDiscardApproval<T extends { dirty: boolean }>(state: T, approved?: ReadonlySet<T>): boolean {
+  return state.dirty && !approved?.has(state);
+}
+
 /** How many closed documents are remembered for reopening. */
 export const CLOSED_KEPT = 20;
 

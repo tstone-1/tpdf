@@ -580,7 +580,7 @@
   } from "./lib/session";
   import { placeOfSpread, spreadOfPlace } from "./lib/spreads";
   import { ScreenMode, type Screen } from "./lib/fullscreen";
-  import { ClosedTabs, tabsToClose, type CloseWhich } from "./lib/tabclose";
+  import { ClosedTabs, needsDiscardApproval, tabsToClose, type CloseWhich } from "./lib/tabclose";
   import { neighbourIn } from "./lib/folderorder";
   import { favouriteCommands, Favourites, FAVOURITE_PREFIX } from "./lib/favourites";
   import type { Favourite } from "./lib/session";
@@ -605,7 +605,7 @@
   import { DegradedLabel } from "./lib/degraded";
   import { pageCopyNotice } from "./lib/pagecopynotice";
   import {
-    finishUpdate, installFailure, pluginUpdater, stepEndsProcess, stepFor, Updates, updateLabel, updateNotice,
+    installFailure, pluginUpdater, stepEndsProcess, stepFor, Updates, updateLabel, updateNotice,
     type FinishStep, type UpdateState,
   } from "./lib/update";
   import { Viewer, type PageClick, type ViewerOptions, type ViewerStatus } from "./lib/viewer";
@@ -757,6 +757,7 @@
   });
   let opening = $state(false);
   let settlingOpen = $state(false);
+  let updateExitHeld = $state(false);
   let documentBusy = $state(false);
   const documentTasks = new DocumentTasks((busy) => {
     documentBusy = busy;
@@ -1271,24 +1272,25 @@
    */
   async function closeTabs(ids: ViewId[]): Promise<void> {
     if (!ids.length) return;
+    const approved = new Set<EditState>();
     const go = await documentTasks.idle().then(() => opens.run(async () => {
       // A draft that cannot be committed is said, as `closeTab` says it, and
       // nothing closes: its words are not in the document yet.
       try { await settleDocument(); } catch (e) { say(String(e)); return false; }
       const closing = new Set(ids);
       const unsaved = oneEach(tabs.all.filter((tab) => closing.has(tab.view)))
-        .filter((tab) => tab.edits.state.dirty && twinsOf(tabs.all, tab).every((twin) => closing.has(twin.view)))
-        .map((tab) => basename(tab.path));
+        .filter((tab) => tab.edits.state.dirty && twinsOf(tabs.all, tab).every((twin) => closing.has(twin.view)));
+      for (const tab of unsaved) approved.add(tab.edits.state);
       if (!unsaved.length) return true;
       return confirmDialog(
         unsaved.length === 1
-          ? TEXT().discardChangesTo(unsaved[0]!)
+          ? TEXT().discardChangesTo(basename(unsaved[0]!.path))
           : TEXT().discardChangesIn(unsaved.length),
         { title: TEXT().closeTabs, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
       );
     }));
     if (!go) return;
-    for (const id of ids) await closeTab(id, true);
+    for (const id of ids) await closeTab(id, approved);
   }
 
   /** The reader's favourites; see `favourites.ts`. Loaded with the session. */
@@ -1311,9 +1313,12 @@
   }
 
   /** A successful in-place write makes the working order the new file order. */
-  function rebaseAfterSave(path: string, model: Edits): void {
+  async function rebaseAfterSave(path: string, model: Edits): Promise<void> {
     keepSavedPlaces(tabs.all, model);
-    if (favourites.rebase(path, (source) => model.map.slotOf(source))) saveFavourites();
+    try {
+      if (await favourites.rebaseAliases(path, (source) => model.map.slotOf(source),
+        (candidates) => call("matching_open_path", { path, candidates }))) saveFavourites();
+    } catch { say(TEXT().favouritesNotSaved); }
   }
 
   /** Offers each favourite in the palette, and writes the list down. */
@@ -1366,7 +1371,7 @@
     }
     const destination = await openPath(next);
     if (destination !== null && destination !== from && tabs.find(from) === tab)
-      await closeTab(from, false, destination);
+      await closeTab(from, undefined, destination);
   }
 
   /** Opens again the document closed most recently, where it was left. */
@@ -1375,10 +1380,9 @@
   }
 
   /**
-   * Closes one tab. `asked` when the caller has already asked about its
-   * unsaved work, as {@link closeTabs} does once for several.
+   * Closes one tab. A batch approval covers only the edit states shown in its prompt.
    */
-  function closeTab(id: ViewId, asked = false, folderDestination?: ViewId): Promise<void> {
+  function closeTab(id: ViewId, approved?: ReadonlySet<EditState>, folderDestination?: ViewId): Promise<void> {
     return documentTasks.idle().then(() => opens.run(async () => {
       const tab = tabs.find(id);
       if (!tab) return;
@@ -1396,7 +1400,7 @@
         // releasing anything: the document, and its unsaved work, stay open in
         // the other.
         const lastView = twinsOf(tabs.all, tab).length === 0;
-        if (lastView && !asked && tab.edits.state.dirty && !await confirmDialog(
+        if (lastView && needsDiscardApproval(tab.edits.state, approved) && !await confirmDialog(
           TEXT().discardChangesTo(basename(tab.path)),
           { title: TEXT().closeTab, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
         )) return;
@@ -3699,7 +3703,7 @@
         if (!error) say(prompt.message, prompt.offers);
         return;
       }
-      rebaseAfterSave(path, model);
+      await rebaseAfterSave(path, model);
       await reopenAfterWrite(path, place);
     });
   }
@@ -4377,7 +4381,7 @@
         say(report.message, prompt.offers);
         return;
       }
-      rebaseAfterSave(path, model);
+      await rebaseAfterSave(path, model);
       const report = await afterRedactionReopen(result.message, result.success, reopen);
       say(report.message, [], resultTone(report.success));
     });
@@ -6173,7 +6177,7 @@
    */
   async function finishUpdateStep(step: FinishStep): Promise<void> {
     const ends = stepEndsProcess(step, isMac());
-    await finishUpdate(step, updates.state, ends, {
+    await updates.finish(step, ends, {
       unsaved: async () => {
         await documentTasks.idle();
         await settleDocument();
@@ -6208,6 +6212,7 @@
       say: (message) => say(message),
       // The busy state every edit already obeys: `applyEdit` refuses, and the
       // edit commands grey.
+      setSurfaceInert: (inert) => { updateExitHeld = inert; },
       hold: () => documentTasks.hold(),
     });
     refreshMenu();
@@ -6308,6 +6313,7 @@
     if ((await matchingTab(given.path, view))?.view !== view || tabs.active !== view) return;
     asDocument(view, () => {
       if (!viewer) return;
+      if (given.page !== null) forwardRequests.cancel(viewer);
       const problem = applyPlace(viewer, given, edits?.state.pages.length ?? openPageCount);
       if (problem !== null) say(problem);
       if (given.forward !== null) void searchForward(viewer, given.path, given.forward);
@@ -7004,7 +7010,9 @@
         rawOutline = result;
         applyPageOrder();
       }))
-      .catch(() => asDocument(view, () => sidebar?.setOutline(null)));
+      .catch(() => asDocument(view, () => {
+        if (viewer === mounted) sidebar?.setOutline(null);
+      }));
   }
 
   /** Reads the comments in the document once its first screen is up. */
@@ -7035,7 +7043,9 @@
         // not fire again for a tab that is already showing.
         if (sidebar?.tab === "comments") void fillCommentWords();
       }))
-      .catch(() => asDocument(view, () => sidebar?.setComments(null)));
+      .catch(() => asDocument(view, () => {
+        if (viewer === mounted) sidebar?.setComments(null);
+      }));
   }
 
   /** Reads the document's links once its first screen is up. */
@@ -7635,7 +7645,7 @@
               {@render tabStrip(tabRows.filter((tab) => tab.slot === slot), paneLayout.front[slot] ?? -1,
                 paneLayout.order[slot] === 0 ? TEXT().leftDocuments : TEXT().rightDocuments)}
             {/if}
-            <div class="surface" inert={settlingOpen} bind:this={areaHosts[slot]}></div>
+            <div class="surface" inert={settlingOpen || updateExitHeld} bind:this={areaHosts[slot]}></div>
           </div>
         {/each}
         {#if paneLayout.split}

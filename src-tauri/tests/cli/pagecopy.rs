@@ -214,12 +214,39 @@ fn hidden_fixture(path: &Path) {
             kids.push(Object::Reference(doc.add_object(sheet)));
         }
     }
+    let layer =
+        doc.add_object(dictionary! { "Type"=>"OCG", "Name"=>Object::string_literal("Labels") });
+    let visible_layer = doc
+        .add_object(dictionary! { "Type"=>"OCG", "Name"=>Object::string_literal("Shown labels") });
+    let mut marked = resources.clone();
+    marked.set(
+        "Properties",
+        dictionary! {"Labels"=>layer, "Shown"=>visible_layer},
+    );
+    for body in [
+        "q 0 0 m 400 400 l 0 400 l 400 0 l h W n BT /F1 12 Tf 65 200 Td (Crossing) Tj ET Q",
+        "BT /F1 12 Tf 25 200 Td (Crop boundary) Tj ET",
+        "/OC /Labels BDC BT /F1 12 Tf 65 300 Td (Layer label) Tj ET EMC",
+        "",
+        "/Span << /ActualText (Distance) >> BDC BT /F1 12 Tf 65 300 Td (D) Tj ET EMC",
+        "q 40 40 400 400 re W n 50 50 300 300 re W n BT /F1 12 Tf 65 300 Td (Visible) Tj ET Q",
+        "/OC /Shown BDC BT /F1 12 Tf 65 300 Td (Layer label) Tj ET EMC",
+    ] {
+        let stream = doc.add_object(Stream::new(dictionary! {}, body.as_bytes().to_vec()));
+        kids.push(Object::Reference(doc.add_object(dictionary! {
+            "Type"=>"Page", "Parent"=>tree, "MediaBox"=>vec![0.into(),0.into(),595.into(),842.into()],
+            "CropBox"=>vec![30.into(),0.into(),595.into(),842.into()],
+            "Contents"=>stream, "Resources"=>marked.clone(),
+        })));
+    }
     let count = kids.len() as i64;
     doc.objects.insert(
         tree,
         dictionary! { "Type"=>"Pages", "Kids"=>kids, "Count"=>count }.into(),
     );
-    let catalog = doc.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>tree});
+    let catalog = doc.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>tree,
+        "OCProperties"=>dictionary! {"OCGs"=>vec![Object::Reference(layer),Object::Reference(visible_layer)],
+        "D"=>dictionary! {"BaseState"=>"ON", "OFF"=>vec![Object::Reference(layer)]}}});
     doc.trailer.set("Root", catalog);
     doc.save(path).unwrap();
 }
@@ -286,6 +313,59 @@ fn keeps_hidden_words_hidden(report: &mut Report, dir: &Path) {
                 with.records, without.records
             ),
         );
+    }
+    let extra = Worker::spawn(&source, &library_dir()).and_then(|mut worker| {
+        let _ = worker.call(&Request::Open {
+            lazy_geometry: false,
+        });
+        (8..15)
+            .map(|page| copy_counted(&mut worker, page))
+            .collect::<Result<Vec<_>, _>>()
+    });
+    match extra {
+        Ok(pages) => {
+            let blank = read(&pages[3].0);
+            for (index, name) in ["crossed clip", "page crop", "optional content"]
+                .iter()
+                .enumerate()
+            {
+                let (emf, omitted) = &pages[index];
+                let seen = read(emf);
+                report.check(
+                    &format!("a label under {name} leaves neither words nor outlines"),
+                    seen.header
+                        && seen.words.is_empty()
+                        && seen.records == blank.records
+                        && *omitted == 1,
+                    &format!("{seen:?}, omitted {omitted}"),
+                );
+            }
+            let shown_layer = read(&pages[6].0);
+            report.check(
+                "a layer whose visibility cannot be verified is omitted and counted even when on",
+                shown_layer.header
+                    && shown_layer.words.is_empty()
+                    && shown_layer.records == blank.records
+                    && pages[6].1 == 1,
+                &format!("{shown_layer:?}"),
+            );
+            let actual = read(&pages[4].0);
+            report.check(
+                "the painted symbol stays a drawing when its accessible name differs",
+                actual.words.is_empty() && actual.shapes > 0 && pages[4].1 == 0,
+                &format!("{actual:?}"),
+            );
+            report.check(
+                "a visible word inside two rectangular clips stays editable",
+                read(&pages[5].0).words == ["Visible"] && pages[5].1 == 0,
+                "",
+            );
+        }
+        Err(why) => report.check(
+            "the worker draws the crop, clip and layer controls",
+            false,
+            &why,
+        ),
     }
     // PowerPoint's Ungroup drops a metafile's clip, so a clipped word drawn
     // as outlines would show whole on the slide: it must not be drawn at all.

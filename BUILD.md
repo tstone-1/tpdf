@@ -2652,7 +2652,11 @@ starts at 0 and increments within the month.
     installed PDFium, the installed tool at the new version, and no second offer in the new
     window. Then it uninstalls and reads the registry back. `--control no-press` finds the
     button and does not press it, and exits 0 exactly when the checks of the restart failed.
-    The real session file is moved away for the run and put back. It needs the network.
+    The real session file is moved away for the run and put back. On Windows the new window must expose the full document path
+    on a tab. On macOS the restarted process must hold the fixture open and enable the
+    native Close tab command. Recent history and the previous process cannot satisfy
+    these checks. Update controls are recognized in English and German. The summary
+    records whether the second start actually offered the update. It needs the network.
 
     From another machine, `run_on_windows.py --host <host> --clone '<clone>' --update
     <path>/tpdf_<previous>_x64-setup.exe` runs it in the desktop session there.

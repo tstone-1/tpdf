@@ -39,8 +39,7 @@ the menu is the application's own second way to the same command.
 
 THE SESSION. As in `update_check.py`: the application is started with
 `TPDF_SESSION_FILE` in the scratch folder, the real session file is moved away
-for the run and put back, and after the restart the document is looked for in
-whichever of the two was written.
+for the run and put back, and after the restart the new process must hold the PDF open and offer Close tab.
 
 It refuses to start while tpdf is running. It needs the network.
 
@@ -64,7 +63,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from update_log import SECOND_START_S, explain, first_attempt, last_launch, served_old
+from update_log import SECOND_START_S, UpdateAttempt, explain, last_launch, served_old
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 NAME = re.compile(r"^tpdf_(\d+\.\d+\.\d+)_aarch64\.dmg$")
@@ -126,15 +125,27 @@ def copies(binary: Path) -> list[int]:
 
 def menu(pid: int, item: str, press: bool = False) -> str:
     """`enabled`, `disabled`, `pressed`, or what System Events said instead."""
-    act = "click it" if press else "return (enabled of it) as text"
-    script = (f'tell application "System Events" to tell (first process whose unix id is {pid}) '
-              f'to tell menu item "{item}" of menu 1 of menu bar item 2 of menu bar 1 to {act}')
+    index, german = {
+        "Install update": (2, "Update installieren"),
+        "Restart to finish update": (2, "Neu starten, um das Update abzuschließen"),
+        "Close tab": (3, "Tab schließen"),
+    }[item]
+    act = 'click targetItem\nreturn "pressed"' if press else 'return (enabled of targetItem) as text'
+    script = f'''tell application "System Events" to tell (first process whose unix id is {pid})
+        tell menu 1 of menu bar item {index} of menu bar 1
+            if exists menu item "{item}" then
+                set targetItem to menu item "{item}"
+            else
+                set targetItem to menu item "{german}"
+            end if
+            {act}
+        end tell
+    end tell'''
     asked = run("osascript", "-e", script, timeout=20)
-    if asked.returncode != 0:
+    if asked.returncode:
         return asked.stderr.strip() or f"exit {asked.returncode}"
-    if press:
-        return "pressed"
-    return "enabled" if asked.stdout.strip() == "true" else "disabled"
+    answer = asked.stdout.strip()
+    return {"true": "enabled", "false": "disabled"}.get(answer, answer)
 
 
 def wait_for(pid: int, item: str, want: str, limit: float) -> str:
@@ -148,17 +159,20 @@ def wait_for(pid: int, item: str, want: str, limit: float) -> str:
     return said
 
 
-def names(document: Path, sessions: list[Path], since: float) -> str:
-    for where in sessions:
-        if where.is_file() and where.stat().st_mtime >= since \
-                and document.name in where.read_text(encoding="utf-8", errors="replace"):
-            return str(where)
-    return ""
+def document_open(pid: int, document: Path) -> bool:
+    """The new window has a document and its process holds the exact fixture open.
+
+    The app retains the source handle for the deferred edit fingerprint. A recent
+    path has no such handle. lsof intersects the PID and the file with -a.
+    """
+    held = run("/usr/sbin/lsof", "-nP", "-a", "-p", str(pid), "-Fp", "--", str(document), timeout=10)
+    return (held.returncode == 0 and f"p{pid}" in held.stdout.splitlines()
+            and menu(pid, "Close tab") == "enabled")
 
 
 def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, new: str,
-           wait: float, press: bool, attempt: dict[str, object]) -> None:
-    """`attempt` receives the first launch's answer and whether a second start was made."""
+           wait: float, press: bool, attempt: UpdateAttempt) -> None:
+    """`attempt` receives the first launch's answer and the outcome of a retry."""
     binary = app / "Contents/MacOS/tpdf"
     cli = app / "Contents/MacOS/tpdf-cli"
     session = scratch / "session.json"
@@ -171,9 +185,9 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
         return
     try:
         offer = wait_for(pid, "Install update", "enabled", wait)
-        attempt["answer"] = last_launch(log)
+        attempt.answer = last_launch(log)
         if offer != "enabled" and served_old(log):
-            attempt["second"] = True
+            attempt.second_offer = False
             print(f"[INFO] {old} was told it is current ({explain(log)}), while latest.json "
                   f"offers {new}; it asks once per launch, so it is started again in "
                   f"{SECOND_START_S} s, once")
@@ -181,11 +195,11 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
             time.sleep(SECOND_START_S)
             pid, opened = start(app, binary, document, session, log, wait)
             offer = wait_for(pid, "Install update", "enabled", wait) if pid else opened
+            attempt.second_offer = offer == "enabled"
         checks.note(offer == "enabled", "the menu offers Install update", offer)
         if offer != "enabled":
             print(f"[INFO] the application's own update checks: {explain(scratch / 'tpdf.log')}")
             return
-        began = time.time()
         if press:
             checks.note(menu(pid, "Install update", press=True) == "pressed", "Install update is chosen")
         else:
@@ -201,11 +215,11 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
             time.sleep(0.3)
         checks.note(pid not in copies(binary), "the application that was running ends")
         again: list[int] = []
-        named = ""
+        named = False
         deadline = time.monotonic() + (wait if ready == "enabled" else 5)
         while time.monotonic() < deadline:
             again = [p for p in copies(binary) if p != pid]
-            named = names(document, [session, REAL_SESSION], began) if again else ""
+            named = any(document_open(p, document) for p in again)
             if again and named:
                 break
             time.sleep(0.5)
@@ -213,7 +227,7 @@ def update(checks: Checks, app: Path, document: Path, scratch: Path, old: str, n
         said = run(str(cli), "--version").stdout.strip()
         checks.note(said.endswith(new), f"the tool in the bundle is version {new}", said)
         checks.note(bool(named), "the document is open again, from under a folder with a space",
-                    f"named in {named}" if named else str(document))
+                    str(document))
         if again:
             # Long enough for the new copy's own check for updates to answer.
             time.sleep(15)
@@ -286,7 +300,7 @@ def main() -> int:
     if control:
         print("--- control: the offer is waited for and nothing is chosen ---")
     checks = Checks()
-    attempt: dict[str, object] = {"answer": None, "second": False}
+    attempt = UpdateAttempt()
     # Resolved, because `ps` prints the path without the `/var` link in it.
     scratch = Path(tempfile.mkdtemp(prefix="tpdf-update-check-")).resolve()
     kept = scratch / "session-as-it-was.json"
@@ -318,8 +332,7 @@ def main() -> int:
         shutil.rmtree(scratch, ignore_errors=True)
 
     print()
-    answer = attempt["answer"]
-    first = first_attempt(answer if isinstance(answer, str) else None, attempt["second"] is True)
+    first = attempt.summary()
     if control:
         unexpected = [n for n in checks.failed if not any(n.startswith(e) for e in NO_PRESS)]
         missing = [e for e in NO_PRESS if not any(n.startswith(e) for n in checks.failed)]

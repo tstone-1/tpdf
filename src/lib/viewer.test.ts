@@ -1451,18 +1451,15 @@ describe("Viewer history", () => {
     viewer.destroy();
   });
 
-  it("announces a new document emptying the history", () => {
-    // The mirror, and the one a reader meets every time they open a second
-    // file: without it Back stays live in the menu on a document with nowhere
-    // to go back to. `setLinks` is where a document's history is cleared.
-    const { viewer, said } = build8Watching();
+  it("keeps Back on a same-document metadata refresh", () => {
+    const { viewer } = build8Watching();
     viewer.goToDestination(2, 200);
-    const jumped = said();
-    expect(viewer.canGoBack).toBe(true);
     viewer.setLinks([]);
-    expect(viewer.canGoBack).toBe(false);
-    expect(said()).toBeGreaterThan(jumped);
+    expect(viewer.goBack()).toBe(true);
     viewer.destroy();
+    const next = build8Watching().viewer;
+    expect(next.canGoBack).toBe(false);
+    next.destroy();
   });
 
   it("announces every jump, including one the stack collapses", () => {

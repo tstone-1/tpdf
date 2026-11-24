@@ -90,8 +90,8 @@ export class CommandLineTool {
 
   /**
    * Runs one of the two commands, shows what the backend said --- a refusal the
-   * same way as a success --- and asks again afterwards either way: a cancelled
-   * administrator prompt changed nothing, and that is worth knowing too.
+   * same way as a success --- and asks again afterwards either way: one link may already have changed
+   * when the reader cancels administrator approval for the other.
    */
   async run(install: boolean): Promise<void> {
     try {

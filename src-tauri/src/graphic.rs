@@ -348,21 +348,31 @@ impl Svg {
 
     /// The finished document when native coordinates are points.
     pub fn finish(self) -> String {
-        self.finish_with_unit(1.0)
+        self.finish_on_page(1.0, 0)
     }
 
     /// Keep native coordinates in the viewBox and scale the physical dimensions.
-    fn finish_with_unit(self, unit: f64) -> String {
+    fn finish_on_page(self, unit: f64, turns: u8) -> String {
         let [left, bottom, right, top] = self.bounds;
-        let (width, height) = (right - left, top - bottom);
+        let (matrix, x, y) = match turns % 4 {
+            0 => ("1 0 0 -1", -left, top),
+            1 => ("0 1 1 0", -bottom, -left),
+            2 => ("-1 0 0 1", right, -bottom),
+            _ => ("0 -1 -1 0", top, right),
+        };
+        let (width, height) = if turns % 2 == 0 {
+            (right - left, top - bottom)
+        } else {
+            (top - bottom, right - left)
+        };
         format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{physical_w}pt\" height=\"{physical_h}pt\" viewBox=\"0 0 {w} {h}\">\n<g transform=\"matrix(1 0 0 -1 {x} {y})\">\n{body}</g>\n</svg>\n",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{physical_w}pt\" height=\"{physical_h}pt\" viewBox=\"0 0 {w} {h}\">\n<g transform=\"matrix({matrix} {x} {y})\">\n{body}</g>\n</svg>\n",
             physical_w = num(width * unit),
             physical_h = num(height * unit),
             w = num(width),
             h = num(height),
-            x = num(-left),
-            y = num(top),
+            x = num(x),
+            y = num(y),
             body = self.body
         )
     }
@@ -407,6 +417,8 @@ pub struct GraphicRequest {
 }
 
 pub use engine::export;
+#[cfg(windows)]
+pub(crate) use engine::{may_be_layered, rectangular_path};
 
 mod engine {
     use std::ffi::c_void;
@@ -473,7 +485,25 @@ mod engine {
                     .collect();
                 let centre = ((region[0] + region[2]) / 2.0, (region[1] + region[3]) / 2.0);
                 let area = f64::from(page.width_pt()) * f64::from(page.height_pt());
-                match hit(&kinds, centre, area) {
+                let mut found = hit(&kinds, centre, area);
+                if let Some(at) = found {
+                    let object = listed[at].1;
+                    let mut problems = Vec::new();
+                    cannot_draw(bindings, object, &mut problems);
+                    if problems.iter().any(|p| matches!(p, Unsupported::Layers))
+                        || (matches!(bindings.FPDFPageObj_GetType(object), IMAGE | FORM)
+                            && !resources_allow(
+                                document,
+                                request.page,
+                                pages,
+                                true,
+                                ResourceCheck::Layers,
+                            ))
+                    {
+                        found = painted_hit(bindings, &page, &listed, &kinds, centre, area, at)?;
+                    }
+                }
+                match found {
                     Some(at) => vec![at],
                     None => {
                         return Ok((
@@ -639,7 +669,11 @@ mod engine {
                             return Err(said!("could not isolate the selected artwork"));
                         }
                     }
-                    alone_png(bindings, &page, around, scale, width, height)?
+                    crate::render::encode_png(
+                        &alone_pixels(bindings, &page, around, scale, width, height)?,
+                        width,
+                        height,
+                    )?
                 }
                 (GraphicFormat::Svg, _) => {
                     if let Some(why) = &found.no_svg {
@@ -650,7 +684,7 @@ mod engine {
                     for &object in &chosen {
                         draw(bindings, &copy, &page, object, IDENTITY, &mut svg)?;
                     }
-                    svg.finish_with_unit(unit).into_bytes()
+                    svg.finish_on_page(unit, page.quarter_turns()).into_bytes()
                 }
             };
             Ok((bytes, found))
@@ -880,13 +914,21 @@ mod engine {
             1 => {}
             _ => return Err(()),
         }
-        let count = bindings.FPDFClipPath_CountPathSegments(clip, 0);
+        rectangular_path(bindings, clip, 0).map(Some)
+    }
+
+    pub(crate) unsafe fn rectangular_path(
+        bindings: Bindings,
+        clip: FPDF_CLIPPATH,
+        path: c_int,
+    ) -> Result<Bounds, ()> {
+        let count = bindings.FPDFClipPath_CountPathSegments(clip, path);
         if !matches!(count, 4 | 5) {
             return Err(());
         }
         let mut points = [(0.0, 0.0); 5];
         for i in 0..count {
-            let seg = bindings.FPDFClipPath_GetPathSegment(clip, 0, i);
+            let seg = bindings.FPDFClipPath_GetPathSegment(clip, path, i);
             let (mut x, mut y) = (0.0, 0.0);
             if seg.is_null()
                 || bindings.FPDFPathSegment_GetType(seg)
@@ -907,12 +949,7 @@ mod engine {
         if !corners || (count == 5 && end != a) {
             return Err(());
         }
-        Ok(Some([
-            a.0.min(c.0),
-            a.1.min(c.1),
-            a.0.max(c.0),
-            a.1.max(c.1),
-        ]))
+        Ok([a.0.min(c.0), a.1.min(c.1), a.0.max(c.0), a.1.max(c.1)])
     }
 
     /// A single open segment has no join, even for a mitered pen. PDFium
@@ -949,7 +986,7 @@ mod engine {
 
     /// PDFium applies optional-content visibility while painting a marked object.
     /// Other mark names (structure tags, for example) do not control visibility.
-    unsafe fn may_be_layered(bindings: Bindings, object: FPDF_PAGEOBJECT) -> bool {
+    pub(crate) unsafe fn may_be_layered(bindings: Bindings, object: FPDF_PAGEOBJECT) -> bool {
         let count = bindings.FPDFPageObj_CountMarks(object);
         if !(0..=4096).contains(&count) {
             return true;
@@ -1248,9 +1285,52 @@ mod engine {
         Ok(bytes)
     }
 
+    /// Resolve overlapping layers on the disposable page, using PDFium's actual paint.
+    unsafe fn painted_hit(
+        bindings: Bindings,
+        page: &RawPage<'_>,
+        listed: &[(u32, FPDF_PAGEOBJECT, Bounds)],
+        kinds: &[(bool, Bounds)],
+        centre: (f64, f64),
+        area: f64,
+        at: usize,
+    ) -> Result<Option<usize>, String> {
+        let handle = page.handle();
+        // A bounding box exists even for a hidden layer. Let PDFium
+        // paint the click with one candidate active at a time.
+        for i in 0..bindings.FPDFPage_CountObjects(handle) {
+            let obj = bindings.FPDFPage_GetObject(handle, i);
+            if !obj.is_null() && bindings.FPDFPageObj_SetIsActive(obj, 0) == 0 {
+                return Err(said!("could not isolate the selected artwork"));
+            }
+        }
+
+        let mut end = at + 1;
+        // Ambiguous deep stacks can still be selected by dragging a region.
+        for _ in 0..16 {
+            let Some(i) = hit(&kinds[..end], centre, area) else {
+                break;
+            };
+            let obj = listed[i].1;
+            if bindings.FPDFPageObj_SetIsActive(obj, 1) == 0 {
+                return Err(said!("could not isolate the selected artwork"));
+            }
+            let (x, y) = centre;
+            let pixel = alone_pixels(bindings, page, [x, y, x, y], 1.0, 1, 1)?;
+            if pixel[3] != 0 {
+                return Ok(Some(i));
+            }
+            if bindings.FPDFPageObj_SetIsActive(obj, 0) == 0 {
+                return Err(said!("could not isolate the selected artwork"));
+            }
+            end = i;
+        }
+        Ok(None)
+    }
+
     /// What is left on the page, drawn alone on a transparent bitmap: the
     /// region `around` at `scale` pixels a point, `width` by `height`.
-    unsafe fn alone_png(
+    unsafe fn alone_pixels(
         bindings: Bindings,
         page: &RawPage<'_>,
         around: Bounds,
@@ -1319,7 +1399,7 @@ mod engine {
         };
         bindings.FPDF_RenderPageBitmapWithMatrix(bitmap, page.handle(), &matrix, &clip, REVERSE);
         bindings.FPDFBitmap_Destroy(bitmap);
-        crate::render::encode_png(&buffer, width, height)
+        Ok(buffer)
     }
 }
 

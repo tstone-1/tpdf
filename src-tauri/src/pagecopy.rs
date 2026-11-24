@@ -54,6 +54,9 @@ pub(crate) struct Words {
 /// what it guessed would put a wrong word on the slide.
 #[cfg(any(windows, test))]
 pub(crate) fn movable(text: &[u16]) -> bool {
+    if text.len() > 8192 {
+        return false; // ExtTextOutW's maximum number of UTF-16 units.
+    }
     let mut any = false;
     for unit in char::decode_utf16(text.iter().copied()) {
         match unit {
@@ -149,45 +152,10 @@ pub(crate) fn hides(text: Bounds, cover: Bounds) -> bool {
     wide > 0.0 && high > 0.0 && high >= 0.25 * (t - b)
 }
 
-/// Whether a clip made of `paths` (each a list of points, page space) leaves
-/// all of `text` showing.
-///
-/// Only an upright rectangle is read, which is what producers write: a
-/// page-sized one around everything, a cell or a column. Any other shape, or
-/// a rectangle that cuts into the text, means part of the text may be hidden,
-/// so the copy leaves the text out: PowerPoint's *Ungroup* drops the
-/// metafile's clip, and even PDFium's clipped outlines then show the whole
-/// word (measured 2026-11-06, `docs/TRAPS.md`, *Text written on top of a
-/// metafile shows what the page covered*).
+/// An editable word must fit in the visible page and every clipping rectangle.
 #[cfg(any(windows, test))]
-pub(crate) fn clip_shows(text: Bounds, paths: &[Vec<(f64, f64)>]) -> bool {
-    const SLACK: f64 = 0.01;
-    paths.iter().all(|points| {
-        upright(points).is_some_and(|[left, bottom, right, top]| {
-            text[0] >= left - SLACK
-                && text[1] >= bottom - SLACK
-                && text[2] <= right + SLACK
-                && text[3] <= top + SLACK
-        })
-    })
-}
-
-/// The rectangle `points` trace, when they trace an upright one.
-#[cfg(any(windows, test))]
-fn upright(points: &[(f64, f64)]) -> Option<Bounds> {
-    const SLACK: f64 = 0.01;
-    if points.len() < 4 || points.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
-        return None;
-    }
-    let left = points.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
-    let right = points.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
-    let bottom = points.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
-    let top = points.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
-    let corner = |v: f64, a: f64, b: f64| (v - a).abs() <= SLACK || (v - b).abs() <= SLACK;
-    points
-        .iter()
-        .all(|&(x, y)| corner(x, left, right) && corner(y, bottom, top))
-        .then_some([left, bottom, right, top])
+fn contains(area: Bounds, text: Bounds) -> bool {
+    text[0] >= area[0] && text[1] >= area[1] && text[2] <= area[2] && text[3] <= area[3]
 }
 
 /// A positive GDI length. Rust float casts otherwise saturate oversized
@@ -263,7 +231,7 @@ mod platform {
     };
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 
-    use super::{clip_shows, escapement, gdi_length, hides, movable, style, Bounds, Words};
+    use super::{contains, escapement, gdi_length, hides, movable, style, Bounds, Words};
     use crate::document::OpenDocument;
     use crate::progressive::{Bindings, RawPage};
 
@@ -285,9 +253,17 @@ mod platform {
     /// `FPDF_RenderPage` and `FPDF_SetPrintMode`, which `pdfium-render` binds
     /// only with its Win32 feature, looked up in the library this process
     /// already mapped.
-    type RenderPage =
-        unsafe extern "C" fn(HDC, FPDF_PAGE, c_int, c_int, c_int, c_int, c_int, c_int);
-    type SetPrintMode = unsafe extern "C" fn(c_int) -> c_int;
+    type RenderPage = unsafe extern "system" fn(
+        HDC,
+        FPDF_PAGE,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+        c_int,
+    ) -> c_int;
+    type SetPrintMode = unsafe extern "system" fn(c_int) -> c_int;
 
     /// The address of `name` in the mapped engine.
     fn symbol(name: &std::ffi::CStr) -> Result<unsafe extern "system" fn() -> isize, String> {
@@ -363,7 +339,9 @@ mod platform {
                 if print_mode(PRINTMODE_EMF) == 0 {
                     return Err(said!("the PDF engine refused to draw a metafile"));
                 }
-                render(dc, raw.handle(), 0, 0, px, py, c_int::from(turns), FLAGS);
+                if render(dc, raw.handle(), 0, 0, px, py, c_int::from(turns), FLAGS) == 0 {
+                    return Err(said!("the PDF engine refused to draw a metafile"));
+                }
                 // The words turn with the page's own `/Rotate` as well as the
                 // reader's; the drawing and `FPDF_PageToDevice` apply both.
                 let device = Device {
@@ -394,8 +372,11 @@ mod platform {
                 });
             }
             let mut bytes = vec![0u8; length];
-            GetEnhMetaFileBits(picture, length as u32, bytes.as_mut_ptr());
+            let read = GetEnhMetaFileBits(picture, length as u32, bytes.as_mut_ptr());
             DeleteEnhMetaFile(picture);
+            if read as usize != length {
+                return Err(said!("Windows would not read the picture back"));
+            }
             Ok((bytes, left_out))
         }
     }
@@ -445,6 +426,7 @@ mod platform {
     /// page showed, and the window says so.
     fn take_words(bindings: Bindings, page: &RawPage<'_>) -> Result<(Vec<Words>, u32), String> {
         let handle = page.handle();
+        let page_box = page.crop_pt().map(f64::from);
         let mut found = Vec::new();
         let mut taken = Vec::new();
         let mut left_out = 0u32;
@@ -454,7 +436,7 @@ mod platform {
         unsafe {
             let text_page = bindings.FPDFText_LoadPage(handle);
             if text_page.is_null() {
-                return Ok((found, left_out));
+                return Err(said!("could not inspect the page text for copying"));
             }
             let mut seen = Vec::new();
             for index in 0..bindings.FPDFPage_CountObjects(handle).max(0) {
@@ -482,11 +464,9 @@ mod platform {
                 // clipped outlines would show the whole word. The copy then
                 // lacks what the clip let through, and never shows more than
                 // the page does.
-                let shows = match (bounds, clip(bindings, object)) {
-                    (_, Some(paths)) if paths.is_empty() => true,
-                    (Some(at), Some(paths)) => clip_shows(at, &paths),
-                    _ => false,
-                };
+                let shows = bounds
+                    .is_some_and(|at| contains(page_box, at) && clip_shows(bindings, object, at))
+                    && !crate::graphic::may_be_layered(bindings, object);
                 if !shows {
                     taken.push(object);
                     seen.push(Seen::Nothing);
@@ -570,41 +550,20 @@ mod platform {
         fill_unseen && stroke_unseen
     }
 
-    /// The paths of an object's clip, each as its points; `None` when PDFium
-    /// cannot read one out.
-    unsafe fn clip(bindings: Bindings, object: FPDF_PAGEOBJECT) -> Option<Vec<Vec<(f64, f64)>>> {
+    /// PDFium returns -1 for an object's empty clip. Each real path intersects
+    /// the previous one and must itself be a rectangle containing the text.
+    unsafe fn clip_shows(bindings: Bindings, object: FPDF_PAGEOBJECT, text: Bounds) -> bool {
         let clip = bindings.FPDFPageObj_GetClipPath(object);
         if clip.is_null() {
-            return Some(Vec::new());
+            return true;
         }
-        // The handle is never null for a page object: it points at the
-        // object's clip state. That state holding no clip at all is a count
-        // of -1 (`FPDFClipPath_CountPaths` without a reference), which is
-        // every object no `W` applies to (measured 2026-11-06, PDFium 8103).
         let count = bindings.FPDFClipPath_CountPaths(clip);
-        if count < 0 {
-            return Some(Vec::new());
-        }
-        let mut paths = Vec::new();
-        for path in 0..count {
-            let segments = bindings.FPDFClipPath_CountPathSegments(clip, path);
-            if segments < 0 {
-                return None;
-            }
-            let mut points = Vec::new();
-            for index in 0..segments {
-                let segment = bindings.FPDFClipPath_GetPathSegment(clip, path, index);
-                let (mut x, mut y) = (0f32, 0f32);
-                if segment.is_null()
-                    || bindings.FPDFPathSegment_GetPoint(segment, &mut x, &mut y) == 0
-                {
-                    return None;
-                }
-                points.push((f64::from(x), f64::from(y)));
-            }
-            paths.push(points);
-        }
-        Some(paths)
+        count == -1
+            || (count >= 0
+                && (0..count).all(|path| {
+                    crate::graphic::rectangular_path(bindings, clip, path)
+                        .is_ok_and(|rect| contains(rect, text))
+                }))
     }
 
     /// The rectangles of the annotations PDFium draws over the page. A link
@@ -655,13 +614,28 @@ mod platform {
         text_page: FPDF_TEXTPAGE,
         mode: i32,
     ) -> Option<Words> {
+        // Accessible replacement words may describe a symbol rather than spell it.
+        // Keep those glyphs in PDFium's drawing.
+        let marks = bindings.FPDFPageObj_CountMarks(object);
+        if !(0..=4096).contains(&marks)
+            || (0..marks).any(|i| {
+                let mark = bindings.FPDFPageObj_GetMark(object, i as _);
+                mark.is_null()
+                    || bindings.FPDFPageObjMark_GetParamValueType(mark, "ActualText") != 0
+            })
+        {
+            return None;
+        }
         let wanted = bindings.FPDFTextObj_GetText(object, text_page, std::ptr::null_mut(), 0);
-        if !(4..=1 << 20).contains(&wanted) {
+        if !(4..=2 * (8192 + 1)).contains(&wanted) {
             return None;
         }
         let mut text = vec![0u16; wanted as usize / 2];
         let got = bindings.FPDFTextObj_GetText(object, text_page, text.as_mut_ptr(), wanted);
-        text.truncate((got as usize / 2).saturating_sub(1));
+        if got != wanted {
+            return None;
+        }
+        text.pop(); // terminating NUL
         if !movable(&text) {
             return None;
         }
@@ -769,8 +743,11 @@ mod platform {
             turns,
             shown,
         } = *device;
-        SetBkMode(dc, TRANSPARENT as _);
-        SetTextAlign(dc, TA_BASELINE | TA_LEFT);
+        if SetBkMode(dc, TRANSPARENT as _) == 0
+            || SetTextAlign(dc, TA_BASELINE | TA_LEFT) == u32::MAX
+        {
+            return Err(said!("Windows could not draw the page text"));
+        }
         for word in words {
             let (mut x, mut y) = (0, 0);
             if bindings.FPDF_PageToDevice(
@@ -786,7 +763,7 @@ mod platform {
                 &mut y,
             ) == 0
             {
-                continue;
+                return Err(said!("Windows could not draw the page text"));
             }
             let mut face: Vec<u16> = word.face.encode_utf16().collect();
             face.push(0);
@@ -808,24 +785,47 @@ mod platform {
                 face.as_ptr(),
             );
             if font.is_null() {
-                continue;
+                return Err(said!("Windows could not draw the page text"));
             }
             let before = SelectObject(dc, font);
-            SetTextColor(dc, word.colour);
-            ExtTextOutW(
-                dc,
-                x,
-                y,
-                0,
-                std::ptr::null(),
-                word.text.as_ptr(),
-                word.text.len() as u32,
-                std::ptr::null(),
-            );
+            if before.is_null() {
+                DeleteObject(font);
+                return Err(said!("Windows could not draw the page text"));
+            }
+            let colour = SetTextColor(dc, word.colour);
+            let drawn = write_text(dc, x, y, &word.text);
             SelectObject(dc, before);
             DeleteObject(font);
+            if colour == u32::MAX {
+                return Err(said!("Windows could not draw the page text"));
+            }
+            drawn?;
         }
         Ok(())
+    }
+
+    unsafe fn write_text(dc: HDC, x: i32, y: i32, text: &[u16]) -> Result<(), String> {
+        if ExtTextOutW(
+            dc,
+            x,
+            y,
+            0,
+            std::ptr::null(),
+            text.as_ptr(),
+            text.len() as u32,
+            std::ptr::null(),
+        ) == 0
+        {
+            return Err(said!("Windows could not draw the page text"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pagecopy_reports_a_failed_native_text_write() {
+        // A null device context cannot accept a text record.
+        let failed = unsafe { write_text(std::ptr::null_mut(), 0, 0, &[65]) };
+        assert_eq!(failed.unwrap_err(), "Windows could not draw the page text");
     }
 }
 
@@ -916,49 +916,14 @@ mod tests {
     }
 
     #[test]
-    fn pagecopy_a_clip_must_be_an_upright_rectangle_around_the_text() {
-        let text = [60.0, 600.0, 160.0, 620.0];
-        let rect = |l: f64, b: f64, r: f64, t: f64| vec![(l, b), (r, b), (r, t), (l, t), (l, b)];
-        assert!(clip_shows(text, &[]));
-        assert!(clip_shows(text, &[rect(0.0, 0.0, 595.0, 842.0)]));
-        // A path with no points is not read, and a clip of no area hides
-        // everything.
-        assert!(!clip_shows(text, &[Vec::new()]));
-        assert!(!clip_shows(text, &[rect(60.0, 600.0, 60.0, 600.0)]));
-        assert!(clip_shows(
-            text,
-            &[
-                rect(0.0, 0.0, 595.0, 842.0),
-                rect(50.0, 590.0, 170.0, 630.0)
-            ]
-        ));
-        // A rectangle that cuts the text, in either direction.
-        assert!(!clip_shows(text, &[rect(60.0, 600.0, 72.0, 620.0)]));
-        assert!(!clip_shows(text, &[rect(0.0, 610.0, 595.0, 842.0)]));
-        // The page clip and one that cuts: the intersection cuts.
-        assert!(!clip_shows(
-            text,
-            &[rect(0.0, 0.0, 595.0, 842.0), rect(60.0, 600.0, 72.0, 620.0)]
-        ));
-        // A diamond whose bounding box holds the text is still not read.
-        let diamond = vec![
-            (110.0, 500.0),
-            (300.0, 610.0),
-            (110.0, 720.0),
-            (-80.0, 610.0),
-        ];
-        assert!(!clip_shows(text, &[diamond]));
-        // Too few points, or a point that is not a number.
-        assert!(!clip_shows(text, &[vec![(0.0, 0.0), (595.0, 842.0)]]));
-        assert!(!clip_shows(
-            text,
-            &[vec![
-                (0.0, 0.0),
-                (f64::NAN, 0.0),
-                (595.0, 842.0),
-                (0.0, 842.0)
-            ]]
-        ));
+    fn pagecopy_keeps_only_words_inside_the_visible_bounds() {
+        let page = [10.0, 20.0, 150.0, 200.0];
+        assert!(contains(page, page));
+        assert!(contains(page, [12.0, 50.0, 84.0, 66.0]));
+        assert!(!contains(page, [9.0, 50.0, 84.0, 66.0]));
+        assert!(!contains(page, [12.0, 190.0, 84.0, 205.0]));
+        assert!(movable(&vec![65; 8192]));
+        assert!(!movable(&vec![65; 8193]));
     }
 
     #[test]

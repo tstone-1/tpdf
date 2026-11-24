@@ -40,7 +40,7 @@ client; nothing is installed for it.
 THE SESSION. The application is started with `TPDF_SESSION_FILE` in a scratch
 folder, and the copy the installer starts may not inherit it. So the real
 session file is moved away before the start and put back at the end, and after
-the update the document is looked for in whichever of the two was written.
+the update the new window's tab is checked by full path.
 
 IT WRITES TO THE MACHINE what `installed_check.py` writes, and reads the same
 three keys back. It refuses to start when tpdf is installed or running there.
@@ -56,7 +56,6 @@ Exit codes: 0 every check passed, 1 a check failed, 2 the run could not start.
 from __future__ import annotations
 
 import argparse
-import ctypes
 import json
 import os
 import shutil
@@ -72,7 +71,7 @@ from installed_check import (APP_KEY, NAME, PDF_CLASS, UNINSTALL_KEY, WM_CLOSE, 
                              registry, tool, uninstall, window_titles)
 from live_output import stream_results
 from win_modules import mapped_engines
-from update_log import SECOND_START_S, explain, first_attempt, last_launch, served_old
+from update_log import SECOND_START_S, UpdateAttempt, explain, has_open_tab, last_launch, offered_button, served_old
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
 
@@ -88,18 +87,24 @@ NO_PRESS = [
 ]
 
 # Lists the names of every button under one window, or invokes the first whose
-# name starts with the given text. One line per button; `PRESSED` after a press.
+# name equals the given text. One line per button; `PRESSED` after a press.
 AUTOMATION = r"""
 param([long]$Window, [string]$Press = "")
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $A = [System.Windows.Automation.AutomationElement]
 $root = $A::FromHandle([IntPtr]$Window)
+$tabs = New-Object System.Windows.Automation.PropertyCondition(
+    $A::ControlTypeProperty, [System.Windows.Automation.ControlType]::TabItem)
+foreach ($tab in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabs)) {
+    "TAB $($tab.Current.HelpText)"
+}
 $buttons = New-Object System.Windows.Automation.PropertyCondition(
     $A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
 foreach ($button in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttons)) {
     $name = $button.Current.Name
     "BUTTON $name"
-    if ($Press -and $name.StartsWith($Press)) {
+    if ($Press -and $name -ceq $Press) {
         $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
         "PRESSED $name"
         break
@@ -217,7 +222,7 @@ def start(folder: Path, pdf: Path, env: dict[str, str], scratch: Path, old: str,
     return app, window
 
 
-def offers(script: Path, window: int, offer: str, wait: float) -> list[str]:
+def offers(script: Path, window: int, version: str, wait: float) -> list[str]:
     """The window's buttons, read until one is the offer or `wait` runs out.
 
     The offer comes after a request to the network, and the automation tree
@@ -225,15 +230,15 @@ def offers(script: Path, window: int, offer: str, wait: float) -> list[str]:
     """
     seen: list[str] = []
     deadline = time.monotonic() + wait
-    while time.monotonic() < deadline and f"BUTTON {offer}" not in seen:
+    while time.monotonic() < deadline and not offered_button(seen, version):
         seen = buttons(script, window)
         time.sleep(1)
     return seen
 
 
 def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new: str,
-           real_session: Path, wait: float, press: bool, attempt: dict[str, object]) -> None:
-    """`attempt` receives the first launch's answer and whether a second start was made."""
+           wait: float, press: bool, attempt: UpdateAttempt) -> None:
+    """`attempt` receives the first launch's answer and the outcome of a retry."""
     from win_modules import modules_of
 
     script = scratch / "buttons.ps1"
@@ -248,11 +253,11 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
         checks.note(bool(window), f"a window titled 'tpdf v{old}' is shown")
         if not window:
             return
-        offer = f"Update to {new}"
-        seen = offers(script, window, offer, wait)
-        attempt["answer"] = last_launch(log)
-        if f"BUTTON {offer}" not in seen and served_old(log):
-            attempt["second"] = True
+        seen = offers(script, window, new, wait)
+        offer = offered_button(seen, new)
+        attempt.answer = last_launch(log)
+        if not offer and served_old(log):
+            attempt.second_offer = False
             print(f"[INFO] {old} was told it is current ({explain(log)}), while latest.json "
                   f"offers {new}; it asks once per launch, so it is started again in "
                   f"{SECOND_START_S} s, once")
@@ -260,10 +265,12 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
             time.sleep(SECOND_START_S)
             app, window = start(folder, pdf, env, scratch, old, wait)
             started.append(app.pid)
-            seen = offers(script, window, offer, wait) if window else []
-        checks.note(f"BUTTON {offer}" in seen, f"the window offers '{offer}'",
+            seen = offers(script, window, new, wait) if window else []
+            offer = offered_button(seen, new)
+            attempt.second_offer = bool(offer)
+        checks.note(bool(offer), f"the window offers version {new}",
                     f"{len(seen)} buttons read" if seen else "no button could be read")
-        if f"BUTTON {offer}" not in seen:
+        if not offer:
             print(f"[INFO] the application's own update checks: {explain(scratch / 'tpdf.log')}")
             return
         if not press:
@@ -286,7 +293,7 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
         again: list[int] = []
         windows: list[tuple[int, str]] = []
         workers: dict[int, set[str]] = {}
-        named = ""
+        named = False
         deadline = time.monotonic() + (wait * 3 if ended else 5)
         while time.monotonic() < deadline:
             again = [pid for pid in copies(folder) if pid != app.pid]
@@ -296,13 +303,7 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
                 for pid in descendants(root):
                     if paths := mapped_engines(modules_of(pid)):
                         workers.setdefault(pid, set()).update(paths)
-            # The copy the installer starts may not have the scratch session.
-            for where in (session, real_session):
-                if where.is_file() and pdf.name in where.read_text(encoding="utf-8", errors="replace"):
-                    # The old copy wrote the scratch one too, so it counts only
-                    # when it was written again after that copy ended.
-                    if where == real_session or where.stat().st_mtime > began_again(again):
-                        named = str(where)
+            named = any(has_open_tab(buttons(script, hwnd), pdf) for hwnd, _ in windows)
             if windows and installed_engine(workers, engine) and named:
                 break
             time.sleep(0.3)
@@ -311,7 +312,7 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
         checks.note(bool(windows), f"a window titled '{title}' is shown",
                     "" if windows else f"saw {[t for p in again for _, t in window_titles(p)]}")
         checks.note(bool(named), "the document is open again, from under a folder with a space",
-                    f"named in {named}" if named else f"{pdf}")
+                    str(pdf))
         checks.note(installed_engine(workers, engine),
                     "a worker of the new copy has the installed PDFium mapped",
                     ", ".join(sorted(set().union(*workers.values()))))
@@ -328,30 +329,13 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
             while not now and time.monotonic() < asked_until:
                 now = buttons(script, windows[0][0])
                 time.sleep(1)
-            checks.note(bool(now) and not any(line.startswith("BUTTON Update to") for line in now),
+            checks.note(any(line.startswith("BUTTON ") for line in now) and not any(
+                            line.startswith(("BUTTON Update to ", "BUTTON Update auf ")) for line in now),
                         "the new copy offers no update",
                         f"{len(now)} buttons read" if now else "no button could be read")
     finally:
         running = [pid for pid in copies(folder)]
         close(sorted(set(running) | ({app.pid} if app.poll() is None else set())))
-
-
-def began_again(pids: list[int]) -> float:
-    """When the earliest of these processes was created, as a file time in seconds."""
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.restype = ctypes.c_void_p
-    earliest = float("inf")
-    for pid in pids:
-        handle = kernel32.OpenProcess(0x1000, False, pid)
-        if not handle:
-            continue
-        created, a, b, c = (ctypes.c_ulonglong() for _ in range(4))
-        if kernel32.GetProcessTimes(ctypes.c_void_p(handle), ctypes.byref(created), ctypes.byref(a),
-                                    ctypes.byref(b), ctypes.byref(c)):
-            # 100 ns ticks since 1601, to seconds since 1970.
-            earliest = min(earliest, created.value / 1e7 - 11644473600)
-        kernel32.CloseHandle(ctypes.c_void_p(handle))
-    return earliest
 
 
 def main() -> int:
@@ -403,7 +387,7 @@ def main() -> int:
     if control:
         print("--- control: the button is found and not pressed ---")
     checks = Checks()
-    attempt: dict[str, object] = {"answer": None, "second": False}
+    attempt = UpdateAttempt()
     before = {key: registry(key) for key in (PDF_CLASS, APP_KEY)}
     real_session = Path(os.environ["APPDATA"]) / "com.timostein.tpdf" / "session.json"
     with tempfile.TemporaryDirectory(prefix="tpdf-update-check-") as temporary:
@@ -422,7 +406,7 @@ def main() -> int:
             checks.note(code == 0, "the installer ends with exit code 0", f"exit {code}")
             said = tool(folder / "tpdf-cli.exe", "--version").stdout.strip()
             checks.note(said.endswith(old), f"the installed tool is version {old}", said)
-            update(checks, folder, document, scratch, old, new, real_session, args.wait,
+            update(checks, folder, document, scratch, old, new, args.wait,
                    press=control != "no-press", attempt=attempt)
         except (RanOut, RuntimeError, OSError) as e:
             checks.note(False, "every step ends, and within its time limit", str(e))
@@ -433,8 +417,7 @@ def main() -> int:
                 uninstall(checks, folder, before, run_it=True)
 
     print()
-    answer = attempt["answer"]
-    first = first_attempt(answer if isinstance(answer, str) else None, attempt["second"] is True)
+    first = attempt.summary()
     if control:
         unexpected = [n for n in checks.failed if not any(n.startswith(e) for e in NO_PRESS)]
         missing = [e for e in NO_PRESS if not any(n.startswith(e) for n in checks.failed)]

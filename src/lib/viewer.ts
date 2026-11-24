@@ -3631,9 +3631,7 @@ export class Viewer {
     this.drawDrag.cancel();
     this.measureDrag.cancel();
     this.moveDrag.cancel();
-    // Back and Forward hold slots as well. `setLinks` forgets them when the
-    // caller translates the links after this, and that is a reason the caller
-    // has, not one this method should depend on.
+    // Saved jumps name slots in the previous page order.
     this.history.clear();
     this.opts.onNavigate?.();
     // A search confined to a selection is confined to slots too, and the
@@ -4241,13 +4239,6 @@ export class Viewer {
     this.linkWalk = orderedLinks(items);
     this.turnedLinks = null;
     this.clearLinkFocus();
-    // The history belongs to the document, not to the session: keeping it would
-    // let Back scroll a new document to a page number the old one had.
-    this.history.clear();
-    // And say so, or Back stays live in the menu on a document with nowhere to
-    // go back to --- the mirror of the case above, and the one a reader meets
-    // every time they open a second file.
-    this.opts.onNavigate?.();
     // The accessibility tree too, and this is the half a sighted reader never
     // sees: without it a table of contents is announced as ordinary prose, with
     // nothing for a screen reader to tell one from the other.

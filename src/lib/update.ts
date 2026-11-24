@@ -206,6 +206,7 @@ export function percentOfDownload(received: number, total: number | null): numbe
 export class Updates {
   #state: UpdateState = { kind: "idle" };
   #busy = false;
+  #finishing = false;
   #handle: UpdateHandle | null = null;
   #onChange: (s: UpdateState) => void;
   #automatic = false;
@@ -281,9 +282,17 @@ export class Updates {
     return this.#check(false);
   }
 
+  /** Own the preflight and confirmation as well as the native operation. */
+  async finish(step: FinishStep, ends: boolean, effects: FinishEffects): Promise<void> {
+    if (this.#finishing) return;
+    this.#finishing = true;
+    try { await finishUpdate(step, this.#state, ends, effects); }
+    finally { this.#finishing = false; }
+  }
+
   #check(launch: boolean): Promise<UpdateState> {
     if (this.#checking) return this.#checking;
-    if (this.#busy) return Promise.resolve(this.#state);
+    if (this.#busy || this.#finishing || this.#state.kind === "ready") return Promise.resolve(this.#state);
     if (!this.inApp) {
       this.#set({ kind: "failed", message: MANUAL_UPDATES });
       return Promise.resolve(this.#state);
@@ -512,6 +521,8 @@ export interface FinishEffects {
    * `dirty` before they land is reading it early.
    */
   unsaved(): Promise<string[]>;
+  /** Block new pointer and keyboard input while existing drafts settle for an exit. */
+  setSurfaceInert(inert: boolean): void;
   /** Asks the reader. `true` goes ahead. */
   confirm(prompt: FinishPrompt): Promise<boolean>;
   /**
@@ -579,6 +590,7 @@ export async function finishUpdate(
   let release: (() => void) | undefined;
   try {
     if (ends) {
+      effects.setSurfaceInert(true);
       const unsaved = await effects.unsaved();
       release = effects.hold();
       const prompt = finishPrompt(step, unsaved);
@@ -592,6 +604,7 @@ export async function finishUpdate(
     return "failed";
   } finally {
     release?.();
+    if (ends) effects.setSurfaceInert(false);
   }
 }
 

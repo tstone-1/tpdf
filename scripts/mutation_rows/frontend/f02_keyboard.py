@@ -2424,15 +2424,11 @@ ROWS += [
         "announces a jump, which is what makes Back live",
     ),
     Mutation(
-        # Say nothing when a new document empties the history. Back stays live
-        # in the menu on a file nobody has jumped in, and pressing it does
-        # nothing -- the mirror of the mutation above, and the one a reader
-        # meets every time they open a second file.
-        "viewer: keep a cleared history from the window",
+        "viewer: erase history on a metadata refresh",
         "src/lib/viewer.ts",
-        "    this.history.clear();\n    // And say so, or Back stays live in the menu on a document with nowhere",
-        "    this.history.clear();\n    if (false)\n    // And say so, or Back stays live in the menu on a document with nowhere",
-        "announces a new document emptying the history",
+        "    this.linkWalk = orderedLinks(items);",
+        "    this.linkWalk = orderedLinks(items); this.history.clear();",
+        "keeps Back on a same-document metadata refresh",
     ),
     Mutation(
         # Offer Back whenever a document is open, which is what both commands

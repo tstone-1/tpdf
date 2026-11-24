@@ -27395,6 +27395,23 @@ red. Its first underline control could not fail: PDFium's bounds for a word with
 start at the baseline, so a line under it touched nothing, and the mutation removing the
 quarter-height rule survived until the line went through the letters.
 
+The visible crop also applies to unmarked words. A rectangular clip needs four axis-aligned
+edges in order. The same corners joined in a different order can cut through a word.
+PDFium exposes optional-content marks but does not report the effective visibility of a
+text object. Page copy omits those marked words and counts them in the notice. An
+`ActualText` mark can replace a painted symbol with its description in extracted text, so
+after the visibility check the symbol stays in PDFium's drawing. Editable runs are limited
+to the 8,192 UTF-16 units accepted by `ExtTextOutW`.
+
+PowerPoint ungrouped a page containing a crossed clip, a crop crossing a word, an
+off-layer label and a symbol with an accessibility description into the same four shapes
+as the visible control. Both slides exported to identical PNGs. Placement matters when
+testing this: on a 1,024 by 768 reference display, the EMF DC reported a 768-pixel-high
+clip for a page drawn 1,123 pixels high. A filled rectangle and an outlined symbol near
+the bottom disappeared from PDFium's records even when it returned success. GDI's
+separately written editable label remained. Moving the same art above the device edge
+restored it. A top-half fixture alone does not cover copying the whole page.
+
 **Outlines are not a safe fallback for a clip.** Round trip in installed PowerPoint the same
 day (clipboard, `Shapes.Paste()`, *Ungroup* until nothing is grouped, save, reopen, slide
 exported as a picture): covered, transparent and annotated words stayed hidden, but the words

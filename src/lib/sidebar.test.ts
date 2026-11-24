@@ -257,6 +257,18 @@ describe("Sidebar keyboard activation", () => {
     bar.destroy();
   });
 
+  it("reveals the chapter when the outline arrives after the last position", () => {
+    const bar = tree([]);
+    bar.setPosition(1, 0);
+    const source = nested(2);
+    bar.setOutline(source);
+    bar.revealCurrent();
+    expect(bar.elementFor("0.0")?.tabIndex).toBe(0);
+    bar.setOutline({ ...source, items: [...source.items] }, source);
+    expect(bar.currentRow).toBe("0.0");
+    bar.destroy();
+  });
+
   it("leaves a visible tab stop when the current child is collapsed", () => {
     const bar = tree([]);
     bar.setOutline(nested(2));

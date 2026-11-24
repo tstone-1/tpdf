@@ -25,6 +25,11 @@ function coveredWith(id: number, words: string): CoveredWords {
 const tab =(id: number, path = `/fixture/${id}.pdf`) => ({ view: id, doc: { id }, path, edits: [id], page: id });
 
 describe("document tabs", () => {
+  it.each(["Outline", "Comments"])("checks the mounted viewer before clearing %s on a failed scan", (panel) => {
+    const reader = functionIn(app, `function read${panel}(`);
+    expect(reader.slice(reader.indexOf(".catch("))).toContain(`if (viewer === mounted) sidebar?.set${panel}(null)`);
+  });
+
   it("keeps independent edit journals and positions across switches", () => {
     const tabs = new DocumentTabs<ReturnType<typeof tab>>();
     tabs.keep(tab(1));
@@ -325,6 +330,7 @@ describe("a close whose drafts cannot be committed", () => {
     // Mutation: drop either catch -> red.
     expect(missingFrom(functionIn(app, "async function closeTabs(ids: ViewId[]): Promise<void> {"), [
       "try { await settleDocument(); } catch (e) { say(String(e)); return false; }",
+      "approved.add(tab.edits.state)", "await closeTab(id, approved)",
     ])).toEqual([]);
     for (const command of ["session_set_invert_pages", "session_set_restore_tabs", "session_set_ocr_language"]) {
       expect(withoutCommentsOf(app)).toContain(`sessionWrites.run(() => call("${command}"`);

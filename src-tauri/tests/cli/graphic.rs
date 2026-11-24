@@ -274,6 +274,40 @@ fn layered_and_rotated(dir: &Path, angle: i64, visible: bool) -> Result<(), Stri
     if found.no_svg.is_none() || export(&mut worker, request(GraphicFormat::Svg)).is_ok() {
         return Err("offered raw SVG despite optional content".into());
     }
+    let (x, y) = match angle {
+        0 => (80, 158),
+        90 => (42, 80),
+        180 => (120, 42),
+        _ => (158, 120),
+    };
+    let (_, hit) = export(
+        &mut worker,
+        GraphicRequest {
+            rect: [x, y, 1, 1],
+            ..request(GraphicFormat::Hit)
+        },
+    )?;
+    if hit.object != Some(u32::from(visible)) {
+        return Err(format!(
+            "selected {:?} with layer visibility {visible}",
+            hit.object
+        ));
+    }
+    let (picked, _) = export(
+        &mut worker,
+        GraphicRequest {
+            object: hit.object,
+            ..request(GraphicFormat::Png)
+        },
+    )?;
+    if decoded(&picked)
+        .ok_or("invalid selected PNG")?
+        .2
+        .chunks_exact(4)
+        .any(|px| px != color)
+    {
+        return Err("clicked graphic differed from the visible drawing".into());
+    }
     // The underlying blue path has no optional-content mark. Selecting it
     // alone must still offer vector export on this very same layered page.
     let (svg, _) = export(
@@ -283,7 +317,19 @@ fn layered_and_rotated(dir: &Path, angle: i64, visible: bool) -> Result<(), Stri
             ..request(GraphicFormat::Svg)
         },
     )?;
-    if !String::from_utf8_lossy(&svg).contains("#0000ff") {
+    let (view_box, transform) = match angle {
+        0 => ("0 0 120 24", "1 0 0 -1 -20 54"),
+        90 => ("0 0 24 120", "0 1 1 0 -30 -20"),
+        180 => ("0 0 120 24", "-1 0 0 1 140 -30"),
+        _ => ("0 0 24 120", "0 -1 -1 0 54 140"),
+    };
+    let svg = String::from_utf8_lossy(&svg);
+    if !svg.contains(&format!("viewBox=\"{view_box}\""))
+        || !svg.contains(&format!("matrix({transform})"))
+    {
+        return Err(format!("wrong SVG orientation for {angle} degrees"));
+    }
+    if !svg.contains("#0000ff") {
         return Err("unmarked vector selection lost its blue drawing".into());
     }
     Ok(())

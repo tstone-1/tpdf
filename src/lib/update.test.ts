@@ -332,6 +332,16 @@ describe("Updates.check", () => {
     expect(await installing).toEqual({ kind: "ready", version: "26.12.0" });
   });
 
+  it("keeps an installed update ready when asked to check again", async () => {
+    const check = vi.fn().mockResolvedValueOnce(handle()).mockResolvedValueOnce(null);
+    const updates = new Updates({ check });
+    await updates.check();
+    const installed = await updates.install();
+    expect(stepFor(installed)).toBe("restart");
+    expect(await updates.check()).toEqual(installed);
+    expect(check).toHaveBeenCalledTimes(1);
+  });
+
   it("clears the previous handle when a later check fails", async () => {
     // Mutation: leave #handle alone in the catch -> red. This is the path that
     // could install something the reader was never shown: an update found, then
@@ -607,9 +617,46 @@ describe("finishing an update", () => {
           return () => log.push("release");
         },
         settled: async () => {},
+        setSurfaceInert: () => {},
       } satisfies FinishEffects,
     };
   }
+
+  it("handles one restart while its preflight is pending and allows a later retry", async () => {
+    const updates = new Updates(api(handle()));
+    await updates.check();
+    await updates.install();
+    const { effects: e, log } = effects({ agree: false });
+    let release!: (names: string[]) => void;
+    const waiting = { ...e, unsaved: () => new Promise<string[]>((done) => { release = done; }) };
+    const first = updates.finish("restart", true, waiting);
+    await updates.finish("restart", true, e);
+    expect(log).toEqual([]);
+    release(["edited.pdf"]);
+    await first;
+    expect(log).toEqual(["hold", "confirm", "release"]);
+    await updates.finish("restart", true, e);
+    expect(log.slice(-4)).toEqual(["unsaved", "hold", "act", "release"]);
+  });
+
+  it("holds comment input from draft settlement until Windows installation returns", async () => {
+    const state = { kind: "available", version: "99" } as const;
+    const { effects: e } = effects();
+    let inert = false;
+    let complete!: () => void;
+    let started!: () => void;
+    const downloading = new Promise<void>((resolve) => { started = resolve; });
+    const result = finishUpdate("install", state, true, { ...e,
+      setSurfaceInert: (held) => { inert = held; },
+      unsaved: async () => { expect(inert).toBe(true); return []; },
+      act: () => new Promise<void>((resolve) => { complete = resolve; started(); }),
+    });
+    await downloading;
+    expect(inert).toBe(true);
+    complete();
+    expect(await result).toBe("acted");
+    expect(inert).toBe(false);
+  });
 
   it("restarts from the ready state with nothing unsaved, asking nobody", () => {
     // The ordinary press, and the one the whole feature exists for.
@@ -662,6 +709,7 @@ describe("finishing an update", () => {
     let held = false;
     let heldDuringAct: boolean | null = null;
     const e: FinishEffects = {
+      setSurfaceInert: () => {},
       settled: async () => {},
       unsaved: async () => { order.push(`unsaved:${held}`); return []; },
       confirm: async () => { order.push("confirm"); return true; },
@@ -777,6 +825,7 @@ describe("finishing an update", () => {
     // Mutation: wire `hold: () => () => {}` -> red.
     expect(missingFrom(functionIn(app, "async function finishUpdateStep(step: FinishStep): Promise<void> {"), [
       "hold: () => documentTasks.hold(),",
+      "setSurfaceInert: (inert) => { updateExitHeld = inert; },",
     ])).toEqual([]);
     expect(withoutComments(app)).toContain("if (copyTaskBusy || (documentBusy && !committingPopup)) return Promise.resolve(null);");
   });

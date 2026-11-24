@@ -63,6 +63,22 @@ export class Favourites {
     return changed;
   }
 
+  /** Match aliases after publication, when a replaced hard link may name a different file. */
+  async rebaseAliases(path: string, slotOf: (source: number) => number | undefined,
+    match: (candidates: string[]) => Promise<string | null>): Promise<boolean> {
+    const matched = [path];
+    const others = new Set(this.list.filter((entry) => slotOf(entry.page) !== entry.page).map((entry) => entry.path));
+    others.delete(path);
+    while (others.size) {
+      const alias = await match([...others]);
+      if (alias === null || !others.delete(alias)) break;
+      matched.push(alias);
+    }
+    let changed = false;
+    for (const name of matched) if (this.rebase(name, slotOf)) changed = true;
+    return changed;
+  }
+
   /** Unmarks a page, answering whether it was marked. */
   remove(path: string, page: number): boolean {
     const before = this.list.length;

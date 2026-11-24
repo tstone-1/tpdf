@@ -65,7 +65,7 @@ impl Place {
             if let Some((source, line)) = value.rsplit_once(':') {
                 let path = std::path::Path::new(source);
                 if !source.is_empty() && path.is_relative() {
-                    self.forward = Some(format!("{}:{line}", cwd.join(path).display()));
+                    self.forward = cwd.join(path).to_str().map(|path| format!("{path}:{line}"));
                 }
             }
         }
@@ -76,7 +76,6 @@ impl Place {
 /// A document handed over from outside, and where to show it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Opening {
-    #[serde(serialize_with = "lossy")]
     pub path: PathBuf,
     #[serde(flatten)]
     pub place: Place,
@@ -89,12 +88,6 @@ impl From<PathBuf> for Opening {
             place: Place::default(),
         }
     }
-}
-
-/// A path as the window takes it: a string, with any byte that is not UTF-8
-/// replaced, as every other route into the window has always sent it.
-fn lossy<S: serde::Serializer>(path: &std::path::Path, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&path.to_string_lossy())
 }
 
 /// Paths waiting for a frontend, and whether one has arrived.
@@ -117,6 +110,7 @@ pub enum Delivery {
     Emit(Opening),
     /// Nothing can show it yet; it is queued.
     Queued,
+    Ignored,
 }
 
 impl Launch {
@@ -126,6 +120,13 @@ impl Launch {
     /// no `AppHandle` and can be tested without a running application.
     pub fn deliver(&self, opening: impl Into<Opening>) -> Delivery {
         let opening = opening.into();
+        if opening.path.to_str().is_none() {
+            eprintln!(
+                "tpdf: ignoring an unrepresentable document path: {:?}",
+                opening.path
+            );
+            return Delivery::Ignored;
+        }
         let mut state = self.state.lock();
         if state.listening {
             Delivery::Emit(opening)
@@ -160,6 +161,32 @@ pub(crate) fn desktop_args(
             })
         })
         .collect()
+}
+
+/// Single-instance transports encode cwd as text. If it cannot round-trip,
+/// resolve document and forward-search paths before handing off the launch.
+pub(crate) fn args_for_handoff(args: &[String], cwd: &std::path::Path) -> Vec<String> {
+    if cwd.to_str().is_some() {
+        return args.to_vec();
+    }
+    let (rest, place) = split_place(args);
+    let mut wire: Vec<String> = args.first().cloned().into_iter().collect();
+    for path in paths_in(rest, cwd, |p| p.is_file()) {
+        match path.into_os_string().into_string() {
+            Ok(name) => wire.push(name),
+            Err(name) => eprintln!("tpdf: ignoring an unrepresentable document path: {name:?}"),
+        }
+    }
+    let place = place.resolved(cwd);
+    for (flag, value) in PLACE_OPTIONS
+        .into_iter()
+        .zip([place.page, place.zoom, place.forward])
+    {
+        if let Some(value) = value {
+            wire.push(format!("{flag}={value}"));
+        }
+    }
+    wire
 }
 
 /// The options that say where to show a document, each taking one value.
@@ -374,6 +401,41 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn the_handoff_preserves_absolute_neighbours_and_does_not_reexec_twice() {
+        use std::os::unix::ffi::OsStrExt;
+        let cwd = Path::new(std::ffi::OsStr::from_bytes(b"/tmp/dir-\xff"));
+        let args = [
+            "tpdf",
+            "--page",
+            "2",
+            "--forward-search=a.tex:4",
+            "one.pdf",
+            "/tmp/two.pdf",
+        ]
+        .map(String::from);
+        let wire = super::args_for_handoff(&args, cwd);
+        assert_eq!(wire, ["tpdf", "/tmp/two.pdf", "--page=2"]);
+        assert_eq!(super::args_for_handoff(&wire, cwd), wire);
+        assert_eq!(super::args_for_handoff(&args, Path::new("/tmp")), args);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_relative_document_in_a_non_unicode_directory_is_never_redirected() {
+        use std::os::unix::ffi::OsStrExt;
+        let cwd = Path::new(std::ffi::OsStr::from_bytes(b"/tmp/dir-\xff"));
+        let launch = Launch::default();
+        for opening in openings_from_launch(["tpdf", "one.pdf", "/tmp/two.pdf"], cwd, |_| true) {
+            launch.deliver(opening);
+        }
+        assert_eq!(
+            launch.take(),
+            vec![Opening::from(PathBuf::from("/tmp/two.pdf"))]
+        );
+    }
+
     #[test]
     #[cfg(unix)]
     fn an_unrepresentable_launch_argument_preserves_the_other_document() {
@@ -411,6 +473,26 @@ mod tests {
         assert_eq!(openings.len(), 1);
         assert_eq!(openings[0].path, Path::new("/work/Grüße.pdf"));
         assert_eq!(openings[0].place.page.as_deref(), Some(""));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_windows_handoff_never_substitutes_a_replacement_character() {
+        use std::os::windows::ffi::OsStringExt;
+        let invalid = std::ffi::OsString::from_wide(&[0xd800]);
+        let cwd = PathBuf::from(r"C:\work").join(&invalid);
+        let args = super::desktop_args(
+            [
+                "tpdf".into(),
+                invalid,
+                "relative.pdf".into(),
+                r"C:\work\�.pdf".into(),
+                r"C:\work\ok.pdf".into(),
+            ],
+            |_| {},
+        );
+        let wire = super::args_for_handoff(&args, &cwd);
+        assert_eq!(wire, ["tpdf", r"C:\work\�.pdf", r"C:\work\ok.pdf"]);
     }
 
     #[test]

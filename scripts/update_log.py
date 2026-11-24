@@ -12,6 +12,7 @@ as the old copy gets the second sentence of `explain` instead.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -56,19 +57,29 @@ def last_launch(log: Path) -> str | None:
     return launches[-1].rstrip().partition(": ")[2] or None
 
 
-def first_attempt(answer: str | None, second_start: bool) -> str:
-    """The first launch's result, for the run's last line beside the count of checks.
+@dataclass
+class UpdateAttempt:
+    answer: str | None = None
+    # None until a retry starts. True only after the offer control is observed.
+    second_offer: bool | None = None
 
-    A run that passes on the second start is a pass of the update path, not of
-    the first launch: a reader who started tpdf at that moment was told it is
-    current and asked nothing more until the next launch. Until 2026-11-16 the
-    summary said only that the run passed, and the miss was an `[INFO]` line
-    above it.
-    """
-    said = answer if answer is not None else "no launch check line"
-    if second_start:
-        return f"first launch MISSED (its check said {said}), offered on the second start"
-    return f"first launch: {said}"
+    def summary(self) -> str:
+        said = self.answer or "no launch check line"
+        if self.second_offer is None:
+            return f"first launch: {said}"
+        retry = "offered on the second start" if self.second_offer else "no offer observed on the second start"
+        return f"first launch MISSED (its check said {said}), {retry}"
+
+
+def offered_button(lines: list[str], version: str) -> str | None:
+    """Return the exact localized button name to invoke."""
+    return next((name for name in (f"Update to {version}", f"Update auf {version}")
+                 if f"BUTTON {name}" in lines), None)
+
+
+def has_open_tab(lines: list[str], document: Path) -> bool:
+    """Compare full paths obtained from tab controls in the relaunched process."""
+    return any(Path(line[4:]) == document for line in lines if line.startswith("TAB "))
 
 
 def explain(log: Path) -> str:

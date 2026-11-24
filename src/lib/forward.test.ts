@@ -14,6 +14,16 @@ describe("A --forward-search value", () => {
     expect(second()).toBe(false);
   });
 
+  it("a later page request supersedes a pending source jump on that viewer", () => {
+    const requests = new ForwardRequests();
+    const viewer = {};
+    const jump = requests.start(viewer, () => true);
+    const other = requests.start({}, () => true);
+    requests.cancel(viewer);
+    expect(jump()).toBe(false);
+    expect(other()).toBe(true);
+  });
+
   it("is a file and a line, split at the last colon", () => {
     expect(parseForward("/proj/ch/intro.tex:12")).toEqual({ source: "/proj/ch/intro.tex", line: 12 });
     expect(parseForward(" C:\\proj\\intro.tex:7 ")).toEqual({ source: "C:\\proj\\intro.tex", line: 7 });

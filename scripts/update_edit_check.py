@@ -261,7 +261,7 @@ class Tunnel(socketserver.BaseRequestHandler):
 
 def header(script: Path, window: int) -> list[str]:
     """The names of the window's buttons."""
-    return [line.removeprefix("BUTTON ") for line in buttons(script, window)]
+    return [line.removeprefix("BUTTON ") for line in buttons(script, window) if line.startswith("BUTTON ")]
 
 
 def dialog(pid: int, title: str, wait: float) -> int:
@@ -387,13 +387,13 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
         checks.note(bool(window), f"a window titled 'tpdf v{old}' is shown")
         if not window:
             return
-        seen = offers(script, window, offer, wait)
+        seen = offers(script, window, new, wait)
         if f"BUTTON {offer}" not in seen and served_old(log):
             print(f"[INFO] {old} was told it is current ({explain(log)}); started again in {SECOND_START_S} s")
             close([app.pid])
             time.sleep(SECOND_START_S)
             app, window = start(folder, pdf, env, scratch, old, wait)
-            seen = offers(script, window, offer, wait) if window else []
+            seen = offers(script, window, new, wait) if window else []
         checks.note(f"BUTTON {offer}" in seen, f"the window offers '{offer}'")
         through = sorted(set(proxy.hosts))
         if not checks.note(any("github" in h for h in through),
@@ -487,7 +487,7 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
                     "the copy closes without asking, nothing being unsaved",
                     f"killed after 20 s: {killed}" if killed else "")
         app, window = start(folder, pdf, env, scratch, old, wait)
-        seen = offers(script, window, offer, wait) if window else []
+        seen = offers(script, window, new, wait) if window else []
         if not checks.note(f"BUTTON {offer}" in seen, f"the second start offers '{offer}'"):
             return
         buttons(script, window, press=offer)

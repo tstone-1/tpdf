@@ -123,9 +123,12 @@ export default {
   "`tpdf-cli` runs it too, which is its name on Windows, so one script runs on both.":
     "`tpdf-cli` startet es ebenfalls; so heißt es unter Windows, damit ein Skript auf beiden läuft.",
   "the administrator prompt could not be shown: {e}": "Die Abfrage nach Administratorrechten konnte nicht angezeigt werden: {e}",
-  "Nothing was changed: the administrator prompt was cancelled.":
-    "Es wurde nichts geändert: Die Abfrage nach Administratorrechten wurde abgebrochen.",
-  "Nothing was changed: {why}": "Es wurde nichts geändert: {why}",
+  "{why} Link status: {primary}; {secondary}.": "{why} Verknüpfungen: {primary}; {secondary}.",
+  "no link at {path}": "keine Verknüpfung unter {path}",
+  "{path} links to {target}": "{path} verweist auf {target}",
+  "The administrator prompt was cancelled.":
+    "Die Abfrage nach Administratorrechten wurde abgebrochen.",
+  "The administrator command failed: {why}": "Der Administratorbefehl ist fehlgeschlagen: {why}",
   "the command-line tool is in no folder": "Das Kommandozeilenwerkzeug liegt in keinem Ordner",
   "Added {dir} to your PATH. Open a new terminal and run tpdf-cli.":
     "{dir} wurde zu deinem PATH hinzugefügt. Öffne ein neues Terminal und starte tpdf-cli.",
@@ -265,8 +268,8 @@ export default {
     "Neben {path} liegt keine SyncTeX-Datei; übersetze es mit -synctex=1",
   "nothing on any page came from {name}": "Nichts auf irgendeiner Seite stammt aus {name}",
   "could not read {path}: {e}": "{path} konnte nicht gelesen werden: {e}",
-  "{path} is {size} MB, more than the {most} MB tpdf reads":
-    "{path} hat {size} MB, mehr als die {most} MB, die tpdf liest",
+  "{path} exceeds the {most} MB SyncTeX file limit":
+    "{path} überschreitet die Größenbeschränkung von {most} MB für SyncTeX-Dateien.",
   "the SyncTeX file could not be read: {e}": "Die SyncTeX-Datei konnte nicht gelesen werden: {e}",
   "the SyncTeX file is more than {most} MB decompressed": "Die SyncTeX-Datei hat entpackt mehr als {most} MB",
   "the SyncTeX file has a line longer than 64 KB": "Die SyncTeX-Datei hat eine Zeile, die länger als 64 KB ist",
