@@ -3,8 +3,9 @@
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
 **26.11.14 release verification, 2026-11-24.** All 39 local gates passed, including
-3,677 Rust library tests and 756 CLI checks on macOS. The Windows CLI passed 755 checks
-and skipped four. The macOS disk image and Windows installer each passed all 70 packaged
+3,678 Rust library tests and 756 CLI checks on macOS. Windows passed 3,692 library
+tests and 755 CLI checks, with 12 library tests ignored and four CLI checks skipped.
+The macOS disk image and Windows installer each passed all 70 packaged
 Python client checks. The normal macOS app opened the page and displayed its text.
 With its bundled PDFium library withheld, the packaged CLI refused to render it.
 Windows Print to PDF passed 49 checks across three fixtures. The rotated fixture
@@ -21,6 +22,28 @@ by a changed test exactly once, including when the implementation file did not c
 Refreshing the Rust lockfiles under the normal three-day rule downgraded the security
 fix for RUSTSEC-2026-0594. A targeted update restored `cookie` 0.18.3 in both lockfiles.
 Both Rust audits and the npm audit then passed.
+
+The split-view form check originally skipped Tab with its single-field fixture.
+On the two-page form, Tab scrolled a field out of view and focused the next one
+before the pane highlight updated. The check now follows the focused control,
+verifies it is visible, and returns to the right document before issuing the
+next command. The standard window suite now uses a two-field fixture.
+
+Both screen readers passed all 11 speech checks. All 16 viewer mutations and
+both Windows-specific Rust mutations were caught. The Windows installer passed
+26 install, launch and uninstall checks. PowerPoint imported the exported metafile
+and retained seven shapes and the three expected text boxes after saving and
+reopening. That check used file import. The Windows redaction survey read back
+356 of 360 sampled regions in three public documents. None yielded text.
+OCR showed 203 unreadable and could not establish that for the other 153.
+
+Three Rust mutations needed attention. The simple-font case now names the test
+that reaches the font walk inside a placed form. The print cleanup tests look
+for the staging names the current process can claim. The picture export test
+writes a partial file and injects a write error, and the existing test covers
+a separate rename failure. All three corrected cases failed their named tests
+with the mutations applied. Across macOS, Windows and Linux, all 844 selected
+Rust mutations were caught by their named tests.
 
 **26.11.13 verification and publication, 2026-11-22.** The 26.11.12 tag and its unpublished draft
 remain at `f9c51da7`. This release carries the application changes verified below. At

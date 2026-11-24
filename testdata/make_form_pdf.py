@@ -24,8 +24,8 @@ WIDTH, HEIGHT = 595, 842
 VALUE = "VISIBLE FORM VALUE"
 
 
-def build(path: Path) -> None:
-    """Writes one page with an appearance-less text widget."""
+def build(path: Path, second_field: bool = False) -> None:
+    """Write the rendering fixture or a two-field variant for keyboard navigation."""
     pdf = Pdf()
     font = pdf.add(
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
@@ -50,17 +50,25 @@ def build(path: Path) -> None:
         + b") /Rect [72 650 360 692] /F 4 /P %d 0 R " % page
         + b"/DA (/Helv 18 Tf 0 g) >>"
     )
+    fields = f"{widget} 0 R".encode()
+    if second_field:
+        # Tab must reveal a field at the other end of the page in split view.
+        other = pdf.add(
+            b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (second-field) "
+            b"/Rect [72 45 360 87] /F 4 /P %d 0 R /DA (/Helv 18 Tf 0 g) >>" % page
+        )
+        fields += f" {other} 0 R".encode()
     pdf.put(
         page,
         b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] "
         b"/Resources << /Font << /Helv %d 0 R >> >> /Contents %d 0 R "
-        b"/Annots [%d 0 R] >>" % (pages, WIDTH, HEIGHT, font, content, widget),
+        b"/Annots [%s] >>" % (pages, WIDTH, HEIGHT, font, content, fields),
     )
     pdf.put(pages, b"<< /Type /Pages /Kids [%d 0 R] /Count 1 >>" % page)
     form = pdf.add(
-        b"<< /Fields [%d 0 R] /NeedAppearances true "
+        b"<< /Fields [%s] /NeedAppearances true "
         b"/DA (/Helv 18 Tf 0 g) /DR << /Font << /Helv %d 0 R >> >> >>"
-        % (widget, font)
+        % (fields, font)
     )
     root = pdf.add(
         b"<< /Type /Catalog /Pages %d 0 R /AcroForm %d 0 R >>" % (pages, form)
@@ -71,10 +79,11 @@ def build(path: Path) -> None:
 def main() -> None:
     """Parses the optional output path and creates the fixture."""
     parser = argparse.ArgumentParser()
+    parser.add_argument("--second-field", action="store_true")
     parser.add_argument("output", nargs="?", type=Path, default=Path("testdata/form.pdf"))
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    build(args.output)
+    build(args.output, args.second_field)
     print(f"[OK] wrote {args.output} ({args.output.stat().st_size} bytes)")
 
 

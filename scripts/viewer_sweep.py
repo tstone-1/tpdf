@@ -203,7 +203,8 @@ NOT_WINDOW: list[tuple[str, str]] = [
     ("text-truetype", "a backend-probe fixture: an embedded TrueType subset"),
     ("text-marked", "a text-probe fixture: marked content and text objects"),
     ("rotated", "the uniform rotation fixture the probes read; rotated-90 is its window twin"),
-    ("form", "an AcroForm fixture for the document model, with no viewer path yet"),
+    ("form", "the single-field AcroForm rendering fixture for the progressive probe"),
+    ("form-beside", "two AcroForm fields for Tab navigation between panes in the form-beside window check"),
     (
         "form-xobject",
         "text inside Form XObjects, for redact-apply-probe: a translating "

@@ -687,6 +687,7 @@ mod tests {
                 .unwrap()
                 .set_plain_content(format!("BT /{name} 12 Tf (example) Tj ET").into_bytes());
             let mapping = page_mapping(&doc, page);
+            assert_eq!(mapping.composite, guesses);
             assert!(mapping.certain());
             assert_eq!(mapping.guessing, guesses);
         }

@@ -97,6 +97,7 @@ use crate::{
 /// one. The full name is `.tpdf-partial-<name hash>-<pid>-<attempt>`: see
 /// [`stage`] for why every part of that is load-bearing.
 const PARTIAL: &str = "tpdf-partial";
+const PRINT_SCRATCH_STEM: &str = "tpdf-print-job";
 
 /// How many names [`stage`] and [`claim_beside`] will try before giving up.
 ///
@@ -581,7 +582,7 @@ fn job_scratch() -> Result<(PathBuf, std::fs::File), Refusal> {
     let dir = std::env::temp_dir();
     for attempt in 0..STAGING_ATTEMPTS {
         let at = dir.join(staging_name(
-            std::ffi::OsStr::new("tpdf-print-job"),
+            std::ffi::OsStr::new(PRINT_SCRATCH_STEM),
             attempt,
         ));
         let mut options = std::fs::OpenOptions::new();

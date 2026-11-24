@@ -2290,14 +2290,13 @@ ROWS += [
         "a_tounicode_settles_it_even_over_identity_ordering",
     ),
     Mutation(
-        # The control on the composite rule, inverted. A Type1 font with no
-        # `/ToUnicode` is most PDFs ever made, and judging one reports the world
-        # as broken while every test above still passes.
+        # The simple-font-only page takes a fast path. A placed form reaches
+        # this content walk and can show a simple or a composite font.
         "encoding: consider simple fonts as well as composite ones",
         "src/encoding.rs",
         'font_kind(doc, drawn)? == b"Type0"',
         '!font_kind(doc, drawn)?.is_empty()',
-        "a_simple_font_is_not_considered",
+        "only_shown_fonts_count_in_a_placed_form",
     ),
     Mutation(
         # `None` is "this font cannot be judged", and dropping it silently makes

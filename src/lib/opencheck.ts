@@ -2372,10 +2372,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       // reached from that document's frames and from a control's own
       // handlers, and the variables are the other document's then.
       //
-      // Two copies of one form, which `testdata/form.pdf` is enough for. With
-      // a form of two controls or more (the `forms` phase's fixture has them)
-      // the Tab check runs as well; it is the one that fails when a control
-      // is placed by whichever document is focused.
+      // Two copies of a form with at least two controls let Tab move focus
+      // and scroll a field into view in the other document.
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable form paths required");
       const { focusedSide, split, mountedAreas, settled, pressIn } = sideProbe(host);
@@ -2411,10 +2409,12 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const inPlace = () => field.style.display !== "none" && Math.abs(placedAt() - fieldAt()) < 1;
 
       report.emit("[form-beside] the reader's own fields being changed, the other side scrolled");
+      const leftVisibility = controlsIn("left").map((control) => control.style.display);
       host.run("edit.formEditOn");
       await settled("the reader's fields in change", () => shownIn("right") === 0);
       check("changing the reader's own fields leaves the other form's controls where they were",
-        shownIn("left") === controlsIn("left").length && inPlace(),
+        controlsIn("left").length === leftVisibility.length &&
+          controlsIn("left").every((control, i) => control.style.display === leftVisibility[i]) && inPlace(),
         { shown: shownIn("left"), of: controlsIn("left").length });
       // Room to scroll in whatever the window's size is, with the field near
       // the top of the view, and then a wheel over the side the reader is not
@@ -2432,19 +2432,24 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         moved, { started: startedAt, placed: placedAt(), field: fieldAt() });
       check("and the reader stays where they were", focusedSide() === "right" && host.edits()?.doc === b.id);
 
-      if (controlsIn("left").length >= 2) {
-        // Tab in a control lays the layer out from the control's own handler,
-        // before the keyboard arrives in the next one. Read at once: placed by
-        // the focused document, whose fields are being changed, every control
-        // here was hidden, and the next one could not take the keyboard.
-        field.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
-        check("Tab in the other side's form leaves its controls in place",
-          shownIn("left") === controlsIn("left").length, { shown: shownIn("left"), of: controlsIn("left").length });
-        // The keyboard went into the left side and took the reader with it.
-        if (focusedSide() !== "right") { pressIn("right"); await host.idle(); }
-      } else {
-        report.emit("[form-beside] one control in this form: the Tab check needs two and was not run");
-      }
+      if (controlsIn("left").length < 2) throw new Error("Tab needs two form controls");
+      // Tab in a control lays the layer out from the control's own handler,
+      // before the keyboard arrives in the next one. Read at once: placed by
+      // the focused document, whose fields are being changed, every control
+      // here was hidden, and the next one could not take the keyboard.
+      field.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+      const next = controlsIn("left").find((control) => control === document.activeElement);
+      const box = next?.getBoundingClientRect();
+      const layer = next?.closest(".form-fields")?.getBoundingClientRect();
+      check("Tab in the other side's form leaves its controls in place",
+        next !== field && !!box && !!layer && box.height > 0 && box.bottom > layer.top &&
+          box.top < layer.bottom && host.edits()?.doc === a.id,
+        { shown: shownIn("left"), of: controlsIn("left").length, focused: next?.dataset.field });
+      // Tab can scroll the original field offscreen and moves focus before
+      // Svelte paints the focused pane. Return to the right document before
+      // asking it to leave field-editing mode.
+      pressIn("right");
+      await settled("focus back on the right", () => focusedSide() === "right" && host.edits()?.doc === b.id);
       host.run("edit.formEditOff");
       await settled("the reader's fields back", () => shownIn("right") > 0);
 

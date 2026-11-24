@@ -91,10 +91,10 @@ the outline's entries and the comments in the sidebar, and the links the viewer 
 
 --phase form-beside puts a form on the side the reader is not in: its controls follow
 their page when that side is scrolled, and what one of them says is shown in its own
-document. With a form of two controls or more (the forms phase's fixture) it also
-presses Tab in one of them; testdata/form.pdf has one, and the transcript says so.
+document. The fixture needs at least two controls so Tab can move the keyboard to
+the next field.
 
-  uv run scripts/tabs_check.py <checks-binary> testdata/form.pdf --phase form-beside
+  uv run scripts/tabs_check.py <checks-binary> testdata/form-beside.pdf --phase form-beside
 
 --phase pictures runs New document from pictures in the window, with no document open.
 

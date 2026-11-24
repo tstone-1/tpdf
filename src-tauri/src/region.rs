@@ -82,6 +82,13 @@ pub fn write_picture(path: &Path, bytes: &[u8], kind: Kind) -> Result<(), String
             }
         });
     }
+    stage_picture(path, |file| file.write_all(bytes))
+}
+
+fn stage_picture(
+    path: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<(), String> {
     let name = path.file_name().ok_or_else(|| {
         said!(
             "The picture was not saved: {path} names no file.",
@@ -96,7 +103,7 @@ pub fn write_picture(path: &Path, bytes: &[u8], kind: Kind) -> Result<(), String
     };
     let (staged, mut file) =
         crate::save::claim_beside(path, name).map_err(|e| failed(e.to_string()))?;
-    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    let written = write(&mut file).and_then(|()| file.sync_all());
     drop(file);
     written.map_err(|why| {
         let _ = std::fs::remove_file(&staged);
@@ -173,6 +180,21 @@ mod tests {
 
     #[test]
     fn a_failed_write_removes_its_staged_file() {
+        let dir = TempDir::new("region-write-fail");
+        let path = dir.join("kept.png");
+        std::fs::write(&path, b"previous picture").unwrap();
+        let why = stage_picture(&path, |file| {
+            file.write_all(b"partial picture")?;
+            Err(std::io::Error::other("test write stopped"))
+        })
+        .expect_err("the incomplete write must fail");
+        assert!(why.contains("test write stopped"), "{why}");
+        assert_eq!(std::fs::read(path).unwrap(), b"previous picture");
+        assert_eq!(dir.names(), ["kept.png"]);
+    }
+
+    #[test]
+    fn a_failed_rename_removes_its_staged_file() {
         let dir = TempDir::new("region-fail");
         // A directory where the file would go: the rename over it fails.
         let path = dir.join("taken.png");

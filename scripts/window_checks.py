@@ -55,7 +55,7 @@ CHECKS: list[tuple[str, str, str, list[str]]] = [
     ("views", "tabs_check.py", TEXT, ["--phase", "views"]),
     ("answers", "tabs_check.py", "testdata/outline-simple.pdf",
      ["--phase", "answers", "--other", "testdata/comments.pdf"]),
-    ("form beside", "tabs_check.py", "testdata/form.pdf", ["--phase", "form-beside"]),
+    ("form beside", "tabs_check.py", "testdata/form-beside.pdf", ["--phase", "form-beside"]),
     ("import", "tabs_check.py", "testdata/text-base14.pdf",
      ["--phase", "import", "--other", "testdata/links.pdf"]),
     ("fit", "tabs_check.py", "testdata/comments.pdf", ["--phase", "fit"]),

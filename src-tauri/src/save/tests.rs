@@ -7019,18 +7019,18 @@ fn the_coordinator_does_not_parse_the_document_it_splits() {
 /// The observable for "the job's own file was removed". It holds the
 /// reader's document decrypted and reordered, so one left behind is a copy
 /// of their document in a shared directory under a name they never chose.
-/// Counted rather than named, because `job_scratch` picks its own name and a
-/// test that guessed it would pass by agreeing with itself. Read under
-/// [`print_lock`], which is what makes the count answerable at all.
+/// Read under [`print_lock`]. Enumerate the names this process can claim so
+/// another process's print jobs cannot affect the count.
 fn print_scratch_files() -> usize {
-    std::fs::read_dir(std::env::temp_dir())
-        .map(|entries| {
-            entries
-                .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
-                .filter(|name| name.starts_with("tpdf-print-job."))
-                .count()
+    let dir = std::env::temp_dir();
+    let stem = std::ffi::OsStr::new(PRINT_SCRATCH_STEM);
+    (0..STAGING_ATTEMPTS)
+        .filter(|&attempt| {
+            dir.join(staging_name(stem, attempt))
+                .try_exists()
+                .expect("inspect print scratch")
         })
-        .unwrap_or(0)
+        .count()
 }
 
 #[test]
