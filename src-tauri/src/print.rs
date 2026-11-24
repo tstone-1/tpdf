@@ -300,11 +300,7 @@ pub fn build_update(original: &[u8], job: &Job) -> Result<Vec<u8>, String> {
     // both are refused: even with the key, this writer cannot put the encryption
     // back. An append could, and a page selection is not appendable.
     if doc.was_encrypted() || doc.is_encrypted() {
-        return Err(said!(
-            "This document is encrypted, and printing a selection of it would produce \
-             an unencrypted copy. Print the whole document instead --- that is handed over \
-             unchanged."
-        ));
+        return Err(encrypted_refusal(doc.is_encrypted()));
     }
 
     let table = doc.get_pages();
@@ -361,6 +357,15 @@ pub fn build_update(original: &[u8], job: &Job) -> Result<Vec<u8>, String> {
     crate::save::serialise(&mut doc, "the print job")
 }
 
+/// Print jobs retain encryption and are opened by a fresh reader without credentials.
+pub(crate) fn encrypted_refusal(needs_password: bool) -> String {
+    if needs_password {
+        said!("This encrypted document requires a password to open. tpdf cannot print it.")
+    } else {
+        said!("This document is encrypted. Only the whole, unchanged document can be printed.")
+    }
+}
+
 /// Dimensions reported by PDFium are native page coordinates. Layout uses
 /// physical points, while tile sampling needs pixels per native coordinate.
 pub(crate) struct Geometry {
@@ -369,34 +374,38 @@ pub(crate) struct Geometry {
 }
 
 impl Geometry {
-    pub fn read(session: &mut crate::save_outside::Session) -> Result<Self, String> {
+    pub fn read(session: &mut crate::save_outside::Session) -> Result<Self, crate::save::Refusal> {
         use crate::worker_proto::{Reply, Request};
         let reply = session
             .ask(Request::Open {
                 lazy_geometry: false,
             })
-            .map_err(|e| {
-                said!(
-                    "the worker could not open the print job: {why}",
-                    why = e.message()
-                )
+            .map_err(|e| match e {
+                crate::save_outside::Declined::Locked(_) => encrypted_refusal(true).into(),
+                other => {
+                    other.print_error(|why| said!("the worker could not open the print job: {why}"))
+                }
             })?;
         let native = match reply {
             Reply::Open {
                 pages, page_count, ..
             } if pages.len() == page_count => pages,
-            Reply::Open { .. } => return Err(said!("the worker returned incomplete page sizes")),
+            Reply::Open { .. } => {
+                return Err(crate::save::Refusal::failed(said!(
+                    "the worker returned incomplete page sizes"
+                )))
+            }
             other => {
-                return Err(format!(
+                return Err(crate::save::Refusal::failed(format!(
                     "the worker answered the print job's sizes with {}",
                     other.described()
-                ))
+                )))
             }
         };
         let mut physical = native.clone();
         session
             .physical_sizes(&mut physical)
-            .map_err(|e| said!("the print job could not be read: {why}", why = e.message()))?;
+            .map_err(|e| e.print_error(|why| said!("the print job could not be read: {why}")))?;
         Ok(Self { native, physical })
     }
 }

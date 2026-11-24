@@ -250,6 +250,10 @@ pub fn lay_out(
     paper: &Paper,
     layout: Layout,
 ) -> Result<Vec<Vec<Placement>>, String> {
+    const MAX_PRINT_ENTRIES: usize = 100_000;
+    if pages.len() > MAX_PRINT_ENTRIES {
+        return Err(said!("A print job can select at most 100,000 pages."));
+    }
     let Layout {
         per_sheet,
         scale,
@@ -280,6 +284,11 @@ pub fn lay_out(
                     page = page + 1,
                 )
             })?;
+            if sheets.len() + tiles.len() > MAX_PRINT_ENTRIES {
+                return Err(said!(
+                    "A poster print job can contain at most 100,000 sides."
+                ));
+            }
             sheets.extend(tiles.into_iter().map(|tile| vec![tile]));
         }
         return Ok(sheets);

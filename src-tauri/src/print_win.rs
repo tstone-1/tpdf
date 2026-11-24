@@ -936,16 +936,22 @@ struct Painter {
 
 impl Painter {
     /// Starts a worker over `bytes` and asks it for every page's size.
-    fn start(bytes: &[u8], library_dir: &std::path::Path) -> Result<Self, String> {
-        let mut session =
-            crate::save::InWorker::at(library_dir.to_path_buf()).session_over(bytes)?;
+    fn start(bytes: &[u8], library_dir: &std::path::Path) -> Result<Self, crate::save::Refusal> {
+        let mut session = crate::save::InWorker::at(library_dir.to_path_buf())
+            .session_over(bytes)
+            .map_err(crate::save::Refusal::failed)?;
         let geometry = crate::print::Geometry::read(&mut session)?;
         Ok(Self { session, geometry })
     }
 
     /// The window of page `index` that `cut` names, as a top-down 32-bit BMP
     /// for [`draw_cut`].
-    fn paint(&mut self, index: u32, cut: &Cut, marks: bool) -> Result<Vec<u8>, String> {
+    fn paint(
+        &mut self,
+        index: u32,
+        cut: &Cut,
+        marks: bool,
+    ) -> Result<Vec<u8>, crate::save::Refusal> {
         let (width, height) = (cut.width, cut.height);
         let rows = band_rows(width)?;
         let mut bmp = bmp_header(width, height)?;
@@ -975,7 +981,7 @@ impl Painter {
                     },
                     BAND_DEADLINE,
                 )
-                .map_err(|e| format!("page {}: {}", index + 1, e.message()))?;
+                .map_err(|e| e.print_error(|why| format!("page {}: {why}", index + 1)))?;
             append_bgra(&mut bmp, &rgba);
             y += band;
         }
@@ -1018,6 +1024,18 @@ pub fn spool(
     beat: Option<&crate::print::Beat<'_>>,
     library_dir: &std::path::Path,
 ) -> Result<u32, String> {
+    spool_checked(dc, bytes, title, output, sheets, beat, library_dir).map_err(|why| why.message)
+}
+
+pub(crate) fn spool_checked(
+    dc: HDC,
+    bytes: &[u8],
+    title: &str,
+    output: Option<&str>,
+    sheets: &[u32],
+    beat: Option<&crate::print::Beat<'_>>,
+    library_dir: &std::path::Path,
+) -> Result<u32, crate::save::Refusal> {
     spool_planned(
         dc,
         bytes,
@@ -1072,6 +1090,7 @@ pub fn spool_laid_out(
         SoftwareCopies::ONE,
         |sizes, paper| crate::print_layout::lay_out(sizes, pages, paper, layout),
     )
+    .map_err(|why| why.message)
 }
 
 // One desktop progress indicator and Stop command belong to one job until its final event.
@@ -1139,7 +1158,7 @@ fn spool_planned(
     library_dir: &std::path::Path,
     copies: SoftwareCopies,
     plan: impl FnOnce(&[PageSize], &Paper) -> Result<Vec<Vec<Placement>>, String>,
-) -> Result<u32, String> {
+) -> Result<u32, crate::save::Refusal> {
     use windows::Win32::Storage::Xps::{EndPage, StartDocW, StartPage, DOCINFOW};
 
     stopped()?;
@@ -1177,10 +1196,7 @@ fn spool_planned(
         None => start(),
     };
     if started <= 0 {
-        return Err(format!(
-            "StartDoc failed: {}",
-            std::io::Error::last_os_error()
-        ));
+        return Err(format!("StartDoc failed: {}", std::io::Error::last_os_error()).into());
     }
     // From here every early return leaves through this guard, which abandons
     // the job. Declared after the two `HSTRING`s, so it is dropped before them.
@@ -1204,7 +1220,8 @@ fn spool_planned(
             return Err(format!(
                 "StartPage failed on sheet {number}: {}",
                 std::io::Error::last_os_error()
-            ));
+            )
+            .into());
         }
         for placed in sheet {
             let size = painter.geometry.native[placed.page as usize];
@@ -1219,7 +1236,8 @@ fn spool_planned(
             return Err(format!(
                 "EndPage failed on sheet {number}: {}",
                 std::io::Error::last_os_error()
-            ));
+            )
+            .into());
         }
         if let Some(beat) = beat {
             beat.sheet();
@@ -1238,8 +1256,8 @@ fn spool_planned(
 /// there is one (`print::Beat::ours`).
 fn ours<R>(
     beat: Option<&crate::print::Beat<'_>>,
-    work: impl FnOnce() -> Result<R, String>,
-) -> Result<R, String> {
+    work: impl FnOnce() -> Result<R, crate::save::Refusal>,
+) -> Result<R, crate::save::Refusal> {
     let value = match beat {
         Some(beat) => beat.ours(work),
         None => work(),
@@ -1382,6 +1400,7 @@ pub(crate) fn print_on(
                     copies,
                     |_, _| Ok(sheets),
                 )
+                .map_err(|why| why.message)
             },
             move |sent| {
                 let owner = shown.map(|h| HWND(h as *mut std::ffi::c_void));
@@ -1860,7 +1879,7 @@ mod tests {
             super::stop();
             Ok(vec![0; 4])
         });
-        assert_eq!(final_band.unwrap_err(), super::STOPPED);
+        assert_eq!(final_band.unwrap_err().message, super::STOPPED);
         assert!(super::PrintJob::begin().is_err());
         assert_eq!(super::stopped().unwrap_err(), super::STOPPED);
         drop(first);

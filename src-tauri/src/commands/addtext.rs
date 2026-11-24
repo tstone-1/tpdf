@@ -40,10 +40,9 @@ pub async fn add_text_copy(
             opened_with.as_deref(),
             &*writing,
             &|staged| {
-                let opened = answered("add_text_copy", |reply| {
-                    service.open(staged.to_path_buf(), true, opened_with.clone(), reply)
-                })
-                .map_err(|e| save::Refusal::from(e.reason))?;
+                let opened =
+                    super::open_temporary(&service, staged, opened_with.clone(), "add_text_copy")
+                        .map_err(|e| save::Refusal::from(e.reason))?;
                 let checked = if opened.page_count == count as usize {
                     addedtext::verify_lines(&expected, |page| {
                         answered("add_text_copy", |reply| {

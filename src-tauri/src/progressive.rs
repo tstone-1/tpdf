@@ -553,14 +553,15 @@ fn open_handle(
     }
     // SAFETY: read on this thread immediately after the failed load.
     let failure = unsafe { Refusal::last(bindings) };
-    let Some(raw) = password.filter(|p| failure.locked && p.len() <= crate::protect::MAX_BYTES)
-    else {
+    // The size limit applies after preparation. Bound normalization work
+    // separately because soft hyphens and combining marks may disappear.
+    let Some(raw) = password.filter(|p| failure.locked && p.len() <= 64 * 1024) else {
         return Err(failure);
     };
     let Ok(prepared) = stringprep::saslprep(raw) else {
         return Err(failure);
     };
-    if prepared.is_empty() || prepared == raw {
+    if prepared.is_empty() || prepared.len() > crate::protect::MAX_BYTES || prepared == raw {
         return Err(failure);
     }
     let handle = load(Some(&prepared));

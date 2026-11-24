@@ -20,6 +20,7 @@ import type { PicturePixels } from "./picture";
 
 const TEXT = catalog({
   "en-US": {
+    nib: "The stroke width cannot be preserved on this page.",
     reply: "A reply must stay with its comment and cannot be cut or copied.",
     words: "A mark made over words is not copied: on another page it would mark nothing",
     field: "A form field is not copied; use Arrange: duplicate",
@@ -27,6 +28,7 @@ const TEXT = catalog({
     signature: "A signature picture without its pixels is not copied",
   },
   "de-DE": {
+    nib: "Die Strichbreite lässt sich auf dieser Seite nicht beibehalten.",
     reply: "Eine Antwort muss bei ihrem Kommentar bleiben und lässt sich nicht ausschneiden oder kopieren.",
     words: "Eine Textmarkierung lässt sich nicht kopieren, weil ihr auf einer anderen Seite der zugehörige Text fehlt.",
     field: "Ein Formularfeld lässt sich mit dem Befehl zum Duplizieren vervielfältigen.",
@@ -55,6 +57,7 @@ export interface CopiedMark {
 export interface CopiedFrom {
   doc: number;
   page: PageId;
+  unit: number;
 }
 
 /**
@@ -129,6 +132,27 @@ export function shapeOf(mark: CopiedMark): { quads: number[]; strokes: number[][
 export class MarkClipboard {
   private held: readonly CopiedMark[] = [];
   private source: CopiedFrom | null = null;
+  private pending: Promise<void> | null = null;
+  private generation = 0;
+
+  /** Copy can need the worker for page units or pixels. The last request owns the clipboard. */
+  async prepare(read: (current: () => boolean) => Promise<void>): Promise<void> {
+    const generation = ++this.generation;
+    const current = () => generation === this.generation;
+    this.pending = read(current);
+    try { await this.pending; }
+    finally { if (current()) this.pending = null; }
+  }
+
+  get canPaste(): boolean {
+    return this.pending !== null || this.held.length > 0;
+  }
+
+  async readyMarks(): Promise<readonly CopiedMark[]> {
+    const generation = this.generation;
+    await this.pending;
+    return generation === this.generation ? this.held : [];
+  }
 
   /**
    * Copies `marks`, replacing what was held. Answers how many were copied and
@@ -164,6 +188,21 @@ export class MarkClipboard {
   /** The marks held, for a paste. */
   get marks(): readonly CopiedMark[] {
     return this.held;
+  }
+
+  /** Convert native coordinates and stroke widths before the destination's fit check. */
+  marksAtUnit(unit: number): readonly CopiedMark[] {
+    const scale = (this.source?.unit ?? unit) / unit;
+    if (scale === 1) return this.held;
+    // The annotation command clamps native nib widths outside this range.
+    // Refuse the group before placing its first mark if a stroke would change.
+    if (this.held.some(mark => hasStrokes(mark.kind) && (mark.width * scale < 0.25 || mark.width * scale > 24))) {
+      throw new Error(TEXT().nib);
+    }
+    const scaled = (values: number[]) => values.map(value => value * scale);
+    return this.held.map(mark => ({
+      ...mark, quads: scaled(mark.quads), strokes: mark.strokes.map(scaled), width: mark.width * scale,
+    }));
   }
 
   /**

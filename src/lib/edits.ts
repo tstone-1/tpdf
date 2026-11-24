@@ -297,6 +297,13 @@ export class Edits {
     return this.pageMap;
   }
 
+  async pageUnit(page: PageId): Promise<number> {
+    const slot = this.map.slotOfId(page);
+    if (slot === undefined) throw new Error("The page is no longer available");
+    const source = this.map.addressOf(slot, this.doc);
+    return source ? physicalPageUnit(source.doc, source.page) : 1;
+  }
+
   /** Quarter-turns an edit has applied to the page in slot `page`. */
   turnsOf(page: number): number {
     return this.current.pages[page]?.turns ?? 0;

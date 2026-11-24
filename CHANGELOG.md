@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Pasted marks keep their physical size across pages with different units. Text comparison accepts empty text shows and inherited fonts in forms with null resources.
+- Password-protected PDFs accept equivalent Unicode spellings across the raw byte-length boundary.
+- Large print previews show consecutive groups of sides. Printer setup errors follow the interface language, encrypted jobs explain when printing is possible, and Windows CLI printing reports worker failures separately from printer refusals.
+- Timed-out copy checks release documents whose background open completes late.
 - Merging or inserting pages from a tagged PDF refuses the import before replacing the output, preserving accessibility structure ownership.
 - Fitted PNGs retain physical scale when written to stdout. Low-resolution PNGs also retain it on import.
 - Tab drags follow the initiating pointer across focus changes. Closing a recovered Windows tab removes it from the next session across alternate path spellings.

@@ -19,6 +19,7 @@ const TEXT = catalog({
     outside: (page: number, count: number) =>
       count === 1 ? `This job has 1 page, not ${page}.` : `This job has pages 1 to ${count}, not ${page}.`,
     backwards: (typed: string) => `"${typed}" runs backwards.`,
+    tooManyPages: "A print job can select at most 100,000 pages.",
     noCurrent: "There is no current page in this job.",
     noOdd: "None of these pages has an odd number.",
     noEven: "None of these pages has an even number.",
@@ -41,6 +42,7 @@ const TEXT = catalog({
         ? `Dieser Druckauftrag hat 1 Seite, nicht ${page}.`
         : `Dieser Druckauftrag hat die Seiten 1 bis ${count}, nicht ${page}.`,
     backwards: (typed: string) => `„${typed}“ läuft rückwärts.`,
+    tooManyPages: "Ein Druckauftrag kann höchstens 100.000 ausgewählte Seiten enthalten.",
     noCurrent: "Dieser Druckauftrag hat keine aktuelle Seite.",
     noOdd: "Keine dieser Seiten hat eine ungerade Nummer.",
     noEven: "Keine dieser Seiten hat eine gerade Nummer.",
@@ -114,6 +116,7 @@ export function parsePages(text: string, count: number): number[] | null | strin
       if (page < 1 || page > count) return TEXT().outside(page, count);
     }
     if (last < first) return TEXT().backwards(piece);
+    if (last - first + 1 > 100_000 - pages.length) return TEXT().tooManyPages;
     for (let page = first; page <= last; page += 1) pages.push(page - 1);
   }
   return pages.length === 0 ? null : pages;

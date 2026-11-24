@@ -41,11 +41,7 @@ fn verify_copy(
     password: Option<&str>,
     expected: usize,
 ) -> Result<(), save::Refusal> {
-    let open = |key| {
-        answered("protect_copy", |reply| {
-            service.open(staged.into(), true, key, reply)
-        })
-    };
+    let open = |key| super::open_temporary(service, staged, key, "protect_copy");
     let close = |id| {
         answered("protect_copy", |reply| service.close(id, reply)).map_err(save::Refusal::from)
     };

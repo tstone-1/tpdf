@@ -2156,9 +2156,9 @@
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
     hasOpenMark: () => viewer?.canRemoveMark ?? false,
-    copyMarks: (cut) => void copyMarks(cut),
+    copyMarks: (cut) => void markClipboard.prepare(current => copyMarks(cut, current)),
     pasteMarks: () => void pasteMarks(),
-    canPasteMarks: () => markClipboard.marks.length > 0,
+    canPasteMarks: () => markClipboard.canPaste,
     removeRedaction: () => removeRedaction(),
     hasPickedRedaction: () => (viewer?.redactionPicked ?? -1) >= 0,
     canEditComment: () => viewer?.commentEditable ?? false,
@@ -2798,7 +2798,7 @@
    * Copies the marks the viewer names, or cuts them. A cut refuses when any
    * of them cannot be copied, so that nothing is removed that is not held.
    */
-  async function copyMarks(cut: boolean): Promise<void> {
+  async function copyMarks(cut: boolean, currentRequest: () => boolean): Promise<void> {
     const view = openView, model = edits, mounted = viewer;
     const state = model?.state;
     if (!mounted || !model || !state) return;
@@ -2816,6 +2816,9 @@
     }
     // A picture's pixels are not in its view, so they are fetched first; one
     // that cannot be read is not copied, and says so.
+    let unit: number;
+    try { unit = await model.pageUnit(page); }
+    catch (error) { if (stillIn(view, model, mounted)) say(spokenError(error)); return; }
     const pixels = new Map<number, PicturePixels>();
     for (const mark of marks) {
       if (mark.kind !== "picture" || !mark.picture) continue;
@@ -2825,18 +2828,18 @@
         // Left out of `pixels`, so `describe` refuses it below.
       }
     }
-    if (!stillIn(view, model, mounted)) return;
+    if (!currentRequest() || !stillIn(view, model, mounted)) return;
     if (cut && !markClipboard.sameSelection(named, mounted.namedMarks())) return;
     if (cut && mounted.markOpen !== -1) {
       try { await mounted.saveOpenMarkDraft(); }
       catch (error) { if (stillIn(view, model, mounted)) say(spokenError(error)); return; }
     }
-    if (!stillIn(view, model, mounted) || !model.state) return;
+    if (!currentRequest() || !stillIn(view, model, mounted) || !model.state) return;
     if (cut && !markClipboard.sameSelection(named, mounted.namedMarks())) return;
     const current = selected(model.state).map(mark => mark.id === mounted.markOpen
       ? { ...mark, note: mounted.markNoteText } : mark);
     if (cut && current.length !== named.length) return;
-    const { copied, refused: unread } = markClipboard.copy(current, { doc: model.doc, page }, pixels, cut);
+    const { copied, refused: unread } = markClipboard.copy(current, { doc: model.doc, page, unit }, pixels, cut);
     if (copied === 0) {
       say(unread[0] ?? TEXT().nothingCopied);
       return;
@@ -2855,12 +2858,18 @@
    * a step down and to the right, as a duplicate is.
    */
   async function pasteMarks(): Promise<void> {
-    const held = markClipboard.marks;
     const view = openView, model = edits, mounted = viewer;
-    if (!mounted || !model || held.length === 0) return;
-    const front = mounted.placePasted(held, false);
-    if (!front) return;
-    const landed = markClipboard.onItsOwnPage(model.doc, front.page) ? mounted.placePasted(held, true) : front;
+    const page = mounted?.frontPageId;
+    if (!mounted || !model || page === undefined) return;
+    let held: typeof markClipboard.marks;
+    try {
+      const copied = await markClipboard.readyMarks();
+      if (!copied.length || !stillIn(view, model, mounted) || mounted.frontPageId !== page) return;
+      const unit = await model.pageUnit(page);
+      if (!stillIn(view, model, mounted) || mounted.frontPageId !== page || markClipboard.marks !== copied) return;
+      held = markClipboard.marksAtUnit(unit);
+    } catch (error) { if (stillIn(view, model, mounted)) say(spokenError(error)); return; }
+    const landed = mounted.placePasted(held, markClipboard.onItsOwnPage(model.doc, page));
     if (!landed) return;
     const before = new Set(model.state.marks.map((mark) => mark.id));
     // In the document it was asked for, whichever side the reader is in by

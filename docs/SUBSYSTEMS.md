@@ -26,7 +26,7 @@ The mark clipboard resolves selected IDs against the marks drawn on the page,
 including saved form widgets. Cut waits for an open note to reach the edit
 journal. A refused note stays open with its typed text. The edit snapshot identifies
 threaded replies so Cut can leave the original in place and explain why it cannot
-go on the clipboard. A paste checks that the whole group fits before adding any marks.
+go on the clipboard. Clipboard geometry is converted from source to destination page units before checking that the whole group fits.
 
 Before any save/copy writing command, the application reads digital-signature
 metadata from the worker and asks for consent if signatures/certification exist
@@ -627,7 +627,7 @@ open the staged copy in fresh PDFium workers before publishing it; `commands/pro
 the window's copy command, which reopens the staged file with the viewer before publishing.
 The new-password dialog asks the writer to validate both the UTF-8 length and SASLprep
 rules before opening the destination chooser. When PDFium rejects a literal password,
-tpdf tries the prepared spelling and accepts it only for revision 6. On
+tpdf tries the prepared spelling and accepts it only for revision 6. The 127-byte limit for this retry applies after preparation. On
 the frontend the rules and sentences are `src/lib/protect.ts` and the dialog is
 `newpassworddialog.ts`; `App.svelte` keeps the two dialogs in order and the `invoke`.
 

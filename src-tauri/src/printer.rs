@@ -42,14 +42,14 @@ pub fn send(
     title: &str,
     _pages: u32,
     _library_dir: &std::path::Path,
-) -> Result<Sent, String> {
+) -> Result<Sent, crate::save::Refusal> {
     let cups = cups::Cups::load()?;
     let queue = cups.destination(printer)?;
     let (path, file) = stage(bytes)?;
     drop(file);
     let sent = cups.print_file(&queue, &path, title);
     let _ = std::fs::remove_file(&path);
-    sent.map(|job| Sent { job: Some(job) })
+    sent.map(|job| Sent { job: Some(job) }).map_err(Into::into)
 }
 
 /// Sends `bytes`, a PDF already read back as `pages` pages, to the printer
@@ -72,7 +72,7 @@ pub fn send(
     title: &str,
     pages: u32,
     library_dir: &std::path::Path,
-) -> Result<Sent, String> {
+) -> Result<Sent, crate::save::Refusal> {
     use windows::core::HSTRING;
     use windows::Win32::Graphics::Gdi::{CreateDCW, DeleteDC};
 
@@ -87,7 +87,8 @@ pub fn send(
             "there is no printer called \"{printer}\" that Windows could open ({}); \
              `Get-Printer` lists the printers there are",
             std::io::Error::last_os_error()
-        ));
+        )
+        .into());
     }
     let output = std::env::var("TPDF_PRINT_OUTPUT")
         .ok()
@@ -96,7 +97,7 @@ pub fn send(
         if let Err(why) = crate::printers_win::check_unattended_port(&device) {
             // SAFETY: this call owns the DC, and has not begun a job.
             let _ = unsafe { DeleteDC(dc) };
-            return Err(why);
+            return Err(why.into());
         }
     }
     // A stuck queue blocks inside GDI and reports nothing; stderr says so
@@ -105,7 +106,7 @@ pub fn send(
         crate::print::STALL,
         |_| (),
         |beat| {
-            crate::print_win::spool(
+            crate::print_win::spool_checked(
                 dc,
                 bytes,
                 title,
@@ -543,7 +544,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            refused.starts_with("there is no printer called \"tpdf-no-such-printer\""),
+            refused
+                .message
+                .starts_with("there is no printer called \"tpdf-no-such-printer\""),
             "{refused}"
         );
     }

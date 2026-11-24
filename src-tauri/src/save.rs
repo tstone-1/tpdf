@@ -3556,12 +3556,9 @@ pub fn rewrite_update_with(
     // already taken. A guard whose neighbour refuses the same input cannot be
     // reached by it.
     if job.is_print() && checked.encryption.is_some() {
-        return Err(said!(
-            "This document is encrypted, and printing part of it would have to write a copy \
-             the printer could not read. Print the whole document instead --- that is handed \
-             over unchanged."
-        )
-        .into());
+        let needs_password = password.is_some_and(|key| !key.is_empty())
+            && crate::encoding::load(original, None)?.is_encrypted();
+        return Err(crate::print::encrypted_refusal(needs_password).into());
     }
     rewrite(plan, checked, job)
 }

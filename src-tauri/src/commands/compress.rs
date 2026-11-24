@@ -178,10 +178,8 @@ pub async fn compress_estimate(
         .map_err(|why| why.message)?;
         let temporary = if edited {
             let path = if pictures.is_some() { &working } else { &sized };
-            let info = answered("compress_estimate", |reply| {
-                service.open(path.clone(), true, password.clone(), reply)
-            })
-            .map_err(|why| why.reason)?;
+            let info = super::open_temporary(&service, path, password.clone(), "compress_estimate")
+                .map_err(|why| why.reason)?;
             Some(info.id)
         } else {
             None

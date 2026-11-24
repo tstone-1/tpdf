@@ -557,7 +557,7 @@ fn a_print_job_from_an_encrypted_document_is_refused_whatever_the_rewrite_can_do
     let why = print_bytes(&source, &keeping(2, &[(0, 0)]), 0, None, &Here)
         .expect_err("a print job from an encrypted document must be refused");
     assert!(
-        why.message.contains("encrypted"),
+        why.message.contains("whole, unchanged document"),
         "the refusal names the reason: {}",
         why.message
     );
@@ -592,7 +592,7 @@ fn a_print_job_from_a_locked_document_names_the_escape_that_exists() {
     let why = print_bytes(&source, &keeping(2, &[(0, 0)]), 0, Some("swordfish"), &Here)
         .expect_err("a print job from an encrypted document must be refused");
     assert!(
-        why.message.contains("Print the whole document"),
+        why.message.contains("requires a password to open"),
         "the refusal must name the operation that works, not one the reader has already \
          done: {}",
         why.message

@@ -91,6 +91,13 @@ pub(crate) fn answered<T: Send + 'static, E: Send + 'static + From<String>>(
     call(Box::new(move |result| {
         let _ = tx.send(result);
     }));
+    wait_for_answer(doing, &rx)
+}
+
+fn wait_for_answer<T, E: From<String>>(
+    doing: &str,
+    rx: &std::sync::mpsc::Receiver<Result<T, E>>,
+) -> Result<T, E> {
     match rx.recv_timeout(ANSWER_BOUND) {
         Ok(result) => result,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(E::from(said!(
@@ -101,6 +108,38 @@ pub(crate) fn answered<T: Send + 'static, E: Send + 'static + From<String>>(
             Err(E::from(said!("the render service stopped")))
         }
     }
+}
+
+/// Transfer ownership only when the waiting caller actually receives the handle.
+fn open_temporary(
+    service: &render::RenderService,
+    path: &std::path::Path,
+    password: Option<String>,
+    doing: &str,
+) -> Result<render::DocumentInfo, crate::progressive::Refusal> {
+    let closing = service.clone();
+    let (deliver, rx) = temporary_reply(move |info: render::DocumentInfo| {
+        closing.close(info.id, Box::new(|_| ()));
+    });
+    service.open(path.into(), true, password, Box::new(deliver));
+    wait_for_answer(doing, &rx)
+}
+
+type AnswerReceiver<T, E> = std::sync::mpsc::Receiver<Result<T, E>>;
+
+/// A rendezvous prevents a successful send into a buffer just as the wait expires.
+fn temporary_reply<T, E>(
+    close: impl FnOnce(T),
+) -> (impl FnOnce(Result<T, E>), AnswerReceiver<T, E>) {
+    let (tx, rx) = std::sync::mpsc::sync_channel(0);
+    (
+        move |result| {
+            if let Err(std::sync::mpsc::SendError(Ok(handle))) = tx.send(result) {
+                close(handle);
+            }
+        },
+        rx,
+    )
 }
 
 /// Fetch one physical scale per requested source slot, preserving request order.
@@ -116,4 +155,34 @@ fn reading_units(
         return Err(said!("the page has an invalid user unit"));
     }
     Ok(units)
+}
+
+#[cfg(test)]
+mod temporary_tests {
+    use super::temporary_reply;
+
+    #[test]
+    fn a_temporary_open_has_one_owner_even_after_a_timeout() {
+        for waiting in [false, true] {
+            let closed = std::sync::Mutex::new(Vec::new());
+            let (deliver, rx) = temporary_reply(|id| closed.lock().unwrap().push(id));
+            std::thread::scope(|scope| {
+                if waiting {
+                    scope.spawn(move || deliver(Ok::<_, String>(7)));
+                    assert_eq!(rx.recv().unwrap().unwrap(), 7);
+                } else {
+                    assert!(matches!(
+                        rx.recv_timeout(std::time::Duration::ZERO),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                    ));
+                    drop(rx);
+                    deliver(Ok::<_, String>(7));
+                }
+            });
+            assert_eq!(
+                *closed.lock().unwrap(),
+                if waiting { vec![] } else { vec![7] }
+            );
+        }
+    }
 }

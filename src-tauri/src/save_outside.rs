@@ -447,6 +447,13 @@ pub enum Declined {
 }
 
 impl Declined {
+    pub(crate) fn print_error(self, context: impl FnOnce(&str) -> String) -> Refusal {
+        match self {
+            Self::Failed(message) => Refusal::failed(context(&message)),
+            Self::Locked(message) | Self::Refused(message) => context(&message).into(),
+        }
+    }
+
     /// The sentence, whichever case it is.
     #[must_use]
     pub fn message(&self) -> &str {

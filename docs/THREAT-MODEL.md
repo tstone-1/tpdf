@@ -1647,9 +1647,8 @@ and a partial job would read as a guarantee.
 **One deliberate non-extension: printing an edited encrypted document.** `save::print_bytes`
 takes the reader's password since 2026-08-30 — for a refusal, not for a job. With the key it
 can tell an encrypted document apart from one it cannot read, so the refusal a reader meets
-names the escape that exists (*print the whole document instead*, which routes the encrypted
-bytes through untouched) instead of claiming the document could not be unlocked while it is
-open on their screen. The job over an edited encrypted document is still refused: the bytes a
+offers whole-document printing only if an independent reader can open the unchanged encrypted
+bytes without a password. The job over an edited encrypted document is still refused: the bytes a
 print job produces go to `NSPrintOperation` or `Windows.Data.Pdf`, which would need the key
 themselves, so making it work means handing the platform a decrypted copy of a document whose
 author encrypted it. That is a different decision from *let the rewrite work*, and it has not

@@ -428,8 +428,7 @@ export default {
     "{source} war während des Speicherns nicht mehr dieselbe Datei - etwas anderes hat sie umbenannt oder entfernt. Die Änderungen wurden in die Datei geschrieben, die zu Beginn des Speicherns so hieß, und was jetzt so heißt, wurde nicht angerührt.",
   "Image-only redaction requires the sandboxed rendering worker":
     "Die Schwärzung als Bild braucht den abgeschotteten Render-Arbeitsprozess",
-  "This document is encrypted, and printing part of it would have to write a copy the printer could not read. Print the whole document instead --- that is handed over unchanged.":
-    "Dieses Dokument ist verschlüsselt, und einen Teil davon zu drucken würde eine Kopie erfordern, die der Drucker nicht lesen könnte. Drucke stattdessen das ganze Dokument - das wird unverändert übergeben.",
+
   "{label} is named as {length} bytes at {offset} in the merge, and only {handed} were handed over":
     "{label} ist beim Zusammenführen mit {length} Bytes an Position {offset} angegeben, übergeben wurden aber nur {handed}",
   "a merge was asked for with no documents to merge in":

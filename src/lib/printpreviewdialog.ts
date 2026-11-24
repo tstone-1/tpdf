@@ -79,6 +79,8 @@ const TEXT = catalog({
     scaleCustom: "Custom",
     scalePoster: "Poster, across several sheets",
     dialog: "Print preview",
+    previousSides: "Previous preview sides",
+    nextSides: "Next preview sides",
     sheetsToPrint: "Sheets to print",
     printer: "Printer",
     pages: "Pages",
@@ -137,6 +139,8 @@ const TEXT = catalog({
     scaleCustom: "Benutzerdefiniert",
     scalePoster: "Poster, über mehrere Blätter",
     dialog: "Druckvorschau",
+    previousSides: "Vorherige Druckseiten",
+    nextSides: "Nächste Druckseiten",
     sheetsToPrint: "Zu druckende Blätter",
     printer: "Drucker",
     pages: "Seiten",
@@ -198,6 +202,9 @@ const SCALES: { value: PrintScale["kind"]; label: string }[] = [
   { value: "poster", label: TEXT().scalePoster },
 ];
 
+// Keep the live preview small even for repeated ranges and poster layouts.
+const SIDES_PER_PREVIEW = 48;
+
 /** A modal showing the job's sheets, with Print and Cancel. Built once and reused. */
 export class PrintPreviewDialog {
   private readonly backdrop: HTMLElement;
@@ -231,8 +238,12 @@ export class PrintPreviewDialog {
 
   private pages: readonly PageSize[] = [];
   private sheets: Sheet[] = [];
+  private allSheets: Sheet[] = [];
+  private startSide = 0;
+  private readonly previousSides: HTMLButtonElement;
+  private readonly nextSides: HTMLButtonElement;
   private readonly resize = new ResizeObserver(() => {
-    if (this.shown && this.sheets.length) this.lay(this.sheets);
+    if (this.shown && this.sheets.length) this.lay(this.allSheets);
   });
   private boxes: { box: HTMLElement; note: HTMLElement; pictures: { page: number; picture: HTMLImageElement }[] }[] =
     [];
@@ -369,7 +380,9 @@ export class PrintPreviewDialog {
     this.cancel = this.button(TEXT().cancel, () => this.settle(false));
     this.print = this.button(TEXT().print, () => this.settle(true));
     this.print.style.fontWeight = "600";
-    buttons.append(this.cancel, this.print);
+    this.previousSides = this.button(TEXT().previousSides, () => this.movePreview(-1));
+    this.nextSides = this.button(TEXT().nextSides, () => this.movePreview(1));
+    buttons.append(this.previousSides, this.nextSides, this.cancel, this.print);
 
     panel.append(this.heading, this.summary, body, this.under, buttons);
     this.backdrop.append(panel);
@@ -603,7 +616,7 @@ export class PrintPreviewDialog {
           this.queued = { settings: this.settings, driver: false };
           return;
         }
-        this.problem.textContent = String(error);
+        this.problem.textContent = spokenError(error);
         // Even a broken default device must leave the other installed printers reachable.
         try {
           const names = await chooser.printers();
@@ -708,17 +721,30 @@ export class PrintPreviewDialog {
       this.pages.length === 0 || (this.chooser !== null && (this.broken || this.asking || this.sheets.length === 0));
   }
 
-  /** One box per sheet, sized before anything is drawn, so the list can scroll. */
+  private movePreview(direction: number): void {
+    this.startSide += direction * SIDES_PER_PREVIEW;
+    this.list.scrollTop = 0;
+    this.drawn.clear();
+    this.lay(this.allSheets);
+  }
+
+  /** One box per visible group member, sized before anything is drawn, so the list can scroll. */
   private lay(sheets: Sheet[]): void {
     const scrolled = this.list.scrollTop;
     this.list.replaceChildren();
-    this.sheets = sheets;
+    this.allSheets = sheets;
+    this.startSide = Math.max(0, Math.min(this.startSide,
+      Math.floor((sheets.length - 1) / SIDES_PER_PREVIEW) * SIDES_PER_PREVIEW));
+    this.sheets = sheets.slice(this.startSide, this.startSide + SIDES_PER_PREVIEW);
+    this.previousSides.hidden = this.nextSides.hidden = sheets.length <= SIDES_PER_PREVIEW;
+    this.previousSides.disabled = this.startSide === 0;
+    this.nextSides.disabled = this.startSide + SIDES_PER_PREVIEW >= sheets.length;
     this.boxes = [];
     this.heights = [];
     const maxWidth = Math.max(120, this.list.clientWidth - 48);
     // Tall enough that a portrait sheet reads, short enough that the next one shows.
     const maxHeight = Math.max(160, Math.round(this.list.clientHeight * 0.92));
-    sheets.forEach((sheet, index) => {
+    this.sheets.forEach((sheet, index) => {
       const { width, height } = fitSheet(
         { width_pt: sheet.paper.width, height_pt: sheet.paper.height },
         maxWidth,
@@ -726,7 +752,7 @@ export class PrintPreviewDialog {
       );
       const box = document.createElement("div");
       box.setAttribute("role", "listitem");
-      box.setAttribute("aria-label", TEXT().sheet(index + 1, sheets.length));
+      box.setAttribute("aria-label", TEXT().sheet(this.startSide + index + 1, sheets.length));
       box.style.cssText =
         `position:relative;flex:none;width:${width}px;height:${height}px;background:#fff;` +
         "box-shadow:0 1px 6px rgba(0,0,0,0.3);";
@@ -858,6 +884,8 @@ export class PrintPreviewDialog {
       // The pictures are of the reader's document: not kept once it is closed.
       this.list.replaceChildren();
       this.sheets = [];
+      this.allSheets = [];
+      this.startSide = 0;
       this.boxes = [];
       this.heights = [];
       this.drawn = new Map();

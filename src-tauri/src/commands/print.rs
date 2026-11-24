@@ -614,7 +614,7 @@ fn open_preview(
     library: &Path,
 ) -> Result<(Built, crate::save_outside::Session, print::Geometry), String> {
     let mut session = save::InWorker::at(library.to_path_buf()).session_over(&built.bytes)?;
-    let geometry = print::Geometry::read(&mut session)?;
+    let geometry = print::Geometry::read(&mut session).map_err(|why| why.message)?;
     print::expect_pages(geometry.native.len(), built.expected)?;
     Ok((built, session, geometry))
 }

@@ -1288,6 +1288,52 @@ class ClientTests(unittest.TestCase):
                     self.pdf.compress(self.source, out, pictures='screen')
                 self.assertFalse(os.path.exists(out))
 
+    def test_r6_prepares_long_decomposed_password_before_measuring(self):
+        locked = self.root / 'unicode.pdf'
+        expected = self.pdf.text(self.source)['pages']
+        for n in (42, 43):
+            with self.subTest(characters=n):
+                self.pdf.protect(self.source, locked, 'é' * n, force=True)
+                for spelling in ('é' * n, 'e\u0301' * n):
+                    self.assertEqual(self.pdf.text(locked, password=spelling)['pages'], expected)
+                with self.assertRaises(CommandError) as failure:
+                    self.pdf.text(locked, password='é' * (n - 1) + 'x')
+                self.assertEqual(failure.exception.exit_code, 3)
+
+    def test_compare_checks_only_character_codes_and_inherits_null_form_resources(self):
+        def stream(dictionary, data):
+            return (b'<< ' + dictionary + b' /Length ' + str(len(data)).encode()
+                    + b' >>\nstream\n' + data + b'\nendstream')
+        words = b'/F1 12 Tf 30 100 Td (READABLE) Tj ET'
+        for show, resources, valid in (
+            (b'', b'', True), (b'() Tj', b'/Resources null', True),
+            (b'[12 () -12] TJ', b'/Resources 9 0 R', True),
+            (b'() \'', b'', True), (b'1 1 () "', b'', True),
+            (b'<0001> Tj', b'', False), (b'[() /invalid] TJ', b'', False),
+            (b'', b'/Resources 10', False),
+        ):
+            with self.subTest(show=show, resources=resources):
+                write_pdf(self.source, [
+                    b'<< /Type /Catalog /Pages 2 0 R >>',
+                    b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+                    b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 4 0 R '
+                    b'/Resources << /XObject << /Form 8 0 R >> /Font << /F1 5 0 R /F2 6 0 R >> >> >>',
+                    stream(b'', b'/Form Do'),
+                    b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+                    b'<< /Type /Font /Subtype /Type0 /BaseFont /Synthetic /Encoding /Identity-H /DescendantFonts [7 0 R] >>',
+                    b'<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Synthetic '
+                    b'/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>',
+                    stream(b'/Type /XObject /Subtype /Form /BBox [0 0 300 400] ' + resources,
+                           b'BT /F2 12 Tf ' + show + b' ' + words),
+                    b'null',
+                ])
+                if valid:
+                    self.assertEqual(self.pdf.compare(self.source, self.source)['changes'], [])
+                else:
+                    with self.assertRaises(CommandError) as failure:
+                        self.pdf.compare(self.source, self.source)
+                    self.assertEqual(failure.exception.exit_code, 3)
+
     def test_protect_and_unprotect_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             locked = os.path.join(directory, 'locked.pdf')

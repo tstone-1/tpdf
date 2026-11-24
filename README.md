@@ -1096,8 +1096,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   rewritten at all, because there is no key to put back. And **printing** part of an
   encrypted document is declined rather than rewritten: re-encrypting would hand the
   printer a file it cannot read, and not re-encrypting would hand it a decrypted copy of a
-  document somebody encrypted on purpose. Print the whole document instead — that is
-  handed over unchanged.
+  document somebody encrypted on purpose. A file that opens without a password can be printed whole and unchanged.
+  tpdf cannot print a file that requires a password to open.
 
 Use **Edit text** or **Edit existing text** in the command palette to choose an
 outlined text run on the current page. Adjust the box width and height, font size,

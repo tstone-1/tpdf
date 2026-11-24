@@ -2813,6 +2813,10 @@ export class Viewer {
     );
   }
 
+  get frontPageId(): PageId | undefined {
+    return this.pages.idOf(this.currentPage());
+  }
+
   thumbnailGeometry(slot: number) {
     const source = this.scroller.tileSource(slot);
     return source && { size: this.displayedPage(slot), turns: source.turns ?? 0, crop: source.crop };

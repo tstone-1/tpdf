@@ -112,7 +112,7 @@ impl Subcommand for Print {
         );
         let pages = u32::try_from(found).unwrap_or(u32::MAX);
         let sent = printer::send(&self.printer, &bytes, &title, pages, &env.library_dir)
-            .map_err(refused)?;
+            .map_err(super::pages::refused)?;
         let report = report::Printed {
             schema: SCHEMA,
             command: "print".into(),
@@ -195,6 +195,15 @@ fn read_back(env: &Env<'_>, bytes: &[u8]) -> Result<usize, Declined> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn spooling_reports_a_worker_timeout_separately_from_a_printer_refusal() {
+        let timeout =
+            Declined::Failed("worker timed out".into()).print_error(|why| format!("page 2: {why}"));
+        assert_eq!(super::super::pages::refused(timeout).exit, Exit::Internal);
+        let printer = crate::save::Refusal::from("no printer is installed");
+        assert_eq!(super::super::pages::refused(printer).exit, Exit::Refused);
+    }
+
     #[test]
     fn print_refuses_unreadable_input_and_reports_worker_or_writer_failure() {
         assert_eq!(

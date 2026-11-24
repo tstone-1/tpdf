@@ -86,9 +86,13 @@ export default {
   "the preview was cancelled": "die Vorschau wurde abgebrochen",
   "the drawing was abandoned": "das Zeichnen wurde abgebrochen",
 
+  "A print job can select at most 100,000 pages.": "Ein Druckauftrag kann höchstens 100.000 ausgewählte Seiten enthalten.",
+  "A poster print job can contain at most 100,000 sides.": "Ein Poster-Druckauftrag kann höchstens 100.000 Druckseiten enthalten.",
   // print.rs
-  "This document is encrypted, and printing a selection of it would produce an unencrypted copy. Print the whole document instead --- that is handed over unchanged.":
-    "Dieses Dokument ist verschlüsselt, und eine Auswahl daraus zu drucken würde eine unverschlüsselte Kopie erzeugen. Drucke stattdessen das ganze Dokument – das wird unverändert übergeben.",
+  "This encrypted document requires a password to open. tpdf cannot print it.":
+    "Dieses verschlüsselte Dokument benötigt zum Öffnen ein Passwort. tpdf kann es nicht drucken.",
+  "This document is encrypted. Only the whole, unchanged document can be printed.":
+    "Dieses Dokument ist verschlüsselt. Es kann nur vollständig und unverändert gedruckt werden.",
   "the print job has {found} pages, not the {expected} asked for": (a) =>
     `der Druckauftrag hat ${pages(a.found!)}, nicht die angeforderten ${a.expected}`,
   "the print job came out empty": "der Druckauftrag ist leer geworden",

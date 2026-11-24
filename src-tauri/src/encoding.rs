@@ -393,6 +393,9 @@ impl<'a> FontScan<'a> {
                     }
                 }
                 "Tj" | "TJ" | "'" | "\"" => {
+                    if !shows_glyphs(&op.operator, &op.operands)? {
+                        continue;
+                    }
                     let drawn = font?;
                     if self.seen.insert(std::ptr::from_ref(drawn))
                         && font_kind(doc, drawn)? == b"Type0"
@@ -416,7 +419,10 @@ impl<'a> FontScan<'a> {
                     {
                         self.forms_left = self.forms_left.checked_sub(1)?;
                         let nested = match obj.dict.get(b"Resources") {
-                            Ok(value) => resolve_dict(doc, value).ok()?,
+                            Ok(value) => match resolve(doc, value) {
+                                Object::Null => resources,
+                                other => other.as_dict().ok()?,
+                            },
                             Err(_) => resources,
                         };
                         if obj.content.is_empty() && !obj.dict.has(b"F") {
@@ -434,6 +440,30 @@ impl<'a> FontScan<'a> {
             }
         }
         Some(())
+    }
+}
+
+/// A spacing adjustment advances the cursor without using the font's character map.
+fn shows_glyphs(operator: &str, operands: &[Object]) -> Option<bool> {
+    match (operator, operands) {
+        ("Tj" | "'", [Object::String(bytes, _)]) => Some(!bytes.is_empty()),
+        ("\"", [word, char_space, Object::String(bytes, _)]) => {
+            word.as_float().ok()?;
+            char_space.as_float().ok()?;
+            Some(!bytes.is_empty())
+        }
+        ("TJ", [Object::Array(parts)]) => {
+            let mut draws = false;
+            for part in parts {
+                match part {
+                    Object::String(bytes, _) => draws |= !bytes.is_empty(),
+                    Object::Integer(_) | Object::Real(_) => (),
+                    _ => return None,
+                }
+            }
+            Some(draws)
+        }
+        _ => None,
     }
 }
 

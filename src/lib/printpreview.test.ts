@@ -3,8 +3,9 @@
  * `commands/print.rs`.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import * as i18n from "./i18n";
 import { PrintPreviewDialog } from "./printpreviewdialog";
 import { FakeElement, installFakeDom } from "./testdom";
 import { printingLine } from "./printing";
@@ -379,7 +380,7 @@ it("keeps a page's render refusal visible when the sheet is laid out again", asy
   const list = new FakeElement("div");
   list.clientWidth = 400;
   list.clientHeight = 500;
-  Object.assign(dialog, { list, shown: true, run: 1, drawing: null, drawn: new Map(), marks: true,
+  Object.assign(dialog, { list, startSide: 0, previousSides: {}, nextSides: {}, shown: true, run: 1, drawing: null, drawn: new Map(), marks: true,
     draw: async () => { throw new Error("sample refusal"); }, update: () => {} });
   const sheets = pageSheets([{ width_pt: 300, height_pt: 400 }]);
   try {
@@ -389,6 +390,46 @@ it("keeps a page's render refusal visible when the sheet is laid out again", asy
     list.clientWidth = 500;
     dialog.lay(sheets);
     expect(dialog.boxes[0].note.textContent).toContain("sample refusal");
+  } finally {
+    dom.restore();
+  }
+});
+
+it("shows the printer setup refusal in the reader's language", async () => {
+  const locale = vi.spyOn(i18n, "UI_LOCALE", "get").mockReturnValue("de-DE");
+  const dialog = Object.create(PrintPreviewDialog.prototype);
+  const settings = defaultSettings([A4]);
+  Object.assign(dialog, { shown: true, settings, problem: {}, printer: {}, rememberedPrinter: null,
+    chooser: { setup: async () => { throw "no printer is installed"; }, printers: async () => [] },
+    options: () => {}, update: () => {} });
+  try {
+    dialog.request(settings, false);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(dialog.problem.textContent).toBe("es ist kein Drucker installiert");
+    expect(dialog.broken).toBe(true);
+  } finally {
+    locale.mockRestore();
+  }
+});
+
+it("bounds repeated ranges and lets every accepted preview side be reached", () => {
+  expect(parsePages("1-50000,1-50000", 50000)).toHaveLength(100000);
+  expect(typeof parsePages("1-50000,1-50000,1", 50000)).toBe("string");
+  const dom = installFakeDom();
+  const dialog = Object.create(PrintPreviewDialog.prototype);
+  const list = new FakeElement("div");
+  Object.assign(dialog, { list, startSide: 0, previousSides: {}, nextSides: {}, drawn: new Map(), update: () => {} });
+  try {
+    dialog.lay(pageSheets(Array(1000).fill(A4)));
+    const first = dialog.boxes.length;
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBeLessThan(1000);
+    while (!dialog.nextSides.disabled) dialog.movePreview(1);
+    expect(dialog.startSide + dialog.boxes.length).toBe(1000);
+    expect(dialog.boxes.length).toBeLessThanOrEqual(first);
+    dialog.movePreview(-1);
+    expect(dialog.nextSides.disabled).toBe(false);
+    expect(dialog.allSheets.length).toBe(1000);
   } finally {
     dom.restore();
   }
