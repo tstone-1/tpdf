@@ -76,6 +76,7 @@
             "document_timestamp": false,
             "field": "Signature1",
             "signer": "First Signer",
+            "signer_sha256": "abababababababababababababababababababababababababababababababab",
             "issuer": "tpdf test root CA",
             "claimed_time": "2026-09-26 20:20:13 +02:00",
             "covers_whole_file": false,

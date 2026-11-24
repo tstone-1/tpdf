@@ -100,6 +100,7 @@ function certificate(): Certificate {
     until: "2030-01-01 00:00:00 UTC",
     self_issued: false,
     chain: 2,
+    sha256: "ab".repeat(32),
     matched_signer: true,
     key_usage: ["Digital signature", "Non-repudiation"],
     extended_usage: ["Email protection"],

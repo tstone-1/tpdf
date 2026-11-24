@@ -21,6 +21,7 @@ function certificate(cn: string): Certificate {
     until: "2026-09-28 00:00:00 UTC",
     self_issued: true,
     chain: 1,
+    sha256: "ab".repeat(32),
     matched_signer: true,
     key_usage: null,
     extended_usage: null,

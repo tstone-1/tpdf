@@ -32,3 +32,6 @@ include = ["tpdf_client"]
 
 [tool.setuptools.package-data]
 tpdf_client = ["py.typed"]
+
+[tool.uv]
+exclude-newer = "3 days"

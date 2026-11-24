@@ -159,11 +159,11 @@ def check_document_workflow(pdf: Tpdf, directory: Path, *, identity: str | None 
     require((rendered['width_px'], rendered['height_px']) == (300, 400)
             and clean_png.read_bytes() != before_png.read_bytes(), 'workflow: redaction changes the rendered page')
     if identity is not None:
-        result = pdf.sign(clean, signed, identity=identity)
-        require(result['identity']['id'] == identity, 'workflow: signing uses the selected certificate')
+        pdf.sign(clean, signed, identity=identity)
         signatures = pdf.verify(signed)['files'][0]['signatures']
         require(len(signatures) == 1 and signatures[0]['integrity']['verdict'] == 'intact'
                 and signatures[0]['covers_whole_file'], 'workflow: signature is intact and covers the file')
+        require(signatures[0].get('signer_sha256') == identity, 'workflow: signing uses the selected certificate')
         require(signed.read_bytes().startswith(clean.read_bytes()), 'workflow: signing preserves the redacted revision')
         readback(signed)
         signed_png = directory / 'signed.png'

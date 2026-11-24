@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import fetch_pdfium
@@ -159,6 +160,28 @@ osascript() {
         self.assertEqual((self.run / "events").read_text().splitlines(),
                          ["hidden App One", "hidden App Two", "shown App One", "shown App Two"])
         self.assertFalse((self.run / "staged").exists())
+
+    @unittest.skipUnless(sys.platform == "darwin", "zsh receiver on Mac")
+    def test_interrupt_after_bootstrap_unloads_only_the_owned_job(self):
+        args = SimpleNamespace(only=[], pictures=False, phase=None, voiceover=False,
+                               clone="repo", timeout=15, wrap="")
+        receiver = run_on_mac.remote(args, "abc", "", "test-run")
+        block = receiver[receiver.index('hidden=""'):receiver.index('if [[ -f "$run/timed-out"')]
+        setup = r'''run=$1; tree=$run; owned_app="$run/app"; app=$owned_app
+job="com.tpdf.windowchecks.test-run"
+mkdir "$app"
+osascript() { return 0; }
+launchctl() { print -r -- "$*" >> "$run/events"; }
+sleep() { kill -TERM $$; }
+stop() { exit 3; }
+'''
+        done = subprocess.run(["zsh", "-c", setup + block, "check", self.run],
+                              capture_output=True, timeout=8)
+        self.assertEqual(done.returncode, 2, done.stderr)
+        domain = f"gui/{os.getuid()}"
+        self.assertEqual((self.run / "events").read_text().splitlines(), [
+            f"bootstrap {domain} {self.run}/job.plist", f"bootout {domain}/com.tpdf.windowchecks.test-run"])
+        self.assertFalse((self.run / "app").exists())
 
     @unittest.skipUnless(sys.platform == "darwin", "zsh receiver on Mac")
     def test_mac_checkout_refuses_stale_and_unrelated_trees(self):

@@ -6,6 +6,19 @@ use crate::integrity::test_tsa::{
 };
 use crate::sign_cms::testkeys::{plain_pdf, Soft, NOW};
 
+#[test]
+fn existing_streams_are_bounded_by_size_and_distinct_object() {
+    let mut doc = Document::new();
+    let stream = || Stream::new(Dictionary::new(), vec![1, 2]);
+    let first = Object::Reference(doc.add_object(stream()));
+    let alias = Object::Reference(doc.add_object(first.clone()));
+    let second = Object::Reference(doc.add_object(stream()));
+    let repeated = [first.clone(), alias];
+    assert_eq!(contents(&doc, &repeated, 2, 1).unwrap().len(), 1);
+    assert!(contents(&doc, &repeated, 1, 1).is_err());
+    assert!(contents(&doc, &[first, second], 2, 1).is_err());
+}
+
 /// The plain document signed by a test authority's signer, and the data a
 /// B-LT writer would add about it.
 fn world() -> (Vec<u8>, Gathered) {

@@ -1188,11 +1188,8 @@ fn run_sign(
         .find(|(ours, _)| *ours)
         .and_then(|(_, s)| s.timestamp.as_ref())
         .map(|stamp| super::verify::timestamp_report(stamp, false));
-    // The document timestamps written after ours are the archive a long-term
-    // signing adds; everything else is the signature or one before it.
-    let ours_at = found.iter().position(|(ours, _)| *ours);
-    let archive = |index: usize, s: &docinfo::Signature| {
-        s.kind == "ETSI.RFC3161" && ours_at.is_some_and(|at| index > at)
+    let archive = |s: &docinfo::Signature| {
+        sign.long_term && crate::longterm::existing::final_timestamp(s) && s.covers_whole_file
     };
     // Whether the new signature locks the document, as the file reads back
     // and not as the line asked: the sentence states what was written.
@@ -1203,9 +1200,8 @@ fn run_sign(
         locked,
         &found
             .iter()
-            .enumerate()
-            .filter(|(index, (_, s))| !archive(*index, s))
-            .map(|(_, (ours, s))| (s.field.clone(), *ours, s.integrity.clone()))
+            .filter(|(_, s)| !archive(s))
+            .map(|(ours, s)| (s.field.clone(), *ours, s.integrity.clone()))
             .collect::<Vec<_>>(),
         timestamp.as_ref().map(|t| {
             (
@@ -1215,9 +1211,8 @@ fn run_sign(
         }),
         &found
             .iter()
-            .enumerate()
-            .filter(|(index, (_, s))| archive(*index, s))
-            .map(|(_, (_, s))| (s.field.clone(), s.integrity.clone()))
+            .filter(|(_, s)| archive(s))
+            .map(|(_, s)| (s.field.clone(), s.integrity.clone()))
             .collect::<Vec<_>>(),
     );
     // A timestamp, long-term data or a lock that was asked for and did not

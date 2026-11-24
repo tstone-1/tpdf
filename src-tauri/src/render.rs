@@ -822,10 +822,8 @@ impl RenderService {
 
     /// [`RenderService::open`] with the file already opened by the caller.
     ///
-    /// The one caller that has a handle is the application's `open_document`,
-    /// which opens the file once and hashes the same handle it hands over here.
-    /// See [`Job::Open`]'s `file`, which carries why that matters; every other
-    /// caller passes nothing and is opened by name.
+    /// Document opens retain a fingerprint handle. Page imports hand over the
+    /// private copy used to compute their digest.
     pub fn open_handed(
         &self,
         path: PathBuf,
@@ -1693,14 +1691,15 @@ impl Engine for InProcess {
         lazy_geometry: bool,
         password: Option<&str>,
     ) -> Result<DocumentInfo, progressive::Refusal> {
-        // Nothing to hand to PDFium: `FPDF_LoadDocument` takes a name, and this
-        // backend is the unsandboxed fallback --- see `UNSANDBOXED_MARK`. The
-        // handle is dropped here rather than being left out of the signature, so
-        // that a backend which *can* use one is not a special case at the call
-        // site.
-        drop(file);
         let t0 = Instant::now();
-        let doc = OpenDocument::open(self.bindings, path, password)?;
+        let doc = if let Some(mut file) = file {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+            OpenDocument::open_owned(self.bindings, bytes.into(), password)?
+        } else {
+            OpenDocument::open(self.bindings, path, password)?
+        };
         let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
         mark("document parsed");
 
@@ -2952,7 +2951,7 @@ pub fn run_signature_preview(
     visible: &crate::sign_prepare::Visible,
 ) -> Result<crate::sign_prepare::Preview, String> {
     let bytes = crate::sign_prepare::preview(at, visible)?;
-    let document = OpenDocument::open_owned(bindings, bytes.into()).map_err(|refusal| {
+    let document = OpenDocument::open_owned(bindings, bytes.into(), None).map_err(|refusal| {
         said!(
             "the preview could not be drawn: {reason}",
             reason = refusal.reason
@@ -3176,7 +3175,7 @@ fn page_sample(
     bytes: Vec<u8>,
     focus: crate::compress::Focus,
 ) -> Result<Option<crate::compress::Sample>, String> {
-    let copy = OpenDocument::open_owned(bindings, bytes.into()).map_err(|why| why.reason)?;
+    let copy = OpenDocument::open_owned(bindings, bytes.into(), None).map_err(|why| why.reason)?;
     let (width_pt, height_pt) = {
         let page = document.page(focus.page)?;
         (page.width_pt(), page.height_pt())

@@ -131,7 +131,7 @@ export class SignatureDialog {
     options.append(label(this.white, said.removeWhite));
     if (keeps) options.append(label(this.remember, said.remember));
     this.white.checked = true;
-    this.white.addEventListener("change", () => { if (this.source) this.render(); });
+    this.white.addEventListener("change", () => { if (this.source) { this.generation++; this.render(); } });
     this.message.setAttribute("role", "status"); this.message.style.cssText = "min-height:1.5em;margin:10px 0 0";
     this.place = this.button(PLACE_WORDS.action, () => void this.accept()); this.place.disabled = true;
     this.place.className = "primary";
@@ -189,7 +189,8 @@ export class SignatureDialog {
     this.point = next; this.place.disabled = false; this.message.textContent = "";
   }
   private async importFile(file: File): Promise<void> {
-    const generation = ++this.generation;
+    this.clear();
+    const generation = this.generation;
     if (!["image/png", "image/jpeg"].includes(file.type) || file.size > 10 * 1024 * 1024) {
       this.message.textContent = TEXT().tooLarge; return;
     }
@@ -243,6 +244,7 @@ export class SignatureDialog {
     if (remembering) {
       try { this.place.disabled = true; await rememberSignature(image); }
       catch {
+        if (generation !== this.generation || !this.isOpen) return;
         this.place.disabled = false;
         this.message.textContent = TEXT().notRemembered;
         return;
@@ -262,7 +264,8 @@ export class SignatureDialog {
       this.message.textContent = TEXT().savedNotPlaced;
   }
   private async loadSaved(): Promise<void> {
-    const generation = ++this.generation;
+    this.clear();
+    const generation = this.generation;
     try {
       const saved = await loadSignature();
       if (generation !== this.generation || !this.isOpen) return;

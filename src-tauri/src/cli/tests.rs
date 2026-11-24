@@ -930,6 +930,7 @@ fn signature(verdict: Verdict, standing: Option<Standing>) -> report::Signature 
         document_timestamp: false,
         field: "Signature1".into(),
         signer: "A".into(),
+        signer_sha256: None,
         issuer: "B".into(),
         claimed_time: String::new(),
         covers_whole_file: true,
@@ -2384,6 +2385,7 @@ fn full_signature() -> report::Signature {
         document_timestamp: false,
         field: "Signature1".into(),
         signer: "First Signer".into(),
+        signer_sha256: Some("ab".repeat(32)),
         issuer: "tpdf test root CA".into(),
         claimed_time: "2026-09-26 20:20:13 +02:00".into(),
         covers_whole_file: false,
@@ -2530,6 +2532,7 @@ fn bare_signature() -> report::Signature {
         document_timestamp: false,
         field: "Signature2".into(),
         signer: String::new(),
+        signer_sha256: None,
         issuer: String::new(),
         claimed_time: String::new(),
         covers_whole_file: true,
@@ -2888,14 +2891,14 @@ fn samples() -> Vec<(&'static str, String)> {
                 schema: report::SCHEMA,
                 command: "comments".into(),
                 input: "edited.pdf".into(),
-                complete: true,
+                complete: false,
                 comments: vec![crate::annots::Comment {
                     id: 0,
                     page: 1,
                     kind: crate::annots::Kind::Text,
                     author: "Synthetic author".into(),
                     body: "Synthetic note".into(),
-                    body_clipped: false,
+                    body_clipped: true,
                     subject: String::new(),
                     date: Some("2026-09-29 12:00".into()),
                     rect: [10., 20., 30., 40.],
@@ -2905,7 +2908,10 @@ fn samples() -> Vec<(&'static str, String)> {
                     color: Some([1., 0., 0.]),
                     object: Some((8, 0)),
                 }],
-                limits: crate::annots::Limits::default(),
+                limits: crate::annots::Limits {
+                    bodies_clipped: 1,
+                    ..Default::default()
+                },
             }),
         ),
         (
@@ -4265,7 +4271,7 @@ fn search_sample() -> report::Searched {
             before: before.into(),
             hit: hit.into(),
             after: after.into(),
-            partial_geometry: false,
+            partial_geometry: end_page.is_some(),
             // One rectangle on the page it starts on, and one more on the page it
             // ends on when it runs over a break.
             rects: std::iter::once(page)
@@ -4777,8 +4783,13 @@ fn a_reading_command_takes_its_document_from_standard_input() {
 #[test]
 fn a_search_plan_marks_every_rectangle_of_every_match_and_refuses_one_it_cannot_place() {
     use super::search::{plan, Markup, MAX_PLAN_OPERATIONS};
-    let report = search_sample();
-    let file = &report.files[0];
+    let mut report = search_sample();
+    let file = &mut report.files[0];
+    assert!(file.matches.last().unwrap().partial_geometry);
+    assert!(plan(file, &[7; 32], Markup::Underline, None)
+        .unwrap_err()
+        .contains("only in part"));
+    file.matches.last_mut().unwrap().partial_geometry = false;
     let value = |plan: &super::search::Plan| serde_json::to_value(plan).expect("json");
     let made =
         value(&plan(file, &[7; 32], Markup::Underline, Some([0.0, 0.5, 1.0])).expect("plan"));

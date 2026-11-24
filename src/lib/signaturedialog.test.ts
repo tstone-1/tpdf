@@ -263,4 +263,31 @@ describe("signature dialog: named for the use it is put to", () => {
     expect(ui.button("Place signature image")).toBeDefined();
     expect(ui.button("Use this image")).toBeUndefined();
   });
+
+  it("keeps the previous image from being placed while the newly chosen file is still decoding", async () => {
+    const ui = mount();
+    ui.ask(); ui.draw();
+    const place = ui.button("Place signature image");
+    expect(place.disabled).toBe(false);
+    const decoding = deferred<{ width: number; height: number; close(): void }>();
+    store.decode.mockReturnValue(decoding.promise);
+    ui.file.files = [{ type: "image/png", size: 10 }];
+    ui.file.dispatch("change", {});
+    if (!place.disabled) place.dispatch("click", {});
+    await settle();
+    expect(ui.answers).toEqual([]);
+  });
+  it("ignores a delayed failure from Remember after Cancel and reopening", async () => {
+    const ui = mount();
+    ui.ask(); ui.draw(); ui.remember.checked = true;
+    const saving = deferred<void>(); store.remember.mockReturnValue(saving.promise);
+    ui.button("Place signature image").dispatch("click", {});
+    ui.button("Cancel").dispatch("click", {});
+    ui.ask();
+    expect(ui.button("Place signature image").disabled).toBe(true);
+    saving.reject(new Error("store offline"));
+    await settle();
+    expect(ui.button("Place signature image").disabled).toBe(true);
+    expect(ui.message.textContent).toBe("");
+  });
 });

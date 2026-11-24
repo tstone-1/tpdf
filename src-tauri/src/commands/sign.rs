@@ -281,6 +281,7 @@ fn conclude(
                     finished.field,
                     finished.signatures,
                     finished.ours,
+                    long_term,
                 )),
                 unstamped: None,
             })

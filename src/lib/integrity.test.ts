@@ -386,6 +386,7 @@ describe("the trust row among the others", () => {
         until: "2025-01-01 00:00:00 UTC",
         self_issued: false,
         chain: 2,
+        sha256: "ab".repeat(32),
         matched_signer: true,
         key_usage: null,
         extended_usage: null,

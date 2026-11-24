@@ -248,8 +248,8 @@ ROWS += [
     Mutation(
         "sign: call every signature in the report the new one",
         "src/sign_cms.rs",
-        "        .map(|(index, signature)| (ours == Some(index), signature))",
-        "        .map(|(_, signature)| (true, signature))",
+        "            ours: ours == Some(index),",
+        "            ours: { let _ = (ours, index); true },",
         "the_report_marks_the_new_signature_and_leaves_out_unsigned_fields",
     ),
     Mutation(

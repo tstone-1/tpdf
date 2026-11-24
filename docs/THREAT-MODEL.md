@@ -2181,8 +2181,7 @@ to, and that writer checks the file again by digest.
 **Where the parse happens.** In the render service, through the same `open_handed` the
 reader's own documents take — a worker pool of its own, sandboxed exactly as §5 and §6
 describe, with the file handed over as a mapping and never as a path. The coordinator opens
-the file, hashes it through the same handle it hands the service (`Fingerprint::of_open`, for
-`open_document`'s reason), and asks the pool one more question before the model sees
+the file, hashes the chunks it writes into a private file for the service, and asks the pool one more question before the model sees
 anything: `document_properties`, whose parse is the worker's too. An encrypted file is
 refused there, because the save refuses one (§T6.19) and a reader should hear so before
 arranging the pages rather than after.
@@ -2192,8 +2191,8 @@ arranging the pages rather than after.
 the fingerprint --- and holds the file for the importing document without placing anything;
 `page_import(doc, pending, after, pages)` places the pages named, and `page_import_cancel`
 releases the file. Neither of the second pair takes a path, so the read authority is still
-exactly one path per prepare. The fingerprint is still taken through the mapped handle, at
-prepare, so what a save checks is the bytes the reader was shown the count of.
+exactly one path per prepare. The preview reads the private copy. A later in-place rewrite of the source cannot change
+which revision the preview or its digest describes.
 
 **The authority it adds.** The same as `open_document`'s: a caller able to reach it can have
 any PDF the reader can read parsed in a sandboxed worker, and see its pages' pixels and text

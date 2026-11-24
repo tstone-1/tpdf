@@ -24,7 +24,7 @@ from tpdf_client import CommandError, Tpdf
 
 
 
-def long_term_checks(report: dict, field: str) -> list[str]:
+def long_term_checks(report: dict, field: str, identity: str) -> list[str]:
     """Require the expected B-LTA readback, beyond verify --strict's policy.
 
     Strict verification also accepts signatures with no revocation evidence;
@@ -43,6 +43,7 @@ def long_term_checks(report: dict, field: str) -> list[str]:
     signatures = files[0]['signatures']
     require(len(signatures) == 2, 'one document signature and one archive timestamp are present')
     signature, archive = signatures
+    require(signature.get('signer_sha256') == identity, 'the selected certificate signed the reopened file')
     require(signature['field'] == field and signature.get('document_timestamp') is False
             and archive.get('document_timestamp') is True,
             'the selected signature is followed by a document timestamp')
@@ -80,14 +81,14 @@ def check_long_term(pdf: Tpdf, source: Path, directory: Path, identity: str,
     output = directory / 'long-term.pdf'
     original = source.read_bytes()
     signed = pdf.sign(source, output, identity=identity, timestamp=timestamp, long_term=True)
-    if signed['identity']['id'] != identity or not output.read_bytes().startswith(original):
-        raise RuntimeError('long-term: selected identity and original revision must be preserved')
+    if not output.read_bytes().startswith(original):
+        raise RuntimeError('long-term: original revision must be preserved')
     result = pdf.run('verify', '--strict', '--', output, check=False)
     (directory / 'long-term-verify.json').write_text(
         json.dumps(result.report, indent=2) + '\n', encoding='utf-8')
     if result.exit_code != 0:
         raise RuntimeError('long-term: strict verification failed; inspect long-term-verify.json')
-    checks = long_term_checks(result.report, signed['field'])
+    checks = long_term_checks(result.report, signed['field'], identity)
     # Both the document signature and the archive must notice covered-byte changes.
     altered = directory / 'long-term-altered.pdf'
     content = output.read_bytes()
@@ -134,13 +135,13 @@ def check_signing(pdf: Tpdf, directory: Path, identity: str, *,
                    'location': 'Synthetic API test'}),
     ]:
         report = pdf.sign(source, path, identity=selected, **options)
-        require(report['identity']['id'] == selected, f'{path.name}: selected certificate was used')
         require(report['visible'] == bool(options), f'{path.name}: requested visibility is reported')
         require(path.read_bytes().startswith(original), f'{path.name}: original revision is preserved')
         verified = pdf.verify(path)
         signatures = verified['files'][0]['signatures']
         require(len(signatures) == 1 and signatures[0]['integrity']['verdict'] == 'intact'
                 and signatures[0]['covers_whole_file'], f'{path.name}: readback is intact and covers the file')
+        require(signatures[0].get('signer_sha256') == selected, f'{path.name}: selected certificate signed the reopened file')
         strict = pdf.run('verify', '--strict', '--', path, check=False)
         if expect_untrusted:
             require(strict.exit_code == 1 and not strict.report['strict_passed']
@@ -177,7 +178,9 @@ def check_signing(pdf: Tpdf, directory: Path, identity: str, *,
     if timestamp is not None:
         stamped = directory / 'timestamped.pdf'
         pdf.sign(source, stamped, identity=selected, timestamp=timestamp)
-        stamp = pdf.verify(stamped)['files'][0]['signatures'][0]['timestamp']
+        signature = pdf.verify(stamped)['files'][0]['signatures'][0]
+        require(signature.get('signer_sha256') == selected, 'timestamped file uses the selected certificate')
+        stamp = signature['timestamp']
         require(stamp is not None and stamp['attested'] and stamp['integrity']['verdict'] == 'intact',
                 'requested timestamp is present and intact')
     if long_term:

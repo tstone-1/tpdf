@@ -88,20 +88,21 @@ pub fn write_picture(path: &Path, bytes: &[u8], kind: Kind) -> Result<(), String
             path = path.display()
         )
     })?;
-    let failed = |why: std::io::Error| {
+    let failed = |why: String| {
         said!(
             "The picture was not saved to {path}: {why}",
             path = path.display()
         )
     };
-    let (staged, mut file) = crate::save::claim_beside(path, name).map_err(failed)?;
+    let (staged, mut file) =
+        crate::save::claim_beside(path, name).map_err(|e| failed(e.to_string()))?;
     let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);
-    let written = written.and_then(|()| std::fs::rename(&staged, path));
     written.map_err(|why| {
         let _ = std::fs::remove_file(&staged);
-        failed(why)
-    })
+        failed(why.to_string())
+    })?;
+    crate::save::commit(&staged, path).map_err(failed)
 }
 
 #[cfg(test)]

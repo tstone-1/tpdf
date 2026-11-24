@@ -9,7 +9,7 @@ TypedDict that `REPORTS` names for it; a key the type does not declare, a
 required key the JSON lacks, a null where the type allows none, or a value of
 the wrong kind is a failure.
 
-Backward: every required key of every TypedDict reachable from `REPORTS` must
+Backward: every declared key of every TypedDict reachable from `REPORTS` must
 have been seen in a sample, `REPORTS` must name exactly the sample files, and
 the walk must have visited at least `MIN_OBJECTS` objects.
 """
@@ -165,7 +165,7 @@ class ReportsMatchSamples(unittest.TestCase):
         walk = walk_samples()
         self.assertGreaterEqual(walk.objects, MIN_OBJECTS)
 
-    def test_every_required_key_is_in_a_sample(self) -> None:
+    def test_every_supported_key_is_in_a_sample(self) -> None:
         walk = walk_samples()
         shapes: dict[str, Any] = {}
         for shape in reports.REPORTS.values():
@@ -174,10 +174,19 @@ class ReportsMatchSamples(unittest.TestCase):
         unseen = sorted(
             f"{name}.{key}"
             for name, shape in shapes.items()
-            for key in shape.__required_keys__
+            for key in typing.get_type_hints(shape)
             if (name, key) not in walk.seen
         )
         self.assertEqual(unseen, [])
+
+    def test_released_schema_one_reports_fit_current_types(self) -> None:
+        for version, command in (("26.10.7", "ocr"), ("26.10.1", "verify"),
+                                 ("26.9.24", "redact"), ("26.9.24", "edit")):
+            path = Path(__file__).parent / "testdata" / f"v{version}-{command}.json"
+            with self.subTest(sample=path.name):
+                walk = Walk()
+                walk.check(json.loads(path.read_text(encoding="utf-8")), reports.REPORTS[command], command)
+                self.assertEqual(walk.errors, [])
 
     def test_verify_coverage_is_unknown_when_an_older_cli_omits_it(self) -> None:
         # The unmodified schema-1 report shipped with v26.11.9.

@@ -745,9 +745,11 @@ pub fn covered(before: &[Signature], after: &[Signature], appended: u64) -> Resu
 /// whose range ends at the file's last byte.
 #[must_use]
 pub fn archive_of(after: &[Signature]) -> Option<&Signature> {
-    after
-        .iter()
-        .find(|s| s.signed && s.kind == DOCUMENT_TIMESTAMP && s.appended_bytes == 0)
+    after.iter().find(|s| final_timestamp(s))
+}
+
+pub(crate) fn final_timestamp(s: &Signature) -> bool {
+    s.signed && s.kind == DOCUMENT_TIMESTAMP && s.appended_bytes == 0
 }
 
 /// What the written file reads back as, against what [`add`] built:
@@ -762,6 +764,11 @@ pub fn archive_of(after: &[Signature]) -> Option<&Signature> {
 /// timestamp is not there, does not cover the whole file or is not intact.
 pub fn read_back(before: &[Signature], after: &[Signature], appended: u64) -> Result<(), Refusal> {
     covered(before, after, appended)?;
+    check_archive(after)
+}
+
+/// Checks the final document timestamp in the reopened output.
+pub(crate) fn check_archive(after: &[Signature]) -> Result<(), Refusal> {
     let Some(archive) = archive_of(after) else {
         return Err(Refusal::Archive(said!(
             "the archive timestamp is not in it"

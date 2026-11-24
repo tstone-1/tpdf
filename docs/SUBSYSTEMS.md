@@ -67,7 +67,9 @@ a certified document**: two signatures would each state what may change, and no 
 measured on the pair. The worker's reply says whether the revision locks (`Unsigned::locked`),
 `sign_cms::Made` and `sign_finish::Stage::Sealed` carry it past a timestamp or long-term
 data that did not come, and `sign_finish::read_back` answers `ReadBack::Lock` for a copy
-whose new signature does not read back at level 1. The window asks whether anyone else still
+whose new signature does not read back at level 1. Long-term signing also requires the
+reopened file to have the expected length and an intact archive timestamp over its final byte.
+Field order alone cannot identify a new timestamp when signing an existing empty field. The window asks whether anyone else still
 needs to sign, with no answer selected, and locks for *No* (`signlock.ts`, since 2026-10-15;
 a checkbox ticked by default before); `tpdf sign` locks only with `--lock`, since a script's output must
 not change under it. Nothing here stops a program from writing to the file: an ordinary save

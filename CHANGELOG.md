@@ -19,6 +19,13 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Long-term signing checks the final archive timestamp after reopening the file. Signature
+  reports identify the signing certificate by its SHA-256 fingerprint.
+- Page import keeps a private preview copy and detects changes to its source before saving.
+  Replacing a signature image disables placement until the selected image is ready.
+- Attachment export preserves filename extensions within the filesystem byte limit and reads
+  optional null attachment parameters. Picture and attachment exports retry brief Windows file locks.
+
 - An incomplete native OCR read leaves a redaction unverified. Saving a copy rejects
   conflicting crops on positions that share a page object. Printing a selection keeps the
   requested number of occurrences, and turns follow the orientation displayed in the viewer.

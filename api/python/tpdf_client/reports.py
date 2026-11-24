@@ -402,8 +402,14 @@ class OcrPage(TypedDict):
     words: int
 
 
-class OcrReport(TypedDict):
-    """`ocr --json`: a copy with a text layer on the pages that had no text."""
+class _OcrRefusals(TypedDict, total=False):
+    # Selected pages whose image the recogniser would not read:
+    # usually a script it cannot read, or a scan too unclear to tell the script.
+    refused: list[int]
+
+
+class OcrReport(_OcrRefusals):
+    """`ocr --json`: a copy with newly recognised words on the selected pages."""
 
     schema: int
     command: str
@@ -414,11 +420,8 @@ class OcrReport(TypedDict):
     pages: list[OcrPage]
     # Selected pages that already had text and were left as they are.
     already_text: list[int]
-    # Selected pages without text on which nothing was recognised.
+    # Selected pages on which OCR recognised no words.
     nothing_read: list[int]
-    # Selected pages without text whose image the recogniser would not read:
-    # usually a script it cannot read, or a scan too unclear to tell the script.
-    refused: list[int]
     signatures_invalidated: int
     signatures_unknown: bool
 
@@ -568,7 +571,12 @@ class FontUsed(TypedDict):
     font: str
 
 
-class EditReport(TypedDict):
+class _EditFonts(TypedDict, total=False):
+    # The font each `replace_text` that named one was set in, in plan order.
+    fonts: list[FontUsed]
+
+
+class EditReport(_EditFonts):
     """`edit --json`: an edit plan, validated without writing or published."""
 
     schema: int
@@ -582,8 +590,6 @@ class EditReport(TypedDict):
     annotations: int
     signatures_invalidated: int
     signatures_unknown: bool
-    # The font each `replace_text` that named one was set in, in plan order.
-    fonts: list[FontUsed]
 
 
 # --- comments --------------------------------------------------------------
@@ -909,15 +915,28 @@ class AppendixReport(_AppendixRemoval):
     sentence: str
 
 
-class _SignatureLock(TypedDict, total=False):
+class _SignatureMeasurements(TypedDict, total=False):
     # Earlier schema-1 reports omit this measurement.
     # What the signature says may change after it: 0 when it locks nothing,
     # 1 no changes (what `sign --lock` writes), 2 form filling and signing,
     # 3 those and comments. A statement, not a check.
     lock: int
+    # None exactly when `appended_bytes` is 0. `--strict` fails the intact
+    # signature, not counting document timestamps, with the fewest
+    # `appended_bytes` when this is `unread` or has
+    # more `pages_touched` than `pages_listing` has entries.
+    appendix: AppendixReport | None
+    # The PAdES level the signature has the parts of; None for a document
+    # timestamp, a signature that is not CAdES, and one that does not hold.
+    # Read from the parts present; conformance to the standard is not tested.
+    pades_level: PadesLevel | None
+    # That level as a sentence; None when the level is.
+    pades: str | None
+    # SHA-256 of the DER certificate identified by SignerInfo.
+    signer_sha256: str | None
 
 
-class Signature(_SignatureLock):
+class Signature(_SignatureMeasurements):
     """One signature, as the properties dialog reports it."""
 
     # True for a document timestamp, including an archive timestamp.
@@ -934,11 +953,6 @@ class Signature(_SignatureLock):
     covers_whole_file: bool
     # Bytes written after the signed range ends.
     appended_bytes: int
-    # None exactly when `appended_bytes` is 0. `--strict` fails the intact
-    # signature, not counting document timestamps, with the fewest
-    # `appended_bytes` when this is `unread` or has
-    # more `pages_touched` than `pages_listing` has entries.
-    appendix: AppendixReport | None
     integrity: IntegrityReport
     # None unless integrity.verdict is "intact" or "weak".
     trust: TrustReport | None
@@ -948,12 +962,6 @@ class Signature(_SignatureLock):
     revocation: RevocationReport | None
     # None exactly when `revocation` is.
     revocation_chain: ChainReport | None
-    # The PAdES level the signature has the parts of; None for a document
-    # timestamp, a signature that is not CAdES, and one that does not hold.
-    # Read from the parts present; conformance to the standard is not tested.
-    pades_level: PadesLevel | None
-    # That level as a sentence; None when the level is.
-    pades: str | None
 
 
 class _SignatureCoverage(TypedDict, total=False):
@@ -1327,7 +1335,15 @@ class RedactSearch(TypedDict):
     matches: int
 
 
-class RedactedPage(TypedDict):
+class _RedactedPaths(TypedDict, total=False):
+    # Drawings that go: paths the region holds all of.
+    path_removals: int
+    # Drawings cut at a region's edge: a straight rule or a rectangle the
+    # region crosses, which keeps the part outside it.
+    path_cuts: int
+
+
+class RedactedPage(_RedactedPaths):
     """One page of a redaction."""
 
     # Counted from 1.
@@ -1342,23 +1358,20 @@ class RedactedPage(TypedDict):
     form_text_removals: int
     # Image draws that go.
     image_removals: int
-    # Drawings that go: paths the region holds all of.
-    path_removals: int
-    # Drawings cut at a region's edge: a straight rule or a rectangle the
-    # region crosses, which keeps the part outside it.
-    path_cuts: int
     # What the removed operations draw, one string per region that took any.
     taking: list[str]
     # What the removal cannot take, one sentence each.
     left: list[str]
 
 
-class _RedactSignatureInventory(TypedDict, total=False):
+class _RedactMeasurements(TypedDict, total=False):
     # Older CLI versions omit this field.
     signatures_unknown: bool
+    # What a clean verdict covers less of than usual, one sentence each.
+    notes: list[str]
 
 
-class RedactReport(_RedactSignatureInventory):
+class RedactReport(_RedactMeasurements):
     """`redact --json`, for a written copy and for a dry run."""
 
     schema: int
@@ -1377,8 +1390,6 @@ class RedactReport(_RedactSignatureInventory):
     # Why the copy could not be proved clean, or for a dry run what the
     # removal will not be able to take. Empty when `verified` is True.
     reasons: list[str]
-    # What a clean verdict covers less of than usual, one sentence each.
-    notes: list[str]
     # The sentence shown after a redaction; None unless written.
     summary: str | None
     # How many regions were marked.

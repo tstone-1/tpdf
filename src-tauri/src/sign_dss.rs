@@ -306,15 +306,33 @@ fn earlier(document: &Document) -> Result<Earlier, String> {
     Ok(Earlier { dictionary, arrays })
 }
 
-/// What the streams `array` names hold, each within `bound` as the reader
-/// decodes it (`docinfo::dss_content`). One that is no stream, or will not
-/// decode, holds nothing anybody could find a duplicate of.
-fn contents(document: &Document, array: &[Object], bound: usize) -> Vec<Vec<u8>> {
-    array
-        .iter()
-        .filter_map(|item| resolve(document, item).as_stream().ok())
-        .filter_map(|stream| crate::docinfo::dss_content(stream, bound))
-        .collect()
+/// Hash each distinct stream once within the reader's per-kind limits.
+fn contents(
+    document: &Document,
+    array: &[Object],
+    bound: usize,
+    count: usize,
+) -> Result<std::collections::HashSet<[u8; 32]>, String> {
+    use sha2::{Digest, Sha256};
+    let mut seen = std::collections::HashSet::new();
+    let mut hashes = std::collections::HashSet::new();
+    let mut decoded = 0;
+    for entry in array {
+        let (id, object) = document.dereference(entry).map_err(|e| e.to_string())?;
+        if id.is_some_and(|id| !seen.insert(id)) {
+            continue;
+        }
+        let stream = object.as_stream().map_err(|e| e.to_string())?;
+        if decoded >= count {
+            return Err(said!("too many existing validation streams to compare"));
+        }
+        decoded += 1;
+        let bytes = crate::docinfo::dss_content(stream, bound).ok_or_else(|| {
+            said!("an existing validation stream could not be read within its size limit")
+        })?;
+        hashes.insert(Sha256::digest(bytes).into());
+    }
+    Ok(hashes)
 }
 
 /// The update section that gives `signed`'s catalog a `/DSS` holding
@@ -373,22 +391,31 @@ pub fn append(signed: &[u8], gathered: &Gathered) -> Result<Vec<u8>, String> {
     // What those arrays' streams hold, so that nothing is written a second
     // time: a later run gathers the same certificates again, and the reader
     // takes a bounded number of streams of each kind.
+    use crate::revocation::{
+        MAX_DSS_CERTIFICATES, MAX_LISTS, MAX_LIST_BYTES, MAX_RESPONSES, MAX_RESPONSE_BYTES,
+    };
     let mut there = [
-        (&certs, crate::trust::MAX_CERTIFICATE_BYTES),
-        (&ocsps, crate::revocation::MAX_RESPONSE_BYTES),
-        (&crls, crate::revocation::MAX_LIST_BYTES),
-    ]
-    .map(|(array, bound)| contents(&prev, array, bound));
+        contents(
+            &prev,
+            &certs,
+            crate::trust::MAX_CERTIFICATE_BYTES,
+            MAX_DSS_CERTIFICATES,
+        )?,
+        contents(&prev, &ocsps, MAX_RESPONSE_BYTES, MAX_RESPONSES)?,
+        contents(&prev, &crls, MAX_LIST_BYTES, MAX_LISTS)?,
+    ];
     let mut dss = dictionary.unwrap_or_default();
 
     let mut incremental = IncrementalDocument::create_from(signed.to_vec(), prev);
     let doc = &mut incremental.new_document;
-    let mut add = |into: &mut Vec<Object>, there: &mut Vec<Vec<u8>>, items: &[Vec<u8>]| {
+    let mut add = |into: &mut Vec<Object>,
+                   there: &mut std::collections::HashSet<[u8; 32]>,
+                   items: &[Vec<u8>]| {
         for item in items {
-            if there.contains(item) {
+            use sha2::{Digest, Sha256};
+            if !there.insert(Sha256::digest(item).into()) {
                 continue;
             }
-            there.push(item.clone());
             into.push(Object::Reference(
                 doc.add_object(Stream::new(Dictionary::new(), item.clone())),
             ));

@@ -2,7 +2,7 @@
   "schema": 1,
   "command": "comments",
   "input": "edited.pdf",
-  "complete": true,
+  "complete": false,
   "comments": [
     {
       "id": 0,
@@ -10,6 +10,7 @@
       "kind": "text",
       "author": "Synthetic author",
       "body": "Synthetic note",
+      "body_clipped": true,
       "subject": "",
       "date": "2026-09-29 12:00",
       "rect": [
@@ -35,7 +36,7 @@
   "limits": {
     "crowded_pages": 0,
     "over_budget": false,
-    "bodies_clipped": 0,
+    "bodies_clipped": 1,
     "unknown_kinds": 0,
     "unreadable": 0,
     "cycles": 0,

@@ -315,7 +315,12 @@ pub(crate) struct EagerOpen {
     /// What was opened, to be compared against what is asked for.
     pub(crate) path: PathBuf,
     /// The pending result, taken by the first matching request.
-    pub(crate) pending: Mutex<Option<ReplyRx<DocumentInfo, progressive::Refusal>>>,
+    pending: Mutex<Option<Opening>>,
+}
+
+struct Opening {
+    reply: ReplyRx<DocumentInfo, progressive::Refusal>,
+    fingerprint: Option<crate::fingerprint::Opened>,
 }
 
 /// Whether page geometry should be collected lazily rather than up front.
@@ -352,26 +357,6 @@ pub async fn open_document(
     password: Option<String>,
 ) -> Result<DocumentInfo, progressive::Refusal> {
     let wanted = PathBuf::from(&path);
-    // **Opened once, here, and the handle goes two ways.** One clone is what the
-    // render service maps for the workers and the other is what is hashed, so
-    // the fingerprint is a record of the bytes the reader is looking at. Opening
-    // the name twice --- once to map, once to hash on a thread --- is two lookups
-    // with a gap between them, and a file replaced in that gap by a revision of
-    // the same page count is invisible to every guard there is: the reader sees
-    // one document, the fingerprint describes another, and a save applies the
-    // plan to whatever the name reaches.
-    //
-    // A file that will not open is not refused here. The backend is about to
-    // meet the same failure and its refusal is the one that names the cause; all
-    // this loses is the fingerprint, and a document with none can be read and not
-    // saved over, which is the fail-closed half below.
-    let handed = std::fs::File::open(&wanted).ok();
-    let fingerprinting = handed.as_ref().and_then(|file| {
-        let cloned = file.try_clone().ok()?;
-        // Here, before the render service reads the file, so the stamp it
-        // records is of the file as it was before anything read it.
-        Some(crate::fingerprint::Opened::new(cloned, wanted.clone()))
-    });
     // The receiver comes out of the lock before anything is awaited, and it has
     // to: the guard is not `Send`, so holding one across the wait below would
     // not compile.
@@ -393,14 +378,13 @@ pub async fn open_document(
     // returns a `DocumentInfo` produced before this call existed --- registering
     // it in only one of the two would leave a reader who opened a file the fast
     // way with no model and no error, which reads as "rotate does nothing".
-    let info = if let Some(rx) = eager {
+    let opening = if let Some(opening) = eager {
         startup::mark("eager open collected");
-        await_reply("open_document", rx).await?
+        opening
     } else {
-        let (reply, rx) = reply_channel();
-        service.open_handed(wanted, handed, lazy_geometry(), password, reply);
-        await_reply("open_document", rx).await?
+        begin_open(&service, wanted, password)
     };
+    let info = await_reply("open_document", opening.reply).await?;
     let pages = u32::try_from(info.page_count).map_err(|_| {
         said!(
             "a document of {count} pages is past what tpdf can edit",
@@ -417,7 +401,7 @@ pub async fn open_document(
     // The document opens and can be read; what it cannot do is be saved over,
     // because a save with no fingerprint is refused. Fail closed, and lose the
     // smaller thing: Save a copy still works, and the original is not at risk.
-    edits.open(info.id, pages, fingerprinting);
+    edits.open(info.id, pages, opening.fingerprint);
 
     // After the open succeeded, so a file that failed to parse is not filed as a
     // document the reader had. Every route in reaches here -- a drop on the
@@ -453,16 +437,9 @@ pub async fn open_document(
 /// the *same* document reuses the first handle, because the model reuses its
 /// id for the same bytes and hands the new one back as `spare`.
 ///
-/// **The fingerprint is taken here, at prepare, and not at the commit.** It has
-/// to be taken through the handle the service mapped, for the reason
-/// `open_document` gives: two lookups of one name with a gap between them can
-/// describe two different files. Here that handle is in hand; at the commit it
-/// would have to be kept open in the pending slot beside the render handle, for
-/// as long as the reader takes to type a range, to hash the same bytes it
-/// could hash now. Taken now, the commit does no I/O and cannot refuse on a
-/// read after the reader has chosen their pages. A save compares it against the
-/// bytes it hands the writer (`docs/THREAT-MODEL.md` §T6.19), which is what
-/// still catches a file replaced while the question was open.
+/// Preparation hashes each chunk as it copies it into the private file handed
+/// to the render service. A save compares that digest with the bytes handed to
+/// the writer, including after an in-place change to the original file.
 ///
 /// An encrypted file is refused here rather than at the save, which refuses it
 /// too: arranging pages that can never be written is work a reader loses.
@@ -486,10 +463,13 @@ pub async fn page_import_prepare(
     }
     let wanted = PathBuf::from(&path);
     let name = imports::display_name(&wanted);
-    let file = std::fs::File::open(&wanted).map_err(|e| said!("Could not open {name}: {e}"))?;
-    let hashing = file
-        .try_clone()
-        .map_err(|e| said!("Could not open {name}: {e}"))?;
+    let source_path = wanted.clone();
+    let (file, fingerprint) = tauri::async_runtime::spawn_blocking(move || {
+        crate::fingerprint::capture_import(&source_path)
+    })
+    .await
+    .map_err(|e| said!("Could not read {name}: {e}"))?
+    .map_err(|e| said!("Could not open {name}: {e}"))?;
 
     let (reply, rx) = reply_channel();
     service.open_handed(wanted.clone(), Some(file), lazy_geometry(), None, reply);
@@ -509,13 +489,6 @@ pub async fn page_import_prepare(
     if properties.encryption.is_some() {
         return Err(imports::locked(&name));
     }
-
-    let what = wanted.clone();
-    let fingerprint = tauri::async_runtime::spawn_blocking(move || {
-        crate::fingerprint::Fingerprint::of_open(&hashing, &what)
-    })
-    .await
-    .map_err(|e| said!("Could not read {name}: {e}"))??;
 
     let pages = imports::page_count(info.page_count)?;
     let source = crate::docmodel::SourceFile {
@@ -865,15 +838,37 @@ pub(crate) fn start_eager_open(service: &RenderService) -> Option<EagerOpen> {
     std::env::var_os("TPDF_EAGER_OPEN")?;
     let path = PathBuf::from(std::env::var("TPDF_STARTUP").ok()?);
 
-    let (reply, rx) = reply_channel();
-    // No password: nothing has had the chance to ask for one this early, and a
-    // locked document simply comes back locked for `open_document` to relay.
-    service.open(path.clone(), lazy_geometry(), None, reply);
+    let opening = begin_open(service, path.clone(), None);
     startup::mark("eager open requested");
     Some(EagerOpen {
         path,
-        pending: Mutex::new(Some(rx)),
+        pending: Mutex::new(Some(opening)),
     })
+}
+
+/// Keep the render request and its original fingerprint handle together, even
+/// when the window collects an eager request after the path has been replaced.
+fn begin_open(service: &RenderService, path: PathBuf, password: Option<String>) -> Opening {
+    request_open(path, |path, file, reply| {
+        service.open_handed(path, file, lazy_geometry(), password, reply);
+    })
+}
+
+fn request_open(
+    path: PathBuf,
+    render: impl FnOnce(PathBuf, Option<std::fs::File>, render::ReplyRefusal<DocumentInfo>),
+) -> Opening {
+    let file = std::fs::File::open(&path).ok();
+    let fingerprint = file
+        .as_ref()
+        .and_then(|file| file.try_clone().ok())
+        .map(|handle| crate::fingerprint::Opened::new(handle, path.clone()));
+    let (reply, rx) = reply_channel();
+    render(path, file, reply);
+    Opening {
+        reply: rx,
+        fingerprint,
+    }
 }
 
 /// What a `stat` said about a document's file at open, and what it says now.
@@ -932,6 +927,27 @@ pub async fn document_differs(
 mod folder_tests {
     use super::pdfs_beside;
     use crate::testutil::TempDir;
+
+    #[test]
+    fn a_pending_open_keeps_the_fingerprint_of_the_revision_handed_to_render() {
+        use crate::fingerprint::Fingerprint;
+        use std::io::Read;
+        let dir = TempDir::new("eager-replacement");
+        let path = dir.join("pages.pdf");
+        std::fs::write(&path, b"first revision").unwrap();
+        let opening = super::request_open(path.clone(), |name, file, _reply| {
+            assert_eq!(name, path);
+            let mut seen = String::new();
+            file.unwrap().read_to_string(&mut seen).unwrap();
+            assert_eq!(seen, "first revision");
+        });
+        let replacement = dir.join("new.pdf");
+        std::fs::write(&replacement, b"later revision").unwrap();
+        std::fs::rename(replacement, &path).unwrap();
+        let held = opening.fingerprint.unwrap();
+        let opened = Fingerprint::of_open(&held.file, &path).unwrap();
+        assert!(opened.agrees_with(&path).is_err());
+    }
 
     #[test]
     fn lists_the_pdfs_beside_a_document_and_nothing_else() {

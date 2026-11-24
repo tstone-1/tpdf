@@ -77,11 +77,15 @@ pub struct OpenDocument {
 }
 
 impl OpenDocument {
-    /// Keeps a bounded, owned preview alive for as long as PDFium borrows its bytes.
-    pub(crate) fn open_owned(bindings: Bindings, bytes: Arc<[u8]>) -> Result<Self, Refusal> {
+    /// Keeps the source bytes alive for both PDFium and the document graph.
+    pub(crate) fn open_owned(
+        bindings: Bindings,
+        bytes: Arc<[u8]>,
+        password: Option<&str>,
+    ) -> Result<Self, Refusal> {
         Ok(Self {
-            pdfium: RawDocument::open_owned(bindings, bytes.clone(), None)?,
-            graph: DocumentGraph::new(Source::Owned(bytes), None),
+            pdfium: RawDocument::open_owned(bindings, bytes.clone(), password)?,
+            graph: DocumentGraph::new(Source::Owned(bytes), password.map(str::to_string)),
             text: RefCell::new(TextCache::new()),
             preview: RefCell::new(None),
         })

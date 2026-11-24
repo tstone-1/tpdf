@@ -183,7 +183,7 @@ def main() -> int:
         # Pin both operations: otherwise uv can select a different managed
         # interpreter for the build (including an inaccessible Windows alias).
         run(['uv', 'build', '--python', sys.executable, '--wheel', '--out-dir', work / 'dist',
-             '--build-constraint', ROOT / 'scripts/api-build-constraints.txt', source], cwd=work)
+             '--build-constraint', ROOT / 'scripts/api-build-constraints.txt', source], cwd=source)
         wheel = one((work / 'dist').glob('*.whl'), 'client wheel')
         venv = work / 'venv'
         run(['uv', 'venv', '--python', sys.executable, venv], cwd=work)

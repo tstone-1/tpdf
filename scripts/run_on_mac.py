@@ -219,7 +219,14 @@ show_again() {{
   print -r -- "$hidden" | while IFS= read -r one; do osascript "$run/show.applescript" "$one" >/dev/null 2>&1; done
   hidden=""
 }}
-trap 'show_again; rm -rf -- "$owned_app"' EXIT
+owns_job=0
+stop_job() {{
+  if (( owns_job )); then
+    launchctl bootout "gui/$(id -u)/$job" 2>/dev/null
+    owns_job=0
+  fi
+}}
+trap 'stop_job; show_again; rm -rf -- "$owned_app"' EXIT
 trap 'exit 2' HUP INT TERM
 # Snapshot before hiding anything, including when the first hide is interrupted.
 hidden=$(osascript "$run/hide.applescript" 2>"$run/hide.log")
@@ -247,10 +254,10 @@ with (run / "job.plist").open("wb") as file:
     plistlib.dump(dict(Label=sys.argv[2], ProgramArguments=[str(run / "job.sh")], RunAtLoad=True), file)
 PYPLIST
 [ "$?" -eq 0 ] || {{ show_again; stop "could not write the launchd job"; }}
-{start} || {{ show_again; stop "launchd did not take the job; is anybody logged in on this Mac?"; }}
+{start} || {{ stop "launchd did not take the job; is anybody logged in on this Mac?"; }}
 waited=0
 while [ ! -f "$run/done" ] && [ ! -f "$run/timed-out" ] && [ "$waited" -lt {limit} ]; do sleep 5; waited=$((waited + 5)); done
-launchctl bootout "gui/$(id -u)/$job" 2>/dev/null
+stop_job
 if [[ -f "$run/timed-out" || ! -f "$run/done" ]]; then
   python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from stray import clear_strays; clear_strays(Path(sys.argv[1]))' "$app/Contents/MacOS/tpdf"
   show_again
@@ -328,7 +335,7 @@ except subprocess.TimeoutExpired:
 
 def remote(args: argparse.Namespace, sha: str, capture: str, run_id: str) -> str:
     only = " ".join(f"--only {shlex.quote(text)}" for text in args.only)
-    start = 'launchctl bootstrap "gui/$(id -u)" "$run/job.plist"'
+    start = 'owns_job=1\nlaunchctl bootstrap "gui/$(id -u)" "$run/job.plist"'
     if args.pictures:
         extra = " ".join(shlex.quote(text) for text in args.picture_arg)
         job = (f'mkdir "$run/{capture}" && '

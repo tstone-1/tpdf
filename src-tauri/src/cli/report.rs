@@ -536,6 +536,8 @@ pub struct Signature {
     /// Whom the signing certificate names (its common name, or its whole
     /// name), or empty when no certificate could be read.
     pub signer: String,
+    /// SHA-256 of the certificate identified by the CMS signer identifier.
+    pub signer_sha256: Option<String>,
     /// Who issued that certificate, likewise.
     pub issuer: String,
     /// `/M`, the signing time the signer's own machine claimed. Not checked.

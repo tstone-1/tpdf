@@ -554,6 +554,8 @@ fn the_report_marks_the_new_signature_and_leaves_out_unsigned_fields() {
     let first = crate::docinfo::scan(&bytes, 1, None)
         .expect("parses")
         .signatures;
+    let reported = crate::cli::verify::signature_report(&first[0]);
+    assert_eq!(reported.signer_sha256, Some(crate::keystore::id_of(&cert)));
     let mut unsigned_field = first[0].clone();
     unsigned_field.signed = false;
     unsigned_field.field = "Empty".into();
@@ -561,12 +563,12 @@ fn the_report_marks_the_new_signature_and_leaves_out_unsigned_fields() {
     found.push(unsigned_field);
     let at = ours(&found, "Signature1", 0);
     assert_eq!(at, Some(0));
-    let report = report("/x.pdf".into(), "Signature1".into(), found, at);
+    let report = report("/x.pdf".into(), "Signature1".into(), found, at, false);
     assert_eq!(report.signatures.len(), 1);
     assert!(report.signatures[0].ours);
     assert_eq!(report.signatures[0].field, "Signature1");
     let at = ours(&first, "Signature9", 0);
-    let other = super::report("/x.pdf".into(), "Signature9".into(), first, at);
+    let other = super::report("/x.pdf".into(), "Signature9".into(), first, at, false);
     assert!(!other.signatures[0].ours);
 }
 
@@ -595,11 +597,17 @@ fn the_new_signature_is_the_one_whose_range_ends_where_its_revision_does() {
     let found = [older.clone(), new.clone()];
     assert_eq!(ours(&found, "Signature1", 0), Some(1));
     // And the report marks one signature as the new one, not both.
-    let marked: Vec<bool> = report(String::new(), "Signature1".into(), found.to_vec(), Some(1))
-        .signatures
-        .iter()
-        .map(|s| s.ours)
-        .collect();
+    let marked: Vec<bool> = report(
+        String::new(),
+        "Signature1".into(),
+        found.to_vec(),
+        Some(1),
+        false,
+    )
+    .signatures
+    .iter()
+    .map(|s| s.ours)
+    .collect();
     assert_eq!(marked, [false, true]);
     // The new one missing: the older one does not stand in for it.
     assert_eq!(ours(std::slice::from_ref(&older), "Signature1", 0), None);

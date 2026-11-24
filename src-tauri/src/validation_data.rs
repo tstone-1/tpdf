@@ -145,7 +145,7 @@ pub(crate) fn finish(
     .map_err(Stopped::Refused)?;
     write(&added.bytes).map_err(Stopped::Unwritten)?;
 
-    let mut written = std::fs::File::open(out).map_err(|e| {
+    let mut written = crate::sign_finish::reopen(out, added.bytes.len()).map_err(|e| {
         Stopped::Unread(said!("the copy was written and could not be reopened: {e}"))
     })?;
     let signatures = checking
@@ -371,6 +371,18 @@ mod tests {
         );
         assert!(!stopped.tpdf_failed());
         assert!(!wrote.get() && !out.exists());
+    }
+
+    #[test]
+    fn appended_bytes_after_publication_are_included_in_the_validation_check() {
+        let pki = good();
+        let (_, out) = scratch("extra-byte");
+        let result = finished(&pki, &signed(&pki), &out, &save::Here, &|bytes| {
+            std::fs::write(&out, [bytes, b" "].concat()).map_err(|e| e.to_string())
+        });
+        assert!(
+            matches!(result, Err(Stopped::Unread(why)) if why.contains("bytes in the written file"))
+        );
     }
 
     #[test]

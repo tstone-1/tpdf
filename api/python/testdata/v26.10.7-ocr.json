@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "command": "ocr",
+  "input": "scan.pdf",
+  "output": "searchable.pdf",
+  "engine": "vision (26A428)",
+  "pages": [
+    {
+      "page": 1,
+      "words": 412
+    },
+    {
+      "page": 4,
+      "words": 7
+    }
+  ],
+  "already_text": [
+    2
+  ],
+  "nothing_read": [
+    3
+  ],
+  "signatures_invalidated": 1,
+  "signatures_unknown": false
+}

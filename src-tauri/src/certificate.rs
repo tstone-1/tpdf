@@ -55,6 +55,8 @@ pub struct Certificate {
     pub issuer: String,
     /// The issuer's common name on its own.
     pub issuer_cn: String,
+    /// SHA-256 of the DER certificate, the identifier used by the signing chooser.
+    pub sha256: String,
     /// The serial number as uppercase hex, no separators.
     pub serial: String,
     /// `notBefore`, formatted as every date in `docinfo` is.
@@ -132,6 +134,7 @@ pub fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
         self_issued: tbs.subject.to_der().ok() == tbs.issuer.to_der().ok(),
         subject,
         issuer,
+        sha256: crate::keystore::id_of(&certificate.to_der().ok()?),
         serial: hex_of(tbs.serial_number.as_bytes()),
         from: certificate_date(&tbs.validity.not_before),
         until: certificate_date(&tbs.validity.not_after),

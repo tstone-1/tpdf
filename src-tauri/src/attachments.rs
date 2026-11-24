@@ -26,8 +26,8 @@ pub const MAX_FILES: usize = 1000;
 /// a real one is two or three levels deep.
 const MAX_DEPTH: usize = 32;
 
-/// Longest name kept, in characters.
-const MAX_NAME_CHARS: usize = 255;
+/// Longest name kept, in UTF-8 bytes.
+const MAX_NAME_BYTES: usize = 255;
 
 /// One embedded file as the properties dialog lists it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -145,7 +145,10 @@ fn decode(document: &Document, stream: &lopdf::Stream, limit: usize) -> Result<V
                     b"EarlyChange",
                 ] {
                     if let Ok(value) = dict.get(key) {
-                        parameters.set(key, direct(value)?.as_i64().map_err(|e| e.to_string())?);
+                        let value = direct(value)?;
+                        if !matches!(value, Object::Null) {
+                            parameters.set(key, value.as_i64().map_err(|e| e.to_string())?);
+                        }
                     }
                 }
             }
@@ -324,13 +327,14 @@ pub fn save(
         }
         out.sync_all().map_err(|e| e.to_string())?;
         drop(out);
-        std::fs::rename(&staged, dest).map_err(|e| e.to_string())?;
         Ok(count)
     })();
-    written.map_err(|why| {
+    let count = written.map_err(|why| {
         let _ = std::fs::remove_file(&staged);
         failed(why)
-    })
+    })?;
+    crate::save::commit(&staged, dest).map_err(failed)?;
+    Ok(count)
 }
 
 #[derive(Default)]
@@ -346,14 +350,17 @@ fn entries(document: &Document) -> Entries<'_> {
         out.incomplete = true;
         return out;
     };
-    let root = if let Ok(names) = catalog.get(b"Names") {
-        let Ok(names) = resolve(document, names).as_dict() else {
+    let optional = |key| catalog.get(key).ok().map(|o| resolve(document, o));
+    let root = match optional(b"Names") {
+        None | Some(Object::Null) => None,
+        Some(Object::Dictionary(names)) => names
+            .get(b"EmbeddedFiles")
+            .ok()
+            .filter(|o| !matches!(resolve(document, o), Object::Null)),
+        Some(_) => {
             out.incomplete = true;
             return out;
-        };
-        names.get(b"EmbeddedFiles").ok()
-    } else {
-        None
+        }
     };
     if let Some(root) = root {
         let mut seen = HashSet::new();
@@ -404,7 +411,10 @@ fn walk<'a>(
             };
             out.files.push((key, &pair[1]));
         }
-    } else if dict.has(b"Names") {
+    } else if dict
+        .get(b"Names")
+        .is_ok_and(|o| !matches!(resolve(document, o), Object::Null))
+    {
         out.incomplete = true;
     }
     if let Some(kids) = dict
@@ -419,7 +429,10 @@ fn walk<'a>(
             }
             walk(document, kid, depth + 1, seen, out);
         }
-    } else if dict.has(b"Kids") {
+    } else if dict
+        .get(b"Kids")
+        .is_ok_and(|o| !matches!(resolve(document, o), Object::Null))
+    {
         out.incomplete = true;
     }
 }
@@ -471,17 +484,28 @@ fn file_name(raw: &str) -> String {
         .filter(|c| {
             !c.is_control() && !reorders(*c) && !matches!(c, '<' | '>' | '"' | '|' | '?' | '*')
         })
-        .take(MAX_NAME_CHARS)
         .collect();
     // Trailing dots and spaces too: Windows drops them from a path, so
     // `report.exe.` has no ending here and is `report.exe` on disk.
-    let kept = kept
-        .trim_matches(|c: char| c.is_whitespace() || c == '.')
-        .to_string();
+    let trim = |c: char| c.is_whitespace() || c == '.';
+    let kept = kept.trim_matches(trim);
+    if kept.len() > MAX_NAME_BYTES {
+        let suffix = kept.rfind('.').map_or("", |dot| &kept[dot..]);
+        let suffix = if suffix.len() + 4 <= MAX_NAME_BYTES {
+            suffix
+        } else {
+            ""
+        };
+        let mut end = MAX_NAME_BYTES - suffix.len();
+        while !kept.is_char_boundary(end) {
+            end -= 1;
+        }
+        return format!("{}{suffix}", kept[..end].trim_end_matches(trim));
+    }
     if kept.is_empty() {
         "attachment".to_string()
     } else {
-        kept
+        kept.to_string()
     }
 }
 
@@ -489,6 +513,14 @@ fn file_name(raw: &str) -> String {
 mod tests {
     use super::*;
     use lopdf::{dictionary, Stream, StringFormat};
+
+    #[test]
+    fn long_names_keep_the_extension_within_the_byte_budget() {
+        for (stem, ending) in [("x", ".csv"), ("界", ".txt")] {
+            let name = file_name(&format!("{}{ending}", stem.repeat(300)));
+            assert!(name.len() <= MAX_NAME_BYTES && name.ends_with(ending));
+        }
+    }
 
     /// A document carrying `files` as `(key, name, bytes, compressed)`, in a
     /// name tree of one leaf, or of one kid per file when `kids`.
@@ -597,6 +629,30 @@ mod tests {
     }
 
     #[test]
+    fn null_tree_options_mean_no_attachments_but_invalid_nodes_are_unknown() {
+        let mut doc = carrying(&[], false);
+        let null = doc.add_object(Object::Null);
+        for value in [
+            Object::Null,
+            Object::Reference(null),
+            Object::Integer(1),
+            Object::Reference((999, 0)),
+        ] {
+            let expected = matches!(resolve(&doc, &value), Object::Null).then_some(0);
+            for names in [
+                value.clone(),
+                Object::Dictionary(dictionary! {"EmbeddedFiles" => value.clone()}),
+                Object::Dictionary(
+                    dictionary! {"EmbeddedFiles" => dictionary! {"Names" => value.clone(), "Kids" => value.clone()}},
+                ),
+            ] {
+                doc.catalog_mut().unwrap().set("Names", names);
+                assert_eq!(list_with_count(&doc).1, expected);
+            }
+        }
+    }
+
+    #[test]
     fn null_optional_attachment_entries_are_absent() {
         let mut doc = carrying(&[("a", "note.txt", b"NOTE", false)], false);
         let null = doc.add_object(Object::Null);
@@ -634,6 +690,7 @@ mod tests {
         let mut doc = carrying(&[("a", "packed.txt", &packed, true)], false);
         let filter = doc.add_object(Object::Name(b"FlateDecode".to_vec()));
         let filters = doc.add_object(Object::Array(vec![Object::Reference(filter)]));
+        let null = doc.add_object(Object::Null);
         let one = doc.add_object(Object::Integer(1));
         let params = doc.add_object(dictionary! { "Predictor" => one });
         let stream = doc
@@ -646,6 +703,14 @@ mod tests {
             .dict
             .set("DecodeParms", vec![Object::Reference(params)]);
         assert_eq!(content(&doc, 0).unwrap(), packed);
+        for value in [Object::Null, Object::Reference(null)] {
+            doc.get_object_mut(params)
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set("Predictor", value);
+            assert_eq!(content(&doc, 0).unwrap(), packed);
+        }
         let stream = doc
             .objects
             .values_mut()

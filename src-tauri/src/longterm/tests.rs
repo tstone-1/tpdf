@@ -456,13 +456,48 @@ fn the_archive_timestamp_covers_the_signature_and_its_validation_data() {
     // And the report after signing names it as the archive, not as an
     // earlier signature.
     let ours = found.iter().position(|s| s.field == signed.field);
-    let report = crate::sign_cms::report(String::new(), signed.field.clone(), found.clone(), ours);
+    let report = crate::sign_cms::report(
+        String::new(),
+        signed.field.clone(),
+        found.clone(),
+        ours,
+        true,
+    );
     let flags: Vec<(bool, bool)> = report
         .signatures
         .iter()
         .map(|c| (c.ours, c.archive))
         .collect();
     assert_eq!(flags, [(true, false), (false, true)]);
+    let read = |found: &[_]| crate::sign_finish::read_back(found, ours, true, true, false);
+    assert_eq!(read(&found), crate::sign_finish::ReadBack::Holds);
+    assert!(matches!(
+        read(&found[..1]),
+        crate::sign_finish::ReadBack::LongTerm(_)
+    ));
+    let mut damaged = found.clone();
+    damaged[1].integrity.as_mut().unwrap().verdict = crate::integrity::Verdict::Broken;
+    assert!(matches!(
+        read(&damaged),
+        crate::sign_finish::ReadBack::LongTerm(_)
+    ));
+    let mut old = found.clone();
+    old[1].appended_bytes = 10;
+    old[1].covers_whole_file = false;
+    assert!(matches!(
+        read(&old),
+        crate::sign_finish::ReadBack::LongTerm(_)
+    ));
+    for (records, long_term) in [(old, true), (found, false)] {
+        let report = crate::sign_cms::report(
+            String::new(),
+            signed.field.clone(),
+            records,
+            ours,
+            long_term,
+        );
+        assert!(report.signatures.iter().all(|s| !s.archive));
+    }
 }
 
 /// The four stages of a long-term signing, each read back as the PAdES level
@@ -1748,7 +1783,7 @@ fn a_worker_that_dies_while_extending_is_tpdfs_failure() {
 fn the_command_lines_read_back_asks_what_the_check_before_writing_asks() {
     let read_back_holds = |found: &[crate::docinfo::Signature], field: &str, stamped, data| {
         let ours = found.iter().find(|s| s.signed && s.field == field);
-        crate::sign_finish::read_back(ours, stamped, data, false)
+        crate::sign_finish::approval_read_back(ours, stamped, data, false)
             == crate::sign_finish::ReadBack::Holds
     };
     let pki = Pki::start(good());

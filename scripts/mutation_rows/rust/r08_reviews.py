@@ -1514,15 +1514,15 @@ ROWS += [
     Mutation(
         "existing: take any signature ending at the last byte for the archive",
         "src/longterm/existing.rs",
-        "        .find(|s| s.signed && s.kind == DOCUMENT_TIMESTAMP && s.appended_bytes == 0)",
-        "        .find(|s| s.signed && s.appended_bytes == 0)",
+        "    s.signed && s.kind == DOCUMENT_TIMESTAMP && s.appended_bytes == 0",
+        "    s.signed && s.appended_bytes == 0",
         "the_written_file_must_hold_the_archive_over_the_whole_file",
     ),
     Mutation(
         "existing: take an earlier timestamp for the archive",
         "src/longterm/existing.rs",
-        "        .find(|s| s.signed && s.kind == DOCUMENT_TIMESTAMP && s.appended_bytes == 0)",
-        "        .find(|s| s.signed && s.kind == DOCUMENT_TIMESTAMP)",
+        "    s.signed && s.kind == DOCUMENT_TIMESTAMP && s.appended_bytes == 0",
+        "    s.signed && s.kind == DOCUMENT_TIMESTAMP",
         "the_written_file_must_hold_the_archive_over_the_whole_file",
     ),
     Mutation(
@@ -1543,8 +1543,8 @@ ROWS += [
         "existing: read the written file without the earlier signatures",
         "src/longterm/existing.rs",
         "    covered(before, after, appended)?;\n"
-        "    let Some(archive) = archive_of(after) else {",
-        "    let Some(archive) = archive_of(after) else {",
+        "    check_archive(after)",
+        "    let _ = (before, appended);\n    check_archive(after)",
         "the_written_file_must_hold_the_archive_over_the_whole_file",
     ),
     Mutation(
@@ -1957,7 +1957,7 @@ ROWS += [
     Mutation(
         "dss: write an entry the store already holds",
         "src/sign_dss.rs",
-        "            if there.contains(item) {\n"
+        "            if !there.insert(Sha256::digest(item).into()) {\n"
         "                continue;\n"
         "            }\n",
         "",
@@ -1966,8 +1966,8 @@ ROWS += [
     Mutation(
         "dss: forget what this revision has just written",
         "src/sign_dss.rs",
-        "            there.push(item.clone());\n",
-        "",
+        "            if !there.insert(Sha256::digest(item).into()) {",
+        "            if there.contains(&<[u8; 32]>::from(Sha256::digest(item))) {",
         "an_entry_the_dss_already_holds_is_not_written_again",
     ),
     Mutation(

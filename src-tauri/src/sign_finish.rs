@@ -191,7 +191,7 @@ impl ReadBack {
 /// the window's TypeScript: until 2026-10-05 the window's sentence looked at
 /// the new signature's verdict alone, so a timestamp or long-term data that
 /// did not read back was a signing reported as done.
-pub(crate) fn read_back(
+pub(crate) fn approval_read_back(
     ours: Option<&crate::docinfo::Signature>,
     timestamp: bool,
     long_term: bool,
@@ -374,7 +374,7 @@ pub(crate) fn finish(
     };
     write(&bytes).map_err(Stopped::Unwritten)?;
 
-    let mut written = std::fs::File::open(out).map_err(|e| {
+    let mut written = reopen(out, bytes.len()).map_err(|e| {
         Stopped::Unread(said!(
             "the signed file was written and could not be reopened: {e}"
         ))
@@ -387,18 +387,56 @@ pub(crate) fn finish(
             ))
         })?;
     let ours = sign_cms::ours(&signatures, &field, (bytes.len() - sealed) as u64);
-    let read_back = read_back(
-        ours.map(|at| &signatures[at]),
-        timestamped,
-        long_term,
-        locked,
-    );
+    let read_back = read_back(&signatures, ours, timestamped, long_term, locked);
     Ok(Finished {
         field,
         signatures,
         read_back,
         ours,
     })
+}
+
+/// Verify the approval and, for long-term signing, the separate final timestamp.
+pub(crate) fn read_back(
+    signatures: &[crate::docinfo::Signature],
+    ours: Option<usize>,
+    timestamped: bool,
+    long_term: bool,
+    locked: bool,
+) -> ReadBack {
+    let approval = approval_read_back(
+        ours.and_then(|at| signatures.get(at)),
+        timestamped,
+        long_term,
+        locked,
+    );
+    if long_term && approval == ReadBack::Holds {
+        use crate::longterm::existing::{check_archive, Refusal};
+        if let Err(error) = check_archive(signatures) {
+            let why = match error {
+                Refusal::Archive(why) => why,
+                Refusal::Budget => {
+                    said!("the archive timestamp exceeded the read-back hashing budget")
+                }
+                other => other.sentence(),
+            };
+            return ReadBack::LongTerm(crate::longterm::Refusal::Written(why));
+        }
+    }
+    approval
+}
+
+/// Refuse a changed length before a verifier maps the expected byte range.
+pub(crate) fn reopen(path: &Path, expected: usize) -> std::io::Result<std::fs::File> {
+    let file = std::fs::File::open(path)?;
+    let held = file.metadata()?.len();
+    if held != expected as u64 {
+        return Err(std::io::Error::other(said!(
+            "expected {count} bytes in the written file and found {held}",
+            count = expected
+        )));
+    }
+    Ok(file)
 }
 
 /// The archive timestamp for the application and the tool: `tsa::ask_over_range`
@@ -606,17 +644,17 @@ pub(crate) mod tests {
             ..Default::default()
         };
         assert_eq!(
-            read_back(Some(&reading(1)), false, false, true),
+            approval_read_back(Some(&reading(1)), false, false, true),
             ReadBack::Holds
         );
         for level in [0, 2, 3] {
             assert_eq!(
-                read_back(Some(&reading(level)), false, false, true),
+                approval_read_back(Some(&reading(level)), false, false, true),
                 ReadBack::Lock,
                 "level {level}"
             );
             assert_eq!(
-                read_back(Some(&reading(level)), false, false, false),
+                approval_read_back(Some(&reading(level)), false, false, false),
                 ReadBack::Holds,
                 "level {level}, and no lock was asked for"
             );
@@ -655,7 +693,7 @@ pub(crate) mod tests {
         };
         let read = |found: &[Signature], timestamp, long_term| {
             let ours = sign_cms::ours(found, "Signature1", 0);
-            read_back(ours.map(|at| &found[at]), timestamp, long_term, false)
+            approval_read_back(ours.map(|at| &found[at]), timestamp, long_term, false)
         };
         let bare = [signature(Verdict::Intact, None)];
         let stamped = [signature(Verdict::Intact, Some(Verdict::Intact))];
@@ -711,7 +749,10 @@ pub(crate) mod tests {
         );
         // And another field is not ours, whatever it reads as.
         assert_eq!(sign_cms::ours(&stamped, "Signature9", 0), None);
-        assert_eq!(read_back(None, true, false, false), ReadBack::Signature);
+        assert_eq!(
+            approval_read_back(None, true, false, false),
+            ReadBack::Signature
+        );
 
         // A new signature the read-back had no hashing budget left for: its
         // own answer, which is neither of the two above. Only for that
@@ -732,14 +773,14 @@ pub(crate) mod tests {
         // read from the dictionaries and needs no hashing.
         let budget = unchecked(Why::Budget);
         assert_eq!(
-            read_back(Some(&budget[0]), false, false, true),
+            approval_read_back(Some(&budget[0]), false, false, true),
             ReadBack::Lock,
             "the lock is compared before the budget's answer"
         );
         let mut locked = unchecked(Why::Budget);
         locked[0].lock = 1;
         assert_eq!(
-            read_back(Some(&locked[0]), false, false, true),
+            approval_read_back(Some(&locked[0]), false, false, true),
             ReadBack::Unchecked
         );
         assert_eq!(
@@ -818,6 +859,29 @@ pub(crate) mod tests {
         }
     }
 
+    #[test]
+    fn a_written_file_with_an_extra_byte_cannot_verify_as_its_prefix() {
+        use crate::integrity::test_tsa::{Pki, Plan};
+        let pki = Pki::start(Plan::default());
+        let dir = crate::testutil::TempDir::new("signed-length");
+        let out = dir.join("written.pdf");
+        let done = asking(test_vouch, |asking| {
+            finish(
+                sealed(&pki),
+                None,
+                false,
+                &out,
+                now(),
+                &save::Here,
+                asking,
+                &|bytes| std::fs::write(&out, [bytes, b" "].concat()).map_err(|e| e.to_string()),
+            )
+        });
+        assert!(
+            matches!(done, Err(Stopped::Unread(why)) if why.contains("bytes in the written file"))
+        );
+    }
+
     /// The new signature is the one this signing wrote, not any intact
     /// signature of its name. Until 2026-10-09 the read-back matched by name,
     /// so an older intact signature answered for a new one that did not read
@@ -856,7 +920,7 @@ pub(crate) mod tests {
         assert_eq!(done.read_back, ReadBack::Signature);
         // What the window is told: one signature is the new one, and it is
         // the altered one.
-        let report = sign_cms::report(String::new(), done.field, done.signatures, done.ours);
+        let report = sign_cms::report(String::new(), done.field, done.signatures, done.ours, false);
         let ours: Vec<_> = report.signatures.iter().filter(|s| s.ours).collect();
         assert_eq!(ours.len(), 1);
         assert_eq!(

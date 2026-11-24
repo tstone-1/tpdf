@@ -93,6 +93,7 @@ fn certificate() -> docinfo::Certificate {
         subject_cn: "A. Signer".into(),
         issuer: "CN=Example CA,O=Example".into(),
         issuer_cn: "Example CA".into(),
+        sha256: "ab".repeat(32),
         serial: "0a0b0c".into(),
         // Both in the past, and deliberately: `scripts/check_dates.py` reads
         // any `20dd-dd-dd` in a tracked file as a claim about when something

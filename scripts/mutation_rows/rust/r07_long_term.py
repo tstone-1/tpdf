@@ -349,8 +349,8 @@ ROWS += [
     Mutation(
         "attachments: keep a name's trailing dots",
         "src/attachments.rs",
-        ".trim_matches(|c: char| c.is_whitespace() || c == '.')",
-        ".trim_start_matches(|c: char| c.is_whitespace() || c == '.')",
+        ".trim_matches(trim)",
+        ".trim_start_matches(trim)",
         "a_name_keeps_its_last_part_and_nothing_a_file_system_refuses",
     ),
     Mutation(
@@ -632,8 +632,8 @@ ROWS += [
     Mutation(
         "archive: report the archive timestamp as an earlier signature",
         "src/sign_cms.rs",
-        '            archive: signature.kind == "ETSI.RFC3161" && at.is_some_and(|at| index > at),',
-        "            archive: false && at.is_some_and(|at| index > at),",
+        "            archive: long_term\n",
+        "            archive: !long_term\n",
         "the_archive_timestamp_covers_the_signature_and_its_validation_data",
     ),
 ]

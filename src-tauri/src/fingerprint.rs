@@ -86,6 +86,43 @@ pub struct Fingerprint {
     pub digest: [u8; 32],
 }
 
+/// Capture imported pages once. Hash the exact chunks written to the private
+/// render file, even when the source is being rewritten in place.
+pub(crate) fn capture_import(path: &Path) -> std::io::Result<(File, Fingerprint)> {
+    use std::io::{Read, Write};
+    let mut source = File::open(path)?;
+    let meta = source.metadata()?;
+    let mut remaining = meta.len();
+    // On Unix the worker receives the descriptor itself. Give it a read-only
+    // handle to the same file and remove the name before writing any PDF data.
+    let (mut writer, name) = tempfile::NamedTempFile::new()?.into_parts();
+    let snapshot = File::open(&name)?;
+    if !FileId::of(&writer).is_some_and(|id| Some(id) == FileId::of(&snapshot)) {
+        return Err(std::io::Error::other(said!(
+            "could not identify the private page import file"
+        )));
+    }
+    name.close()?;
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0; CHUNK];
+    while remaining > 0 {
+        let count = remaining.min(CHUNK as u64) as usize;
+        let chunk = &mut buffer[..count];
+        source.read_exact(chunk)?;
+        writer.write_all(chunk)?;
+        hash.update(&*chunk);
+        remaining -= count as u64;
+    }
+    Ok((
+        snapshot,
+        Fingerprint {
+            len: meta.len(),
+            modified_ns: modified_ns(&meta),
+            digest: hash.finalize().into(),
+        },
+    ))
+}
+
 impl Fingerprint {
     /// Reads `path` and records what it finds.
     ///
@@ -641,6 +678,21 @@ mod tests {
     /// The same-length rewrite is the case that reaches the digest; a different
     /// length is answered by the `stat` and would pass with the digest
     /// comparison deleted. The touch is the case a stamp alone gets wrong.
+    #[test]
+    fn imported_pages_are_the_bytes_the_digest_identifies() {
+        let dir = crate::testutil::TempDir::new("capture-import");
+        let path = dir.join("source.pdf");
+        let a = b"original pages";
+        let b = b"replaced pages";
+        std::fs::write(&path, a).unwrap();
+        let (snapshot, fingerprint) = capture_import(&path).unwrap();
+        fingerprint.agrees_with(&path).unwrap();
+        std::fs::write(&path, b).unwrap();
+        assert!(fingerprint.agrees_with(&path).is_err());
+        fingerprint.agrees_with_open(&snapshot, &path).unwrap();
+        assert!(std::io::Write::write(&mut &snapshot, b"x").is_err());
+    }
+
     #[test]
     fn same_bytes_reads_the_contents_and_ignores_the_timestamp() {
         let subject = Scratch::new("same-bytes", b"the original");

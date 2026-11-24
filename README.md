@@ -1972,8 +1972,8 @@ recogniser refused is named in the same closing line.
 The JSON report carries `schema`, `command`, `input`, `output`, the `engine` that read the
 pages, `pages` (each with `page` and the number of `words` written), `already_text` (pages
 left alone because they had text, including scans on which at least half of the recognised
-words were already there), `nothing_read` (pages without text on which nothing was
-recognised), `refused` (pages without text that the recogniser would not read),
+words were already there), `nothing_read` (selected pages on which OCR recognised no words),
+`refused` (selected pages whose image the recogniser would not read),
 `signatures_invalidated` and `signatures_unknown`.
 
 **A document from pictures.** `tpdf images front.jpg plan.png -o album.pdf` writes a
@@ -2175,7 +2175,7 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   (scan-local), one-based `page`, `kind`, `author`, `body`, `subject`, `date`,
   `rect` (`[left,top,right,bottom]`, unlike an edit request's width/height),
   flattened `quads`, `reply_to` (another scan-local id or null), `hidden`, `color`
-  and `object` (`[number,generation]` or null). Limits report `crowded_pages`,
+  and `object` (`[number,generation]` or null). A truncated comment has `body_clipped` set to true. Limits report `crowded_pages`,
   `over_budget`, `bodies_clipped`, `unknown_kinds`, `unreadable`, `cycles` and
   `pages_missed`. `complete` is false when any limit applies.
 - `text-runs`: `input`, one-based `page`, `revision` (32 byte values) and `runs`.
@@ -2233,7 +2233,7 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   on a line, `rect` being `[x, y, width, height]` in points from the page's top-left corner,
   the form `edit`'s `annotate` and `redact --regions` take. `rects` is empty for a match
   whose characters have no position. A match with some usable rectangles and incomplete
-  character coverage carries `partial_geometry: true`. Matches are in page order, then in the order they
+  character coverage has `partial_geometry` set to true. Matches are in page order, then in the order they
   start.
 - `page-numbers` and `watermark`: `input`, `output`, `pages` (how many the copy has),
   `written` (the pages the text went on, counted from 1, each read back holding its line),
@@ -2311,7 +2311,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   timestamp added over the whole), `signatures` (every signature in the written file, read
   back, the archive timestamp last) and `summary` (the sentence the application shows).
 - A signature: `field`; `document_timestamp` (`true` for an RFC 3161 document or archive
-  timestamp, `false` for a document signature, including one with an attached timestamp); `signer` and `issuer` (from its certificate, empty when none could
+  timestamp, `false` for a document signature, including one with an attached timestamp); `signer_sha256` (the signing certificate's SHA-256 in lowercase hex, or null
+  when its identity could not be established); `signer` and `issuer` (from its certificate, empty when none could
   be read); `claimed_time` (the time the signer's computer gave; not checked);
   `covers_whole_file`; `appended_bytes` (bytes written after the signed range);
   `appendix`, `null` exactly when `appended_bytes` is 0, what those bytes changed, by the

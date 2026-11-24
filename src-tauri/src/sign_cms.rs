@@ -228,20 +228,17 @@ pub fn report(
     field: String,
     found: Vec<crate::docinfo::Signature>,
     ours: Option<usize>,
+    long_term: bool,
 ) -> Signed {
-    let signed: Vec<(bool, crate::docinfo::Signature)> = found
+    let signatures = found
         .into_iter()
         .enumerate()
-        .map(|(index, signature)| (ours == Some(index), signature))
         .filter(|(_, signature)| signature.signed)
-        .collect();
-    let at = signed.iter().position(|(ours, _)| *ours);
-    let signatures = signed
-        .into_iter()
-        .enumerate()
-        .map(|(index, (ours, signature))| Checked {
-            ours,
-            archive: signature.kind == "ETSI.RFC3161" && at.is_some_and(|at| index > at),
+        .map(|(index, signature)| Checked {
+            ours: ours == Some(index),
+            archive: long_term
+                && crate::longterm::existing::final_timestamp(&signature)
+                && signature.covers_whole_file,
             lock: signature.lock,
             field: signature.field,
             integrity: signature.integrity,

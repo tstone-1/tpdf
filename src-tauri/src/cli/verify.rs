@@ -119,6 +119,9 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
     report::Signature {
         document_timestamp,
         field: signature.field.clone(),
+        signer_sha256: certificate
+            .filter(|c| c.matched_signer)
+            .map(|c| c.sha256.clone()),
         signer: certificate.map_or_else(String::new, |c| name(&c.subject_cn, &c.subject)),
         issuer: certificate.map_or_else(String::new, |c| name(&c.issuer_cn, &c.issuer)),
         claimed_time: signature.when.clone(),

@@ -87,7 +87,7 @@ impl Preview {
         let document = match revision(source.graph().parsed()?, view)? {
             None => None,
             Some(bytes) => {
-                match OpenDocument::open_owned(source.pdfium().bindings(), bytes.into()) {
+                match OpenDocument::open_owned(source.pdfium().bindings(), bytes.into(), None) {
                     Ok(document) => Some(Box::new(document)),
                     Err(_) if view.changes.is_empty() => None,
                     Err(refusal) => return Err(refusal.reason),

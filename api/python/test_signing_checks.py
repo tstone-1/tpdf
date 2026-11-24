@@ -16,7 +16,7 @@ def good_report():
     stamp = {'attested': True, 'integrity': {'verdict': 'intact'},
              'trust': {'standing': 'trusted'}, 'revocation': {'standing': 'good'},
              'revocation_chain': chain}
-    signature = {'field': 'Signature1', 'pades_level': 'B-LTA', 'document_timestamp': False,
+    signature = {'field': 'Signature1', 'signer_sha256': 'SYNTHETIC', 'pades_level': 'B-LTA', 'document_timestamp': False,
                  'covers_whole_file': False, 'appended_bytes': 123,
                  'integrity': {'verdict': 'intact'}, 'trust': {'standing': 'trusted'},
                  'timestamp': stamp, 'revocation': {'standing': 'good'},
@@ -30,11 +30,12 @@ def good_report():
 
 class SigningCheckTests(unittest.TestCase):
     def test_complete_report_passes(self):
-        self.assertTrue(long_term_checks(good_report(), 'Signature1'))
+        self.assertTrue(long_term_checks(good_report(), 'Signature1', 'SYNTHETIC'))
 
     def test_incomplete_or_untrusted_evidence_is_refused_even_when_strict_passed(self):
         # Each control breaks one property while strict_passed remains true.
         cases = [
+            (['signer_sha256'], 'ANOTHER SYNTHETIC IDENTITY'),
             (['pades_level'], 'B-LT'),
             (['document_timestamp'], True),
             (['integrity', 'verdict'], 'altered'),
@@ -59,7 +60,7 @@ class SigningCheckTests(unittest.TestCase):
                 current = current[part]
             current[path[-1]] = value
             with self.subTest(path=path), self.assertRaises(RuntimeError):
-                long_term_checks(report, 'Signature1')
+                long_term_checks(report, 'Signature1', 'SYNTHETIC')
 
     def test_missing_or_wrong_archive_is_refused(self):
         for name in ['absent', 'ordinary-signature', 'partial-coverage', 'appended-bytes', 'altered', 'untrusted']:
@@ -79,7 +80,7 @@ class SigningCheckTests(unittest.TestCase):
             else:
                 archive['trust']['standing'] = 'untrusted'
             with self.subTest(case=name), self.assertRaises(RuntimeError):
-                long_term_checks(report, 'Signature1')
+                long_term_checks(report, 'Signature1', 'SYNTHETIC')
 
     def test_invalid_options_stop_before_key_discovery(self):
         pdf = Mock()

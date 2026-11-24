@@ -610,6 +610,7 @@ export interface Certificate {
   until: string;
   self_issued: boolean;
   chain: number;
+  sha256: string;
   matched_signer: boolean;
   /**
    * What the issuer says the key is for. `null` is a certificate carrying no

@@ -1882,7 +1882,7 @@ pub(crate) fn dss_content(stream: &lopdf::Stream, bound: usize) -> Option<Vec<u8
     if stream.dict.has(b"Filter") {
         stream.decompressed_content_with_limit(bound).ok()
     } else {
-        Some(stream.content.clone())
+        (stream.content.len() <= bound).then(|| stream.content.clone())
     }
 }
 
@@ -6444,6 +6444,7 @@ mod tests {
             until: _,
             self_issued: _,
             chain: _,
+            sha256: _,
             matched_signer: _,
             key_usage: _,
             extended_usage: _,
