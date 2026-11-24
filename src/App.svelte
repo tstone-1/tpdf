@@ -562,6 +562,7 @@
     redactionRows,
     slotOfIdIn,
     type MarkKind,
+    type MarkView,
     type FieldKind,
     type StampName,
     type PageId,
@@ -2814,6 +2815,11 @@
       say(refused[0] ?? null);
       return;
     }
+    // Copy belongs to the selection at command time, including the unsaved
+    // note. Its worker reads may finish after the reader moves to another tab.
+    const withDraft = (mark: MarkView) => mark.id === mounted.markOpen
+      ? { ...mark, note: mounted.markNoteText } : mark;
+    let current = marks.map(withDraft);
     // A picture's pixels are not in its view, so they are fetched first; one
     // that cannot be read is not copied, and says so.
     let unit: number;
@@ -2828,20 +2834,22 @@
         // Left out of `pixels`, so `describe` refuses it below.
       }
     }
-    if (!currentRequest() || !stillIn(view, model, mounted)) return;
-    if (cut && !markClipboard.sameSelection(named, mounted.namedMarks())) return;
-    if (cut && mounted.markOpen !== -1) {
-      try { await mounted.saveOpenMarkDraft(); }
-      catch (error) { if (stillIn(view, model, mounted)) say(spokenError(error)); return; }
+    if (!currentRequest()) return;
+    if (cut) {
+      const ownsSelection = () => stillIn(view, model, mounted)
+        && markClipboard.sameSelection(named, mounted.namedMarks());
+      if (!ownsSelection()) return;
+      if (mounted.markOpen !== -1) {
+        try { await mounted.saveOpenMarkDraft(); }
+        catch (error) { if (stillIn(view, model, mounted)) say(spokenError(error)); return; }
+        if (!currentRequest() || !ownsSelection()) return;
+      }
+      current = selected(model.state).map(withDraft);
+      if (current.length !== named.length) return;
     }
-    if (!currentRequest() || !stillIn(view, model, mounted) || !model.state) return;
-    if (cut && !markClipboard.sameSelection(named, mounted.namedMarks())) return;
-    const current = selected(model.state).map(mark => mark.id === mounted.markOpen
-      ? { ...mark, note: mounted.markNoteText } : mark);
-    if (cut && current.length !== named.length) return;
     const { copied, refused: unread } = markClipboard.copy(current, { doc: model.doc, page, unit }, pixels, cut);
     if (copied === 0) {
-      say(unread[0] ?? TEXT().nothingCopied);
+      asDocument(view, () => say(unread[0] ?? TEXT().nothingCopied));
       return;
     }
     if (cut) mounted.removeMarks();

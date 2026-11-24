@@ -576,6 +576,14 @@ jobs:
           file was already sent, assume it can still hold what was redacted.
           Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-261111
 
+          **New in 26.11.14.** Tagged words stay editable after saving, and
+          correcting a centred heading keeps it in place. Copying an annotation
+          between documents preserves its size and draft note. Zooming and
+          resizing keep the reader on the same page. Printing follows the
+          requested page order, including repeated pages. Fitted PNGs keep
+          their physical size when converted back to PDF. This release also
+          improves form saving, signature checks and OCR verification.
+
           **New in 26.11.13.** Saving, reloading and switching between PDFs
           now preserve form answers and unfinished edits. The base document keeps
           the bookmarks and page labels of its surviving pages. Appendix

@@ -1771,6 +1771,25 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("one sidebar is shown, the focused document's", shownSidebars() <= 1);
       const rightViewer = host.viewer();
 
+      // Focus and Paste in the same event turn, while Copy is waiting for
+      // the source document's page scale.
+      const page = host.edits()!.state.pages[0]!.id;
+      const note = "cross-tab copy check";
+      await host.apply(edits => edits.mark("square", page, [20, 30, 60, 70], [], note));
+      const original = host.edits()!.state.marks.find(mark => mark.note === note)!;
+      rightViewer!.pick([original.id]);
+      host.run("edit.copyMark");
+      host.run("view.focusOtherSide");
+      host.run("edit.pasteMark");
+      await settled("the cross-tab paste", () => host.edits()?.state.marks.some(mark => mark.note === note) === true);
+      check("a mark copied before switching tabs is pasted into the destination document",
+        host.edits()?.doc === b.id && host.edits()?.state.marks.some(mark => mark.note === note) === true);
+      host.run("edit.undo");
+      await settled("the pasted mark is undone", () => host.edits()?.state.dirty === false);
+      host.run("view.focusOtherSide");
+      host.run("edit.undo");
+      await settled("the original mark is undone", () => host.edits()?.state.dirty === false);
+
       report.emit("[sides] inverting the page colours");
       // The colours are the window's, and each viewer holds its own copy of
       // them: set on the focused one alone, the other side stayed as it was.

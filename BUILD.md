@@ -1010,8 +1010,15 @@ starts at 0 and increments within the month.
    (cd src-tauri/fuzz && cargo update)           # its own lockfile, audited on its own
    git diff --stat -- package-lock.json src-tauri/Cargo.lock src-tauri/fuzz/Cargo.lock    # cargo's own lines are no proof
    scripts/third_party_notices.py                # when a crate or a package moved
+   python3 scripts/check_cargo_audit.py src-tauri/Cargo.lock src-tauri/fuzz/Cargo.lock
    scripts/check_pdfium_age.py                   # the engine pin against Chrome stable
    ```
+
+   The routine resolver can downgrade a security fix published within its age window.
+   If the audit flags that downgrade, restore the fixed crate in each affected lockfile
+   with `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update -p <crate> --precise <fixed-version>`
+   from the corresponding manifest directory and rerun the audit. This happened with
+   `cookie` 0.18.3 in both lockfiles during 26.11.14 preparation.
 
    The last line asks the question `Audit` asks on the release commit, and a pin that is
    behind refuses the release there (*The pin is now asked about every week*, near the top
@@ -1026,8 +1033,8 @@ starts at 0 and increments within the month.
 
    - **`der`, `x509-cert`, `sha1`, and the second `sha2`** remain on the generation
      required by `cms` 0.2.3 and `rsa` 0.9,
-     and the versions of both that take the new one are release candidates (`cms`
-     0.3.0-rc.0, `rsa` 0.10.0-rc.19). Take that set when both are released. ECDSA is
+     because the stable CMS builder still uses their types. RSA 0.10 is stable,
+     while CMS 0.3 is still a release candidate. Take the set when CMS 0.3 is stable. ECDSA is
      independent: it exchanges prehashed bytes and SEC1 points, not their ASN.1 types.
      `ecdsa` 0.17 and `p256`/`p384` 0.14 move to fixed `crypto-bigint` 0.7.6 for
      RUSTSEC-2026-0387. The earlier requirement to hold them together was wrong.
@@ -1060,6 +1067,8 @@ starts at 0 and increments within the month.
    - **`windows-core` 0.100** is held by Tauri: `tao`, `wry` and `webview2-com` name 0.62.
      **`parking_lot` 0.13** would be a second copy beside `tao`'s 0.12, the reason `base64` is
      held. Take each when Tauri does (26.10.24).
+   - Colour conversion shares `moxcms` 0.8 with `image` 0.25.10, which PDFium rendering also uses.
+     Moving the application alone to 0.9 would ship both copies.
    - **`tauri-plugin-updater` is pinned exactly in both ecosystems** (`Cargo.toml` and
      `package.json`): a hold recorded only here was once undone by the routine
      dependency-update commands above. A new updater is taken only in a release that runs

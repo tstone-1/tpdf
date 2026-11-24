@@ -1319,8 +1319,8 @@ cannot create returns a top-level error with `kind` set to `annotation`.
 
 **Reading from a pipe.** `info`, `verify`, `text`, `search`, `compare` and `fields` take `-` for the
 document and read it from standard input: `curl -s https://example.org/a.pdf | tpdf text -`.
-The commands that write a file do not, because each compares its output with its input by
-path.
+`render` also accepts a PDF on standard input and can write its PNG to a named file
+or to standard output.
 
 **Completion.** `tpdf completions bash`, `zsh`, `fish` or `powershell` prints a completion
 script for the commands, each command's options and file names, under both names of the

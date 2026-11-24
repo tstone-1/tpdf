@@ -27,6 +27,9 @@ including saved form widgets. Cut waits for an open note to reach the edit
 journal. A refused note stays open with its typed text. The edit snapshot identifies
 threaded replies so Cut can leave the original in place and explain why it cannot
 go on the clipboard. Clipboard geometry is converted from source to destination page units before checking that the whole group fits.
+Copy captures the selection and its draft note before requesting the source page scale
+or picture pixels. It can finish after the reader switches tabs. Cut checks the source
+view and selection again before removing anything.
 
 Before any save/copy writing command, the application reads digital-signature
 metadata from the worker and asks for consent if signatures/certification exist
@@ -591,7 +594,7 @@ segments. A PNG with gamma or chromaticity metadata uses CalGray or CalRGB when
 it carries neither an ICC profile nor an sRGB declaration. Untagged pictures use
 DeviceGray or DeviceRGB. Both picture placement and document creation apply PNG
 eXIf orientation. Physical pHYs density takes precedence over EXIF resolution.
-CLI renders record pixels per metre in pHYs for named files and stdout. PNG import accepts positive physical densities below 30 DPI for low-resolution renders. Import recovers the original integer
+CLI renders record pixels per metre in pHYs for named files and stdout. PNG import uses positive metered densities, including fitted renders below 30 or above 2,400 DPI. Import recovers the original integer
 DPI when it rounds to the stored density, so a 72 DPI render imports at one point
 per pixel. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
 Without physical resolution, a unitless PNG or JFIF density ratio sets the pixel

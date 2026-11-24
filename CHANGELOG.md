@@ -17,14 +17,16 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.14] - Unreleased
+## [26.11.14] - 2026-11-24
 
+- Editing a tagged word made of several fragments keeps it editable after saving. Correcting a centred heading preserves its position when the PDF includes spacing after the final glyph.
+- Switching tabs during Copy keeps the selected mark and its draft note. Zooming in continuous view and resizing in one-page view preserve the reader's place.
 - Pasted marks keep their physical size across pages with different units. Text comparison accepts empty text shows and inherited fonts in forms with null resources.
 - Password-protected PDFs accept equivalent Unicode spellings across the raw byte-length boundary.
 - Large print previews show consecutive groups of sides. Printer setup errors follow the interface language, encrypted jobs explain when printing is possible, and Windows CLI printing reports worker failures separately from printer refusals.
 - Timed-out copy checks release documents whose background open completes late.
 - Merging or inserting pages from a tagged PDF refuses the import before replacing the output, preserving accessibility structure ownership.
-- Fitted PNGs retain physical scale when written to stdout. Low-resolution PNGs also retain it on import.
+- Fitted PNGs retain physical scale when written to stdout and when imported, including densities outside the manual DPI range. Rendering to stdout exits quietly when the reader closes the pipe.
 - Tab drags follow the initiating pointer across focus changes. Closing a recovered Windows tab removes it from the next session across alternate path spellings.
 - Annotation-plan searches accept a literal double dash as the search text. Release checks protect the saved session and verify the relaunched updater's answer and both control rotations.
 - Thumbnail menu edits use the selected page in facing-page layouts. Blank thumbnails

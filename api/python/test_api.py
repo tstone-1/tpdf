@@ -833,6 +833,27 @@ class ClientTests(unittest.TestCase):
             page, = report['pages']
             self.assertEqual((page['width_pt'], page['height_pt']), (612, 792))
 
+    def test_fitted_png_above_2400_dpi_keeps_its_page_size(self):
+        source = self.root / 'small.pdf'
+        write_pdf(source, [
+            b'<< /Type /Catalog /Pages 2 0 R >>',
+            b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+            b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 6 6] /Resources << >> >>',
+        ])
+        png = self.root / 'fitted.png'
+        subprocess.run([BINARY, 'render', source, '--fit', '256x256', '-o', png], check=True, capture_output=True)
+        output = self.root / 'imported.pdf'
+        self.pdf.images([png], output)
+        size, = self.pdf.info(output)['files'][0]['document']['page_sizes']
+        self.assertEqual((size['width_pt'], size['height_pt']), (6, 6))
+
+    def test_png_stdout_accepts_a_reader_closing_the_pipe(self):
+        reader, writer = os.pipe()
+        os.close(reader)
+        with os.fdopen(writer, 'wb') as stream:
+            result = subprocess.run([BINARY, 'render', self.source, '-o', '-'], stdout=stream, stderr=subprocess.PIPE)
+        self.assertEqual((result.returncode, result.stderr), (0, b''))
+
     def test_tagged_merge_refuses_before_publishing(self):
         base = self.root / 'tagged.pdf'
         incoming = self.root / 'other.pdf'

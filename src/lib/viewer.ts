@@ -3228,12 +3228,12 @@ export class Viewer {
     if (next === this.zoom) return;
 
     const half = this.viewportSize().height / 2;
-    const anchor = (this.scrollTop + half) / this.zoom;
-    // Under one row at a time each row's slot is a window tall at every zoom,
-    // so the offset does not scale with the zoom; the centre is kept inside
-    // the row on screen instead.
-    const row = this.scroller.spread.continuous ? null : this.currentPage();
-    const inRow = row === null ? 0 : (this.scrollTop + half - this.scroller.pageTopOf(row)) / this.zoom;
+    const row = this.currentPage();
+    const offset = this.scrollTop + half - this.scroller.pageTopOf(row);
+    const continuous = this.scroller.spread.continuous;
+    const rowHeight = this.scroller.pagePitchOf(row) - PAGE_GAP;
+    const inGap = continuous && offset >= rowHeight;
+    const inRow = offset / this.zoom;
     this.zoom = next;
     // `settle` is set by the two zooms that arrive as a stream of events rather
     // than as one: a trackpad pinch, which is a wheel event per frame, and a
@@ -3243,15 +3243,12 @@ export class Viewer {
     // scale the reader has already left is work nobody ever sees. See
     // `Scroller.quieten`.
     this.scroller.setZoom(next, settle ? ZOOM_SETTLE_MS : 0);
-    if (row !== null) {
-      const top = this.scroller.pageTopOf(row);
-      this.scrollTop = Math.max(top, Math.min(top + inRow * next - half, this.scroller.rowSpan(top).bottom));
-    } else {
-      this.scrollTop = Math.max(
-        0,
-        Math.min(anchor * next - half, this.scroller.maxScroll),
-      );
-    }
+    const top = this.scroller.pageTopOf(row);
+    // The gap below each row stays the same size in CSS pixels at every zoom.
+    const scaled = inGap ? this.scroller.pagePitchOf(row) - PAGE_GAP + (offset - rowHeight) : inRow * next;
+    const target = top + scaled - half;
+    this.scrollTop = continuous ? Math.max(0, Math.min(target, this.scroller.maxScroll))
+      : Math.max(top, Math.min(target, this.scroller.rowSpan(top).bottom));
     this.wake();
   }
 
@@ -3915,13 +3912,15 @@ export class Viewer {
   }
 
   private onResize(): void {
+    // Identify the row while both the viewport and its row slots still have
+    // their old geometry. A larger midpoint can already lie on the next row.
+    const row = this.scroller.spread.continuous ? null : this.currentPage();
     // The one place the element is measured on purpose: this is the event that
     // says the answer has changed, and everything else reads what is left here.
     this.viewport = this.measureViewport();
     const viewport = this.viewport;
     // Under one row at a time each row's slot is the window's height, so a
     // resize moves every row; the reader stays on theirs.
-    const row = this.scroller.spread.continuous ? null : this.currentPage();
     this.scroller.resize(viewport);
     this.sizeOverlay();
     // A window drag delivers one of these per frame, so the fit it recomputes is

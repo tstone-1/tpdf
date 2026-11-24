@@ -36,7 +36,7 @@ pub const DEFAULT_DPI: f64 = 72.0;
 pub const MAX_PAGE_PT: f64 = 14_400.0;
 /// The shortest side of a page, in points.
 const MIN_PAGE_PT: f64 = 3.0;
-/// A stated resolution outside this range is a mistake in the file.
+/// Accepted manual DPI and plausible JPEG metadata. Metered PNG uses its own units.
 const PLAUSIBLE_DPI: std::ops::RangeInclusive<f64> = 30.0..=2400.0;
 
 const PNG: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
@@ -541,13 +541,9 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
                     }
                 };
                 let density = (dpi(x), dpi(y));
-                // The CLI also emits fitted thumbnails below one DPI. The PNG
-                // unit is explicit; page geometry is bounded during placement.
-                let supported = |d: f64| d > 0.0 && d <= *PLAUSIBLE_DPI.end();
-                (
-                    (supported(density.0) && supported(density.1)).then_some(density),
-                    None,
-                )
+                // Fitted renders can be outside the manual DPI range. Physical
+                // PNG units are explicit, and placement bounds the page size.
+                ((x > 0.0 && y > 0.0).then_some(density), None)
             }
             png::Unit::Unspecified => (None, relative_density(x, y)),
         }

@@ -143,6 +143,7 @@ FILTERS = [
     # list is what `--list` is filtered by. It refused to start and said which
     # three, which is that guard doing its job rather than a bug in it.
     "print::",
+    "printer::",
     # Added 2026-08-17 with the page-tree module. Its own tests were invisible to
     # the harness for the same reason `print::` was: this list is what selects
     # them, and a mutation whose test cannot be seen reports SURVIVED.

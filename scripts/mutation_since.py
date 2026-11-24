@@ -365,11 +365,14 @@ def apply_near(mutations, ref: str, prefix: str = "", sources=None, label: str =
             return None
 
     chosen = pick_near(mutations, changed, read, prefix)
+    selected_names = {mutation.name for mutation in chosen}
+    omitted_changed = sum(mutation.name not in selected_names for mutation in by_file[0])
+    omitted_unchanged = len(mutations) - len(chosen) - omitted_changed
     print(
         f"--- near {ref}: {len(chosen)} of {len(mutations)} mutations selected, those within "
         f"{NEAR_LINES} lines of a change or whose test changed; "
-        f"{len(by_file[0]) - len(chosen)} more are in changed files and NOT run, "
-        f"{len(mutations) - len(by_file[0])} are in files that did not change",
+        f"{omitted_changed} more are in changed files and NOT run, "
+        f"{omitted_unchanged} others are in files that did not change",
         flush=True,
     )
     print(
@@ -535,6 +538,11 @@ def self_test() -> int:
             chosen, code, out = run(fn, sources=rust, label="Rust source")
             check(f"{flag}: a Rust source changed with no mutation on it is refused",
                   chosen == [] and code == 1 and "[FAIL]" in out and "[OK] no" not in out, f"{code} {out!r}")
+        (root / "crate/b.rs").write_text("fn t() {}\n")
+        chosen, code, out = run(apply_near)
+        check("--near: a changed test selects an unchanged target and accounts for it once",
+              chosen == rows and code == 0 and "0 more are in changed files" in out
+              and "0 others are in files that did not change" in out, out)
         git("checkout", "-q", "--", "crate/b.rs")
         (root / "crate/new.rs").write_text("fn new() {}\n")
         chosen, code, out = run(apply_near, sources=rust, label="Rust source")

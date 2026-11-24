@@ -1268,23 +1268,29 @@ pub(super) fn settle_spans(
     // run's text: every show of the Span plain text in one run, and nothing
     // else in the run, with the texts equal but for spaces at either end.
     for (span, (mut shows, plain)) in span_shows {
-        // A layout may end with a cursor restore after the visible show (or
-        // after the editable empty show left by deletion). It owns no text.
-        let restores: BTreeSet<_> = shows
+        // A grouped edit empties the shows after its first, and a layout may
+        // append a cursor restore. Keep the first anchor even after deletion.
+        let empty_members: BTreeSet<_> = shows
             .iter()
             .skip(1)
             .copied()
             .filter(|&show| {
                 let op = &inspection.content.operations[show as usize];
-                op.operator == "TJ"
-                    && matches!(op.operands.as_slice(), [Object::Array(items)]
-                if matches!(items.as_slice(), [empty, shift]
-                    if empty.as_str().is_ok_and(|bytes| bytes.is_empty()) && number(shift).is_ok()))
+                let empty = |item: &Object| item.as_str().is_ok_and(|bytes| bytes.is_empty());
+                match (op.operator.as_str(), op.operands.as_slice()) {
+                    ("Tj", [item]) => empty(item),
+                    ("TJ", [Object::Array(items)]) => match items.as_slice() {
+                        [item] => empty(item),
+                        [item, shift] => empty(item) && number(shift).is_ok(),
+                        _ => false,
+                    },
+                    _ => false,
+                }
             })
             .collect();
-        shows.retain(|show| !restores.contains(show));
+        shows.retain(|show| !empty_members.contains(show));
         inspection.runs.runs.retain(|run| {
-            if restores.contains(&run.operator) {
+            if empty_members.contains(&run.operator) {
                 inspection.preserved.push(run.clone());
                 false
             } else {

@@ -3076,7 +3076,7 @@ SOFTWARE.
 
 ## Rust crates
 
-535 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+539 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -3293,14 +3293,18 @@ SOFTWARE.
 | javascriptcore-rs | 1.1.2 | MIT |
 | javascriptcore-rs-sys | 1.1.1 | MIT |
 | jiff | 0.2.46 | Unlicense OR MIT |
+| jiff | 1.0.1 | Unlicense OR MIT |
 | jiff-core | 0.1.8 | Unlicense OR MIT |
+| jiff-core | 1.0.1 | Unlicense OR MIT |
 | jiff-tzdb | 0.1.10 | Unlicense OR MIT |
+| jiff-tzdb | 1.0.0 | Unlicense OR MIT |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT |
+| jiff-tzdb-platform | 1.0.0 | Unlicense OR MIT |
 | json-patch | 4.2.0 | MIT/Apache-2.0 |
 | jsonptr | 0.7.1 | MIT OR Apache-2.0 |
 | keccak | 0.1.6 | Apache-2.0 OR MIT |
 | keyboard-types | 0.8.3 | MIT OR Apache-2.0 |
-| landlock | 0.4.7 | MIT OR Apache-2.0 |
+| landlock | 0.4.8 | MIT OR Apache-2.0 |
 | lazy_static | 1.5.1 | MIT OR Apache-2.0 |
 | libappindicator | 0.9.0 | Apache-2.0 OR MIT |
 | libappindicator-sys | 0.9.0 | Apache-2.0 OR MIT |
@@ -3377,7 +3381,7 @@ SOFTWARE.
 | phf_generator | 0.13.1 | MIT |
 | phf_macros | 0.13.1 | MIT |
 | phf_shared | 0.13.1 | MIT |
-| pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
+| pin-project-lite | 0.2.18 | Apache-2.0 OR MIT |
 | piper | 0.2.5 | MIT OR Apache-2.0 |
 | piston-float | 1.0.1 | MIT |
 | pkcs1 | 0.7.5 | Apache-2.0 OR MIT |
@@ -3455,8 +3459,8 @@ SOFTWARE.
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 |
 | serde_spanned | 0.6.9 | MIT OR Apache-2.0 |
 | serde_spanned | 1.1.3 | MIT OR Apache-2.0 |
-| serde_with | 3.24.0 | MIT OR Apache-2.0 |
-| serde_with_macros | 3.24.0 | MIT OR Apache-2.0 |
+| serde_with | 3.25.0 | MIT OR Apache-2.0 |
+| serde_with_macros | 3.25.0 | MIT OR Apache-2.0 |
 | serdect | 0.4.3 | Apache-2.0 OR MIT |
 | serialize-to-javascript | 0.1.2 | MIT OR Apache-2.0 |
 | serialize-to-javascript-impl | 0.1.2 | MIT OR Apache-2.0 |
@@ -3494,7 +3498,7 @@ SOFTWARE.
 | synstructure | 0.14.0 | MIT |
 | system-configuration | 0.7.0 | MIT OR Apache-2.0 |
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
-| tao | 0.37.2 | Apache-2.0 |
+| tao | 0.37.3 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
 | tauri | 2.12.7 | Apache-2.0 OR MIT |
 | tauri-codegen | 2.7.6 | Apache-2.0 OR MIT |
@@ -3523,13 +3527,13 @@ SOFTWARE.
 | tokio | 1.54.1 | MIT |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 |
 | tokio-util | 0.7.20 | MIT |
-| toml | 1.2.1+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml | 1.2.2+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_datetime | 0.6.3 | MIT OR Apache-2.0 |
 | toml_datetime | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_edit | 0.19.15 | MIT OR Apache-2.0 |
 | toml_edit | 0.20.2 | MIT OR Apache-2.0 |
-| toml_edit | 0.25.19+spec-1.1.0 | MIT OR Apache-2.0 |
-| toml_parser | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_edit | 0.25.20+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_parser | 1.1.6+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_writer | 1.2.0+spec-1.1.0 | MIT OR Apache-2.0 |
 | tower | 0.5.3 | MIT |
 | tower-http | 0.6.11 | MIT |
@@ -3557,7 +3561,7 @@ SOFTWARE.
 | utf_types | 1.0.0 | Apache-2.0 OR MIT |
 | uuid | 1.29.3 | Apache-2.0 OR MIT |
 | vecmath | 1.0.0 | MIT |
-| walkdir | 2.5.0 | Unlicense/MIT |
+| walkdir | 2.5.1 | Unlicense/MIT |
 | want | 0.3.2 | MIT |
 | web-time | 1.1.0 | MIT OR Apache-2.0 |
 | web_atoms | 0.2.6 | MIT OR Apache-2.0 |
@@ -3587,7 +3591,7 @@ SOFTWARE.
 | winnow | 1.0.5 | MIT |
 | wnaf | 0.14.1 | Apache-2.0 OR MIT |
 | writeable | 0.6.4 | Unicode-3.0 |
-| wry | 0.57.2 | Apache-2.0 OR MIT |
+| wry | 0.57.3 | Apache-2.0 OR MIT |
 | x11 | 2.21.0 | MIT |
 | x11-dl | 2.21.0 | MIT |
 | x509-cert | 0.2.5 | Apache-2.0 OR MIT |
@@ -3598,8 +3602,8 @@ SOFTWARE.
 | zbus | 5.19.0 | MIT |
 | zbus_macros | 5.19.0 | MIT |
 | zbus_names | 4.3.5 | MIT |
-| zcheapstr | 1.2.0 | MIT |
-| zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zcheapstr | 1.4.0 | MIT |
+| zerocopy | 0.8.64 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
 | zeroize | 1.9.2 | Apache-2.0 OR MIT |
@@ -3607,7 +3611,7 @@ SOFTWARE.
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.9 | Unicode-3.0 |
 | zerovec-derive | 0.11.7 | Unicode-3.0 |
-| zip | 9.7.0 | MIT |
+| zip | 9.8.1 | MIT |
 | zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |

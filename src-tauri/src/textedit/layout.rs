@@ -2264,6 +2264,21 @@ fn as_drawn(
     }
 }
 
+/// A TJ's final cursor movement changes where the next show starts, but has
+/// no bearing on the centre of the glyphs in this show.
+fn trailing_movement(items: &[Object], size: f64) -> f64 {
+    let mut movement = 0.0;
+    for item in items.iter().rev() {
+        movement -= match item {
+            Object::String(bytes, _) if bytes.is_empty() => continue,
+            Object::Integer(value) => *value as f64,
+            Object::Real(value) => f64::from(*value),
+            _ => break,
+        };
+    }
+    movement * size / 1000.
+}
+
 fn centred_one_line() -> String {
     said!("A centred line cannot be wrapped yet. Keep the text on one line.")
 }
@@ -2503,10 +2518,19 @@ fn validate<'a>(
     // text set again with its own kerns, and an unchanged centred line moved
     // back by half the difference.
     let (source_spacing, source_word_spacing) = page.text_spacing[&run.operator];
+    let last = page
+        .groups
+        .get(&run.operator)
+        .and_then(|members| members.last())
+        .unwrap_or(&run.operator);
+    let tail = match page.content.operations[*last as usize].operands.as_slice() {
+        [Object::Array(items)] => trailing_movement(items, run.size),
+        _ => 0.,
+    };
     let original_width = as_drawn(
         &original_metrics,
         &run.text,
-        run.advance,
+        run.advance - tail,
         (run.size, source_spacing, source_word_spacing),
         gap,
     );
@@ -2987,10 +3011,10 @@ fn first_fit(edit: &Edit<'_>, centred: bool) -> (Result<Laid, String>, f64) {
         // measure, having neither.
         if let (true, Ok((_, _, used, ..))) = (centred, &outcome) {
             let replacement = match &kept {
-                Some((_, advance, ..)) => as_drawn(
+                Some((items, advance, ..)) => as_drawn(
                     metrics,
                     &change.replacement,
-                    *advance,
+                    *advance - trailing_movement(items, size),
                     (size, spacing, word_spacing),
                     gap,
                 ),

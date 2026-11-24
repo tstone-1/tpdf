@@ -264,6 +264,7 @@ async function run(host: MarkCheckHost): Promise<void> {
     check("the viewer hands over a surface to press on", false, "no surface");
     return;
   }
+  viewer.goToPage(0);
   await settle(() => viewer.idle);
 
   // Mid-window, well inside whatever page is on screen. Nothing here depends on
@@ -271,7 +272,16 @@ async function run(host: MarkCheckHost): Promise<void> {
   // dragged across it, which is exactly why these tools have no `hasSelection`
   // guard.
   const bounds = root.getBoundingClientRect();
-  const mid = { x: bounds.left + bounds.width * 0.4, y: bounds.top + bounds.height * 0.4 };
+  const onPage = (slot: number) => {
+    const origin = viewer.screenPoint(slot, 0, 0);
+    const size = viewer.pageBoxCssOf(slot);
+    const left = Math.max(0, origin.x), top = Math.max(0, origin.y);
+    const right = Math.min(bounds.width, origin.x + size.width);
+    const bottom = Math.min(bounds.height, origin.y + size.height);
+    if (right <= left || bottom <= top) throw new Error(`page ${slot + 1} is outside the viewport`);
+    return { x: bounds.left + left + (right - left) * 0.4, y: bounds.top + top + (bottom - top) * 0.4 };
+  };
+  let mid = onPage(0);
 
   // --- The control, and it goes first ------------------------------------
   //
@@ -295,7 +305,7 @@ async function run(host: MarkCheckHost): Promise<void> {
     const armed = host.run("edit.addComment");
     check("the add-comment command runs and arms the pointer", armed && viewer.drawArmed === "note", `armed: ${viewer.drawArmed}`);
 
-    const slot = viewer.position.page;
+    const slot = 0;
     const before = new Set(host.marks().map((mark) => mark.id));
     click(root, mid.x, mid.y);
 
@@ -342,7 +352,8 @@ async function run(host: MarkCheckHost): Promise<void> {
     const armed = host.run("edit.drawBox");
     check("the draw-box command runs and arms the pointer", armed && viewer.drawArmed === "square", `armed: ${viewer.drawArmed}`);
 
-    const slot = viewer.position.page;
+    const slot = last;
+    mid = onPage(slot);
     const before = new Set(host.marks().map((mark) => mark.id));
     drag(root, { x: mid.x, y: mid.y }, { x: mid.x + 120, y: mid.y + 90 });
 

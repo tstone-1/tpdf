@@ -71,6 +71,7 @@ def launch(binary: str, pdf: str, timeout: float) -> tuple[int, str]:
         env = dict(
             os.environ,
             TPDF_MARKCHECK="1",
+            TPDF_SESSION_FILE=str(Path(scratch) / "session.json"),
             TPDF_VIEWERCHECK_SCRATCH=str(Path(scratch) / "scratch.pdf"),
         )
         done = run_app([binary, pdf], env=env, timeout=timeout)

@@ -358,7 +358,7 @@ ROWS += [
         # leaves out the kerns the line was drawn with.
         "textedit centred: the source measured from its glyph widths",
         "src/textedit/layout.rs",
-        "    let original_width = as_drawn(\n        &original_metrics,\n        &run.text,\n        run.advance,\n        (run.size, source_spacing, source_word_spacing),\n        gap,\n    );",
+        "    let original_width = as_drawn(\n        &original_metrics,\n        &run.text,\n        run.advance - tail,\n        (run.size, source_spacing, source_word_spacing),\n        gap,\n    );",
         "    let original_width = original_metrics.gapped_layout(run.text.trim_end_matches(' '), run.size, source_spacing, source_word_spacing, gap).map_or(run.advance, |(advance, ink)| advance.max(ink[1] + (-ink[0]).max(0.)));",
         "textedit_a_kerned_centred_line_keeps_its_centre",
     ),
@@ -372,8 +372,8 @@ ROWS += [
     Mutation(
         "textedit centred: a kept plan measured by what it used",
         "src/textedit/layout.rs",
-        "                Some((_, advance, ..)) => as_drawn(",
-        "                Some(_) if true => *used,\n                Some((_, advance, ..)) => as_drawn(",
+        "                Some((items, advance, ..)) => as_drawn(",
+        "                Some(_) if true => *used,\n                Some((items, advance, ..)) => as_drawn(",
         "textedit_a_kerned_centred_line_keeps_its_centre",
     ),
     Mutation(

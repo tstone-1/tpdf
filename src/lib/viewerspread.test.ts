@@ -78,6 +78,18 @@ function press(viewer: Viewer, id: number): void {
 }
 
 describe("Facing pages in the viewer", () => {
+  it("keeps the centred page point through a continuous zoom and its inverse", () => {
+    dom.root.clientHeight = 400;
+    const viewer = build();
+    viewer.setZoomFixed(1);
+    viewer.goToPage(8);
+    viewer.setZoomFixed(2);
+    // The viewport centre stays 200 points down this page. At double
+    // zoom its top edge is 100 points down, regardless of preceding gaps.
+    expect(viewer.position).toEqual({ page: 8, top: 100 });
+    viewer.setZoomFixed(1);
+    expect(viewer.position).toEqual({ page: 8, top: 0 });
+  });
   it("fits the row of two to the width, less the gap between them", () => {
     const viewer = build();
     const single = viewer.currentZoom;
@@ -270,9 +282,12 @@ describe("One page at a time in the viewer", () => {
     viewer.setZoomFixed(1);
     viewer.setSpread(ONE_AT_A_TIME);
     viewer.goToPage(5);
-    dom.root.clientHeight = 500;
+    dom.root.clientHeight = 400;
     // The fake has no ResizeObserver to deliver it, so the handler is called
     // as the observer would call it.
+    (viewer as unknown as { onResize(): void }).onResize();
+    expect(viewer.position.page).toBe(5);
+    dom.root.clientHeight = 900;
     (viewer as unknown as { onResize(): void }).onResize();
     expect(viewer.position.page).toBe(5);
   });
@@ -285,7 +300,9 @@ describe("One page at a time in the viewer", () => {
     // A zoom keeps the centre, and under one page at a time the view stays
     // on this page whatever the centre's new offset.
     viewer.setZoomFixed(0.5);
-    expect(viewer.position.page).toBe(3);
+    expect(viewer.position).toEqual({ page: 3, top: 0 });
+    viewer.setZoomFixed(1);
+    expect(viewer.position).toEqual({ page: 3, top: 0 });
   });
 
   it("scrolls continuously again, from the same page", () => {

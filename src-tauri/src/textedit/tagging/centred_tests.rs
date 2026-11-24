@@ -94,6 +94,17 @@ fn textedit_a_centred_line_is_edited_about_its_centre() {
     }
 }
 
+#[test]
+fn centred_edits_ignore_positioning_after_the_final_glyph() {
+    for replacement in ["FIRSD", "DIRST"] {
+        let (mut doc, ids) = fixture(b"/Standard << /MCID 0 >> BDC BT /F1 12 Tf 80 180 Td [(FIRST) -500] TJ ET EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 80 140 Td (SECOND) Tj ET EMC");
+        align(&mut doc, ids[3], "Center");
+        let edit = change(&doc, "FIRST", replacement, true);
+        textedit::write(&mut doc, &[edit]).unwrap();
+        assert!((span(&doc, replacement).0 - 80.).abs() < 0.0001);
+    }
+}
+
 // The source line is measured as it is drawn, kerns and tracking included, and
 // so is the replacement: its own text, set again with the source's own
 // positioning, stays exactly where it was. Measured afresh from glyph widths,

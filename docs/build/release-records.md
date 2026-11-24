@@ -2,6 +2,26 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.14 release verification, 2026-11-24.** All 39 local gates passed, including
+3,677 Rust library tests and 756 CLI checks on macOS. The Windows CLI passed 755 checks
+and skipped four. The macOS disk image and Windows installer each passed all 70 packaged
+Python client checks. The normal macOS app opened the page and displayed its text.
+With its bundled PDFium library withheld, the packaged CLI refused to render it.
+Windows Print to PDF passed 49 checks across three fixtures. The rotated fixture
+distinguished the selected sheet from the first sheet by its printed geometry.
+The other two fixtures had matching first and last sheet dimensions and skipped
+that comparison. All three Linux printing mutations failed their named tests.
+
+All 19 macOS window checks passed after the mark check started with a scratch session
+and used the target page's own geometry. The frontend suite caught all 447 mutations
+selected against 26.11.13, and the Python gate tests caught all 41. The Rust runner's
+test filter now includes the printer module. Its selection report counts a case selected
+by a changed test exactly once, including when the implementation file did not change.
+
+Refreshing the Rust lockfiles under the normal three-day rule downgraded the security
+fix for RUSTSEC-2026-0594. A targeted update restored `cookie` 0.18.3 in both lockfiles.
+Both Rust audits and the npm audit then passed.
+
 **26.11.13 verification and publication, 2026-11-22.** The 26.11.12 tag and its unpublished draft
 remain at `f9c51da7`. This release carries the application changes verified below. At
 `db4bff3c` the corrected Windows packaging check passed all 53 tests three consecutive times

@@ -266,11 +266,9 @@ impl Subcommand for Render {
         let png = crate::render::encode_png_with_density(&pixels, width, height, Some(dpi))
             .map_err(|e| Failure::new(Exit::Internal, e))?;
         if stdout {
-            out.write_all(&png)
-                .and_then(|()| out.flush())
-                .map_err(|e| {
-                    Failure::new(Exit::Refused, format!("could not write the PNG: {e}"))
-                })?;
+            // The command runner flushes stdout and classifies its first
+            // write error, including an early reader close.
+            let _ = out.write_all(&png);
             return Ok(Exit::Ok);
         }
         let staging = Temporary::beside(&self.output)?;

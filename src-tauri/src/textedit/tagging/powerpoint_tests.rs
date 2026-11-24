@@ -449,6 +449,32 @@ fn replace(
 }
 
 #[test]
+fn grouped_actual_text_accepts_a_second_edit_and_retyping_after_deletion() {
+    for member in ["(RST) Tj", "[(RST)] TJ"] {
+        let body = std::str::from_utf8(CONTENT)
+            .unwrap()
+            .replace("(FIRST) Tj", &format!("(FI) Tj 14.4 0 Td {member}"));
+        let (mut doc, ids) = spoken("FIRST", "SECOND", Some(&body));
+        for (original, replacement) in [("FIRST", "IN"), ("IN", ""), ("", "IN")] {
+            // The plain replacement is limited to the original advance.
+            // Retyping into an empty run uses the editor's layout box.
+            let layout = original.is_empty().then_some(textedit::Layout {
+                width: 60.,
+                height: 16.,
+                size: 12.,
+                wrap: false,
+                font: textedit::EditFont::Original,
+                grow: false,
+                installed: None,
+            });
+            replace(&mut doc, original, replacement, layout).unwrap();
+            assert_eq!(spoken_text(&doc, ids[6]), replacement);
+            assert_eq!(texts(&doc), [replacement, "SECOND"]);
+        }
+    }
+}
+
+#[test]
 fn textedit_a_spans_actual_text_is_rewritten_with_its_words() {
     // Equal, and equal but for a trailing space only the ActualText has.
     let (mut doc, ids) = spoken("FIRST", "SECOND ", None);

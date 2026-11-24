@@ -1161,7 +1161,8 @@ them on one original page.
   editable only where every show of the Span is plain text in exactly one run, the run
   holds nothing else, no inline ActualText span sits inside it, and the rule below holds.
   A trailing `TJ` that only restores the cursor after a layout edit draws no glyphs, so
-  the scanner excludes it from ownership. The first empty show stays editable after deletion.
+  the scanner excludes it from ownership, along with the empty text shows left by a
+  grouped edit. The first empty show stays editable after deletion.
   Anywhere else the page is scanned again with that Span pinned (`textedit::inspect`,
   `Tags::pin`), which is exactly the old behaviour.
 
@@ -1194,8 +1195,8 @@ non-blank text on its line, editable or read-only, stays read-only
 The writer lays the replacement out as it would any other, then again with its
 start moved back by half the change in width (`layout::prepare`, the `back`
 argument of `lay_out`). Both widths are measured as drawn (`layout::as_drawn`):
-the line's own advance, kerns and tracking included, less the trailing space
-neither draws, or its ink where that reaches further. The source is measured
+the line's own advance, kerns and tracking included, less trailing spaces and
+cursor movement after the final glyph, or its ink where that reaches further. The source is measured
 from its own advance, not laid out afresh, so a kerned or tracked line set
 again unchanged does not move. The moved
 line is held to the page, the clip and the other text like any other line.
