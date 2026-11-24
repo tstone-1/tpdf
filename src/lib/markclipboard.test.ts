@@ -35,6 +35,17 @@ describe("notCopied", () => {
 });
 
 describe("a copied mark", () => {
+  it("refuses a cut containing a threaded reply and retains the previous clipboard", () => {
+    const clipboard = new MarkClipboard();
+    const source = { doc: 1, page: pageId(3) };
+    clipboard.copy([mark("stamp")], source);
+    const result = clipboard.copy([mark("square"), { ...mark("note", 2), is_reply: true }], source, new Map(), true);
+    expect(result.copied).toBe(0);
+    expect(result.refused[0]).toContain("reply");
+    expect(clipboard.marks.map(m => m.kind)).toEqual(["stamp"]);
+    expect(clipboard.copy([mark("note")], source).copied).toBe(1);
+  });
+
   it("carries the kind, the place, the note, the colour, the width and the stamp", () => {
     expect(describeMark(mark("stamp"))).toEqual({
       kind: "stamp", quads: [10, 20, 110, 70], strokes: [], note: "a note",

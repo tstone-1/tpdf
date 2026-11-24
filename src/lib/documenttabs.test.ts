@@ -407,7 +407,7 @@ describe("a search confined to a selection, kept by a tab", () => {
   // there, and not that they run (`sourcetext.ts`).
   it("is kept with the document's pages and put back through them, in the window", () => {
     expect(missingFrom(functionIn(app, "function keepActiveTab("), [
-      "searchScope: keepScope(viewer.searchScopeRanges, edits.state.pages),",
+      "searchScope: keepScope(viewer.restorableSearchScope, edits.state.pages),",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "const restoring: Restore = {"), [
       "searchOptions: (value, kept) => viewer?.restoreSearch(kept.query, value, scopeToRestore(kept.searchScope, edits?.state.pages ?? [])),",

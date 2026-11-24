@@ -30,6 +30,8 @@
  * from 1, and following that fit (`launchplace.ts`).
  */
 
+import { emit } from "@tauri-apps/api/event";
+import { PROGRESS_EVENT as PRINT_PROGRESS, type Printing } from "./printing";
 import { call } from "./ipc";
 import { allLinksIn, commentsIn, filePage } from "./pages";
 import { rowsOf } from "./comments";
@@ -337,6 +339,34 @@ function sidebars(): number {
   return document.querySelectorAll(`.${SIDEBAR_CLASS}`).length;
 }
 
+/** Cut must leave a reply attached to the same saved annotation. */
+async function checkReplyCut(host: OpenCheckHost): Promise<void> {
+  await host.apply(e => e.mark("note", e.state.pages[0]!.id, [15, 15, 39, 39], [], "Thread parent"));
+  host.run("file.save");
+  await host.idle();
+  const scan = () => call("document_comments", { doc: host.edits()!.doc });
+  const parent = (await scan()).items.find(item => item.body === "Thread parent");
+  if (!parent?.object) throw new Error("saved thread parent is missing");
+  const object = parent.object;
+  await host.apply(e => e.reply(e.state.pages[0]!.id, object, parent.rect, "Thread reply"));
+  const mark = host.edits()!.state.marks.find(item => item.note === "Thread reply");
+  if (!mark) throw new Error("new reply is missing");
+  host.viewer()!.showMark(mark.id);
+  host.run("edit.cutMark");
+  await host.idle();
+  const retained = host.edits()!.state.marks.some(item => item.id === mark.id && item.is_reply);
+  const refusal = document.body.textContent?.includes("A reply must stay with its comment") === true;
+  report.check("cutting a reply explains the refusal and keeps the original", retained && refusal,
+    `retained ${retained}, refused ${refusal}`);
+  host.run("file.save");
+  await host.idle();
+  const { items } = await scan();
+  const savedParent = items.find(item => item.body === "Thread parent");
+  const savedReply = items.find(item => item.body === "Thread reply");
+  report.check("the saved and reopened reply still belongs to its parent comment",
+    !!savedParent && savedReply?.reply_to === savedParent.id, `reply to ${savedReply?.reply_to}, parent ${savedParent?.id}`);
+}
+
 /** Refused notes stay with their panes through focus changes and an explicit reload. */
 async function checkSplitDrafts(host: OpenCheckHost, path: string): Promise<void> {
   await host.open(path);
@@ -358,6 +388,17 @@ async function checkSplitDrafts(host: OpenCheckHost, path: string): Promise<void
     host.run("view.focusOtherSide");
     await settled("focus on " + side, () => focusedSide() === side);
   };
+  const stop = () => document.querySelector('[data-testid="stop-printing"]');
+  const printLine = () => document.querySelector('[data-testid="print-progress"]')?.textContent;
+  await emit<Printing>(PRINT_PROGRESS, { sent: 0, of: 4, state: "printing" });
+  await settled("active print job", () => !!stop());
+  await otherSide("left");
+  check("Stop and print progress follow the window across panes", !!stop() && printLine()?.includes("1 of 4") === true);
+  await emit<Printing>(PRINT_PROGRESS, { sent: 4, of: 4, state: "sent" });
+  await settled("completed print job", () => !stop());
+  await otherSide("right");
+  check("returning to the first pane cannot restore an active print job",
+    !stop() && !document.querySelector(".document-name")?.textContent?.includes("Printing side"));
   const right = await editNote("Right α");
   await otherSide("left");
   await otherSide("right");
@@ -1568,6 +1609,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       await host.open(second);
       check("opening after the last close still works", host.tabs().length === 1 && host.hasViewer());
       check("only one sidebar is mounted", sidebars() === 1);
+      await checkReplyCut(host);
       await checkSplitDrafts(host, first);
       break;
     }

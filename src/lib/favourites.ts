@@ -19,8 +19,26 @@ export const FAVOURITE_PREFIX = "nav.favourite.";
 const MAX_FAVOURITES = 500;
 const MAX_NAME_LENGTH = 200;
 
+/** The opened spelling comes first, followed by stored paths for the same file. */
+type OpenNames = readonly [string, ...string[]];
+type FileNames = string | OpenNames;
+
+function belongs(path: string, names: FileNames): boolean {
+  return typeof names === "string" ? path === names : names.includes(path);
+}
+
 export class Favourites {
   private list: Favourite[];
+  private readonly opened = new WeakMap<object, OpenNames>();
+
+  /** Bind paths to this open model, so switching panes selects its own file identity. */
+  rememberFile(model: object, names: OpenNames): void {
+    this.opened.set(model, names);
+  }
+
+  namesFor(model: object | null, path: string): FileNames {
+    return (model && this.opened.get(model)) ?? path;
+  }
 
   constructor(list: readonly Favourite[] = []) {
     this.list = [...list];
@@ -32,21 +50,25 @@ export class Favourites {
   }
 
   /** Whether page `page` of `path` is a favourite. */
-  has(path: string, page: number): boolean {
-    return this.list.some((one) => one.path === path && one.page === page);
+  has(path: FileNames, page: number): boolean {
+    return this.list.some((one) => belongs(one.path, path) && one.page === page);
   }
 
   /**
    * Marks a page, named `name` or, with none, after the page. Marking a page
    * already marked renames it rather than adding it twice.
    */
-  add(path: string, page: number, name: string): Favourite {
+  add(names: FileNames, page: number, name: string): Favourite {
+    const matches = (one: Favourite) => belongs(one.path, names) && one.page === page;
+    const at = this.list.findIndex(matches);
+    const path = this.list[at]?.path ?? (typeof names === "string" ? names : names[0]);
     const added = { path, page, name: name.trim() || TEXT().page(page + 1) };
-    const at = this.list.findIndex((one) => one.path === path && one.page === page);
     if (at < 0 && this.list.length >= MAX_FAVOURITES) throw new RangeError(TEXT().full(MAX_FAVOURITES));
     if ([...added.name].length > MAX_NAME_LENGTH) throw new RangeError(TEXT().nameTooLong(MAX_NAME_LENGTH));
-    if (at >= 0) this.list[at] = added;
-    else this.list.push(added);
+    if (at >= 0) {
+      this.list[at] = added;
+      this.list = this.list.filter((entry, index) => index === at || !matches(entry));
+    } else this.list.push(added);
     return added;
   }
 
@@ -63,26 +85,31 @@ export class Favourites {
     return changed;
   }
 
-  /** Match aliases after publication, when a replaced hard link may name a different file. */
-  async rebaseAliases(path: string, slotOf: (source: number) => number | undefined,
-    match: (candidates: string[]) => Promise<string | null>): Promise<boolean> {
-    const matched = [path];
-    const others = new Set(this.list.filter((entry) => slotOf(entry.page) !== entry.page).map((entry) => entry.path));
+  async fileNames(path: string, match: (candidates: string[]) => Promise<string | null>): Promise<[string, ...string[]]> {
+    const names: [string, ...string[]] = [path];
+    const others = new Set(this.list.map(entry => entry.path));
     others.delete(path);
     while (others.size) {
       const alias = await match([...others]);
       if (alias === null || !others.delete(alias)) break;
-      matched.push(alias);
+      names.push(alias);
     }
+    return names;
+  }
+
+  /** Resolve again after publication, when a replaced hard link may name a different file. */
+  async rebaseAliases(path: string, slotOf: (source: number) => number | undefined,
+    match: (candidates: string[]) => Promise<string | null>): Promise<boolean> {
+    const matched = await this.fileNames(path, match);
     let changed = false;
     for (const name of matched) if (this.rebase(name, slotOf)) changed = true;
     return changed;
   }
 
   /** Unmarks a page, answering whether it was marked. */
-  remove(path: string, page: number): boolean {
+  remove(path: FileNames, page: number): boolean {
     const before = this.list.length;
-    this.list = this.list.filter((one) => !(one.path === path && one.page === page));
+    this.list = this.list.filter((one) => !(belongs(one.path, path) && one.page === page));
     return this.list.length !== before;
   }
 
@@ -90,8 +117,8 @@ export class Favourites {
    * The favourite page of `path` after (`1`) or before (`-1`) `page`, or
    * `null` past the last or before the first.
    */
-  step(path: string, page: number, step: 1 | -1, slotOf = (source: number): number | undefined => source): number | null {
-    const pages = this.list.filter((one) => one.path === path)
+  step(path: FileNames, page: number, step: 1 | -1, slotOf = (source: number): number | undefined => source): number | null {
+    const pages = this.list.filter((one) => belongs(one.path, path))
       .map((one) => slotOf(one.page)).filter((slot) => slot !== undefined);
     const beyond = pages.filter((one) => (step > 0 ? one > page : one < page));
     if (beyond.length === 0) return null;

@@ -20,12 +20,14 @@ import type { PicturePixels } from "./picture";
 
 const TEXT = catalog({
   "en-US": {
+    reply: "A reply must stay with its comment and cannot be cut or copied.",
     words: "A mark made over words is not copied: on another page it would mark nothing",
     field: "A form field is not copied; use Arrange: duplicate",
     pixels: "A picture whose pixels could not be read is not copied",
     signature: "A signature picture without its pixels is not copied",
   },
   "de-DE": {
+    reply: "Eine Antwort muss bei ihrem Kommentar bleiben und lässt sich nicht ausschneiden oder kopieren.",
     words: "Eine Textmarkierung lässt sich nicht kopieren, weil ihr auf einer anderen Seite der zugehörige Text fehlt.",
     field: "Ein Formularfeld lässt sich mit dem Befehl zum Duplizieren vervielfältigen.",
     pixels: "Das Bild konnte nicht kopiert werden, weil seine Bilddaten nicht lesbar waren.",
@@ -65,7 +67,8 @@ export interface CopiedFrom {
  * A signature picture and a picture are copied with their pixels: a
  * signature's are in its view, and a picture's the caller fetches.
  */
-export function notCopied(kind: MarkKind): string | null {
+export function notCopied(kind: MarkKind, isReply = false): string | null {
+  if (isReply) return TEXT().reply;
   switch (kind) {
     case "highlight":
     case "underline":
@@ -96,7 +99,7 @@ export function notCopied(kind: MarkKind): string | null {
  * pixels in `pixels`; one without them is not copied.
  */
 export function describe(mark: MarkView, pixels?: PicturePixels): CopiedMark | string {
-  const why = notCopied(mark.kind);
+  const why = notCopied(mark.kind, mark.is_reply);
   if (why) return why;
   if (mark.kind === "picture" && !pixels) return TEXT().pixels;
   if (mark.kind === "signature" && !mark.image) return TEXT().signature;

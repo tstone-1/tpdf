@@ -454,14 +454,15 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
   const previous = localStorage.getItem("tpdf.print-settings");
   const requests: PrintSettings[] = [], draws: number[] = [];
   let installed = "Printer A", driverCopies = 3, brokenDefault = false;
+  let pageCount = 2, duplex = false;
   let holdSetup = false, finishSetup = () => {}, releaseDraw = () => {};
   const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
   const reply = (s: PrintSettings, copies: number): PrintSetup => ({
     printers: brokenDefault ? ["Printer B", "Printer C"] : [installed],
     device: { printer: installed, papers: [{ id: 1, name: "A4" }], paper: 1,
-      landscape: !!s.landscape, copies, mostCopies: 10, twoSided: "off", colour: s.colour ?? true },
+      landscape: !!s.landscape, copies, mostCopies: 10, twoSided: duplex ? "long" : "off", colour: s.colour ?? true },
     paper: { width: 595, height: 842, left: 10, top: 10, printableWidth: 575, printableHeight: 822 },
-    sheets: (s.pages ?? [0, 1]).map(page => [{ page, x: 0, y: 0, width: 575, height: 822, turned: false }]),
+    sheets: (s.pages ?? Array.from({ length: pageCount }, (_, i) => i)).map(page => [{ page, x: 0, y: 0, width: 575, height: 822, turned: false }]),
   });
   const chooser: Chooser = {
     printers: async () => ["Printer B", "Printer C"],
@@ -475,7 +476,7 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
     driver: async s => reply(s, driverCopies),
   };
   const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6L7H8AAAAASUVORK5CYII=";
-  const job = () => dialog.ask("Sample", Array.from({ length: 2 }, () => ({ width_pt: 595, height_pt: 842 })),
+  const job = () => dialog.ask("Sample", Array.from({ length: pageCount }, () => ({ width_pt: 595, height_pt: 842 })),
     async page => {
       draws.push(page);
       if (draws.length === 1) await new Promise<void>(resolve => { releaseDraw = resolve; });
@@ -497,6 +498,7 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
     const driver = host.querySelector("button")!;
     change(range, "custom");
     const pages = control<HTMLInputElement>('input[type="text"]');
+    record("Selecting Custom focuses the page range", document.activeElement === pages, document.activeElement?.tagName ?? "");
     change(pages, "99");
     enter();
     record("Enter cannot confirm a rejected print range", dialog.isOpen && print.disabled, pages.value);
@@ -578,6 +580,29 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
     if (dialog.isOpen) dialog.close();
     const confirmed = await recovered;
     record("the replacement printer can print", confirmed.print && confirmed.settings?.printer === installed, installed);
+    duplex = true;
+    for (const count of [3, 4]) {
+      pageCount = count;
+      localStorage.removeItem("tpdf.print-settings");
+      brokenDefault = false;
+      const pending = job();
+      await turn();
+      const list = control<HTMLElement>('[role="list"]');
+      const lastSide = list.lastElementChild?.getAttribute("aria-label");
+      record(`duplex preview identifies side ${count} on two sheets`,
+        lastSide === `Side ${count} of ${count}` && host.textContent?.includes("2 sheets of paper") === true, lastSide ?? "");
+      if (count === 4) {
+        const width = () => list.firstElementChild?.getBoundingClientRect().width ?? 0;
+        const before = width();
+        list.style.flex = "0 0 170px";
+        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        record("the open print preview refits after its pane narrows",
+          width() > 0 && width() < before && width() <= list.clientWidth, `${before} to ${width()} in ${list.clientWidth}`);
+        list.style.flex = "1";
+      }
+      dialog.close();
+      await pending;
+    }
   } finally {
     releaseDraw();
     dialog.close();

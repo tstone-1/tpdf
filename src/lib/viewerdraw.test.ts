@@ -1972,6 +1972,10 @@ describe("where pasted marks land", () => {
     expect(stepped?.placed).toEqual([{ quads: [22, 32, 122, 82], strokes: [[24, 34, 120, 80]] }]);
     // At the page's lower right corner the step would leave the page, so the
     // marks stay where they are.
+    expect(viewer.placePasted([
+      { quads: [10, 10, 20, 20], strokes: [] },
+      { quads: [700, 10, 710, 20], strokes: [] },
+    ], false)).toBeNull();
     const corner = viewer.placePasted([{ quads: [500, 700, 600, 800], strokes: [] }], true);
     expect(corner?.placed[0]?.quads).toEqual([500, 700, 600, 800]);
     viewer.destroy();

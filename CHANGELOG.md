@@ -19,6 +19,14 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Cut and copy now refuse threaded replies so they stay attached to their comments. Paste reports when
+  a group of annotations cannot fit on the destination page.
+- Page favourites work when reopening a PDF through an equivalent path. A refreshed
+  link list preserves keyboard focus, and tab switches discard search ranges based on
+  temporary recognised text.
+- Windows print preview focuses the custom range, labels preview sides consistently
+  and refits the page when resized. Print progress and Stop stay available across panes.
+
 - Copy page for PowerPoint omits words that cross the visible crop or an unsupported clip,
   and words on optional layers. Labels with accessibility descriptions keep their painted
   glyphs. A failed Windows text write stops the copy.

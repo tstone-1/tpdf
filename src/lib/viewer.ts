@@ -199,6 +199,7 @@ const TEXT = catalog({
     nothingMarked: "You have not marked anything in this document.",
     noFurtherMarks: "No further marks.",
     noEarlierMarks: "No earlier marks.",
+    pasteTooLarge: "These marks do not fit together on this page.",
     nothingToRecognise: "This page has no saved content to recognize.",
     pageChanged: "The page changed during recognition. Try again.",
     noWordsRecognised: "No words could be recognized on this page.",
@@ -219,6 +220,7 @@ const TEXT = catalog({
     nothingMarked: "Du hast in diesem Dokument nichts markiert.",
     noFurtherMarks: "Keine weiteren Markierungen.",
     noEarlierMarks: "Keine vorherigen Markierungen.",
+    pasteTooLarge: "Diese Markierungen passen nicht zusammen auf diese Seite.",
     nothingToRecognise: "Diese Seite hat keinen gespeicherten Inhalt, der erkannt werden kann.",
     pageChanged: "Die Seite hat sich während der Texterkennung geändert. Versuche es erneut.",
     noWordsRecognised: "Auf dieser Seite konnten keine Wörter erkannt werden.",
@@ -4238,7 +4240,16 @@ export class Viewer {
     this.linkItems = items;
     this.linkWalk = orderedLinks(items);
     this.turnedLinks = null;
-    this.clearLinkFocus();
+    const focused = this.focusedLink;
+    if (focused) {
+      const current = items.find(link => link.id === focused.id && link.page === focused.page &&
+        link.rect.every((v, i) => v === focused.rect[i]) &&
+        JSON.stringify(link.target) === JSON.stringify(focused.target));
+      if (current) {
+        this.focusedLink = current;
+        this.placeRing();
+      } else this.clearLinkFocus();
+    }
     // The accessibility tree too, and this is the half a sighted reader never
     // sees: without it a table of contents is announced as ordinary prose, with
     // nothing for a screen reader to tell one from the other.
@@ -5048,7 +5059,14 @@ export class Viewer {
       return out;
     };
     const laid = shapes.map((shape) => rects(shape.quads).map((rect) => this.viewRectOn(slot, rect)));
-    const by = together(laid.flat(), step ? { dx: COPY_STEP, dy: COPY_STEP } : { dx: 0, dy: 0 }, this.laidSize(slot));
+    const pageSize = this.laidSize(slot);
+    const quads = laid.flat();
+    const by = together(quads, step ? { dx: COPY_STEP, dy: COPY_STEP } : { dx: 0, dy: 0 }, pageSize);
+    if (quads.some(q => q.left + by.dx < -1e-6 || q.top + by.dy < -1e-6 ||
+        q.right + by.dx > pageSize.width + 1e-6 || q.bottom + by.dy > pageSize.height + 1e-6)) {
+      this.opts.onError?.(TEXT().pasteTooLarge);
+      return null;
+    }
     const moved = (quad: Quad) => this.fileRectOn(slot, {
       left: quad.left + by.dx, top: quad.top + by.dy, right: quad.right + by.dx, bottom: quad.bottom + by.dy,
     });
@@ -8687,6 +8705,15 @@ export class Viewer {
    * step. Two mutations survived exactly that way.
    */
   get searchScopeRanges(): readonly ScopeRange[] | null {
+    return this.searchScope;
+  }
+
+  /** OCR offsets expire with this viewer, even if the page order survives. */
+  get restorableSearchScope(): readonly ScopeRange[] | null {
+    if (this.searchScope?.some(range => {
+      const source = this.pages.addressOf(range.page, this.opts.doc);
+      return source && this.recovery.has(source.doc, source.page);
+    })) return null;
     return this.searchScope;
   }
 

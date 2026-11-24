@@ -570,6 +570,25 @@ describe("Viewer status", () => {
     viewer.destroy();
   });
 
+  it("retains native search ranges but discards offsets belonging to temporary OCR", async () => {
+    const viewer = build(dom);
+    try {
+      const recovered = pageText();
+      recovered.codes = [120, 121, ...recovered.codes];
+      recovered.boxes = [...recovered.boxes, ...recovered.boxes];
+      core.invoke.mockImplementation((command: string) => Promise.resolve(
+        command === "recognise_page" ? recovered : command === "page_text" ? pageText() : null));
+      await viewer.recognisePage(1, null);
+      const native = [{ page: 0, from: 0, to: 2 }];
+      viewer.restoreSearch("", viewer.searchOptionsNow, native);
+      expect(viewer.restorableSearchScope).toEqual(native);
+      const mixed = [...native, { page: 1, from: 2, to: 4 }];
+      viewer.restoreSearch("", viewer.searchOptionsNow, mixed);
+      expect(viewer.searchScopeRanges).toEqual(mixed);
+      expect(viewer.restorableSearchScope).toBeNull();
+    } finally { viewer.destroy(); }
+  });
+
   it("lets go of a search confined to a selection when the pages move", async () => {
     // Mutation: `setPages` without `this.searchScope = null`. The scope is a
     // snapshot of the selection in slots, the selection is cleared by the same
@@ -1411,6 +1430,25 @@ describe("Viewer history", () => {
     // And nothing moved, so Back has nowhere to go.
     expect(viewer.canGoBack).toBe(false);
     viewer.destroy();
+  });
+
+  it("keeps a keyboard link through a refresh until its destination changes or it disappears", () => {
+    const viewer = build8();
+    const link = { id: 9, page: 1, rect: [0, 0, 10, 10] as [number, number, number, number],
+      target: { kind: "page" as const, page: 2, top_pt: null } };
+    try {
+      viewer.setLinks([link]);
+      expect(viewer.stepLink(1)).toBe(true);
+      viewer.setLinks([structuredClone(link)]);
+      expect(viewer.linkFocus).toBe(9);
+      expect(viewer.followFocusedLink()).toBe(true);
+      viewer.setLinks([{ ...link, target: { ...link.target, page: 3 } }]);
+      expect(viewer.followFocusedLink()).toBe(false);
+      viewer.goToPage(0);
+      expect(viewer.stepLink(1)).toBe(true);
+      viewer.setLinks([]);
+      expect(viewer.followFocusedLink()).toBe(false);
+    } finally { viewer.destroy(); }
   });
 
   it("says nothing until the history moves", () => {

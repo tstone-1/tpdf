@@ -249,6 +249,9 @@ pub struct MarkView {
     /// about to remove. The overlay does not draw from it --- PDFium paints
     /// every mark inside the tile --- so this is a label, not geometry.
     pub kind: MarkKind,
+    /// A threaded reply cannot be reconstructed by the plain-mark clipboard.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_reply: bool,
     /// The page it is on, by [`PageView::id`] --- never a position.
     pub page: u64,
     /// Four numbers per quad: left, top, right, bottom, in display-space points
@@ -3847,6 +3850,7 @@ fn snapshot(model: &Doc) -> EditState {
             MarkView {
                 id: id.get(),
                 kind: mark.kind,
+                is_reply: mark.reply_to.is_some(),
                 // Off the body rather than through an accessor, unlike the
                 // geometry below: a stamp's name is fixed at the moment it is
                 // made, so there is no "what it is now" for the model to answer.
@@ -8040,13 +8044,15 @@ mod tests {
 
         let mut reply = of_kind(MarkKind::Note, pages[0].id);
         reply.reply_to = Some((12, 0));
-        edits.annotate(7, reply, stamped()).expect("the reply");
+        let added = edits.annotate(7, reply, stamped()).expect("the reply");
+        assert!(added.marks[0].is_reply);
 
         // The control, and it shares the page so that "every mark carries a
         // parent" cannot pass this test either.
-        edits
+        let added = edits
             .annotate(7, of_kind(MarkKind::Note, pages[0].id), stamped())
             .expect("an ordinary comment");
+        assert!(!added.marks[1].is_reply);
 
         let plan = edits.plan(7).expect("plan");
         assert_eq!(plan.marks.len(), 2);

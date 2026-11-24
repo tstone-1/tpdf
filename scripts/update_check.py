@@ -56,6 +56,8 @@ Exit codes: 0 every check passed, 1 a check failed, 2 the run could not start.
 from __future__ import annotations
 
 import argparse
+import ctypes
+from contextlib import contextmanager
 import json
 import os
 import shutil
@@ -168,7 +170,7 @@ def close(pids: list[int]) -> list[int]:
     for pid in pids:
         for hwnd, title in window_titles(pid):
             if title.startswith("tpdf v"):
-                user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+                user32.PostMessageW(ctypes.c_void_p(hwnd), WM_CLOSE, 0, 0)
     gone_by = time.monotonic() + 20
     while time.monotonic() < gone_by and {p for p, _, _ in processes()} & set(pids):
         time.sleep(0.2)
@@ -178,35 +180,33 @@ def close(pids: list[int]) -> list[int]:
     return killed
 
 
-def set_session_aside(real: Path, kept: Path) -> None:
-    """Moves the reader's own session out of the way, if there is one.
-
-    Copied under another name, renamed, and only then deleted, so `kept`
-    existing means a whole copy, and a failure at any step leaves the
-    original where it was rather than in neither place.
-    """
-    if not real.is_file():
-        return
-    part = kept.with_name(kept.name + ".part")
-    shutil.copy2(real, part)
-    part.replace(kept)
-    real.unlink()
-
-
-def restore_session(real: Path, kept: Path, set_aside: bool) -> None:
-    """Puts the reader's own session back, or removes the one a run left.
-
-    Call it first in a `finally`, before the uninstall or anything else that
-    can raise: `kept` lives in the run's temporary folder, so a restore
-    skipped by an earlier exception is a session deleted with that folder.
-    `set_aside` says `set_session_aside` returned; before that, a
-    session in place is still the reader's own and is left alone.
-    """
-    if kept.is_file():
-        real.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(kept, real)
-    elif set_aside and real.is_file():
-        real.unlink()
+@contextmanager
+def isolated_session(real: Path):
+    """Keep the original beside the session until it can be restored atomically."""
+    backup_dir = real.parent.with_name(real.parent.name + ".updater-check-backup")
+    real.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        backup_dir.mkdir()
+    except FileExistsError as exc:
+        raise RuntimeError(f"Another check or an unrestored session owns {backup_dir}") from exc
+    kept = backup_dir / real.name
+    try:
+        if real.is_file():
+            real.replace(kept)
+        try:
+            yield
+        finally:
+            if kept.exists():
+                try:
+                    real.parent.mkdir(parents=True, exist_ok=True)
+                    kept.replace(real)
+                except OSError as exc:
+                    raise OSError(f"Could not restore {real}. The original remains at {kept}") from exc
+            else:
+                real.unlink(missing_ok=True)
+    finally:
+        if not kept.exists():
+            backup_dir.rmdir()
 
 
 def start(folder: Path, pdf: Path, env: dict[str, str], scratch: Path, old: str,
@@ -392,27 +392,21 @@ def main() -> int:
     real_session = Path(os.environ["APPDATA"]) / "com.timostein.tpdf" / "session.json"
     with tempfile.TemporaryDirectory(prefix="tpdf-update-check-") as temporary:
         scratch = Path(temporary)
-        kept = scratch / "session-as-it-was.json"
-        set_aside = False
-        try:
-            set_session_aside(real_session, kept)
-            set_aside = True
-            spaced = scratch / "a folder with a space"
-            spaced.mkdir()
-            document = spaced / pdf.name
-            shutil.copyfile(pdf, document)
-            print(f"--- latest.json offers {new}; installing {old} into {folder} ---")
-            code = bounded(f'"{installer}" /S /D={folder}', "the installer", 300)
-            checks.note(code == 0, "the installer ends with exit code 0", f"exit {code}")
-            said = tool(folder / "tpdf-cli.exe", "--version").stdout.strip()
-            checks.note(said.endswith(old), f"the installed tool is version {old}", said)
-            update(checks, folder, document, scratch, old, new, args.wait,
-                   press=control != "no-press", attempt=attempt)
-        except (RanOut, RuntimeError, OSError) as e:
-            checks.note(False, "every step ends, and within its time limit", str(e))
-        finally:
+        with isolated_session(real_session):
             try:
-                restore_session(real_session, kept, set_aside)
+                spaced = scratch / "a folder with a space"
+                spaced.mkdir()
+                document = spaced / pdf.name
+                shutil.copyfile(pdf, document)
+                print(f"--- latest.json offers {new}; installing {old} into {folder} ---")
+                code = bounded(f'"{installer}" /S /D={folder}', "the installer", 300)
+                checks.note(code == 0, "the installer ends with exit code 0", f"exit {code}")
+                said = tool(folder / "tpdf-cli.exe", "--version").stdout.strip()
+                checks.note(said.endswith(old), f"the installed tool is version {old}", said)
+                update(checks, folder, document, scratch, old, new, args.wait,
+                       press=control != "no-press", attempt=attempt)
+            except (RanOut, RuntimeError, OSError) as e:
+                checks.note(False, "every step ends, and within its time limit", str(e))
             finally:
                 uninstall(checks, folder, before, run_it=True)
 

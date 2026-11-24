@@ -120,7 +120,7 @@ const TEXT = catalog({
     all: "All",
     currentPage: (page: number) => `Current page (${page})`,
     custom: "Custom",
-    sheet: (sheet: number, of: number) => `Sheet ${sheet} of ${of}`,
+    sheet: (side: number, of: number) => `Side ${side} of ${of}`,
     page: (page: number) => `Page ${page}`,
     drawing: (page: number) => `Drawing page ${page}...`,
     notDrawn: (page: number) => `Page ${page} could not be drawn.`,
@@ -178,7 +178,7 @@ const TEXT = catalog({
     all: "Alle",
     currentPage: (page: number) => `Aktuelle Seite (${page})`,
     custom: "Benutzerdefiniert",
-    sheet: (sheet: number, of: number) => `Blatt ${sheet} von ${of}`,
+    sheet: (side: number, of: number) => `Druckseite ${side} von ${of}`,
     page: (page: number) => `Seite ${page}`,
     drawing: (page: number) => `Seite ${page} wird gezeichnet...`,
     notDrawn: (page: number) => `Seite ${page} konnte nicht gezeichnet werden.`,
@@ -231,6 +231,9 @@ export class PrintPreviewDialog {
 
   private pages: readonly PageSize[] = [];
   private sheets: Sheet[] = [];
+  private readonly resize = new ResizeObserver(() => {
+    if (this.shown && this.sheets.length) this.lay(this.sheets);
+  });
   private boxes: { box: HTMLElement; note: HTMLElement; pictures: { page: number; picture: HTMLImageElement }[] }[] =
     [];
   private heights: number[] = [];
@@ -467,6 +470,7 @@ export class PrintPreviewDialog {
       this.returnFocus = typeof active?.focus === "function" ? (active as HTMLElement) : null;
     }
     this.shown = true;
+    this.resize.observe(this.list);
     this.backdrop.style.display = "flex";
     if (chooser) {
       this.settings = withKept(defaultSettings(pages), readKept(), pages[0]);
@@ -539,6 +543,10 @@ export class PrintPreviewDialog {
       this.twoSidedRow.style.display = "none";
       this.colourRow.style.display = "none";
     }
+    if (control === this.range) {
+      this.update();
+      if (this.range.value === "custom") this.pagesField.focus();
+    }
     const read = this.read();
     if (typeof read === "string") {
       this.queued = null;
@@ -553,7 +561,6 @@ export class PrintPreviewDialog {
       this.orientation.value = settings.landscape ? "landscape" : "portrait";
     }
     if (control === this.scale && settings.scale.kind === "poster") this.perSheet.value = "1";
-    if (control === this.range && this.range.value === "custom") this.pagesField.focus();
     if (settings.marks !== this.marks) {
       // Every picture so far is of the other choice, so none is kept.
       this.marks = settings.marks;
@@ -846,6 +853,7 @@ export class PrintPreviewDialog {
     if (print && settings && this.chooser) writeKept(settings);
     if (this.shown) {
       this.shown = false;
+      this.resize.disconnect();
       this.backdrop.style.display = "none";
       // The pictures are of the reader's document: not kept once it is closed.
       this.list.replaceChildren();

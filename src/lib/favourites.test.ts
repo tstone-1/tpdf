@@ -61,6 +61,24 @@ describe("Favourites", () => {
     expect(list.all.map(({ page, name }) => [name, page])).toEqual([["B", 1], ["C", 0], ["other", 1]]);
   });
 
+  it("finds, renames and removes an existing favourite through an alias", async () => {
+    const list = new Favourites();
+    list.add("original", 2, "first");
+    list.add("other", 2, "other");
+    const names = await list.fileNames("alias", async paths => paths.includes("original") ? "original" : null);
+    const model = {};
+    list.rememberFile(model, names);
+    expect(list.namesFor({}, "other")).toBe("other");
+    expect(list.has(list.namesFor(model, "alias"), 2)).toBe(true);
+    expect(list.step(names, 0, 1)).toBe(2);
+    expect(list.step(names, 3, -1)).toBe(2);
+    list.add(names, 2, "renamed");
+    expect(list.all).toHaveLength(2);
+    expect(list.all[0]).toEqual({path: "original", page: 2, name: "renamed"});
+    expect(list.remove(names, 2)).toBe(true);
+    expect(list.all.map(x => x.path)).toEqual(["other"]);
+  });
+
   it("rebases every spelling of a saved file and leaves a distinct file alone", async () => {
     const list = new Favourites();
     for (const path of ["/docs/a.pdf", "/docs/sub/../a.pdf", "/old-link.pdf"]) list.add(path, 1, "B");

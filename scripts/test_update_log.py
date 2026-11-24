@@ -113,5 +113,86 @@ class FirstAttempt(unittest.TestCase):
         self.assertIn("no launch check line", UpdateAttempt().summary())
 
 
+class WindowsUpdateChecks(unittest.TestCase):
+    def test_close_returns_without_killing_a_process_that_closed_its_window(self) -> None:
+        import update_check as check
+        with patch.object(check.ctypes, "WinDLL", create=True) as load, \
+             patch.object(check, "window_titles", return_value=[(123, "tpdf v1")]), \
+             patch.object(check, "processes", return_value=[]), patch.object(check.subprocess, "run") as kill:
+            self.assertEqual(check.close([]), [])
+            self.assertEqual(check.close([7]), [])
+            post = load.return_value.PostMessageW
+            post.assert_called_once()
+            window, message, _, _ = post.call_args.args
+            self.assertEqual((window.value, message), (123, check.WM_CLOSE))
+            kill.assert_not_called()
+
+    def test_session_is_restored_after_failure_and_a_missing_session_stays_missing(self) -> None:
+        from update_check import isolated_session
+        with tempfile.TemporaryDirectory() as folder:
+            real = Path(folder) / "app" / "session.json"
+            with isolated_session(real):
+                real.write_bytes(b"test session")
+            self.assertFalse(real.exists())
+            real.write_bytes(b"reader session")
+            with self.assertRaisesRegex(ValueError, "stopped"), isolated_session(real):
+                self.assertFalse(real.exists())
+                with self.assertRaisesRegex(RuntimeError, "unrestored"), isolated_session(real):
+                    self.fail("overlapping run acquired the session")
+                real.write_bytes(b"test session")
+                raise ValueError("stopped")
+            self.assertEqual(real.read_bytes(), b"reader session")
+
+    def test_restore_failure_keeps_original_after_run_temp_directory_is_removed(self) -> None:
+        from update_check import isolated_session
+        with tempfile.TemporaryDirectory() as folder:
+            real = Path(folder) / "app" / "session.json"
+            real.parent.mkdir()
+            real.write_bytes(b"reader session")
+            with self.assertRaisesRegex(OSError, "original remains") as caught:
+                with tempfile.TemporaryDirectory(dir=folder), isolated_session(real):
+                    # A directory at the destination makes the atomic restore fail on every OS.
+                    real.mkdir()
+            backup = Path(str(caught.exception).split("original remains at ")[1])
+            self.assertEqual(backup.read_bytes(), b"reader session")
+            with self.assertRaisesRegex(RuntimeError, "unrestored"), isolated_session(real):
+                self.fail("second run claimed the first run's backup")
+
+    def test_localized_edit_save_and_confirmation_controls(self) -> None:
+        import update_edit_check as check
+        with tempfile.TemporaryDirectory() as folder:
+            pdf = Path(folder) / "demo.pdf"
+            windows = [
+                (check.ENGLISH, ("Pages", "Rotate page clockwise", "Save"), "Unsaved changes",
+                 ("Discard and install", "Keep open"), "Install update"),
+                (check.GERMAN, ("Seiten", "Seite im Uhrzeigersinn drehen", "Speichern"),
+                 "Nicht gespeicherte Änderungen", ("Verwerfen und installieren", "Geöffnet lassen"),
+                 "Update installieren"),
+            ]
+            for labels, controls, unsaved, choices, title in windows:
+                with self.subTest(title=title):
+                    pdf.write_bytes(b"original")
+
+                    def elements(script, window, press="", expandable=False):
+                        if press:
+                            self.assertIn(press, controls)
+                            if press == controls[2]:
+                                os.utime(pdf, ns=(0, 0))
+                            return [f"PRESSED|{press}|invoke"]
+                        return [f"Tab|{pdf.name}", f"Text|{unsaved}", *(f"Button|{c}" for c in choices)]
+
+                    with patch.object(check, "elements", side_effect=elements) as read, \
+                         patch.object(check.time, "sleep"), patch.object(check, "dialog", return_value=0) as dialog, \
+                         patch.object(check.ctypes, "WinDLL", create=True) as win:
+                        self.assertTrue(check.edit(pdf, 1, pdf.name, labels)[0])
+                        self.assertTrue(check.save(pdf, 1, pdf, labels)[0])
+                        pressed = [call.kwargs["press"] for call in read.call_args_list if "press" in call.kwargs]
+                        self.assertEqual(tuple(pressed), controls)
+                        for button, number in [(choices[1], 1001), (choices[0], 1000)]:
+                            self.assertTrue(check.answer(check.Checks(), pdf, 1, 2, button, labels))
+                            dialog.assert_called_with(1, title, 0.5)
+                            self.assertEqual(win.return_value.PostMessageW.call_args.args[2], number)
+
+
 if __name__ == "__main__":
     unittest.main()

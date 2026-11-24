@@ -373,6 +373,8 @@ export interface RegionPlan {
  * not import the module that talks to Tauri.
  */
 export interface MarkView {
+  /** Present for a note attached to an existing comment. */
+  is_reply?: boolean;
   id: number;
   /**
    * Which of the three marks it is.

@@ -72,15 +72,16 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from installed_check import (APP_KEY, NAME, PDF_CLASS, UNINSTALL_KEY, Checks, RanOut,
                              already_installed, bounded, processes, registry, tool, uninstall,
                              window_titles)
 from live_output import stream_results
-from update_check import (buttons, close, copies, offered, offers, restore_session, set_session_aside,
+from update_check import (buttons, close, copies, offered, offers, isolated_session,
                           start)
-from update_log import SECOND_START_S, explain, served_old
+from update_log import SECOND_START_S, explain, offered_button, served_old
 
 # The checks a `--control edit-after` run must fail, and the one that a copy
 # before 26.11.10 fails in every run (it said nothing when a download broke).
@@ -91,6 +92,7 @@ SAYS_FROM = (26, 11, 10)
 # Every element under one window, as `<control type>|<name>`.
 ELEMENTS = r"""
 param([long]$Window, [string]$Press = "", [switch]$Expandable)
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $A = [System.Windows.Automation.AutomationElement]
 $root = $A::FromHandle([IntPtr]$Window)
@@ -274,13 +276,27 @@ def dialog(pid: int, title: str, wait: float) -> int:
     return 0
 
 
-UNSAVED = "Unsaved changes"  # the tab's marker, `aria-label` in App.svelte
+@dataclass(frozen=True)
+class Labels:
+    pages: str
+    rotate: str
+    unsaved: str
+    save: str
+    title: str
+    discard: str
+    keep: str
+    downloading: str
+    failure: str
 
 
-ROTATE = "Rotate page clockwise"  # an item of the tool row's Pages group
+ENGLISH = Labels("Pages", "Rotate page clockwise", "Unsaved changes", "Save", "Install update",
+                 "Discard and install", "Keep open", "Downloading update", "could not be installed")
+GERMAN = Labels("Seiten", "Seite im Uhrzeigersinn drehen", "Nicht gespeicherte Änderungen", "Speichern",
+                "Update installieren", "Verwerfen und installieren", "Geöffnet lassen",
+                "Update wird heruntergeladen", "konnte nicht installiert werden")
 
 
-def turn(script: Path, window: int) -> str:
+def turn(script: Path, window: int, labels: Labels) -> str:
     """Opens the Pages group and presses Rotate page clockwise, through UI Automation.
 
     Answers what the press printed: `PRESSED|...`, `REFUSED|...` for a
@@ -288,17 +304,17 @@ def turn(script: Path, window: int) -> str:
     keys sent with `SendInput` landed in two runs of five on 2026-11-17, and a
     click to give the page the keyboard took the foreground elsewhere.
     """
-    opened = elements(script, window, press="Pages", expandable=True)
+    opened = elements(script, window, press=labels.pages, expandable=True)
     if not any(line.startswith(("PRESSED|", "OPEN|")) for line in opened):
         found = next((line for line in opened if line.startswith("REFUSED|")), None)
-        return found or f"Pages not found among {[l for l in opened if 'Pages' in l][:6]}"
+        return found or f"Pages not found among {[l for l in opened if labels.pages in l][:6]}"
     time.sleep(0.5)
-    pressed = elements(script, window, press=ROTATE)
+    pressed = elements(script, window, press=labels.rotate)
     found = next((line for line in pressed if line.startswith(("PRESSED|", "REFUSED|"))), None)
-    return found or f"{ROTATE} not found; page controls: {[l for l in pressed if 'age' in l][:12]}"
+    return found or f"{labels.rotate} not found; page controls: {[l for l in pressed if labels.rotate in l][:12]}"
 
 
-def edit(script: Path, window: int, name: str) -> tuple[bool, str]:
+def edit(script: Path, window: int, name: str, labels: Labels) -> tuple[bool, str]:
     """Turns the page once; whether the tab then marks it unsaved, and what the press said.
 
     The second run on 2026-11-17 pressed the offer with nothing unsaved and
@@ -307,20 +323,20 @@ def edit(script: Path, window: int, name: str) -> tuple[bool, str]:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and not any(name in line for line in elements(script, window)):
         time.sleep(1)
-    said = turn(script, window)
+    said = turn(script, window, labels)
     if not said.startswith("PRESSED|"):
         return False, said
     for _ in range(10):
         time.sleep(0.5)
-        if any(UNSAVED in line for line in elements(script, window)):
+        if any(labels.unsaved in line for line in elements(script, window)):
             return True, said
-    return False, f"{said}; no '{UNSAVED}' marker came"
+    return False, f"{said}; no '{labels.unsaved}' marker came"
 
 
-def save(script: Path, window: int, pdf: Path) -> tuple[bool, str]:
+def save(script: Path, window: int, pdf: Path, labels: Labels) -> tuple[bool, str]:
     """Presses the header's Save; whether the file was then written."""
     before = pdf.stat().st_mtime_ns
-    pressed = elements(script, window, press="Save")
+    pressed = elements(script, window, press=labels.save)
     said = next((line for line in pressed if line.startswith(("PRESSED|", "REFUSED|"))), "Save not found")
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline and pdf.stat().st_mtime_ns == before:
@@ -332,11 +348,10 @@ def save(script: Path, window: int, pdf: Path) -> tuple[bool, str]:
 # by rfd 0.17.2 (`backend/win_cid/message_dialog.rs`): OK, here *Discard and
 # install*, is 1000, and Cancel, here *Keep open*, is 1001. 26.11.8 and main
 # both lock rfd 0.17.2; a new rfd is a reason to read the numbers again.
-CHOICES = {"Discard and install": 1000, "Keep open": 1001}
 TDM_CLICK_BUTTON = 0x0400 + 102
 
 
-def answer(checks: Checks, script: Path, pid: int, asked: int, choice: str) -> bool:
+def answer(checks: Checks, script: Path, pid: int, asked: int, choice: str, labels: Labels) -> bool:
     """Presses one choice of the question; True when the question is then gone.
 
     The two choices are panes without Invoke, and a click on their centre
@@ -345,23 +360,24 @@ def answer(checks: Checks, script: Path, pid: int, asked: int, choice: str) -> b
     The labels are read first, and both must be there: a question whose
     choices were renamed or replaced stops the run here. Which number each
     label has is not read from the dialog --- the element listing carries no
-    button ids --- so the numbers rest on `CHOICES` and the rfd version it
+    button ids --- so the numbers rest on the rfd version the check
     names, and the check after the press is what says the question went.
 
     Every later step assumes the question is gone. On the first run that day
     it stayed up and a check after it passed with the dialog still open; so
     the run stops here instead.
     """
+    choices = {labels.discard: 1000, labels.keep: 1001}
     shown = elements(script, asked)
-    if not all(any(line.endswith(f"|{label}") for line in shown) for label in CHOICES):
+    if not all(any(line.endswith(f"|{label}") for line in shown) for label in choices):
         return checks.note(False, f"{choice} closes the question", f"the choices read {shown}")
     user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.PostMessageW(ctypes.c_void_p(asked), TDM_CLICK_BUTTON, CHOICES[choice], 0)
+    user32.PostMessageW(ctypes.c_void_p(asked), TDM_CLICK_BUTTON, choices[choice], 0)
     gone_by = time.monotonic() + 10
-    while dialog(pid, "Install update", 0.5) and time.monotonic() < gone_by:
+    while dialog(pid, labels.title, 0.5) and time.monotonic() < gone_by:
         pass
-    return checks.note(not dialog(pid, "Install update", 0.5), f"{choice} closes the question",
-                       f"button {CHOICES[choice]} posted")
+    return checks.note(not dialog(pid, labels.title, 0.5), f"{choice} closes the question",
+                       f"button {choices[choice]} posted")
 
 
 def version_of(name: str) -> tuple[int, ...]:
@@ -379,7 +395,6 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
     address = f"http://127.0.0.1:{proxy.server_address[1]}"
     env = dict(os.environ, TPDF_SESSION_FILE=str(scratch / "session.json"), TPDF_LOG_FILE=str(log),
                HTTPS_PROXY=address, HTTP_PROXY=address, ALL_PROXY=address, NO_PROXY="")
-    offer = f"Update to {new}"
 
     print(f"--- {old} opens the document, through the proxy at {address} ---")
     app, window = start(folder, pdf, env, scratch, old, wait)
@@ -388,36 +403,38 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
         if not window:
             return
         seen = offers(script, window, new, wait)
-        if f"BUTTON {offer}" not in seen and served_old(log):
+        if not offered_button(seen, new) and served_old(log):
             print(f"[INFO] {old} was told it is current ({explain(log)}); started again in {SECOND_START_S} s")
             close([app.pid])
             time.sleep(SECOND_START_S)
             app, window = start(folder, pdf, env, scratch, old, wait)
             seen = offers(script, window, new, wait) if window else []
-        checks.note(f"BUTTON {offer}" in seen, f"the window offers '{offer}'")
+        offer = offered_button(seen, new)
+        checks.note(bool(offer), f"the window offers version {new}")
         through = sorted(set(proxy.hosts))
         if not checks.note(any("github" in h for h in through),
                            "the updater's requests went through the proxy", ", ".join(through) or "none"):
             return
-        if f"BUTTON {offer}" not in seen:
+        if not offer:
             return
+        labels = GERMAN if offer == f"Update auf {new}" else ENGLISH
 
         print("--- an edit, then the question, answered Keep open ---")
         # Paced and cut from here on, so that a press with nothing unsaved,
         # which installs without asking, cannot finish an install either.
         proxy.mode = "slow"
-        turned, said = edit(everything, window, pdf.name)
-        if not checks.note(turned, f"{ROTATE} turns the page, and the tab marks unsaved changes", said):
+        turned, said = edit(everything, window, pdf.name, labels)
+        if not checks.note(turned, f"{labels.rotate} turns the page, and the tab marks unsaved changes", said):
             return
         pressed = buttons(script, window, press=offer)
         checks.note(f"PRESSED {offer}" in pressed, "the offer is pressed")
-        asked = dialog(app.pid, "Install update", 20)
+        asked = dialog(app.pid, labels.title, 20)
         if not checks.note(bool(asked), "the question 'Install update' comes"):
             return
         said = elements(everything, asked)
         checks.note(any(pdf.name in line for line in said), "the question names the document",
                     "; ".join(said[:6]))
-        if not answer(checks, everything, app.pid, asked, "Keep open"):
+        if not answer(checks, everything, app.pid, asked, labels.keep, labels):
             return
         time.sleep(1)
         checks.note(app.poll() is None and offer in header(script, window),
@@ -426,20 +443,20 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
         print(f"--- the question answered Discard and install; the proxy paces to "
               f"{proxy.rate // 1024} KB/s and cuts at {proxy.cut_after >> 20} MB ---")
         buttons(script, window, press=offer)
-        asked = dialog(app.pid, "Install update", 20)
+        asked = dialog(app.pid, labels.title, 20)
         if not checks.note(bool(asked), "the question comes again, so the edit is still unsaved"):
             return
-        if not answer(checks, everything, app.pid, asked, "Discard and install"):
+        if not answer(checks, everything, app.pid, asked, labels.discard, labels):
             return
         downloading: list[str] = []
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline and not downloading:
-            downloading = [b for b in header(script, window) if b.startswith("Downloading update")]
+            downloading = [b for b in header(script, window) if b.startswith(labels.downloading)]
             time.sleep(0.5)
         checks.note(bool(downloading), "the header says the update is downloading", ", ".join(downloading))
         if control != "edit-after":
-            during = [turn(everything, window) for _ in range(2)]
-            still = any(b.startswith("Downloading update") for b in header(script, window))
+            during = [turn(everything, window, labels) for _ in range(2)]
+            still = any(b.startswith(labels.downloading) for b in header(script, window))
             checks.note(still, "the download still runs after two tries to turn the page",
                         "; ".join(during))
             # `REFUSED|<name>|disabled` and not any refusal: a press refused
@@ -453,7 +470,7 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
         deadline = time.monotonic() + wait * 3
         while time.monotonic() < deadline and app.poll() is None:
             now = header(script, window)
-            if not any(b.startswith("Downloading update") for b in now):
+            if not any(b.startswith(labels.downloading) for b in now):
                 break
             time.sleep(1)
         checks.note(proxy.cut > 0, "the proxy cut the download", f"largest tunnel {proxy.largest:,} bytes")
@@ -463,14 +480,14 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
         result["first"] = "failed (the download was cut by this check's proxy, as intended)"
         time.sleep(2)
         shown = elements(everything, window)
-        told = [line for line in shown if "could not be installed" in line]
+        told = [line for line in shown if labels.failure in line]
         checks.note(bool(told), SAYS_FAILURE, told[0] if told else "nothing names the failure")
         if control == "edit-after":
             for _ in range(2):
-                print(f"[INFO] control: {turn(everything, window)}")
+                print(f"[INFO] control: {turn(everything, window, labels)}")
 
         print("--- the reader saves ---")
-        written, said = save(everything, window, pdf)
+        written, said = save(everything, window, pdf, labels)
         checks.note(written, "Save writes the document", said)
         time.sleep(1)
         turned = rotation(pdf)
@@ -491,7 +508,7 @@ def run(checks: Checks, proxy: Tunnels, folder: Path, pdf: Path, scratch: Path, 
         if not checks.note(f"BUTTON {offer}" in seen, f"the second start offers '{offer}'"):
             return
         buttons(script, window, press=offer)
-        checks.note(not dialog(app.pid, "Install update", 5), "nothing unsaved, so nothing is asked")
+        checks.note(not dialog(app.pid, labels.title, 5), "nothing unsaved, so nothing is asked")
         try:
             app.wait(timeout=wait * 5)
             ended = True
@@ -571,24 +588,18 @@ def main() -> int:
     real_session = Path(os.environ["APPDATA"]) / "com.timostein.tpdf" / "session.json"
     with tempfile.TemporaryDirectory(prefix="tpdf-update-edit-check-") as temporary:
         scratch = Path(temporary)
-        kept = scratch / "session-as-it-was.json"
-        set_aside = False
-        try:
-            set_session_aside(real_session, kept)
-            set_aside = True
-            spaced = scratch / "a folder with a space"
-            spaced.mkdir()
-            document = spaced / "turn me.pdf"
-            document.write_bytes(one_page_pdf())
-            print(f"--- latest.json offers {new}; installing {old} into {folder} ---")
-            code = bounded(f'"{installer}" /S /D={folder}', "the installer", 300)
-            checks.note(code == 0, "the installer ends with exit code 0", f"exit {code}")
-            run(checks, proxy, folder, document, scratch, old, new, args.wait, args.control, result)
-        except (RanOut, RuntimeError, OSError) as e:
-            checks.note(False, "every step ends, and within its time limit", str(e))
-        finally:
+        with isolated_session(real_session):
             try:
-                restore_session(real_session, kept, set_aside)
+                spaced = scratch / "a folder with a space"
+                spaced.mkdir()
+                document = spaced / "turn me.pdf"
+                document.write_bytes(one_page_pdf())
+                print(f"--- latest.json offers {new}; installing {old} into {folder} ---")
+                code = bounded(f'"{installer}" /S /D={folder}', "the installer", 300)
+                checks.note(code == 0, "the installer ends with exit code 0", f"exit {code}")
+                run(checks, proxy, folder, document, scratch, old, new, args.wait, args.control, result)
+            except (RanOut, RuntimeError, OSError) as e:
+                checks.note(False, "every step ends, and within its time limit", str(e))
             finally:
                 try:
                     proxy.shutdown()

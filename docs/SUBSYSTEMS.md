@@ -24,7 +24,9 @@ This creates visual marks only; it does not create certificate-based signatures.
 
 The mark clipboard resolves selected IDs against the marks drawn on the page,
 including saved form widgets. Cut waits for an open note to reach the edit
-journal. A refused note stays open with its typed text.
+journal. A refused note stays open with its typed text. The edit snapshot identifies
+threaded replies so Cut can leave the original in place and explain why it cannot
+go on the clipboard. A paste checks that the whole group fits before adding any marks.
 
 Before any save/copy writing command, the application reads digital-signature
 metadata from the worker and asks for consent if signatures/certification exist
@@ -669,7 +671,8 @@ renders through the parser worker and recognises through the OCR worker;
 same Rust matcher through `search_text`, and selection reads the same recovered
 characters. Existing text is replaced for that view, never concatenated. Each
 character retains its whole word's OCR box, so partial matches highlight the
-whole word. An edit or leaving the view discards the result, and a pending edit
+whole word. Leaving the view also drops any search scope that uses recovered character offsets.
+A native-only scope survives if the page order still matches. An edit or leaving the view discards the result, and a pending edit
 must be saved first. Recovery neither writes the PDF nor supplies evidence to
 redaction verification. The retained text budget is one million scalars; a full
 cache refuses another page instead of silently invalidating an active search.

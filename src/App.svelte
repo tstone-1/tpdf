@@ -939,7 +939,7 @@
     keepState(tab, {
       edits, place: currentPlace(false), covered: covered.copy(), query,
       findShown, searchOptions: viewer.searchOptionsNow,
-      searchScope: keepScope(viewer.searchScopeRanges, edits.state.pages), sidebarTab: sidebar?.tab ?? "outline",
+      searchScope: keepScope(viewer.restorableSearchScope, edits.state.pages), sidebarTab: sidebar?.tab ?? "outline",
       error, messageTone, offers, notice, redactedCopyPath, measures: viewer.measurements,
     });
     refreshTabs();
@@ -1295,6 +1295,10 @@
 
   /** The reader's favourites; see `favourites.ts`. Loaded with the session. */
   let favourites = new Favourites();
+
+  function favouriteFile() {
+    return favourites.namesFor(edits, openPathName);
+  }
   const sessionWrites = new Serial();
 
   /** The page being read, zero-based: the one filling the screen. */
@@ -1309,7 +1313,7 @@
   function nextFavourite(step: 1 | -1): number | null {
     const map = edits?.map;
     if (!map) return null;
-    return favourites.step(openPathName, readingPage(), step, (source) => map.slotOf(source));
+    return favourites.step(favouriteFile(), readingPage(), step, (source) => map.slotOf(source));
   }
 
   /** A successful in-place write makes the working order the new file order. */
@@ -1961,13 +1965,13 @@
     canAddFavourite: () => favouriteSource() !== undefined,
     isFavourite: () => {
       const page = favouriteSource();
-      return page !== undefined && favourites.has(openPathName, page);
+      return page !== undefined && favourites.has(favouriteFile(), page);
     },
     addFavourite: (name: string) => {
       const page = favouriteSource();
       if (!openPathName || page === undefined) return;
       try {
-        favourites.add(openPathName, page, name);
+        favourites.add(favouriteFile(), page, name);
         saveFavourites();
       } catch (error) {
         say(error instanceof Error ? error.message : String(error));
@@ -1975,7 +1979,7 @@
     },
     removeFavourite: () => {
       const page = favouriteSource();
-      if (page !== undefined && favourites.remove(openPathName, page)) saveFavourites();
+      if (page !== undefined && favourites.remove(favouriteFile(), page)) saveFavourites();
     },
     canStepFavourite: (step: 1 | -1) => nextFavourite(step) !== null,
     stepFavourite: (step: 1 | -1) => {
@@ -2805,7 +2809,7 @@
     if (cut && marks.length !== named.length) { say(TEXT().nothingCopied); return; }
     const page = marks[0]?.page;
     if (page === undefined) return;
-    const refused = marks.flatMap((mark) => notCopied(mark.kind) ?? []);
+    const refused = marks.flatMap((mark) => notCopied(mark.kind, mark.is_reply) ?? []);
     if (cut && refused.length > 0) {
       say(refused[0] ?? null);
       return;
@@ -4777,7 +4781,8 @@
    */
   let notice = $state<string | null>(null);
   /** A Windows print is being drawn, so the notice line offers Stop. */
-  let printStoppable = $state(false);
+  let printProgress = $state<Printing | null>(null);
+  let printMessageTimer: ReturnType<typeof setTimeout> | undefined;
 
   /**
    * Puts the answer to something the reader asked in front of them, where
@@ -5973,8 +5978,11 @@
       // Windows only, and not blocking: the job is the backend's own copy, so
       // the reader can go on working while it prints.
       await listen<Printing>(PRINT_PROGRESS_EVENT, (event) => {
-        printStoppable = stoppable(event.payload);
-        tell(printingLine(event.payload));
+        clearTimeout(printMessageTimer);
+        printProgress = event.payload;
+        if (!stoppable(event.payload)) {
+          printMessageTimer = setTimeout(() => { printProgress = null; }, 5000);
+        }
       });
       // Together rather than one after the other. Neither answer feeds the
       // other --- one is what the launcher handed over, the other is what was on
@@ -7208,8 +7216,11 @@
     // write already closed: an open that fails takes it down (`abandonedBy`).
     const written = afterWrite ? tabs.forPath(path, tabs.active) : undefined;
     try {
+      const names = favourites.fileNames(path,
+        candidates => call("matching_open_path", { path, candidates })).catch((): [string] => [path]);
       const doc = retained?.doc ?? await openOrAsk(path, !resuming);
       acquired = retained ? -1 : doc.id;
+      const favouriteNames = await names;
       // Whatever the outgoing document was owed, before its path is replaced.
       notePlace();
       places.flush();
@@ -7287,6 +7298,7 @@
       sidebar.setVisible(sidebarShown);
 
       const model = adoptModel(view, doc, path, { retained, replacing, replaceId, twins, resume, kept });
+      favourites.rememberFile(model, favouriteNames);
       viewer = buildViewer(area, view, doc, pages, model);
       panes.mounted(view, slot);
       showModel(viewer, sidebar, model, resume, retained ? kept : null);
@@ -7350,9 +7362,12 @@
           onclick={() => void call("ocr_cancel", { run: recognitionRun })}>{TEXT().stop}</button>{/if}
         {#if findingHidden}<button data-testid="stop-hidden-text" title={TEXT().stopHiddenText}
           onclick={() => hiddenRuns.stop((run) => void call("hidden_text_cancel", { run }))}>{TEXT().stop}</button>{/if}
-      {:else if notice}<span class="notice" data-testid="notice">{notice}</span>
-        {#if printStoppable}<button data-testid="stop-printing" title={TEXT().stopPrinting}
-          onclick={() => void call("print_cancel")}>{TEXT().stop}</button>{/if}{/if}
+      {/if}
+      {#if printProgress && printingLine(printProgress)}
+        <span class="notice" data-testid="print-progress">{printingLine(printProgress)}</span>
+        {#if stoppable(printProgress)}<button data-testid="stop-printing" title={TEXT().stopPrinting}
+          onclick={() => void call("print_cancel")}>{TEXT().stop}</button>{/if}
+      {:else if !blockingTask && notice}<span class="notice" data-testid="notice">{notice}</span>{/if}
     </span>
     {#if status}
       {@const printed = printedOf(status.page - 1)}

@@ -2583,8 +2583,8 @@ starts at 0 and increments within the month.
 12. <a id="release-step-12"></a>**Apply the update from the previous release: `scripts/update_check.py` on Windows, `scripts/update_check_mac.py` on a Mac.** This is the only end-to-end
     proof the updater works, and no gate, harness or unit test can stand in for it:
     `update.test.ts` fakes the plugin, so what it covers is the state machine and not
-    signature verification, TLS, or the shape of the real `latest.json`. Nothing in this
-    repository has ever fetched that file.
+    signature verification, TLS, or the shape of the live release manifest. The installed
+    updater check fetches `latest.json` and verifies the offered version.
 
     **When a release moves the updater's own crates, test the new updater before the tag.**
     This step proves the previous release can update; a release whose own updater is broken

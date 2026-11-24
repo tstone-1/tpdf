@@ -488,6 +488,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             can_redo: false,
             marks: vec![
                 edits::MarkView {
+                    is_reply: false,
                     id: 3,
                     kind: docmodel::MarkKind::Highlight,
                     page: 1,
@@ -503,6 +504,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     lines: vec!["the line under it".into()],
                 },
                 edits::MarkView {
+                    is_reply: false,
                     id: 4,
                     kind: docmodel::MarkKind::Stamp,
                     page: 2,
@@ -518,6 +520,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     lines: Vec::new(),
                 },
                 edits::MarkView {
+                    is_reply: false,
                     id: 6,
                     kind: docmodel::MarkKind::Signature,
                     page: 2,
@@ -537,6 +540,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     lines: Vec::new(),
                 },
                 edits::MarkView {
+                    is_reply: false,
                     id: 7,
                     kind: docmodel::MarkKind::Picture,
                     page: 2,

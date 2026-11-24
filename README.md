@@ -671,7 +671,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   be one, so another reader gets a comment they can open and a shape they can select. What
   you have drawn can be dragged to somewhere else on its page afterwards, and a box, an
   ellipse or a text box can be resized by its lower right corner. Right-click a mark for *Copy mark* or *Cut mark*.
-  Right-click the page for *Paste mark*, in this document or another tab. *Add a link* is dragged like a box, and
+  A reply stays with its parent comment and cannot be cut or copied. Right-click the page for
+  *Paste mark*, in this document or another tab. A group must fit on the destination page. *Add a link* is dragged like a box, and
   where it goes is typed in the box that opens on it: a page number or a web address.
   *Add a picture from a file* takes a PNG or JPEG, turns a photograph upright, and places it
   by a drag at its own proportions; it can be moved, resized and copied like a mark. *Paste a
