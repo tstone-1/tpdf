@@ -105,6 +105,7 @@ export default {
   "A radio button is missing an appearance": "Einem Optionsfeld fehlt ein Erscheinungsbild",
   "A radio button appearance is not a stream": "Das Erscheinungsbild eines Optionsfelds ist kein Stream",
   "Could not read the document catalog: {e}": "Der Dokumentkatalog konnte nicht gelesen werden: {e}",
+  "the form field tree could not be read": "Der Formularfeldbaum konnte nicht gelesen werden",
   "Could not read the form dictionary: {e}": "Das Formularverzeichnis konnte nicht gelesen werden: {e}",
   "XFA forms are not supported": "XFA-Formulare werden nicht unterstützt",
   "This form exceeds the field-tree limit": "Der Feldbaum dieses Formulars ist größer, als tpdf liest",

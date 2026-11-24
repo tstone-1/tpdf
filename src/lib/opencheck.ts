@@ -451,6 +451,38 @@ async function checkSplitDrafts(host: OpenCheckHost, path: string): Promise<void
 
 async function run(host: OpenCheckHost, phase: string, expected: string): Promise<void> {
   switch (phase) {
+    case "thumbnail-menu": {
+      const [first] = expected.split("|");
+      if (!first) throw new Error("a disposable fixture path is required");
+      await host.open(first);
+      await host.idle();
+      const words = async () => {
+        const model = host.edits()!;
+        return Promise.all(model.state.pages.map(async (_, index) =>
+          (await call("page_text", { doc: model.doc, page: filePage(index), crop: null })).codes.join(",")));
+      };
+      const before = await words();
+      if (before.length !== 4 || new Set(before).size !== 4) throw new Error("four distinct pages required");
+      host.viewer()!.setSpread({ columns: 2, coverAlone: false, rightToLeft: false, continuous: true });
+      host.run("view.showThumbnails");
+      const row = document.querySelector<HTMLElement>('[data-sidebar-panel="pages"] [data-page="1"]');
+      if (!row) throw new Error("second thumbnail missing");
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 80 }));
+      const menu = document.querySelectorAll<HTMLElement>('.context-menu [role="menuitem"]');
+      const remove = Array.from(menu).find((item) => item.textContent?.trim() === "Delete page");
+      if (!remove) throw new Error("delete command missing");
+      report.check("the clicked page shares a row with the first", host.viewer()!.position.page === 0, String(host.viewer()!.position.page));
+      remove.click();
+      if (!await settle(() => host.edits()?.state.pages.length === 3, SETTLE_MS)) throw new Error("delete did not land");
+      const original = host.edits()!.doc;
+      host.run("file.save");
+      await host.idle();
+      const after = await words();
+      report.check("saved facing-page deletion keeps pages one, three and four",
+        host.edits()!.doc !== original && JSON.stringify(after) === JSON.stringify([before[0], before[2], before[3]]),
+        `saved page order: ${after.map((label) => before.indexOf(label) + 1).join(", ")}`);
+      break;
+    }
     case "tabs-rotation": {
       const [first] = expected.split("|");
       if (!first) throw new Error("a disposable fixture path is required");
@@ -1624,9 +1656,9 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (!older || !newer || !scan) throw new Error("two fixture paths and a scan required");
       const { split, check, settled } = sideProbe(host);
       const rowsIn = () => Array.from(document.querySelectorAll<HTMLElement>(
-        '[id="tpdf-panel-changes"] button[data-index]'));
+        '[data-sidebar-panel="changes"] button[data-index]'));
       const said = () => Array.from(document.querySelectorAll<HTMLElement>(
-        '[id="tpdf-panel-changes"] [role="status"]')).map((status) => status.textContent ?? "").join(" | ");
+        '[data-sidebar-panel="changes"] [role="status"]')).map((status) => status.textContent ?? "").join(" | ");
 
       report.emit("[compare] opening two documents");
       await host.open(older); await host.open(newer);
@@ -1645,7 +1677,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         left.side === "removed" && right.side === "added");
       check("both sides have words painted", left.spans.length > 0 && right.spans.length > 0);
       check("both sides are on the first change", left.current === 0 && right.current === 0);
-      const panels = Array.from(document.querySelectorAll('[id="tpdf-panel-changes"]'));
+      const panels = Array.from(document.querySelectorAll('[data-sidebar-panel="changes"]'));
       const identities = panels.map((panel) => Array.from(panel.querySelectorAll<HTMLElement>("button[data-index]"),
         (row) => [row.dataset.index, row.textContent]));
       const rows = rowsIn().length;
@@ -2262,7 +2294,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (!first || !other) throw new Error("a document with an outline and one with comments are required");
       const outlineRows = () => Array.from(document.querySelectorAll<HTMLElement>(
         `.${SIDEBAR_CLASS} [role="tree"] [role="treeitem"][aria-level="1"]`));
-      const commentRows = () => document.querySelectorAll('#tpdf-panel-comments [role="option"]').length;
+      const commentRows = () => document.querySelectorAll('[data-sidebar-panel="comments"] [role="option"]').length;
 
       report.emit("[answers] opening the document with an outline");
       await host.open(first); await host.idle();

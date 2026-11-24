@@ -141,7 +141,8 @@ pub fn write(doc: &mut Document, layers: &[Layer]) -> Result<(), String> {
                 count = layer.words.len()
             ));
         }
-        let shown = pagetree::displayed_page(doc, id);
+        let shown = pagetree::writable_page(doc, id)
+            .ok_or_else(|| said!("the OCR page geometry could not be read"))?;
         if let Some(lines) = content(shown, &layer.words, &mut codes)? {
             if shared.contains_key(&id) {
                 return Err(said!(
@@ -264,9 +265,11 @@ fn attach(
     let mut fonts = if resources.has(b"Font") {
         resources
             .get_deref(b"Font", doc)
-            .and_then(Object::as_dict)
+            .and_then(|object| match object {
+                Object::Null => Ok(Dictionary::new()),
+                _ => object.as_dict().cloned(),
+            })
             .map_err(|e| said!("the OCR page font resources could not be read: {e}"))?
-            .clone()
     } else {
         Dictionary::new()
     };
@@ -685,6 +688,30 @@ mod tests {
     }
 
     #[test]
+    fn absent_and_null_font_resources_allow_a_new_ocr_font() {
+        for indirect in [false, true] {
+            let (mut doc, page) = document(0);
+            let font = if indirect {
+                Object::Reference(doc.add_object(Object::Null))
+            } else {
+                Object::Null
+            };
+            doc.get_dictionary_mut(page)
+                .unwrap()
+                .set("Resources", dictionary! {"Font" => font});
+            write(
+                &mut doc,
+                &[Layer {
+                    page: 0,
+                    words: vec![word("hi", [0., 0., 10., 10.])],
+                }],
+            )
+            .unwrap();
+            assert!(layer_text(&doc, page).contains("/TpdfOcr "));
+        }
+    }
+
+    #[test]
     fn an_unresolved_font_dictionary_does_not_get_replaced() {
         let (mut doc, page) = document(0);
         let missing = doc.new_object_id();
@@ -768,8 +795,15 @@ mod tests {
     #[test]
     fn a_cropped_page_s_corner_is_where_the_layer_measures_from() {
         let (mut doc, page) = document(0);
-        // The page shows 500 x 700 of the sheet, starting 40 right and 60 up.
-        doc.get_object_mut(page)
+        // The parent supplies an offset crop, 40 right and 60 up.
+        let parent = doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Parent")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        doc.get_object_mut(parent)
             .and_then(Object::as_dict_mut)
             .expect("the page")
             .set(

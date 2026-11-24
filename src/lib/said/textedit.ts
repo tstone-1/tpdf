@@ -104,6 +104,7 @@ export default {
   "no font was made for a line of text": "Für eine Textzeile wurde keine Schrift angelegt",
 
   // textlayer.rs
+  "the OCR page geometry could not be read": "Die Geometrie der zu erkennenden Seite konnte nicht gelesen werden",
   "the OCR page resources could not be read: {e}": "Die Ressourcen der zu erkennenden Seite konnten nicht gelesen werden: {e}",
   "the OCR page font resources could not be read: {e}": "Die Schriftressourcen der zu erkennenden Seite konnten nicht gelesen werden: {e}",
   "the OCR page shares its page object with another page": "Die zu erkennende Seite verwendet dasselbe Seitenobjekt wie eine andere Seite",

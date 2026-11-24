@@ -528,7 +528,20 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
     let (dpi, relative) = reader.info().pixel_dims.map_or((None, None), |dims| {
         let (x, y) = (f64::from(dims.xppu), f64::from(dims.yppu));
         match dims.unit {
-            png::Unit::Meter => (plausible(x * 0.0254, y * 0.0254), None),
+            png::Unit::Meter => {
+                // pHYs rounds to whole pixels per metre. Recover an integer DPI
+                // when it produces exactly the stored value (e.g. 72 -> 2835).
+                let dpi = |per_metre: f64| {
+                    let measured = per_metre * 0.0254;
+                    let whole = measured.round();
+                    if (whole / 0.0254).round() == per_metre {
+                        whole
+                    } else {
+                        measured
+                    }
+                };
+                (plausible(dpi(x), dpi(y)), None)
+            }
             png::Unit::Unspecified => (None, relative_density(x, y)),
         }
     });

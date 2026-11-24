@@ -85,6 +85,14 @@ EXEMPT: "dict[tuple[str, str], str]" = {
         "2027-09-26",
     ): "a sample usable identity's expiry, which must be ahead of now to be usable",
     (
+        "api/python/testdata/v26.9.24-identities.json",
+        "2027-09-26",
+    ): "certificate expiry in the archived schema-1 identities sample",
+    (
+        "api/python/testdata/v26.9.24-sign.json",
+        "2027-09-26",
+    ): "certificate expiry in the archived schema-1 signing sample",
+    (
         "src-tauri/testdata/cli/identities.json",
         "2027-09-26",
     ): "the same sample identity's expiry, as `identities --json` writes it",

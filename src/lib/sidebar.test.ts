@@ -84,6 +84,28 @@ describe("Sidebar keyboard activation", () => {
     return bar;
   }
 
+  it("links tabs to their own panels across two mounted sidebars", () => {
+    tree([]);
+    tree([]);
+    const all = (node: FakeElement): FakeElement[] => [node, ...node.children.flatMap(all)];
+    const ids = new Set<string>();
+    for (const side of dom.root.children) {
+      const nodes = all(side);
+      const tabs = nodes.filter((n) => n.dataset.sidebarTab);
+      expect(tabs.length).toBeGreaterThan(0);
+      for (const tab of tabs) {
+        const panel = nodes.find((n) => n.dataset.sidebarPanel === tab.dataset.sidebarTab)!;
+        const id = (n: FakeElement) => (n as unknown as HTMLElement).id;
+        expect(tab.getAttribute("aria-controls")).toBe(id(panel));
+        expect(panel.getAttribute("aria-labelledby")).toBe(id(tab));
+        for (const key of [id(tab), id(panel)]) {
+          expect(ids.has(key)).toBe(false);
+          ids.add(key);
+        }
+      }
+    }
+  });
+
   it("reports the tab that is showing, including the first one", () => {
     // The seam `App.svelte` hangs the comments panel's word lookup off. The
     // initial `outline` is reported too, so a caller sees every state the tab

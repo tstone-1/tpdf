@@ -280,23 +280,8 @@ export function nextWanted(
  * in. Rows sized from the file would leave a gap under every one of them while
  * the borrowed bitmap overflowed.
  *
- * **One page's size for the whole strip, and on a mixed-size document that is
- * wrong.** Stated rather than left to be discovered: the viewer stopped assuming
- * a uniform document on 2026-08-02 --- `scroller.ts` holds a size per page now
- * --- and this did not. Every row is page 1's aspect, and the render request is
- * `TIER1_WIDTH` wide at `TIER1_WIDTH / page1.width_pt`, so a page wider than
- * page 1 is asked for only as far as page 1 reaches and its thumbnail is
- * cropped. It is a smaller fault than the viewer's was, because a thumbnail is
- * an index rather than the content, and the row it sits in is a fixed box that a
- * reader reads as one --- but it is a fault, not a case that happens to be safe.
- *
- * Fixing it is a separate piece of work rather than an oversight in this one. It
- * needs a size per page here too, and the strip has no channel to learn one: the
- * viewer's comes from the text extraction it already performs for every visible
- * page, and the strip extracts no text. What it would take is either that lookup
- * threaded through from the viewer, or rows sized from the bitmap that arrives
- * --- and the second changes the virtualised list's arithmetic, which is
- * currently one row height times an index.
+ * Every row has the same pitch for virtual scrolling. The tile renderer fits
+ * each slot's own geometry into that row when the viewer has measured it.
  */
 export function rowHeightFor(page: PageSize, turns = 0): number {
   const shown = displayedSize(page, turns);
@@ -1063,6 +1048,7 @@ export class Thumbnails {
 
     row.append(canvas, label);
     row.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.isPrimary === false || this.press) return;
       event.preventDefault();
       this.focus(page);
       // Still on the press, and deliberately not deferred to the release now
@@ -1095,7 +1081,8 @@ export class Thumbnails {
     this.spacer.appendChild(row);
     this.rows.set(page, row);
     this.mark(page, page === this.current);
-    this.draw(page);
+    if (this.blank.has(page)) this.paintBlank(page);
+    else this.draw(page);
   }
 
   /**
@@ -1110,7 +1097,7 @@ export class Thumbnails {
     if (!canvas) return;
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) return;
-    context.fillStyle = "#ffffff";
+    context.fillStyle = this.invert ? "#000000" : "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
   }
 

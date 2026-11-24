@@ -585,6 +585,9 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             crate::fields::Flow::Descend
         },
     );
+    if cut.unreadable_root {
+        return Err(said!("the form field tree could not be read"));
+    }
     if cut.dropped > 0 || cut.too_deep > 0 {
         return Err(said!("This form exceeds the field-tree limit"));
     }

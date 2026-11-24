@@ -12,8 +12,9 @@
  * where the rules that decide what goes in it live.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { Edits } from "./edits";
 import { CommandRegistry, type Command } from "./commands";
 import {
   ContextMenu,
@@ -23,7 +24,7 @@ import {
   REDACTION_MENU,
   SELECTION_MENU,
   SEPARATOR,
-  type Entry,
+  thumbnailActions, type Entry,
 } from "./contextmenu";
 import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 
@@ -202,6 +203,22 @@ describe("which menu a right-click on the page gets", () => {
 });
 
 describe("what a menu shows", () => {
+  it("targets the second thumbnail even when the viewport is on the first page", () => {
+    const { menu, commands, chosen } = menuOf();
+    const owner = new Edits(7, 4);
+    const deleted = vi.spyOn(owner, "delete").mockResolvedValue(owner.state);
+    const actions = thumbnailActions(commands, owner, 1, (guard) => guard(),
+      (edit) => { void edit(owner); });
+    expect(actions.map((action) => action.id)).toEqual(ids(PAGE_MENU));
+    menu.show(PAGE_MENU, { x: 0, y: 0 }, actions);
+    menu.choose(menu.offered.indexOf("edit.deletePage"));
+    expect(deleted).toHaveBeenCalledWith(1);
+    expect(chosen).toEqual([]);
+    const first = thumbnailActions(commands, owner, 0, (guard) => guard(), () => {});
+    menu.show(PAGE_MENU, { x: 0, y: 0 }, first);
+    expect(menu.offered).not.toContain("edit.movePageUp");
+  });
+
   it("runs the clicked tab's actions without changing or leaking into the registry", () => {
     const { menu, commands, chosen } = menuOf();
     const fired: string[] = [];

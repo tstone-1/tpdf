@@ -456,7 +456,7 @@ export function panelTabs(): HTMLElement[] {
 
 /** Whether a panel is displayed. */
 export function panelShown(tab: string): boolean {
-  const panel = document.getElementById(`tpdf-panel-${tab}`);
+  const panel = document.querySelector<HTMLElement>(`[data-sidebar-panel="${tab}"]`);
   return !!panel && getComputedStyle(panel).display !== "none";
 }
 

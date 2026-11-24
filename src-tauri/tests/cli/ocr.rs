@@ -1064,6 +1064,15 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
         parent = child;
     }
     deep.get_dictionary_mut(page).unwrap().set("Parent", parent);
+    // Isolate the resource refusal from the independent geometry check.
+    let media = deep
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"MediaBox")
+        .unwrap()
+        .clone();
+    deep.get_dictionary_mut(page).unwrap().set("CropBox", media);
+    deep.get_dictionary_mut(page).unwrap().set("Rotate", 0);
     let deep_path = at("deep.pdf");
     deep.save(&deep_path).unwrap();
     let protected = at("preserved.pdf");
@@ -1073,6 +1082,29 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
         "OCR refuses unresolved inherited resources without replacing the destination",
         status != 0
             && refusal.contains("page resources could not be read")
+            && std::fs::read(&protected).unwrap() == b"previous destination",
+        &format!("exit {status}; {refusal}"),
+    );
+
+    let resources = deep
+        .get_dictionary_mut(tree)
+        .unwrap()
+        .remove(b"Resources")
+        .unwrap();
+    deep.get_dictionary_mut(page)
+        .unwrap()
+        .set("Resources", resources);
+    deep.get_dictionary_mut(page).unwrap().remove(b"CropBox");
+    deep.get_dictionary_mut(tree).unwrap().set(
+        "CropBox",
+        vec![2.into(), 2.into(), 2000.into(), 2000.into()],
+    );
+    deep.save(&deep_path).unwrap();
+    let (status, _, refusal) = tool(&["ocr", &deep_path, "-o", &protected, "--force"], &[]);
+    report.check(
+        "OCR refuses unresolved inherited geometry without replacing the destination",
+        status != 0
+            && refusal.contains("geometry could not be read")
             && std::fs::read(&protected).unwrap() == b"previous destination",
         &format!("exit {status}; {refusal}"),
     );

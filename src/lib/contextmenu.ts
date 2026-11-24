@@ -35,6 +35,7 @@
  * `viewer_check.py` could not see it at all.
  */
 
+import type { Edits, EditState } from "./edits";
 import type { Command, CommandRegistry } from "./commands";
 
 /** A gap between groups. */
@@ -64,6 +65,39 @@ export const PAGE_MENU: Entry[] = [
   SEPARATOR,
   "edit.deletePage",
 ];
+
+/** Bind thumbnail commands to the clicked document and page through queued edits. */
+export function thumbnailActions(
+  registry: CommandRegistry, owner: Edits, slot: number,
+  available: (guard: () => boolean) => boolean,
+  apply: (edit: (model: Edits) => Promise<EditState>) => void,
+): Command[] {
+  const page = owner.map.idOf(slot);
+  function action(id: string, edit: (model: Edits, at: number) => Promise<EditState>,
+                  allowed: (at: number, count: number) => boolean = () => true): Command {
+    const command = registry.find(id)!;
+    const target = (model: Edits) => page === undefined ? undefined : model.map.slotOfId(page);
+    return {
+      id, title: command.title, ...(command.keys ? { keys: command.keys } : {}),
+      enabled: () => available(() => {
+        const at = target(owner);
+        return at !== undefined && allowed(at, owner.state.pages.length) && (command.enabled?.() ?? true);
+      }),
+      run: () => apply((model) => {
+        const at = target(model);
+        return at === undefined || !allowed(at, model.state.pages.length)
+          ? Promise.resolve(model.state) : edit(model, at);
+      }),
+    };
+  }
+  return [
+    action("edit.rotatePageClockwise", (m, at) => m.rotate(at, 1)),
+    action("edit.rotatePageCounterClockwise", (m, at) => m.rotate(at, -1)),
+    action("edit.movePageUp", (m, at) => m.move(at, at - 1), (at) => at > 0),
+    action("edit.movePageDown", (m, at) => m.move(at, at + 1), (at, count) => at + 1 < count),
+    action("edit.deletePage", (m, at) => m.delete(at), (_, count) => count > 1),
+  ];
+}
 
 /**
  * What a right-click on one of the reader's own marks offers.

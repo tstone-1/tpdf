@@ -808,6 +808,25 @@ class ClientTests(unittest.TestCase):
                 self.assertEqual(struct.unpack('>II', visible.stdout[16:24]), (24, 32))
                 self.assertNotEqual(thumbnail(3 - wanted).returncode, 0)
 
+    def test_render_and_image_import_preserve_physical_size(self):
+        png = self.root / '144dpi.png'
+        saved = self.root / 'imported.pdf'
+        self.pdf.render(self.source, png, dpi=144)
+        self.pdf.images([png], saved)
+        size, = self.pdf.info(saved)['files'][0]['document']['page_sizes']
+        self.assertEqual((size['width_pt'], size['height_pt']), (300, 400))
+
+    def test_raw_search_annotation_returns_plan_or_no_match(self):
+        for word, status in [('SYNTHETIC', 0), ('unmatched-string', 1)]:
+            result = self.pdf.run('search', '--annotate', 'highlight', '--text', word,
+                                  '--', self.source, check=False)
+            self.assertEqual(result.exit_code, status)
+            if status == 0:
+                self.assertTrue(result.report['operations'])
+                self.assertEqual(len(result.report['source_sha256']), 64)
+            else:
+                self.assertEqual(result.report, {})
+
     def test_render_supports_repeatable_visual_assertions(self):
         first = self.root / 'before.png'
         second = self.root / 'after.png'
@@ -1363,6 +1382,16 @@ class ExecutableLookupTests(unittest.TestCase):
                     Tpdf(shim)
                 with self.assertRaisesRegex(ValueError, 'native'):
                     Tpdf(shim.name)
+
+    def test_only_macos_discovers_the_legacy_cli_alias(self):
+        alias = self.empty / ('tpdf.exe' if os.name == 'nt' else 'tpdf')
+        alias.touch()
+        alias.chmod(0o755)
+        if sys.platform == 'darwin':
+            self.assertEqual(self.found(str(self.empty)), str(alias.resolve()))
+        else:
+            with self.assertRaises(FileNotFoundError):
+                self.found(str(self.empty))
 
     def test_a_tool_in_the_current_directory_is_not_found(self):
         with patch.dict(os.environ, {'PATH': str(self.empty)}):

@@ -265,7 +265,8 @@ impl Subcommand for Render {
         if let Some(fingerprint) = &fingerprint {
             unchanged(&[(self.input.as_path(), fingerprint)])?;
         }
-        let png = crate::render::encode_png(&pixels, width, height)
+        let dpi = scale / unit * 72.0;
+        let png = crate::render::encode_png_with_density(&pixels, width, height, Some(dpi))
             .map_err(|e| Failure::new(Exit::Internal, e))?;
         if stdout {
             out.write_all(&png)
@@ -285,7 +286,7 @@ impl Subcommand for Render {
             input: self.input.display().to_string(),
             output: self.output.display().to_string(),
             page: self.page,
-            dpi: (scale / unit * 72.0).round() as u32,
+            dpi: dpi.round() as u32,
             width_px: width,
             height_px: height,
         };

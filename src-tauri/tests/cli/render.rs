@@ -164,6 +164,8 @@ pub(super) fn renders(report: &mut Report) {
         .is_ok_and(|s| s.success())
     {
         let encrypted_name = encrypted.display().to_string();
+        let sentinel = b"previous destination";
+        std::fs::write(&output, sentinel).unwrap();
         for (secret, expected_status) in
             [(None, 3), (Some("wrong"), 3), (Some("synthetic-user"), 0)]
         {
@@ -185,7 +187,13 @@ pub(super) fn renders(report: &mut Report) {
             let (code, json, stderr) = tool(&args, &env);
             report.check(
                 "encrypted renders require the password and match unencrypted pixels",
-                code == expected_status && std::fs::read(&output).unwrap() == before,
+                code == expected_status
+                    && std::fs::read(&output).unwrap()
+                        == if expected_status == 0 {
+                            &before[..]
+                        } else {
+                            sentinel
+                        },
                 &format!("{stderr}; {json}"),
             );
         }

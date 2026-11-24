@@ -19,6 +19,7 @@ rollback and must never be interpreted as proof that nothing was written.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import math
@@ -26,6 +27,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 from typing import Any, Mapping, Sequence
 
 from . import reports
@@ -135,6 +137,32 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
             pass
 
 
+@contextmanager
+def _command_stdin(command: str, payload: bytes | None):
+    """Lend the foreground terminal to Linux key prompts across setsid()."""
+    if sys.platform != 'linux' or command != 'sign' or payload is not None:
+        yield subprocess.PIPE if payload is not None else subprocess.DEVNULL
+        return
+    import termios
+
+    try:
+        terminal = open('/dev/tty', 'r+b', buffering=0)
+    except OSError:
+        yield subprocess.DEVNULL
+        return
+    with terminal:
+        if os.tcgetpgrp(terminal.fileno()) != os.getpgrp():
+            yield subprocess.DEVNULL
+            return
+        saved = termios.tcgetattr(terminal)
+        try:
+            yield terminal
+        finally:
+            # The CLI normally restores echo. A timeout can kill it mid-prompt.
+            if termios.tcgetattr(terminal) != saved:
+                termios.tcsetattr(terminal, termios.TCSAFLUSH, saved)
+
+
 def _search_options(
     texts: Sequence[str], patterns: Sequence[str], pages: str | None,
     case_sensitive: bool, whole_word: bool,
@@ -157,6 +185,13 @@ def _search_options(
     return args
 
 
+def _check_plan(plan: Any) -> None:
+    if (not isinstance(plan, dict) or type(plan.get('schema')) is not int or plan['schema'] != 1
+            or not isinstance(plan.get('operations'), list) or not plan['operations']
+            or not isinstance(plan.get('source_sha256'), str) or len(plan['source_sha256']) != 64):
+        raise ProtocolError('expected a revision-checked annotation plan; use a CLI built from the same checkout')
+
+
 class Tpdf:
     """A stateless client. Each call runs an isolated CLI process and its workers.
 
@@ -175,7 +210,7 @@ class Tpdf:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError('timeout must be a finite positive number of seconds')
         found = os.fspath(executable) if executable is not None else (
-            _on_path('tpdf-cli') or _on_path('tpdf')
+            _on_path('tpdf-cli') or (_on_path('tpdf') if sys.platform == 'darwin' else None)
         )
         if not found:
             raise FileNotFoundError('tpdf CLI not found; pass executable= or install it on PATH')
@@ -224,6 +259,12 @@ class Tpdf:
             input_json, ensure_ascii=False, allow_nan=False, separators=(',', ':'),
         ).encode('utf-8')
         exit_code, stdout, said = self._invoke(command, ['--json', *args], password, new_password, payload)
+        plan_mode = command == 'search' and '--annotate' in flags
+        if plan_mode and exit_code == 1 and not stdout:
+            result = Result({}, exit_code, said)
+            if check:
+                raise CommandError(result)
+            return result
         try:
             report = json.loads(stdout.decode('utf-8'))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -237,6 +278,9 @@ class Tpdf:
         help_only = (exit_code == 0 and any(arg in ('--help', '-h') for arg in args)
                      and password is None and new_password is None
                      and all(arg in ('--help', '-h', '--json') for arg in args))
+        if plan_mode and exit_code == 0 and 'command' not in report:
+            _check_plan(report)
+            return Result(report, exit_code, said)
         if report.get('command') != ('help' if help_only else command):
             raise ProtocolError(f'tpdf report command does not match {command}',
                                 stderr=said, exit_code=exit_code)
@@ -258,39 +302,40 @@ class Tpdf:
         if new_password is not None:
             env['TPDF_API_NEW_PASSWORD'] = new_password
             options += ['--new-password-env', 'TPDF_API_NEW_PASSWORD']
-        process = subprocess.Popen(
-            [self.executable, command, *options, *args],
-            stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=env, cwd=self.cwd, start_new_session=os.name != 'nt',
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
-        )
-        try:
-            stdout, stderr = process.communicate(payload, timeout=self.timeout)
-        except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
+        with _command_stdin(command, payload) as stdin:
+            process = subprocess.Popen(
+                [self.executable, command, *options, *args],
+                stdin=stdin,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=env, cwd=self.cwd, start_new_session=os.name != 'nt',
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
+            )
             try:
-                _stop(process)
-            except (OSError, subprocess.SubprocessError):
-                # Keep cleanup bounded even if taskkill is unavailable or denied.
-                pass
-            finally:
-                process.kill()
+                stdout, stderr = process.communicate(payload, timeout=self.timeout)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
                 try:
-                    process.communicate(timeout=5)
-                except subprocess.TimeoutExpired:
-                    # Windows communicate() owns the pipe readers. Closing a
-                    # buffered stream here waits on its thread's read lock
-                    # until the last descendant releases its inherited handle.
-                    if os.name != 'nt':
-                        for stream in (process.stdin, process.stdout, process.stderr):
-                            if stream is not None:
-                                stream.close()
-                    process.wait(timeout=5)
-            if isinstance(error, KeyboardInterrupt):
-                raise
-            raise CommandTimeout(
-                f'tpdf {command} exceeded {self.timeout} seconds; outputs may already exist'
-            ) from None
+                    _stop(process)
+                except (OSError, subprocess.SubprocessError):
+                    # Keep cleanup bounded even if taskkill is unavailable or denied.
+                    pass
+                finally:
+                    process.kill()
+                    try:
+                        process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        # Windows communicate() owns the pipe readers. Closing a
+                        # buffered stream here waits on its thread's read lock
+                        # until the last descendant releases its inherited handle.
+                        if os.name != 'nt':
+                            for stream in (process.stdin, process.stdout, process.stderr):
+                                if stream is not None:
+                                    stream.close()
+                        process.wait(timeout=5)
+                if isinstance(error, KeyboardInterrupt):
+                    raise
+                raise CommandTimeout(
+                    f'tpdf {command} exceeded {self.timeout} seconds; outputs may already exist'
+                ) from None
         said = stderr.decode('utf-8', errors='replace')
         return process.returncode, stdout, said
 
@@ -667,10 +712,7 @@ class Tpdf:
             plan = json.loads(stdout)
         except (ValueError, UnicodeDecodeError) as error:
             raise ProtocolError('invalid search annotation plan', stderr=stderr, exit_code=exit_code) from error
-        if (not isinstance(plan, dict) or type(plan.get('schema')) is not int or plan['schema'] != 1
-                or not isinstance(plan.get('operations'), list) or not plan['operations']
-                or not isinstance(plan.get('source_sha256'), str) or len(plan['source_sha256']) != 64):
-            raise ProtocolError('expected a revision-checked annotation plan; use a CLI built from the same checkout')
+        _check_plan(plan)
         try:
             return self.edit(source, output, plan['operations'], force=force, source_sha256=plan['source_sha256'],
                              invalidate_signatures=invalidate_signatures, password=password)
@@ -836,7 +878,7 @@ class Tpdf:
         return result.typed
 
     def identities(self) -> reports.IdentitiesReport:
-        """List usable OS-held signing certificates and rejected ones with reasons.
+        """List usable signing certificates and rejected ones with reasons.
 
         Enumeration does not sign. Pass a chosen certificate's id to sign(); the
         client never chooses the first available identity automatically.
@@ -857,7 +899,7 @@ class Tpdf:
         timestamp: str | None = None, long_term: bool = False, lock: bool = False,
         force: bool = False,
     ) -> reports.SignReport:
-        """Sign with an explicitly selected OS-held certificate; no key is exported.
+        """Sign with an explicitly selected certificate.
 
         Use identities()['usable'] to select its SHA-256 id (or its sha1
         thumbprint, or exact subject).
@@ -895,8 +937,9 @@ class Tpdf:
         signature is refused, and validation data can still be added. A
         certified document is refused with lock=True. The report's signature
         carries 'lock': 1 when it read back.
-        Encrypted inputs are not supported by signing. The OS may prompt for
-        key access; configure the client's timeout for interactive use.
+        Encrypted inputs are refused. macOS and Windows may prompt for key access.
+        On Linux, run from a terminal for a token PIN or certificate-file password.
+        Set the timeout to allow time to answer.
         """
         if not isinstance(identity, str) or not identity.strip():
             raise ValueError('identity must name an explicitly selected certificate')

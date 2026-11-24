@@ -2273,7 +2273,7 @@ feature that reaches the reader's **keys** --- the second thing §1 puts first a
   default; under `TPDF_BACKEND=in-process` the read-back runs `docinfo::scan` in the app
   process, like every other parse on that fallback (`save::Here::signatures`).
 
-**The key never leaves the OS, and tpdf never sees a PIN.** There is no API here that reads a
+**On macOS and Windows, the OS holds the key and handles PIN prompts.** There is no OS-store API here that reads a
 key or accepts one: `sign_cms::Key` has one method, which signs a digest. Keychain access
 confirmations, smart-card PINs and Windows' key-protection dialogs are the operating system's
 own, raised during the one call that signs; that is correct and expected, and nothing in the
@@ -2455,9 +2455,8 @@ other: the tool opens it, holds its size to 10 MB, and hands it to a worker as a
 read-only mapping, where `signature_import` reads its header by a fixed grammar and then
 decodes it (`png`, `zune-jpeg`) under an 8-megapixel bound. The tool's own process parses no
 image. The worker is given nothing to write. A refusal there ends the command before the
-store is asked for a certificate. A key file
-(`.p12`) option is deliberately absent in this version: it would put a private key in a file
-this process reads, which the whole design avoids, and is an explicit later decision.
+store is asked for a certificate. Linux also supports registered ECDSA PKCS#12 files. The signing process asks for the
+password and decrypts the key for one signature as described in the Linux signing section.
 
 **The same worker boundary, proved rather than assumed.** A document named on the command
 line is attacker-controlled input exactly as a double-clicked one is. The tool parses none of

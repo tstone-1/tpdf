@@ -1690,8 +1690,8 @@ ROWS += [
     Mutation(
         "values: stop at the depth bound without saying so",
         "src/docinfo.rs",
-        "    complete &= cut.dropped == 0 && cut.too_deep == 0;",
-        "    complete &= cut.dropped == 0;",
+        "    complete &= !cut.unreadable_root && cut.dropped == 0 && cut.too_deep == 0;",
+        "    complete &= !cut.unreadable_root && cut.dropped == 0;",
         "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
     ),
     Mutation(

@@ -215,7 +215,8 @@ Text uses Helvetica with the same supported character set as `textbox.rs`.
 `form_pdfkit_check.swift` independently reads and renders the saved result.
 Signature reporting, long-term validation and rewrite preflight use the terminal field's
 inherited type and value. A field with separate widget annotations counts once. An
-unreadable form dictionary must surface as a read error in the field listing.
+unreadable form dictionary must surface as a read error in the field listing. An unreadable
+field-tree root also makes signature coverage unknown during verification and rewrite preflight.
 When writing inherited fields, materialise `/FT` and `/Ff` on the terminal field:
 PDFKit reads `/V` through the parent chain but did not render our fixture's text
 when `/FT` existed only on its grandparent. The unit test pins this compatibility
@@ -587,7 +588,10 @@ The same check applies to embedded JPEG profiles, including profiles split acros
 segments. A PNG with gamma or chromaticity metadata uses CalGray or CalRGB when
 it carries neither an ICC profile nor an sRGB declaration. Untagged pictures use
 DeviceGray or DeviceRGB. Both picture placement and document creation apply PNG
-eXIf orientation. Physical pHYs density takes precedence over EXIF resolution. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
+eXIf orientation. Physical pHYs density takes precedence over EXIF resolution.
+CLI renders record pixels per metre in pHYs. Import recovers the original integer
+DPI when it rounds to the stored density, so a 72 DPI render imports at one point
+per pixel. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
 Without physical resolution, a unitless PNG or JFIF density ratio sets the pixel
 proportions at a default scale of one point along the longer pixel dimension.
 A PNG with an sRGB declaration gets an ICCBased colour space and its declared PDF

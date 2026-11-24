@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { filePage } from "./pages";
-import { installFakeDom, settle, type FakeDom } from "./testdom";
+import { installFakeDom, settle, FakeElement, type FakeDom } from "./testdom";
 import {
   insertionGap,
   landingSlot,
@@ -293,6 +293,31 @@ describe("Thumbnails lifetime", () => {
     pages.setCurrentPage(20);
     expect(pages.elementFor(20)?.tabIndex).toBe(0);
     pages.destroy();
+  });
+
+  it.each([false, true])("repaints blank thumbnails after remount, inverted=%s", (invert) => {
+    const paints = new Map<FakeElement, string>();
+    const spy = vi.spyOn(FakeElement.prototype, "getContext").mockImplementation(function(this: FakeElement) {
+      const canvas = this;
+      const context = { fillStyle: "", fillRect() { paints.set(canvas, context.fillStyle); } };
+      return context as never;
+    });
+    try {
+      const pages = makeStrip(dom, { addressOf: () => undefined });
+      pages.setInvert(invert);
+      pages.setActive(true);
+      const canvas = () => (pages.elementFor(0) as unknown as FakeElement)?.querySelector("canvas");
+      const first = canvas()!;
+      expect(paints.get(first)).toBe(invert ? "#000000" : "#ffffff");
+      pages.setCurrentPage(30);
+      expect(canvas()).toBeUndefined();
+      pages.setCurrentPage(0);
+      expect(canvas()).not.toBe(first);
+      expect(paints.get(canvas()!)).toBe(paints.get(first));
+      pages.destroy();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("asks for no tile for a page tpdf made, and carries on past it", async () => {
@@ -859,7 +884,7 @@ describe("Thumbnails dragging", () => {
   /** Presses a row, at the top of its own box. */
   function press(pages: Thumbnails, page: number, y: number): void {
     const row = pages.elementFor(page) as unknown as FakeDom["root"];
-    row.dispatch("pointerdown", { pointerId: 1, clientY: y, preventDefault: () => {} });
+    row.dispatch("pointerdown", { button: 0, pointerId: 1, clientY: y, preventDefault: () => {} });
   }
 
   it("does not reorder anything when the pointer barely moves", () => {
@@ -905,6 +930,22 @@ describe("Thumbnails dragging", () => {
     panel.dispatch("pointerup", { pointerId: 1, clientY: -9999 });
 
     expect(moves).toEqual([[0, 1]]);
+    pages.destroy();
+  });
+
+  it("ignores middle-button drags and keeps the first touch as the owner", () => {
+    const moves: [number, number][] = [];
+    const { pages, panel, rowHeight } = stripForDrag(moves);
+    const second = pages.elementFor(2) as unknown as FakeElement;
+    second.dispatch("pointerdown", {button: 1, pointerId: 9, clientY: 2 * rowHeight, preventDefault() {}});
+    panel.dispatch("pointermove", {pointerId: 9, clientY: 2});
+    panel.dispatch("pointerup", {pointerId: 9, clientY: 2});
+    expect(moves).toEqual([]);
+    press(pages, 3, 3 * rowHeight);
+    second.dispatch("pointerdown", {button: 0, pointerId: 9, clientY: 2 * rowHeight, preventDefault() {}});
+    panel.dispatch("pointermove", {pointerId: 1, clientY: 2});
+    panel.dispatch("pointerup", {pointerId: 1, clientY: 2});
+    expect(moves).toEqual([[3, 0]]);
     pages.destroy();
   });
 
@@ -1002,7 +1043,7 @@ describe("Thumbnails dragging", () => {
     panel.clientHeight = 700;
     panel.dispatch("scroll", {});
     const row = pages.elementFor(2) as unknown as FakeDom["root"];
-    row.dispatch("pointerdown", { pointerId: 1, clientY: 0, preventDefault: () => {} });
+    row.dispatch("pointerdown", { button: 0, pointerId: 1, clientY: 0, preventDefault: () => {} });
 
     expect(panel.captured.size).toBe(0);
     panel.dispatch("pointermove", { pointerId: 1, clientY: 900 });

@@ -19,6 +19,13 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- Thumbnail menu edits use the selected page in facing-page layouts. Blank thumbnails
+  keep their paper colour after scrolling, and split-view tabs label their own panels.
+- OCR refuses unreadable page geometry and handles scans with null font resources.
+  Exported PNGs carry their physical resolution for conversion back to PDF.
+- The Python client supports interactive Linux certificate signing and raw annotation
+  plans. Its schema-1 signing types accept reports from older CLI versions.
+
 - Signature reporting and form-fill preflight recognise signatures in hierarchical fields.
   The CLI reports a damaged form dictionary as unreadable.
 - CLI printing preserves the requested order and repeated pages and distinguishes a failed

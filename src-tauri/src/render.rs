@@ -2216,9 +2216,26 @@ pub(crate) fn text_edit_draft(
 }
 
 pub(crate) fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    encode_png_with_density(rgba, width, height, None)
+}
+
+pub(crate) fn encode_png_with_density(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    dpi: Option<f32>,
+) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_pixel_dims(dpi.map(|dpi| {
+            let per_metre = (dpi / 0.0254).round() as u32;
+            png::PixelDimensions {
+                xppu: per_metre,
+                yppu: per_metre,
+                unit: png::Unit::Meter,
+            }
+        }));
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         // Fast compression: this is a latency path, not an archival one.

@@ -95,11 +95,13 @@ pub struct Bounds {
 
 /// What a walk could not do.
 ///
-/// Both fields are about the *tree*, never about one node's contents: a caller
+/// These limits describe the tree as a whole. A caller
 /// that could not make sense of a dictionary it was handed counts that itself,
 /// because only it knows what it was looking for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Cut {
+    /// A declared field tree could not be opened.
+    pub unreadable_root: bool,
     /// Entries still queued when the node budget ran out, plus the one that
     /// exhausted it.
     pub dropped: usize,
@@ -144,18 +146,21 @@ enum Entry<'a> {
 /// `dereference` rather than one hop, because it is what both callers' own
 /// lookups did between them and it is the stronger of the two: a reference
 /// naming a reference is legal and pathological, and lopdf bounds the chase.
-#[must_use]
-pub fn fields_of(doc: &Document) -> Option<&Vec<Object>> {
-    let form = doc
-        .catalog()
-        .ok()
-        .and_then(|catalog| catalog.get(b"AcroForm").ok())
-        .and_then(|object| doc.dereference(object).map(|(_, object)| object).ok())
-        .and_then(|object| object.as_dict().ok())?;
-    form.get(b"Fields")
-        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
-        .and_then(Object::as_array)
-        .ok()
+fn fields_of(doc: &Document) -> lopdf::Result<Option<&Vec<Object>>> {
+    let catalog = doc.catalog()?;
+    if !catalog.has(b"AcroForm") {
+        return Ok(None);
+    }
+    let form = catalog.get_deref(b"AcroForm", doc)?;
+    if matches!(form, Object::Null) {
+        return Ok(None);
+    }
+    let form = form.as_dict()?;
+    // Signing can add the first field to an existing empty form dictionary.
+    if form.is_empty() {
+        return Ok(None);
+    }
+    form.get_deref(b"Fields", doc)?.as_array().map(Some)
 }
 
 /// Walks the form's field tree, calling `visit` for each node.
@@ -166,8 +171,15 @@ pub fn walk<F>(doc: &Document, bounds: &Bounds, visit: F) -> Cut
 where
     F: FnMut(Node<'_>) -> Flow,
 {
-    let Some(fields) = fields_of(doc) else {
-        return Cut::default();
+    let fields = match fields_of(doc) {
+        Ok(Some(fields)) => fields,
+        Ok(None) => return Cut::default(),
+        Err(_) => {
+            return Cut {
+                unreadable_root: true,
+                ..Cut::default()
+            }
+        }
     };
     run(doc, fields.iter().map(Entry::Inline), bounds, visit)
 }
@@ -355,6 +367,9 @@ pub fn one_part_fields(doc: &Document) -> Result<Vec<(Option<ObjectId>, String)>
         names.push((node.id, name));
         Flow::Leaf
     });
+    if cut.unreadable_root {
+        return Err("the form field tree could not be read".into());
+    }
     if cut.dropped > 0 || cut.too_deep > 0 {
         return Err(
             "this form has more fields, or groups nested deeper, than tpdf reads, so it \
@@ -686,6 +701,12 @@ mod tests {
     #[test]
     fn a_document_with_no_form_has_no_names_and_is_not_refused() {
         let mut doc = Document::with_version("1.7");
+        assert!(
+            one_part_names(&doc).is_err(),
+            "a missing catalog is unreadable"
+        );
+        let catalog = doc.add_object(lopdf::dictionary! { "Type" => "Catalog" });
+        doc.trailer.set("Root", catalog);
         assert!(one_part_names(&doc).expect("read").is_empty());
         form(&mut doc, vec![]);
         assert!(one_part_names(&doc).expect("read").is_empty());

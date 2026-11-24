@@ -28,6 +28,7 @@ lines of their own, so a longer draft there grows the box and moves nothing. Lik
 testdata PDF it is generated rather than committed:
   python3 testdata/make_textedit_push.py
   uv run scripts/tabs_check.py <app> testdata/textedit-push.pdf --phase textedit-push
+For --phase thumbnail-menu, pass a PDF with four textually distinct pages.
 For --phase import, pass --other with a second PDF of at least three pages whose
 pages differ in their text from each other and from the first PDF's first page. Past
 the file dialog, the palette's page question is dismissed (nothing inserted, the file
@@ -149,7 +150,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "forms-mixed", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "compare", "add-text", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen", "closing", "fit", "disk-change"), default="tabs")
+    parser.add_argument("--phase", choices=("thumbnail-menu", "tabs", "sides", "views", "answers", "form-beside", "tabs-position", "tabs-rotation", "forms", "forms-mixed", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "compare", "add-text", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned", "screen", "closing", "fit", "disk-change"), default="tabs")
     parser.add_argument("--other", type=Path, help="The second file --phase import and --phase answers read")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the

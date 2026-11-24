@@ -237,7 +237,7 @@ async function moreStates(
     find.value = "pier";
     find.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await pause(600);
-    document.getElementById("tpdf-tab-results")?.click();
+    document.querySelector<HTMLElement>('[data-sidebar-tab="results"]')?.click();
   }
   await shot("more-find");
   [...document.querySelectorAll<HTMLButtonElement>(".find-panel button")]

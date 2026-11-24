@@ -161,6 +161,8 @@ export interface SidebarOptions {
 export const SIDEBAR_CLASS = "tpdf-sidebar";
 
 export class Sidebar {
+  private static nextId = 0;
+  private readonly prefix = `tpdf-sidebar-${++Sidebar.nextId}`;
   private readonly host: HTMLElement;
   private readonly opts: SidebarOptions;
   private readonly tablist: HTMLElement;
@@ -311,8 +313,9 @@ export class Sidebar {
   private panel(tab: Tab, label: string, icon: IconName): HTMLElement {
     const button = document.createElement("button");
     button.setAttribute("role", "tab");
-    button.id = `tpdf-tab-${tab}`;
-    button.setAttribute("aria-controls", `tpdf-panel-${tab}`);
+    button.id = `${this.prefix}-tab-${tab}`;
+    button.dataset.sidebarTab = tab;
+    button.setAttribute("aria-controls", `${this.prefix}-panel-${tab}`);
     // The picture is the face and the word is the name: a screen reader and a
     // hovering pointer both get the label, and the SVG is `aria-hidden`.
     button.setAttribute("aria-label", label);
@@ -328,7 +331,8 @@ export class Sidebar {
 
     const element = document.createElement("div");
     element.setAttribute("role", "tabpanel");
-    element.id = `tpdf-panel-${tab}`;
+    element.id = `${this.prefix}-panel-${tab}`;
+    element.dataset.sidebarPanel = tab;
     element.setAttribute("aria-labelledby", button.id);
     element.style.cssText = "flex:1;min-height:0;display:flex;flex-direction:column;";
     this.panels.set(tab, element);

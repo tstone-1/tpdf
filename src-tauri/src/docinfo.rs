@@ -1333,7 +1333,7 @@ fn read_signatures(
     // assignments: the closure above has already counted what it met, and these
     // are the two refusals only the walk can see.
     limits.signatures_dropped += cut.dropped;
-    limits.unreadable += cut.too_deep;
+    limits.unreadable += cut.too_deep + usize::from(cut.unreadable_root);
 
     out
 }
@@ -1394,7 +1394,7 @@ pub(crate) fn signature_values(document: &Document) -> Values {
         }
         fields::Flow::Descend
     });
-    complete &= cut.dropped == 0 && cut.too_deep == 0;
+    complete &= !cut.unreadable_root && cut.dropped == 0 && cut.too_deep == 0;
     let store = read_dss(document);
     Values {
         values,
@@ -2656,6 +2656,9 @@ pub(crate) fn locked_for(document: &Document, target: Option<&str>) -> Result<bo
         }
         fields::Flow::Descend
     });
+    if cut.unreadable_root {
+        return Err(said!("the form field tree could not be read"));
+    }
     if cut.dropped > 0 || cut.too_deep > 0 {
         return Err(said!(
             "this form has more fields, or groups nested deeper, than tpdf reads, so it \
@@ -6146,6 +6149,34 @@ mod tests {
             "and its certificate is read like any other"
         );
         assert_eq!(properties.limits.unreadable, 0, "nothing was walked past");
+    }
+
+    #[test]
+    fn signature_coverage_distinguishes_an_unreadable_field_tree_from_an_empty_one() {
+        for (fields, complete) in [
+            (None, true),
+            (Some(Object::Array(vec![])), true),
+            (Some(Object::Integer(1)), false),
+        ] {
+            let (mut doc, _, _) = crate::forms::tests::fixture();
+            doc.catalog_mut().unwrap().remove(b"AcroForm");
+            if let Some(fields) = fields {
+                let form = doc.add_object(dictionary! { "Fields" => fields });
+                doc.catalog_mut().unwrap().set("AcroForm", form);
+            }
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).unwrap();
+            let properties = scan(&bytes, 0, None).unwrap();
+            assert_eq!(
+                crate::cli::verify::signatures_complete(&properties.limits),
+                complete
+            );
+            assert_eq!(
+                crate::cli::fill::signed_refusal("form.pdf", &properties).is_none(),
+                complete
+            );
+            assert_eq!(super::signature_values(&doc).complete, complete);
+        }
     }
 
     #[test]

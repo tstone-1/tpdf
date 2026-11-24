@@ -181,7 +181,8 @@ class ReportsMatchSamples(unittest.TestCase):
 
     def test_released_schema_one_reports_fit_current_types(self) -> None:
         for version, command in (("26.10.7", "ocr"), ("26.10.1", "verify"),
-                                 ("26.9.24", "redact"), ("26.9.24", "edit")):
+                                 ("26.9.24", "redact"), ("26.9.24", "edit"),
+                                 ("26.9.24", "identities"), ("26.9.24", "sign")):
             path = Path(__file__).parent / "testdata" / f"v{version}-{command}.json"
             with self.subTest(sample=path.name):
                 walk = Walk()

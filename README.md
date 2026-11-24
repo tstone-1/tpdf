@@ -1164,7 +1164,7 @@ both.
 and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
 window, with the same code: the document is read only by the same sandboxed worker processes,
-the private key never leaves the operating system, and every signed, filled or redacted file is
+and every signed, filled or redacted file is
 read back and checked before success is reported. Nothing is uploaded, and nothing goes online
 except the request `sign --timestamp` makes to the timestamp authority you name and, with
 `sign --long-term`, up to 16 revocation requests to the certificate authorities and a second
@@ -1839,8 +1839,8 @@ assert pdf.verify("signed.pdf")["files"][0]["signatures"][0]["integrity"]["verdi
 require it. `lines=[]` hides the three standard lines. `timestamp="digicert"` (or another
 CLI authority name or URL) requests a timestamp; `long_term=True` additionally requests
 revocation evidence and requires a timestamp. Both network features are off by default.
-Signing keeps the key in the OS, which may request key-access approval; allow an appropriate
-client timeout. Encrypted inputs are refused. An intact signature is not necessarily trusted;
+On macOS and Windows the system holds the key and may prompt for access. On Linux,
+use an interactive terminal for a token PIN or registered certificate-file password. Allow time to answer. Encrypted inputs are refused. An intact signature is not necessarily trusted;
 `verify(..., strict=True)` checks both and raises on a negative verdict.
 
 `run(command, *arguments)` runs CLI commands that produce JSON. Shell completions produce plain text and are available directly from the CLI.
@@ -1848,7 +1848,8 @@ It returns a `Result` carrying
 `report`, `exit_code` and `stderr`. `Result.typed` is the same report; the client's methods
 return it under the shape `tpdf_client.reports` names, and nothing checks that shape at run time. Nonzero exits raise `CommandError`, which retains
 those results; use `check=False` on `run` to inspect a negative verification verdict
-or partial split directly. Malformed or incompatible reports raise `ProtocolError`.
+or partial split directly. For `search --annotate`, a match returns the edit plan in
+`result.report`. With `check=False`, no match returns exit 1 and an empty dictionary. Malformed or incompatible reports raise `ProtocolError`.
 `password=` passes a password in the child's environment, without changing the
 caller's environment or placing the password in the command line.
 
@@ -2131,10 +2132,10 @@ it signs with it; choose *Always Allow* if a script is to sign without you — w
 lets anything else running as you sign with that key through `tpdf`, until you remove the
 permission in Keychain Access. A visible
 signature reads your saved signature image from the same protected store, and macOS may ask
-about that too; `--no-image` and `--image <file>` do not read it at all. A smart card or token asks for its PIN in the system's own dialog. tpdf never
-sees what you type, and does nothing to avoid the prompt: if the system asks, the command
-waits for an answer. Signing with a key file (`.p12`) instead of the system store is not
-built.
+about that too; `--no-image` and `--image <file>` do not read it at all. On macOS and Windows the system handles key access and PIN prompts.
+On Linux, a token signs with its own key. tpdf asks for its PIN in the terminal when required,
+or the token uses its PIN pad. For a registered ECDSA PKCS#12 file, tpdf prompts for the
+password, decrypts the key in the signing process for one signature, then drops it.
 
 **Exit codes** are stable:
 

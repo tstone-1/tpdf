@@ -733,13 +733,16 @@ class PagesReport(TypedDict):
 # --- identities ------------------------------------------------------------
 
 
-class UsableIdentity(TypedDict):
+class _IdentityThumbprint(TypedDict, total=False):
+    # Older schema-1 CLIs returned the SHA-256 id only.
+    sha1: str
+
+
+class UsableIdentity(_IdentityThumbprint):
     """A certificate with a key that may sign now."""
 
     # SHA-256 of the certificate, lowercase hex: what `--identity` accepts.
     id: str
-    # SHA-1 of the certificate, lowercase hex; also accepted by `--identity`.
-    sha1: str
     # The subject's common name, or its whole name.
     subject: str
     # The issuer's common name, or its whole name.
@@ -750,11 +753,10 @@ class UsableIdentity(TypedDict):
     method: str
 
 
-class NotUsableIdentity(TypedDict):
+class NotUsableIdentity(_IdentityThumbprint):
     """A certificate with a key that may not sign, and why."""
 
     id: str
-    sha1: str
     # Who it names, as far as it could be read.
     subject: str
     # Why it is not offered, as a clause.
@@ -1017,7 +1019,12 @@ class Appearance(TypedDict):
     lines: list[DrawnLine]
 
 
-class SignReport(TypedDict):
+class _SignAppearance(TypedDict, total=False):
+    # Older schema-1 CLIs reported only the visibility flag.
+    appearance: Appearance | None
+
+
+class SignReport(_SignAppearance):
     """`sign --json`."""
 
     schema: int
@@ -1032,8 +1039,6 @@ class SignReport(TypedDict):
     identity: UsableIdentity
     # Whether it has an appearance on a page.
     visible: bool
-    # None for an invisible signature.
-    appearance: Appearance | None
     # Every signature in the written file, read back after writing.
     signatures: list[Signature]
     # The signing panel's closing sentence, word for word.

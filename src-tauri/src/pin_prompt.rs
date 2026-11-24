@@ -143,13 +143,23 @@ const MOST: usize = 255;
 /// A signal from elsewhere (`kill`, a closed terminal) can still end the
 /// process with the settings changed; `stty sane` restores them.
 fn terminal(asked: Asked<'_>) -> Result<Option<AuthPin>, String> {
+    use std::io::IsTerminal as _;
     use std::io::Write;
-    use std::os::fd::AsRawFd;
+    use std::os::fd::{AsFd as _, AsRawFd};
 
     let tty = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/tty")
+        .or_else(|err| {
+            // A client can isolate the process group and lend its terminal on stdin.
+            let stdin = std::io::stdin();
+            if stdin.is_terminal() {
+                Ok(std::fs::File::from(stdin.as_fd().try_clone_to_owned()?))
+            } else {
+                Err(err)
+            }
+        })
         .map_err(|e| format!("{} There is no terminal to ask on ({e}).", question(asked)))?;
     let fd = tty.as_raw_fd();
     // SAFETY: `termios` is plain data, filled by `tcgetattr` before it is read.

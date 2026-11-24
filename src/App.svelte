@@ -441,7 +441,7 @@
   import {
     ContextMenu,
     menuForSurface,
-    PAGE_MENU,
+    PAGE_MENU, thumbnailActions,
   } from "./lib/contextmenu";
   import { contentBox, cropBox } from "./lib/crop";
   import { Edits, markMade, queuedPage, type EditState } from "./lib/edits";
@@ -6564,11 +6564,7 @@
       pages: {
         doc: doc.id,
         pageCount: doc.page_count,
-        // Page 1 alone, and the strip lays every row out at it. Deliberately
-        // left on the uniform assumption the viewer has just stopped making,
-        // and it is a *known* gap rather than a proof of harmlessness: see
-        // `thumbnails.ts`, which states what a mixed-size document costs there
-        // and why the fix is a separate piece of work from this one.
+        // The first page sets the uniform row pitch. Tiles use geometryOf below.
         page,
         // The viewer is created below, so the strip reaches it lazily rather
         // than being handed a reference that does not exist yet.
@@ -6588,15 +6584,14 @@
         onReorder: (from, to) => {
           void movePageTo(from, to);
         },
-        // Right-clicking a thumbnail goes to that page first, and then offers
-        // the page operations. Navigating on a right-click is unusual and it
-        // is the honest arrangement here: every one of these commands acts on
-        // the page the viewer is on, so the alternative is a second way to
-        // address a page --- and a reader who rotates a page wants to see it
-        // turn, which means being on it anyway.
         onContextMenu: (slot, at) => {
-          viewer?.goToPage(slot);
-          openContextMenu(PAGE_MENU, at);
+          const owner = edits;
+          if (!owner || !viewer) return;
+          viewer.goToPage(slot);
+          const actions = thumbnailActions(commands, owner, slot,
+            (available) => asDocument(view, () => edits === owner && available()) === true,
+            (edit) => { void applyEdit(edit, view, owner); });
+          contextMenu?.show(PAGE_MENU, at, actions);
         },
       },
       // The comments panel lists a bare highlight by the words it covers, and
