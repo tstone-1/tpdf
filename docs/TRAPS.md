@@ -633,6 +633,8 @@ hop through the index.
 - An anchor that begins with spaces matches inside a deeper copy of its line, and the row moves there unseen
 
 ## Harnesses: running checks and reading what they print
+
+- A check directory can still exist after its registered worktree has moved
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
 - Restoring a mutated file by *moving* a backup over it tests the mutated binary (the title names the wrong mechanism — see the entry below it)
@@ -27813,3 +27815,13 @@ volume. The native linker ran out of space and Windows detached the virtual
 disk during a write. Before running both builds on one machine, check free
 space on the Windows volume holding the VHDX as well as the volume holding
 the native Cargo target. An ext4 free-space check measures neither limit.
+
+### A check directory can still exist after its registered worktree has moved
+
+Before forcing a remote checkout, verify the detached worktree registration, the
+common Git directory, and the backlink from the worktree metadata. A stale
+registration can prevent creation, while an unrelated clone at the expected
+path accepts a forced checkout and loses local edits. The two runners send
+`scripts/check_worktree.py` from the initiating checkout so the guard applies
+even when testing an older revision. Each invocation holds the shared worktree
+lock through the run and keeps its transport files in a separate directory.

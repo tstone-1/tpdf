@@ -826,7 +826,7 @@ pub(super) fn widgets_are_removed(report: &mut Report) {
             "independent qpdf control: a stored field value and appearance become absent after rewriting",
             contains(&before, "WIDGET-SECRET-4827") && !contains(&after, "WIDGET-SECRET-4827") && contains(&after, "CONTROL-ANSWER"),
             "qpdf did not observe the expected before/after values"),
-        _ => report.skip("independent qpdf field/appearance readback", "qpdf is unavailable or could not decode the files"),
+        _ => report.skip("independent qpdf field/appearance readback", "qpdf is unavailable"),
     }
     if let Some(probe) = std::env::var_os("TPDF_REDACT_PROBE").map(PathBuf::from) {
         std::fs::create_dir_all(&probe).expect("probe directory");
@@ -1454,30 +1454,38 @@ fn text_of(path: &Path, env: &[(&str, &str)], extra: &[&str]) -> String {
     tool(&args, env).1
 }
 
-/// Poppler's reading, or `None` when it is not installed.
-fn pdftotext(path: &Path) -> Option<String> {
-    let out = Command::new("pdftotext")
-        .args([path.display().to_string().as_str(), "-"])
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+/// An optional oracle can be skipped only if its executable is absent.
+fn read_with(command: &mut Command, accepted: &[i32]) -> Option<Vec<u8>> {
+    let out = match command.output() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        result => result.unwrap_or_else(|e| panic!("could not start {command:?}: {e}")),
+    };
+    assert!(
+        out.status
+            .code()
+            .is_some_and(|code| accepted.contains(&code)),
+        "{command:?} exited {}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Some(out.stdout)
 }
 
-/// The file's bytes with every stream uncompressed, or `None` without qpdf.
 fn qdf(path: &Path, dir: &Path) -> Option<Vec<u8>> {
-    let out = dir.join(format!("{}.qdf", path.file_name()?.to_string_lossy()));
-    let status = Command::new("qpdf")
-        .args(["--qdf", "--object-streams=disable"])
-        .arg(path)
-        .arg(&out)
-        .status()
-        .ok()?;
-    // 0 or 3 (warnings): the file was written.
-    (status.code() == Some(0) || status.code() == Some(3))
-        .then(|| std::fs::read(&out).ok())
-        .flatten()
+    let out = dir.join(format!(
+        "{}.qdf",
+        path.file_name()
+            .expect("fixture filename")
+            .to_string_lossy()
+    ));
+    read_with(
+        Command::new("qpdf")
+            .args(["--qdf", "--object-streams=disable"])
+            .arg(path)
+            .arg(&out),
+        &[0, 3],
+    )?;
+    Some(std::fs::read(out).expect("qpdf wrote the decompressed file"))
 }
 
 /// One page drawing a reusable block `times` times. The block holds a rule,
@@ -1712,8 +1720,8 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
 fn readers(path: &Path, dir: &Path, gone: &[&str], kept: &[&str]) -> Vec<String> {
     let mut wrong = Vec::new();
     let mut texts: Vec<(&str, Vec<u8>)> = vec![("tpdf text", text_of(path, &[], &[]).into_bytes())];
-    if let Some(poppler) = pdftotext(path) {
-        texts.push(("pdftotext", poppler.into_bytes()));
+    if let Some(poppler) = read_with(Command::new("pdftotext").arg(path).arg("-"), &[0]) {
+        texts.push(("pdftotext", poppler));
     }
     if let Some(bytes) = qdf(path, dir) {
         texts.push(("qpdf --qdf", bytes));

@@ -262,7 +262,8 @@ def walk(binary: Path, pdf: Path, scratch: Path) -> tuple[list[Step], float, Pat
         if not running("nvda.exe"):
             raise Lost("NVDA did not start")
         steps.append(Step("open", time.time(), expect=["Page 1 of 8, printed as i"]))
-        app = subprocess.Popen([str(binary), str(pdf)])
+        app = subprocess.Popen([str(binary), str(pdf)],
+                               env={**os.environ, "TPDF_SESSION_FILE": str(scratch / "session.json")})
         time.sleep(12)
         ensure_front()
 

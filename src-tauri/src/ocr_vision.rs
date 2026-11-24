@@ -40,7 +40,8 @@ use objc2_core_graphics::{
 };
 use objc2_foundation::{NSArray, NSDictionary, NSRange, NSString};
 use objc2_vision::{
-    VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
+    VNImageRequestHandler, VNRecognizeTextRequest, VNRecognizedTextObservation, VNRequest,
+    VNRequestTextRecognitionLevel,
 };
 
 use crate::ocr::{EngineId, Options, Pixels, RecogniseError, RecognisedItem, Recogniser};
@@ -349,13 +350,17 @@ impl Vision {
             RecogniseError::Rejected(why)
         })?;
 
-        // `None` here is Vision reporting no results object at all, which is different from
-        // an empty one. Both mean "nothing read", and neither may be turned into a claim
-        // that nothing is there -- that decision belongs to `ocr::adjudicate`, which is why
-        // this returns an empty vec rather than trying to be clever about it.
-        let Some(results) = request.results() else {
-            return Ok(Vec::new());
-        };
+        Self::items(request.results(), pixels, options)
+    }
+
+    fn items(
+        observations: Option<Retained<NSArray<VNRecognizedTextObservation>>>,
+        pixels: Pixels<'_>,
+        options: &Options,
+    ) -> Result<Vec<RecognisedItem>, RecogniseError> {
+        let results = observations.ok_or_else(|| {
+            RecogniseError::Crashed("Vision returned no results collection".into())
+        })?;
 
         let mut items = Vec::with_capacity(results.len());
         for observation in &results {
@@ -441,6 +446,21 @@ mod tests {
         assert!((r[3] - 50.0).abs() < 0.01, "bottom: {r:?}");
     }
 
+    #[test]
+    fn missing_and_empty_observations_have_different_outcomes() {
+        let pixel = Pixels {
+            rgba: &[255; 4],
+            width: 1,
+            height: 1,
+            scale: 1.0,
+        };
+        let options = Options::default();
+        assert!(Vision::items(None, pixel, &options).is_err());
+        assert!(Vision::items(Some(NSArray::new()), pixel, &options)
+            .unwrap()
+            .is_empty());
+    }
+
     /// The list is the system's, so only what every supported system has is
     /// held: English, and tags of the shape the session file will keep.
     #[test]
@@ -452,6 +472,12 @@ mod tests {
             listed.len(),
             started.elapsed()
         );
+        if !VNRecognizeTextRequest::new()
+            .respondsToSelector(sel!(supportedRecognitionLanguagesAndReturnError:))
+        {
+            assert!(listed.is_empty());
+            return;
+        }
         assert!(listed.iter().any(|tag| tag == "en-US"), "{listed:?}");
         for tag in &listed {
             assert!(crate::ocr_layer::is_language_tag(tag), "{tag}");

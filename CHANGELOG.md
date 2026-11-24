@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.11.14] - Unreleased
 
+- An incomplete native OCR read leaves a redaction unverified. Saving a copy rejects
+  conflicting crops on positions that share a page object. Printing a selection keeps the
+  requested number of occurrences, and turns follow the orientation displayed in the viewer.
+- Reopening a document keeps the saved position on its page if the sheet has become shorter.
+  Page editing accepts null optional page labels, label fields, user units and bookmark destinations.
 - Redaction verification isolates the selected OCR control word and measures its print
   size in physical points, including after a page turn.
 - Text comparison checks indirect font subtypes and treats a null Unicode map as absent.

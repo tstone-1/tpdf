@@ -162,7 +162,6 @@ describe("Reading a page's text, and asking for it again", () => {
     vi.clearAllMocks();
   });
 
-  /** A three-page document. */
   it("keeps independent text geometry for two placements of one imported page", async () => {
     const viewer = build();
     const source = { imported: { source: 1, page: 0 } };

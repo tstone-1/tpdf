@@ -237,6 +237,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "the update checks would start the old copy again on an answer that is a finding",
         ),
         (
+            "runners",
+            [sys.executable, str(ROOT / "scripts" / "test_runner_checks.py")],
+            "a remote checkout or platform observation failed its controls",
+        ),
+        (
             # The disk-change window phase asks this side to change the open
             # copy, since the webview cannot. An unanswered request reads as a
             # window that never noticed; that half runs nowhere but a screen.

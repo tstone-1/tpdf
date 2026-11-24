@@ -6116,7 +6116,7 @@
         tabs: () => tabs.all.map((tab) => tab.path),
         setRestoreTabs,
         reopenLastTabs,
-        tabsSettled: () => tabRecorder.settled(),
+        writesSettled: async () => { await Promise.all([places.settled(), tabRecorder.settled(), sessionWrites.settled()]); },
         moveToOtherSide: async () => { await moveTab(openView, otherSide(panes.focused)); },
         recentCommands: () =>
           commands

@@ -71,6 +71,7 @@ from installed_check import (APP_KEY, NAME, PDF_CLASS, UNINSTALL_KEY, WM_CLOSE, 
                              already_installed, bounded, descendants, installed_engine, processes,
                              registry, tool, uninstall, window_titles)
 from live_output import stream_results
+from win_modules import mapped_engines
 from update_log import SECOND_START_S, explain, first_attempt, last_launch, served_old
 
 LATEST = "https://github.com/tstone-1/tpdf/releases/latest/download/latest.json"
@@ -281,10 +282,10 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
         checks.note(ended, "the application that was running ends")
 
         title = f"tpdf v{new}"
-        engine = str(folder / "pdfium").lower()
+        engine = str(folder / "pdfium" / "pdfium.dll")
         again: list[int] = []
         windows: list[tuple[int, str]] = []
-        workers: dict[int, str] = {}
+        workers: dict[int, set[str]] = {}
         named = ""
         deadline = time.monotonic() + (wait * 3 if ended else 5)
         while time.monotonic() < deadline:
@@ -293,9 +294,8 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
             windows = [w for pid in again for w in window_titles(pid) if w[1].startswith(title)]
             for root in again:
                 for pid in descendants(root):
-                    for module in modules_of(pid):
-                        if "pdfium" in module.lower():
-                            workers[pid] = module
+                    if paths := mapped_engines(modules_of(pid)):
+                        workers.setdefault(pid, set()).update(paths)
             # The copy the installer starts may not have the scratch session.
             for where in (session, real_session):
                 if where.is_file() and pdf.name in where.read_text(encoding="utf-8", errors="replace"):
@@ -314,7 +314,7 @@ def update(checks: Checks, folder: Path, pdf: Path, scratch: Path, old: str, new
                     f"named in {named}" if named else f"{pdf}")
         checks.note(installed_engine(workers, engine),
                     "a worker of the new copy has the installed PDFium mapped",
-                    ", ".join(sorted(set(workers.values()))))
+                    ", ".join(sorted(set().union(*workers.values()))))
         said = tool(folder / "tpdf-cli.exe", "--version").stdout.strip()
         checks.note(said.endswith(new), f"the installed tool is version {new}", said)
 

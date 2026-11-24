@@ -2476,7 +2476,7 @@ ROWS += [
         # different rotations.
         "pagetree: set the rotation instead of composing onto the page's own",
         "src/pagetree.rs",
-        "        let composed = (effective_rotation(doc, *id).rem_euclid(360) + extra * 90).rem_euclid(360);",
+        "        let composed = (i64::from(turns_of_degrees(effective_rotation(doc, *id))) + extra) % 4 * 90;",
         "        let composed = (extra * 90).rem_euclid(360);",
         "a_turn_composes_with_the_rotation_the_page_already_had",
     ),

@@ -1711,6 +1711,7 @@ mod tests {
         .expect("build");
         let printed = reload(&out);
         let labels = page_labels(&printed);
+        assert_eq!(labels.len(), 1);
         assert!(
             labels.iter().any(|label| label.contains("page 1")),
             "the page asked for is still there and still draws its text: {labels:?}"

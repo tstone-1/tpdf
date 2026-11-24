@@ -44,11 +44,7 @@ def clear_strays(binary: Path) -> int:
     earlier phases may have been affected by them.
     """
     path = str(Path(binary).resolve())
-    try:
-        pids = _running(path)
-    except Exception as exc:  # noqa: BLE001 - a probe failure must not stop the run
-        print(f"[WARN] could not check for stray instances of {path}: {exc}")
-        return 0
+    pids = _running(path)
 
     if not pids:
         return 0
@@ -61,8 +57,7 @@ def clear_strays(binary: Path) -> int:
     )
     ended = 0
     for pid in pids:
-        if sys.platform == "win32" or _executable(pid) == path:
-            _end(pid)
+        if _end(pid, path):
             ended += 1
     return ended
 
@@ -77,11 +72,12 @@ def _running(path: str) -> list[int]:
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                "Get-CimInstance Win32_Process | "
+                "Get-CimInstance Win32_Process -ErrorAction Stop | "
                 "Where-Object { $_.ExecutablePath -ne $null } | "
                 "ForEach-Object { \"$($_.ProcessId)|$($_.ExecutablePath)\" }",
             ],
             capture_output=True,
+            check=True,
             text=True,
             timeout=60,
         ).stdout
@@ -115,16 +111,40 @@ def _executable(pid: int) -> str | None:
         return None
 
 
-def _end(pid: int) -> None:
-    """Ends one process, ignoring a race with it exiting on its own."""
+def _end(pid: int, path: str) -> bool:
+    """Terminate only the selected executable. A process that already left counts as zero."""
     if sys.platform == "win32":
-        subprocess.run(
-            ["taskkill", "/PID", str(pid), "/F", "/T"],
-            capture_output=True,
-            timeout=30,
-        )
-    else:
-        subprocess.run(["kill", "-9", str(pid)], capture_output=True, timeout=30)
+        # Keep a process handle through the path check and termination so PID reuse
+        # cannot redirect the kill to a replacement process.
+        script = """
+$ErrorActionPreference = 'Stop'
+try { $p = [Diagnostics.Process]::GetProcessById([int]$env:TPDF_STRAY_PID) }
+catch [ArgumentException] { exit 3 }
+try {
+    $null = $p.Handle
+    $image = $p.MainModule.FileName
+    if (!$image) { throw "cannot read the process image path" }
+    if ($image -ne $env:TPDF_STRAY_PATH) { exit 3 }
+    $p.Kill()
+    if (!$p.WaitForExit(10000)) { exit 1 }
+} catch {
+    if ($p.HasExited) { exit 3 }
+    throw
+}
+"""
+        ended = subprocess.run(["powershell", "-NoProfile", "-Command", script], timeout=30,
+                               env={**os.environ, "TPDF_STRAY_PID": str(pid), "TPDF_STRAY_PATH": path})
+        if ended.returncode == 3:
+            return False
+        ended.check_returncode()
+        return True
+    if _executable(pid) != path:
+        return False
+    try:
+        os.kill(pid, 9)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def main(argv: "list[str]") -> int:

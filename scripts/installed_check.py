@@ -85,6 +85,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 from live_output import stream_results
+from win_modules import mapped_engines, windows_path
 
 UNINSTALL_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\tpdf"
 PDF_CLASS = r"HKCU\Software\Classes\.pdf"
@@ -195,10 +196,8 @@ def started(root: int) -> str:
                      for pid in descendants(root)) or "nothing"
 
 
-def installed_engine(workers: dict[int, str], engine: str) -> bool:
-    """Whether some worker maps a PDFium, and every one that does maps the installed one."""
-    return bool(workers) and all(path.lower().removeprefix("\\\\?\\").startswith(engine)
-                                 for path in workers.values())
+def installed_engine(workers: dict[int, set[str]], engine: str) -> bool:
+    return set().union(*workers.values()) == {windows_path(engine)}
 
 
 def window_titles(pid: int) -> list[tuple[int, str]]:
@@ -397,20 +396,19 @@ def check_window(checks: Checks, folder: Path, pdf: Path, scratch: Path, version
     session = scratch / "session.json"
     env = dict(os.environ, TPDF_SESSION_FILE=str(session), TPDF_LOG_FILE=str(scratch / "tpdf.log"))
     app = subprocess.Popen([str(folder / "tpdf.exe"), str(pdf)], env=env, cwd=str(scratch))
-    engine = str(engine_folder / "pdfium").lower()
+    engine = str(engine_folder / "pdfium" / "pdfium.dll")
     title = f"tpdf v{version}"
     watch = Watch(app.pid)
     windows: list[tuple[int, str]] = []
-    workers: dict[int, str] = {}
+    workers: dict[int, set[str]] = {}
     named = False
     deadline = time.monotonic() + wait
     try:
         while time.monotonic() < deadline and app.poll() is None:
             windows = [w for w in window_titles(app.pid) if w[1].startswith(title)]
             for pid in descendants(app.pid):
-                for module in modules_of(pid):
-                    if "pdfium" in module.lower():
-                        workers[pid] = module
+                if paths := mapped_engines(modules_of(pid)):
+                    workers.setdefault(pid, set()).update(paths)
             if session.is_file():
                 named = pdf.name in session.read_text(encoding="utf-8", errors="replace")
             if windows and installed_engine(workers, engine) and named:
@@ -420,7 +418,7 @@ def check_window(checks: Checks, folder: Path, pdf: Path, scratch: Path, version
         checks.note(bool(windows), f"a window titled '{title}' is shown",
                     "" if windows else f"saw {[t for _, t in window_titles(app.pid)]}")
         checks.note(installed_engine(workers, engine), "a worker has the installed PDFium mapped",
-                    ", ".join(sorted(set(workers.values()))) or f"no PDFium in: {started(app.pid)}")
+                    ", ".join(sorted(set().union(*workers.values()))) or f"no PDFium in: {started(app.pid)}")
         checks.note(named, "the session file names the document")
 
         print("--- and closes when asked ---")

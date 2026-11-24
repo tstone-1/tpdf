@@ -93,11 +93,10 @@ def seed_clipboard() -> bool:
     """
     if sys.platform != "darwin":
         return True
-    script = (
-        f'set the clipboard to {{«class PNGf»:(read (POSIX file "{ICON}") as «class PNGf»), '
-        f'«class utf8»:"{PASTED_TEXT}"}}'
-    )
-    done = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    script = """on run argv
+        set the clipboard to {«class PNGf»:(read (POSIX file (item 1 of argv)) as «class PNGf»), «class utf8»:(item 2 of argv)}
+    end run"""
+    done = subprocess.run(["osascript", "-e", script, str(ICON), PASTED_TEXT], capture_output=True, text=True)
     if done.returncode != 0:
         print(f"[FAIL] could not put {ICON.name} on the clipboard: {done.stderr.strip()}")
         return False

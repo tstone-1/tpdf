@@ -137,6 +137,10 @@ rm -f "$run/tree.bundle"
 git cat-file -e "$sha^{{commit}}" 2>/dev/null || stop "this Mac does not have commit $sha"
 [ -d "$tree" ] || git worktree add --quiet --detach "$tree" "$sha" || stop "cannot make the worktree $tree"
 cd "$tree" || stop "cannot enter $tree"
+python3 - "$clone" "$tree" <<'WORKTREE'
+{verify_worktree}
+WORKTREE
+[ "$?" -eq 0 ] || stop "cannot verify the check worktree"
 git checkout --quiet --force --detach "$sha" || stop "cannot check out $sha"
 echo "[OK] $tree is at $(git rev-parse --short HEAD)"
 # An explicit phase can name an external document in the clone. Stage it
@@ -200,9 +204,6 @@ rm -f "$run/done" "$run/checks.log"
 cat >"$run/hide.applescript" <<'HIDE'
 tell application "System Events"
   set found to name of every process whose visible is true
-  repeat with one in found
-    set visible of process (one as text) to false
-  end repeat
   set AppleScript's text item delimiters to linefeed
   return found as text
 end tell
@@ -212,17 +213,24 @@ on run argv
   tell application "System Events" to set visible of process (item 1 of argv) to true
 end run
 SHOW
-hidden=$(osascript "$run/hide.applescript" 2>"$run/hide.log")
-if [ -n "$hidden" ]; then
-  echo "[OK] hidden for the run, and shown again after it: $(print -r -- "$hidden" | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
-elif [ -s "$run/hide.log" ]; then
-  echo "[WARN] the other apps could not be hidden, so a window covering the screen will stop the checks: $(head -1 "$run/hide.log")"
-fi
+hidden=""
 show_again() {{
   [ -n "$hidden" ] || return 0
   print -r -- "$hidden" | while IFS= read -r one; do osascript "$run/show.applescript" "$one" >/dev/null 2>&1; done
   hidden=""
 }}
+trap 'show_again; rm -rf -- "$owned_app"' EXIT
+trap 'exit 2' HUP INT TERM
+# Snapshot before hiding anything, including when the first hide is interrupted.
+hidden=$(osascript "$run/hide.applescript" 2>"$run/hide.log")
+if [ -n "$hidden" ]; then
+  print -r -- "$hidden" | while IFS= read -r one; do
+    osascript -e 'on run argv' -e 'tell application "System Events" to set visible of process (item 1 of argv) to false' -e 'end run' "$one" 2>>"$run/hide.log"
+  done
+fi
+if [ -s "$run/hide.log" ]; then
+  echo "[WARN] could not hide all visible apps: $(head -1 "$run/hide.log")"
+fi
 printf '#!/bin/zsh\nexport PATH=%q\ncd -- %q || exit 2\nrun=%q\napp=%q\n' "$PATH" "$tree" "$run" "$app" >"$run/job.sh"
 cat >>"$run/job.sh" <<'JOB'
 {job} >"$run/checks.log" 2>&1
@@ -348,7 +356,7 @@ def remote(args: argparse.Namespace, sha: str, capture: str, run_id: str) -> str
     phase_input = PurePosixPath(args.phase[1]) if args.phase else None
     borrow = (phase_input is not None and phase_input.parts[:1] == ("testdata",)
               and phase_input.parts[:2] != ("testdata", "private") and ".." not in phase_input.parts)
-    return REMOTE.format(clone=remote_path(args.clone), sha=shlex.quote(sha), marker=f"{MARKER} {run_id}",
+    return REMOTE.format(verify_worktree=(ROOT / "scripts/check_worktree.py").read_text(), clone=remote_path(args.clone), sha=shlex.quote(sha), marker=f"{MARKER} {run_id}",
                          phase_input=shlex.quote(str(phase_input) if borrow else ""),
                          ref=f"refs/tpdf-check/{run_id}", run_id=run_id, capture=capture, wrap=args.wrap, app=APP, job=job, show=show,
                          limit=int(args.timeout), start=start)

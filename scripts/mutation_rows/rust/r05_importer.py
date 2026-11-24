@@ -456,8 +456,8 @@ ROWS += [
         # have pointed at a page.
         "pagetree: drop the outline for a move as well as a deletion",
         "src/pagetree.rs",
-        "        let doomed = doomed_pages(&doc.get_pages(), dropped);",
-        "        drop_outline(doc)?;\n        let doomed = doomed_pages(&doc.get_pages(), dropped);",
+        "        let doomed = doomed_pages(&table, dropped);",
+        "        drop_outline(doc)?;\n        let doomed = doomed_pages(&table, dropped);",
         "materialising_a_move_keeps_the_outline",
     ),
     Mutation(
@@ -466,7 +466,7 @@ ROWS += [
         # job that changed nothing.
         "pagetree: flatten the page tree for a plan that moved nothing",
         "src/pagetree.rs",
-        "    if let Some(order) = reorder_to {\n        reorder_pages(doc, order)?;\n    }",
+        "    if let Some(order) = reorder_to.or(surviving_slots.as_deref()) {\n        reorder_pages(doc, order)?;\n    }",
         "    reorder_pages(doc, reorder_to.unwrap_or(&doc.get_pages().into_values().collect::<Vec<_>>()))?;",
         "materialising_nothing_leaves_the_tree_alone",
     ),
@@ -1892,11 +1892,11 @@ ROWS += [
         "the_same_page_placed_twice_is_two_pages",
     ),
     Mutation(
-        # Drop an imported page's crop: `agreed_crops` keys by baseline page.
+        # Drop an imported placement's crop.
         "save: import: forget an imported page's crop",
         "src/save.rs",
-        "    crops.extend(",
-        "    let _ = (",
+        "        let want = page.crop;",
+        "        let want = if matches!(page.source, PageSource::Imported { .. }) { None } else { page.crop };",
         "a_mark_a_turn_and_a_crop_on_an_imported_page_land_on_it",
     ),
     Mutation(

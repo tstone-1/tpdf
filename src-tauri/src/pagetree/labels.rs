@@ -10,6 +10,13 @@ fn invalid() -> String {
     said!("the document's page labels could not be remapped")
 }
 
+fn entry<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<&'a Object> {
+    dict.get(key)
+        .ok()
+        .map(|v| resolve(doc, v))
+        .filter(|v| !matches!(v, Object::Null))
+}
+
 struct Range<'a> {
     style: Option<&'a [u8]>,
     prefix: Option<(&'a [u8], StringFormat)>,
@@ -24,8 +31,8 @@ fn read<'a>(doc: &'a Document, root: &'a Object) -> Result<BTreeMap<u32, Range<'
     let mut pending = vec![root];
     while let Some(node) = pending.pop() {
         let dict = resolve(doc, node).as_dict().map_err(|_| invalid())?;
-        if let Ok(kids) = dict.get(b"Kids") {
-            if dict.has(b"Nums") {
+        if let Some(kids) = entry(doc, dict, b"Kids") {
+            if entry(doc, dict, b"Nums").is_some() {
                 return Err(invalid());
             }
             for kid in resolve(doc, kids).as_array().map_err(|_| invalid())? {
@@ -47,24 +54,20 @@ fn read<'a>(doc: &'a Document, root: &'a Object) -> Result<BTreeMap<u32, Range<'
             let key = resolve(doc, &pair[0]).as_i64().map_err(|_| invalid())?;
             let key = u32::try_from(key).map_err(|_| invalid())?;
             let rule = resolve(doc, &pair[1]).as_dict().map_err(|_| invalid())?;
-            let style = rule
-                .get(b"S")
-                .ok()
-                .map(|v| resolve(doc, v).as_name())
+            let style = entry(doc, rule, b"S")
+                .map(Object::as_name)
                 .transpose()
                 .map_err(|_| invalid())?;
             if style.is_some_and(|value| !matches!(value, b"D" | b"R" | b"r" | b"A" | b"a")) {
                 return Err(invalid());
             }
-            let prefix = match rule.get(b"P").ok().map(|value| resolve(doc, value)) {
+            let prefix = match entry(doc, rule, b"P") {
                 Some(Object::String(bytes, format)) => Some((bytes.as_slice(), *format)),
                 Some(_) => return Err(invalid()),
                 None => None,
             };
-            let start = rule
-                .get(b"St")
-                .ok()
-                .map(|v| resolve(doc, v).as_i64())
+            let start = entry(doc, rule, b"St")
+                .map(Object::as_i64)
                 .transpose()
                 .map_err(|_| invalid())?
                 .unwrap_or(1);
@@ -94,7 +97,7 @@ pub(crate) fn remap(
     let Some(root) = doc
         .catalog()
         .ok()
-        .and_then(|catalog| catalog.get(b"PageLabels").ok())
+        .and_then(|catalog| entry(doc, catalog, b"PageLabels"))
     else {
         return Ok(());
     };

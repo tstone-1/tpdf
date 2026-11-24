@@ -188,6 +188,7 @@ jobs:
             # the repository root is an untracked file, and the `untracked`
             # gate refuses a run over one (first seen 2026-09-28).
             curl -fsSL -o "$RUNNER_TEMP/qpdf.zip" https://github.com/qpdf/qpdf/releases/download/v12.4.1/qpdf-12.4.1-msvc64.zip
+            (cd "$RUNNER_TEMP" && echo "3cd016cd433ef7232e42f4c13348a49cc14907a3c7278ef4f99120593126f7a6  qpdf.zip" | sha256sum -c -)
             # Python rather than `unzip`, which Git Bash on the Windows image
             # does not promise, and rather than PowerShell's Expand-Archive,
             # which would mean a second shell inside a bash step. The

@@ -984,6 +984,19 @@ describe("Viewer geometry on a mixed-size document", () => {
     dom.restore();
   });
 
+  it("keeps a saved point on its page when that page has become shorter", () => {
+    const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+      doc: 1, pageCount: 8, pages: [{ width_pt: 600, height_pt: 600 }],
+    });
+    try {
+      viewer.restore({ page: 0, top_pt: 1500, zoom: 1, fit: "none", turns: 0 });
+      expect(viewer.position.page).toBe(0);
+      expect(viewer.position.top).toBeGreaterThanOrEqual(599);
+    } finally {
+      viewer.destroy();
+    }
+  });
+
   it("restores an absolute point after the remembered page size arrives", async () => {
     sizes.set(1, { width_pt: 600, height_pt: 1600 });
     held.set(1, () => {});
@@ -1055,6 +1068,23 @@ describe("Viewer geometry on a mixed-size document", () => {
     expect(viewer.position.page).toBe(1);
     expect(viewer.position.top).toBeCloseTo(240, 6);
     viewer.destroy();
+  });
+
+  it.each([600, 800])("clamps a saved point when the learned page is %i points high", async height => {
+    sizes.set(1, { width_pt: 600, height_pt: height });
+    held.set(1, () => {});
+    const viewer = build3();
+    try {
+      viewer.restore({ page: 1, top_pt: 1500, zoom: 1, fit: "none", turns: 0 });
+      await pump();
+      held.get(1)?.();
+      await pump();
+      expect(viewer.knowsPageSize(1)).toBe(true);
+      expect(viewer.position.page).toBe(1);
+      expect(viewer.position.top).toBeLessThan(height + 16);
+    } finally {
+      viewer.destroy();
+    }
   });
 
   it("loads a restored page even when the saved offset exceeds its estimated height", async () => {

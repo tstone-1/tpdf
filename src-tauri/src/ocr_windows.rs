@@ -233,6 +233,19 @@ fn rotated_word(
     bounds
 }
 
+// The WinRT iterator treats a failed read as exhaustion. Keep each error in
+// the result, including a failure after the control word was already read.
+fn indexed<T>(
+    name: &'static str,
+    size: windows::core::Result<u32>,
+    mut get: impl FnMut(u32) -> windows::core::Result<T>,
+) -> Result<impl Iterator<Item = Result<T, RecogniseError>>, RecogniseError> {
+    let count = size.map_err(|e| RecogniseError::Crashed(format!("counting {name}: {e}")))?;
+    Ok((0..count).map(move |index| {
+        get(index).map_err(|e| RecogniseError::Crashed(format!("reading {name}[{index}]: {e}")))
+    }))
+}
+
 impl Recogniser for WindowsOcr {
     fn id(&self) -> EngineId {
         EngineId {
@@ -364,11 +377,12 @@ impl Recogniser for WindowsOcr {
             .map_err(|e| RecogniseError::Crashed(format!("reading lines: {e}")))?;
 
         let mut items = Vec::new();
-        for line in &lines {
-            let words = line
+        for line in indexed("lines", lines.Size(), |i| lines.GetAt(i))? {
+            let words = line?
                 .Words()
                 .map_err(|e| RecogniseError::Crashed(format!("reading words: {e}")))?;
-            for word in &words {
+            for word in indexed("words", words.Size(), |i| words.GetAt(i))? {
+                let word = word?;
                 let text = word
                     .Text()
                     .map_err(|e| RecogniseError::Crashed(format!("reading a word: {e}")))?
@@ -401,6 +415,47 @@ impl Recogniser for WindowsOcr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_word_read_after_the_control_cannot_certify() {
+        use crate::ocr::{adjudicate, Control, Legibility};
+        let control = Control {
+            token: "K7QX2".into(),
+            band: [0.0, 100.0, 200.0, 120.0],
+            size_pt: 6.0,
+        };
+        let engine = EngineId {
+            name: "test",
+            build: String::new(),
+        };
+        for fail in [true, false] {
+            let words = indexed("words", Ok(2), |index| {
+                if index == 1 && fail {
+                    return Err(windows::core::Error::from_hresult(
+                        windows::Win32::Foundation::E_FAIL,
+                    ));
+                }
+                let (text, rect) = if index == 0 {
+                    ("K7QX2", control.band)
+                } else {
+                    ("region", [0.0, 0.0, 60.0, 10.0])
+                };
+                Ok(RecognisedItem {
+                    text: text.into(),
+                    rect,
+                    confidence: None,
+                })
+            })
+            .unwrap()
+            .collect();
+            let verdict = adjudicate(&engine, &control, &words);
+            if fail {
+                assert!(matches!(verdict, Legibility::NotVerified { .. }));
+            } else {
+                assert!(matches!(verdict, Legibility::Legible { .. }));
+            }
+        }
+    }
 
     /// The swap is real, and this is the test the end-to-end one cannot be.
     ///

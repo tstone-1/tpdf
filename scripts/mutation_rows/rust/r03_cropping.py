@@ -1582,15 +1582,15 @@ ROWS += [
         "save: let one page be cropped two ways",
         "src/save.rs",
         "        match chosen.get(&source) {\n            None => {",
-        "        match None::<&([f64; 4], usize)> {\n            None => {",
+        "        match None::<&(Option<[f64; 4]>, usize)> {\n            None => {",
         "one_page_cropped_two_ways_is_refused_and_cropped_one_way_is_not",
     ),
     Mutation(
         # Write a crop box onto every page of every document tpdf saves.
         "save: plan a crop for a page nobody cropped",
         "src/save.rs",
-        "        let Some(want) = page.crop else { continue };",
-        "        let want = page.crop.unwrap_or([0.0, 0.0, 1.0, 1.0]);",
+        "        let want = page.crop;",
+        "        let want = page.crop.or(Some([0.0, 0.0, 1.0, 1.0]));",
         "a_plan_with_no_crop_writes_no_crop_box",
     ),
     Mutation(

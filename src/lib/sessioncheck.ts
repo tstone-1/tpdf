@@ -78,13 +78,14 @@ const TARGET = {
   /** Zero-based, and far enough in that no default lands on it. */
   page: 7,
   /**
-   * A zoom stop, reached by stepping, so the fit ends up following nothing.
+   * A fixed zoom, explicitly selected, so the fit ends up following nothing.
    *
    * Deliberately not `"page"`, which would also differ from the default: under
    * a fit the zoom is recomputed from the window on restore, so the stored
    * number is never read and the round trip of `zoom` itself goes untested.
    */
   fit: "none" as const,
+  zoom: 1.25,
   /** One quarter turn clockwise. */
   turns: 1,
   /** Open, where a fresh window has it closed. */
@@ -144,8 +145,8 @@ export interface SessionCheckHost {
   tabs: () => string[];
   setRestoreTabs: (restore: boolean) => void;
   reopenLastTabs: () => Promise<void>;
-  /** Resolves once the tab list on disk is the one on screen. */
-  tabsSettled: () => Promise<void>;
+  /** Resolves once all queued session writes have finished. */
+  writesSettled: () => Promise<void>;
   /** Moves the tab in front to the other side, as the command does. */
   moveToOtherSide: () => Promise<void>;
 }
@@ -194,8 +195,7 @@ async function leaveTabs(host: SessionCheckHost, argument: string, restore: bool
   check("the tab left in front is the one asked for", host.path() === front, basename(host.path()));
   if (restore) host.setRestoreTabs(true);
   host.flush();
-  await host.tabsSettled();
-  await pause(500);
+  await host.writesSettled();
 }
 
 /** Dispatches a keydown at the viewer's root, the way the window would. */
@@ -256,7 +256,8 @@ async function driveToTarget(host: SessionCheckHost): Promise<void> {
   // makes, and this is the only thing that tests it.
   if (viewer.inverted !== TARGET.invert) windowKey("I", true);
   key(root, "r", true);
-  key(root, "-", true);
+  key(root, "1", true); // Actual Size, then one stop up to 125%.
+  key(root, "+", true);
   viewer.goToPage(TARGET.page);
   await settle(() => viewer.idle);
 }
@@ -284,7 +285,7 @@ function checkRestored(host: SessionCheckHost, expectedPath: string): void {
   );
   check(
     "it opens at a fixed zoom, not fitted",
-    viewer.fitMode === TARGET.fit,
+    viewer.fitMode === TARGET.fit && viewer.currentZoom === TARGET.zoom,
     `${viewer.fitMode} at ${viewer.currentZoom.toFixed(2)}`,
   );
   check(
@@ -404,6 +405,7 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
           driven.position.page === TARGET.page &&
           driven.rotation === TARGET.turns &&
           driven.fitMode === TARGET.fit &&
+          driven.currentZoom === TARGET.zoom &&
           host.sidebarShown() === TARGET.sidebar &&
           driven.inverted === TARGET.invert,
         describe(host),
@@ -416,7 +418,7 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
       // land is the whole point of the phase. The script that drives this reads
       // the file afterwards, so a write that did not finish fails there rather
       // than passing quietly here.
-      await pause(500);
+      await host.writesSettled();
       break;
     }
 
@@ -496,8 +498,8 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
         `right ${basename(front)} (${basename(front)}), reader right, 2 mounted`;
       const shown = await settle(() => sidesShown() === wanted);
       check("the tab in front moved to the right side", shown, `${sidesShown()}; wanted ${wanted}`);
-      await host.tabsSettled();
-      await pause(500);
+      host.flush();
+      await host.writesSettled();
       break;
     }
 

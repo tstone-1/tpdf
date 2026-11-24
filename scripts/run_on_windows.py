@@ -80,14 +80,14 @@ key they press lands in tpdf: on 2026-11-12 one Page Down failed the `open`
 phase with `page 13` (`docs/TRAPS.md`, *A key pressed at a machine running the
 window checks moved the open check's page*). Run there, nobody's screen is
 taken. Every `[FAIL]` line and the summary come back; the whole transcript
-stays in `<clone>-check-run\\window.txt`. `--only` is passed on. The exit is
+stays in `<clone>-check-run\\<run-id>\\window.txt`. `--only` is passed on. The exit is
 `window_checks.py`'s.
 
 THE NVDA CHECK INSTEAD. `--nvda` builds the checks binary and generates the
 fixtures as `--window-checks` does, and runs `nvda_check.py` in the desktop
 session the same way: what NVDA says while tpdf opens a labelled document and
 *Extract pages* asks for a range. The host needs NVDA installed. All of its
-output comes back; the speech log stays in `<clone>-check-run\\nvda` there. The
+output comes back; the speech log stays in `<clone>-check-run\\<run-id>\\nvda` there. The
 exit is `nvda_check.py`'s.
 
 AN INSTALLER INSTEAD. `--installed INSTALLER` sends that installer and runs
@@ -118,13 +118,16 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
+import shlex
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MARKER = "TPDF-REMOTE-EXIT"
+RUN_ID = uuid.uuid4().hex
+MARKER = f"TPDF-REMOTE-EXIT {RUN_ID}"
 # The name `installed_check.py` and `update_check.py` read the version from.
 INSTALLER = re.compile(r"^tpdf_\d+\.\d+\.\d+_x64-setup\.exe$")
-REF = "refs/tpdf-remote/check"
+REF = f"refs/tpdf-remote/{RUN_ID}"
 
 SUITES = {
     "cli": ["cargo test --locked --test cli"],
@@ -202,29 +205,44 @@ def bundle_of(sha: str) -> bytes | None:
         git("update-ref", "-d", REF)
 
 
+def run_directory(clone: str) -> str:
+    return clone.rstrip("\\/") + "-check-run\\" + RUN_ID
+
+
 def checkout(clone: str, sha: str) -> str:
     """The start of every remote run: the commit in the check worktree, with its packages."""
     tree = clone.rstrip("\\/") + "-check"
-    run = clone.rstrip("\\/") + "-check-run"
+    run = run_directory(clone)
     return f"""$ErrorActionPreference = "Continue"
 $clone = '{clone}'; $tree = '{tree}'; $run = '{run}'; $sha = '{sha}'
 function Stop-Run($why, $code) {{ "[FAIL] $why"; "{MARKER} $code"; exit }}
 if (-not (Test-Path "$clone\\.git")) {{ Stop-Run "there is no clone at $clone" 2 }}
-Set-Location $clone
+$runs = Split-Path -Parent $run
+try {{
+  $worktreeLock = [IO.File]::Open((Join-Path $runs "worktree.lock"), "OpenOrCreate", "ReadWrite", "None")
+  Set-Location -LiteralPath $clone -ErrorAction Stop
+}} catch {{ Stop-Run "cannot lock or enter the clone: $_" 2 }}
 git fetch --quiet origin 2>&1 | Out-Null
 if (Test-Path "$run\\tree.bundle") {{ git fetch --quiet "$run\\tree.bundle" "{REF}" 2>&1 | Out-Null }}
 git cat-file -e "$sha^{{commit}}" 2>&1 | Out-Null
 if ($LASTEXITCODE) {{ Stop-Run "the commit $sha did not arrive in the clone" 2 }}
-if (-not (Test-Path $tree)) {{ git worktree add --quiet --detach $tree $sha 2>&1 | Out-Null }}
-Set-Location $tree
+if (-not (Test-Path -LiteralPath $tree)) {{
+  git worktree add --quiet --detach $tree $sha
+  if ($LASTEXITCODE) {{ Stop-Run "cannot create the check worktree" 2 }}
+}}
+@'
+{(ROOT / "scripts/check_worktree.py").read_text()}
+'@ | python - $clone $tree
+if (-not $? -or $LASTEXITCODE) {{ Stop-Run "cannot verify the check worktree" 2 }}
+try {{ Set-Location -LiteralPath $tree -ErrorAction Stop }} catch {{ Stop-Run "cannot enter the check worktree: $_" 2 }}
 git checkout --quiet --force --detach $sha 2>&1 | Out-Null
-if ((git rev-parse HEAD) -ne $sha) {{ Stop-Run "the check worktree is not at $sha" 2 }}
+if ($LASTEXITCODE -or (git rev-parse HEAD) -ne $sha) {{ Stop-Run "the check worktree is not at $sha" 2 }}
 "[OK] $tree is at " + (git rev-parse --short HEAD)
 $lock = (Get-FileHash package-lock.json).Hash
-if (-not (Test-Path node_modules) -or -not (Test-Path "$run\\lock.txt") -or ((Get-Content "$run\\lock.txt") -ne $lock)) {{
+if (-not (Test-Path node_modules) -or -not (Test-Path "$runs\\lock.txt") -or ((Get-Content "$runs\\lock.txt") -ne $lock)) {{
   npm ci --no-audit --no-fund 2>&1 | Out-Null
   if ($LASTEXITCODE) {{ Stop-Run "npm ci failed" 2 }}
-  Set-Content "$run\\lock.txt" $lock
+  Set-Content "$runs\\lock.txt" $lock
 }}
 """
 
@@ -232,15 +250,46 @@ if (-not (Test-Path node_modules) -or -not (Test-Path "$run\\lock.txt") -or ((Ge
 # What CI generates, by the script CI calls. Without it most checks skip, and
 # a suite that skipped everything reads like one that passed; the window checks
 # count a missing fixture as a failure instead.
-FIXTURES = """python -u scripts\\ci_fixtures.py --signed --hostile 2>&1 | Select-Object -Last 1
+FIXTURES = """$manifest = Join-Path $runs "borrowed-fixtures.txt"
+try {
+  if (Test-Path -LiteralPath $manifest) {
+    foreach ($name in (Get-Content -LiteralPath $manifest -Encoding UTF8 -ErrorAction Stop)) {
+      if (!$name -or [IO.Path]::GetFileName($name) -ne $name -or $name -in '.', '..') { throw "invalid fixture name" }
+      # A formerly borrowed file may now be tracked by the incoming revision.
+      git --literal-pathspecs ls-files --error-unmatch -- "testdata/$name" 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 1) {
+        $path = Join-Path testdata $name
+        if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -ErrorAction Stop }
+      } elseif ($LASTEXITCODE) { throw "cannot determine fixture ownership" }
+    }
+  } else {
+    # The older runner recorded no ownership. Preserve ignored top-level files
+    # in this run's directory and regenerate or reborrow the current inputs.
+    $legacy = New-Item -ItemType Directory "$run\\previous-fixtures" -ErrorAction Stop
+    foreach ($file in (Get-ChildItem testdata -File -ErrorAction Stop)) {
+      git check-ignore -q -- $file.FullName
+      if ($LASTEXITCODE -eq 0) { Move-Item -LiteralPath $file.FullName -Destination $legacy.FullName -ErrorAction Stop }
+      elseif ($LASTEXITCODE -ne 1) { throw "cannot identify previous fixtures" }
+    }
+  }
+  Set-Content -LiteralPath $manifest -Value @() -Encoding UTF8 -ErrorAction Stop
+} catch { Stop-Run "cannot prepare supplemental fixtures: $_" 2 }
+python -u scripts/ci_fixtures.py --signed --hostile 2>&1 | Select-Object -Last 1
 if ($LASTEXITCODE) { Stop-Run "the fixtures could not be generated; python -m pip install -r scripts\\fixture-tools.txt installs what that needs" 2 }
 # The fixtures CI cannot generate embed a system font. The clone has them if
 # they were ever made there, and without them the OCR checks skip. Every file
 # and not only the documents: a fixture without its manifest fails a control.
 $borrowed = 0
-Get-ChildItem "$clone\\testdata" -File -ErrorAction SilentlyContinue | ForEach-Object {
-  if (-not (Test-Path "testdata\\$($_.Name)")) { Copy-Item $_.FullName "testdata\\$($_.Name)"; $borrowed++ }
-}
+try {
+  Get-ChildItem "$clone\\testdata" -File -ErrorAction Stop | ForEach-Object {
+    $target = Join-Path testdata $_.Name
+    if (-not (Test-Path -LiteralPath $target)) {
+      Add-Content -LiteralPath $manifest -Value $_.Name -Encoding UTF8 -ErrorAction Stop
+      Copy-Item -LiteralPath $_.FullName -Destination $target -ErrorAction Stop
+      $borrowed++
+    }
+  }
+} catch { Stop-Run "cannot borrow fixtures: $_" 2 }
 "[OK] fixtures: CI's generated here, $borrowed more copied from the clone's testdata"
 """
 
@@ -280,7 +329,7 @@ def pictures_task(clone: str, extra: list[str]) -> str:
     copied back as this one's.
     """
     tree = clone.rstrip("\\/") + "-check"
-    run = clone.rstrip("\\/") + "-check-run"
+    run = run_directory(clone)
     passed = " ".join("'" + text.replace("'", "''") + "'" for text in [*PICTURE_DEFAULTS, *extra])
     return f"""$run = '{run}'
 Remove-Item "$run\\pictures" -Recurse -Force -ErrorAction SilentlyContinue
@@ -307,7 +356,7 @@ def window_checks_task(clone: str, only: list[str]) -> str:
     the reason it stopped is (an `--only` matching nothing said so only there).
     """
     tree = clone.rstrip("\\/") + "-check"
-    run = clone.rstrip("\\/") + "-check-run"
+    run = run_directory(clone)
     passed = " ".join(f"--only '{text.replace(chr(39), chr(39) * 2)}'" for text in only)
     return f"""$run = '{run}'
 Remove-Item "$run\\window.txt","$run\\window-shown.txt" -ErrorAction SilentlyContinue
@@ -335,7 +384,7 @@ NVDA_LIMIT = 300
 def nvda_check_task(clone: str) -> str:
     """The script that runs `nvda_check.py` in the desktop session. Its output is short, so all of it comes back."""
     tree = clone.rstrip("\\/") + "-check"
-    run = clone.rstrip("\\/") + "-check-run"
+    run = run_directory(clone)
     return f"""$run = '{run}'
 Remove-Item "$run\\nvda.txt" -ErrorAction SilentlyContinue
 Set-Location '{tree}'
@@ -360,7 +409,7 @@ def installer_task(clone: str, job: str, installer: str, more: list[str] | None 
     read the version from it. All of the output comes back: about 30 lines.
     """
     tree = clone.rstrip("\\/") + "-check"
-    run = clone.rstrip("\\/") + "-check-run"
+    run = run_directory(clone)
     script, extra = {"installed": ("installed_check.py", " testdata\\text-wide.pdf --word Ledger"),
                      "update": ("update_check.py", " testdata\\text-wide.pdf"),
                      "updateedit": ("update_edit_check.py", "")}[job]
@@ -413,12 +462,13 @@ if ($LASTEXITCODE) {{ Get-Content "$run\\build.txt" -Tail 12; Stop-Run "the chec
 # and reads as this run's.
 function Invoke-InSession($name, $script, $done, $limit) {{
   Remove-Item $done -ErrorAction SilentlyContinue
-  schtasks /Delete /TN $name /F 2>$null | Out-Null
+  $name = "$name-{RUN_ID}"
   schtasks /Create /TN $name /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $script" /SC ONCE /ST 23:59 /IT /F 2>&1 | Out-Null
   if ($LASTEXITCODE) {{ return $false }}
   schtasks /Run /TN $name 2>&1 | Out-Null
   $waited = 0
   while (-not (Test-Path $done) -and $waited -lt $limit) {{ Start-Sleep 1; $waited++ }}
+  if (-not (Test-Path $done)) {{ schtasks /End /TN $name 2>&1 | Out-Null }}
   schtasks /Delete /TN $name /F 2>&1 | Out-Null
   return (Test-Path $done)
 }}
@@ -483,10 +533,10 @@ def run_desktop(host: str, clone: str, sha: str, bundle: bytes | None, job: str,
     """
     if "'" in clone or " " in clone:
         raise SystemExit("[FAIL] --clone with a quote or a space in it cannot be passed to schtasks")
-    run = clone.rstrip("\\/") + "-check-run"
+    run = run_directory(clone)
     made = ssh_command(
         host,
-        f"New-Item -ItemType Directory -Force '{run}' | Out-Null; "
+        f"New-Item -ItemType Directory -Force -ErrorAction Stop '{run}' | Out-Null; "
         f"Remove-Item '{run}\\result.txt','{run}\\tree.bundle' -ErrorAction SilentlyContinue; exit 0",
         120,
     )
@@ -527,16 +577,16 @@ def run_desktop(host: str, clone: str, sha: str, bundle: bytes | None, job: str,
 def copy_pictures(host: str, clone: str, folder: Path) -> bool:
     """The pictures into `folder`. The remote folder was emptied before the run."""
     folder.mkdir(parents=True, exist_ok=True)
-    source = (clone.rstrip("\\/") + "-check-run/pictures").replace("\\", "/")
+    source = (run_directory(clone) + "/pictures").replace("\\", "/")
     got = subprocess.run(["scp", "-q", "-r", *SSH_OPTIONS, f"{host}:{source}/.", str(folder)],
                          stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
     return got.returncode == 0
 
 
 def bash(clone: str, sha: str, suite: str, bundle: bytes | None) -> str:
-    run = wsl_path(clone) + "-check-run"
-    windows_run = clone.rstrip("\\/") + "-check-run"
-    lines = [f'mkdir -p "{run}" && cd "{run}" || exit 1', "rm -f result.txt tree.bundle"]
+    run = wsl_path(run_directory(clone))
+    windows_run = run_directory(clone)
+    lines = [f'mkdir -p {shlex.quote(run)} && cd {shlex.quote(run)} || exit 1', "rm -f result.txt tree.bundle"]
     if bundle is not None:
         lines += [
             "base64 -d > tree.bundle <<'TPDF_PAYLOAD'",
@@ -598,7 +648,7 @@ def run_under_bash(host: str, clone: str, sha: str, suite: str, bundle: bytes | 
     ran = ssh(host, bash(clone, sha, suite, bundle), timeout)
     if ran.returncode != 0:
         return ran
-    return ssh(host, f'cat "{wsl_path(clone)}-check-run/result.txt"\n', 120).stdout
+    return ssh(host, f'cat {shlex.quote(wsl_path(run_directory(clone)) + "/result.txt")}\n', 120).stdout
 
 
 def run_under_powershell(host: str, clone: str, sha: str, suite: str, bundle: bytes | None,
@@ -611,10 +661,10 @@ def run_under_powershell(host: str, clone: str, sha: str, suite: str, bundle: by
     """
     if "'" in clone:
         raise SystemExit("[FAIL] --clone with a single quote in it cannot be quoted for PowerShell")
-    run = clone.rstrip("\\/") + "-check-run"
+    run = run_directory(clone)
     made = ssh_command(
         host,
-        f"New-Item -ItemType Directory -Force '{run}' | Out-Null; "
+        f"New-Item -ItemType Directory -Force -ErrorAction Stop '{run}' | Out-Null; "
         f"Remove-Item '{run}\\result.txt','{run}\\tree.bundle' -ErrorAction SilentlyContinue; exit 0",
         120,
     )
@@ -708,11 +758,15 @@ def main() -> int:
     if args.only and not args.window_checks:
         print("[FAIL] --only is for --window-checks")
         return 2
+    if args.clone and any(ch in args.clone for ch in "'\u2018\u2019\u201a\u201b\r\n"):
+        print("[FAIL] the clone path cannot contain a quote or newline")
+        return 2
     if not args.host or not args.clone:
         print("[FAIL] name the machine: --host HOST --clone 'C:\\Users\\me\\tpdf', "
               "or TPDF_WINDOWS_HOST and TPDF_WINDOWS_CLONE")
         return 2
 
+    print(f"[INFO] remote run directory: {run_directory(args.clone)}")
     sha, what = tree_to_send(args.rev)
     bundle = bundle_of(sha)
     sent = "already on origin/main" if bundle is None else f"{len(bundle):,} bytes of commits sent"
@@ -798,7 +852,7 @@ def main() -> int:
             print(f"[OK] window_checks.py passed on {args.host}")
         elif code == 1:
             print(f"[FAIL] window_checks.py failed on {args.host}; "
-                  "the whole transcript is in <clone>-check-run\\window.txt there")
+                  f"the whole transcript is in {run_directory(args.clone)}\\window.txt there")
         else:
             print(f"[FAIL] the run on {args.host} did not finish, so no window was checked")
         return code
@@ -806,7 +860,7 @@ def main() -> int:
         print(f"[OK] the {args.suite} suite passes on {args.host}")
     elif code == 1:
         print(f"[FAIL] the {args.suite} suite fails on {args.host}; "
-              "the full output is in <clone>-check-run\\cargo.txt there")
+              f"the full output is in {run_directory(args.clone)}\\cargo.txt there")
     else:
         print(f"[FAIL] the run on {args.host} did not finish, so nothing was tested")
     return code

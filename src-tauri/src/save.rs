@@ -4299,21 +4299,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // win for both positions. `agreed_turns` refuses the same shape for the same
     // reason, and this reuses neither because the values it compares are four
     // numbers rather than one.
-    let crops = agreed_crops(plan)?;
-    let mut crops: Vec<(lopdf::ObjectId, [f64; 4])> = crops
-        .into_iter()
-        .filter_map(|(source, box_pt)| Some((*pages.get(source as usize)?, box_pt)))
-        .collect();
-    // An imported page's crop, by the object it became. `agreed_crops` keys by
-    // baseline page because two positions can be one object of the file; an
-    // imported position never shares one --- `import_pages` gives each its own
-    // --- so there is nothing to agree and the box goes straight on.
-    crops.extend(
-        plan.pages
-            .iter()
-            .zip(&imported)
-            .filter_map(|(page, id)| Some(((*id)?, page.crop?))),
-    );
+    let crops = agreed_crops(plan, &order)?;
     crop_pages(&mut doc, &crops, &written)?;
 
     // **Last, and everything above it is a reason this can be last rather than
@@ -5263,38 +5249,24 @@ fn import_pages(
     Ok(answer)
 }
 
-/// The crop each kept source page is to get, refusing two that disagree.
-///
-/// One entry per **source** page rather than per plan position, because a page
-/// object can appear in the order twice --- nothing in tpdf duplicates a page
-/// today, and `docmodel` states what would have to be proved first, but the
-/// writer must not be the thing that discovers it. Two positions naming one
-/// object with different boxes have no output that satisfies both, so this
-/// refuses rather than letting the later write win for both.
-///
-/// The same shape as `pagetree::agreed_turns` and deliberately not sharing its
-/// code: that one compares a `u8` and this compares four `f64`, and folding them
-/// together would mean a generic whose only two instantiations are these.
-fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
-    let mut order: Vec<u32> = Vec::new();
-    let mut chosen: std::collections::HashMap<u32, ([f64; 4], usize)> =
-        std::collections::HashMap::new();
-    for (at, page) in plan.pages.iter().enumerate() {
-        let Some(want) = page.crop else { continue };
-        // **Unreachable, and the arm has to exist**: `Command::Crop` refuses a
-        // box on a page tpdf made, so no plan carries one --- see
-        // `Refusal::CropOnMadePage`. The match must be exhaustive, so this is where
-        // the model's refusal is written down on the writer's side, and it is
-        // also the right answer if that refusal is ever lifted: this function
-        // exists for one hazard, two positions that are one *object*, and a made
-        // page gets an object of its own for every position it occupies.
-        let PageSource::Baseline(source) = page.source else {
-            continue;
-        };
+/// Placements sharing an object must request the same crop, including no crop.
+fn agreed_crops(
+    plan: &Plan,
+    objects: &[lopdf::ObjectId],
+) -> Result<Vec<(lopdf::ObjectId, [f64; 4])>, String> {
+    if plan.pages.iter().all(|page| page.crop.is_none()) {
+        return Ok(Vec::new());
+    }
+    let mut crops = Vec::new();
+    let mut chosen = std::collections::HashMap::new();
+    for (at, (page, &source)) in plan.pages.iter().zip(objects).enumerate() {
+        let want = page.crop;
         match chosen.get(&source) {
             None => {
                 chosen.insert(source, (want, at));
-                order.push(source);
+                if let Some(area) = want {
+                    crops.push((source, area));
+                }
             }
             Some(&(first, first_at)) if first != want => {
                 return Err(said!(
@@ -5304,7 +5276,7 @@ fn agreed_crops(plan: &Plan) -> Result<Vec<(u32, [f64; 4])>, String> {
             Some(_) => {}
         }
     }
-    Ok(order.into_iter().map(|s| (s, chosen[&s].0)).collect())
+    Ok(crops)
 }
 
 /// The file name [`stage`] tries on its `attempt`-th try, for a destination

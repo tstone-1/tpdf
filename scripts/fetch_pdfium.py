@@ -198,7 +198,9 @@ def inherits_permissions(dest: Path) -> bool:
     if os.name != "nt":
         return True
     listed = subprocess.run(["icacls", str(dest)], capture_output=True, text=True, check=False)
-    return listed.returncode != 0 or "(I)" in listed.stdout
+    if listed.returncode:
+        sys.exit(f"[FAIL] could not inspect permissions on {dest}: {listed.stderr.strip()}")
+    return "(I)" in listed.stdout
 
 
 def download(url: str, target: Path) -> str:
@@ -255,7 +257,9 @@ def install(key: str, dest: Path, force: bool) -> int:
         # A tree installed before 0be47c6f is complete and unreadable by a
         # worker, and nothing else would ever replace it.
         if not inherits_permissions(dest):
-            subprocess.run(["icacls", str(dest), "/reset", "/T", "/Q"], capture_output=True, check=False)
+            reset = subprocess.run(["icacls", str(dest), "/reset", "/T", "/Q"], capture_output=True, text=True)
+            if reset.returncode:
+                sys.exit(f"[FAIL] could not reset permissions on {dest}: {reset.stderr.strip()}")
             if not inherits_permissions(dest):
                 sys.exit(f"[FAIL] {dest} takes no permission from its folder, and resetting them failed;"
                          " a worker cannot load the library from it. Run with --force.")

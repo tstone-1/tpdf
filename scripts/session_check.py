@@ -83,7 +83,7 @@ PRECONDITION = "the document is long enough to test page restore"
 
 # The names `check_recorded_file` prints, in order, shared with the skip path so
 # the two cannot drift apart.
-RECORDED_FIELDS = ("path", "page", "turns", "fit", "sidebar")
+RECORDED_FIELDS = ("path", "page", "turns", "fit", "zoom", "sidebar")
 
 
 def launch(binary: str, mode: str, session_file: Path, timeout: float) -> tuple[int, str]:
@@ -122,6 +122,7 @@ def check_recorded_file(session_file: Path, pdf: str) -> bool:
         "page": EXPECTED_PAGE,
         "turns": EXPECTED_TURNS,
         "fit": "none",
+        "zoom": 1.25,
         "sidebar": True,
     }
     ok = True

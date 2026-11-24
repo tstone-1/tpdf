@@ -21,6 +21,7 @@ Usable on its own:
 from __future__ import annotations
 
 import ctypes
+import ntpath
 from ctypes import wintypes
 
 TH32CS_SNAPMODULE = 0x00000008
@@ -97,6 +98,17 @@ def modules_of(pid: int) -> list[str]:
     return found
 
 
+def windows_path(path: str) -> str:
+    path = ntpath.normcase(path)
+    if path.startswith("\\\\?\\unc\\"):
+        path = "\\\\" + path[8:]
+    return ntpath.normpath(path.removeprefix("\\\\?\\"))
+
+
+def mapped_engines(modules: list[str]) -> set[str]:
+    return {windows_path(module) for module in modules if ntpath.basename(module).lower() == "pdfium.dll"}
+
+
 def maps_parser(pid: int) -> tuple[bool, int]:
     """(is the PDF parser mapped, how many modules were seen at all).
 
@@ -106,7 +118,7 @@ def maps_parser(pid: int) -> tuple[bool, int]:
     look like a fixed one.
     """
     loaded = modules_of(pid)
-    return any("pdfium" in m.lower() for m in loaded), len(loaded)
+    return bool(mapped_engines(loaded)), len(loaded)
 
 
 if __name__ == "__main__":

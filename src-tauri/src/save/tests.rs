@@ -1421,16 +1421,18 @@ fn a_crop_reaches_the_file_it_was_planned_for() {
 
 /// Two positions naming one page with different crops have no output.
 ///
-/// Nothing duplicates a page today, so this cannot arise from the model ---
-/// it is the writer refusing to be the thing that discovers it, the same
-/// shape `agreed_turns` refuses.
 #[test]
 fn one_page_cropped_two_ways_is_refused_and_cropped_one_way_is_not() {
     let mut plan = plan_of(&[0, 0]);
-    plan.pages[1].source = PageSource::Baseline(0);
+    let doc = Document::load_mem(&shared_page_document()).expect("shared page");
+    let ids = ordered_pages(&doc);
     plan.pages[0].crop = Some([0.0, 0.0, 100.0, 100.0]);
+    assert!(
+        agreed_crops(&plan, &ids).is_err(),
+        "the other placement is untouched"
+    );
     plan.pages[1].crop = Some([0.0, 0.0, 200.0, 200.0]);
-    let why = agreed_crops(&plan).expect_err("two crops for one page");
+    let why = agreed_crops(&plan, &ids).expect_err("two crops for one page");
     assert!(why.contains("cannot be cropped"), "{why}");
 
     // The control: the same document with the same crop twice is one entry
@@ -1438,8 +1440,8 @@ fn one_page_cropped_two_ways_is_refused_and_cropped_one_way_is_not() {
     // repetition.
     plan.pages[1].crop = plan.pages[0].crop;
     assert_eq!(
-        agreed_crops(&plan).expect("one crop, twice"),
-        vec![(0, [0.0, 0.0, 100.0, 100.0])]
+        agreed_crops(&plan, &ids).expect("one crop, twice"),
+        vec![(ids[0], [0.0, 0.0, 100.0, 100.0])]
     );
 }
 
@@ -1450,8 +1452,15 @@ fn a_plan_with_no_crop_writes_no_crop_box() {
     // unconditionally would pass the two tests above and write a `/CropBox`
     // onto every page of every document tpdf saves.
     assert_eq!(
-        agreed_crops(&plan_of(&[0, 0, 0])).expect("no crops"),
+        agreed_crops(&plan_of(&[0, 0, 0]), &[(1, 0), (2, 0), (3, 0)]).expect("no crops"),
         Vec::new()
+    );
+    let mut plan = plan_of(&[0, 0]);
+    let crop = [10.0, 20.0, 110.0, 120.0];
+    plan.pages[0].crop = Some(crop);
+    assert_eq!(
+        agreed_crops(&plan, &[(1, 0), (2, 0)]).unwrap(),
+        vec![((1, 0), crop)]
     );
 }
 

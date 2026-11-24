@@ -230,6 +230,7 @@ pub(crate) fn user_unit(doc: &Document, page: ObjectId) -> Option<f64> {
     };
     let (_, value) = doc.dereference(value).ok()?;
     let unit = match value {
+        Object::Null => 1.0,
         Object::Integer(n) => *n as f64,
         Object::Real(n) => f64::from(*n),
         _ => return None,
@@ -578,7 +579,7 @@ pub fn apply_turns(doc: &mut Document, turns: &[(ObjectId, u8)]) -> Result<(), S
         if extra == 0 {
             continue;
         }
-        let composed = (effective_rotation(doc, *id).rem_euclid(360) + extra * 90).rem_euclid(360);
+        let composed = (i64::from(turns_of_degrees(effective_rotation(doc, *id))) + extra) % 4 * 90;
         doc.get_object_mut(*id)
             .and_then(Object::as_dict_mut)
             .map_err(|e| said!("page {page:?} is not a dictionary: {e}", page = id))?
@@ -1093,17 +1094,34 @@ pub fn materialise(
     if !dropped.is_empty() || reorder_to.is_some() {
         labels::remap(doc, source_pages)?;
     }
+    let mut surviving_slots = None;
     if !dropped.is_empty()
         || reorder_to.is_some_and(|order| !order.starts_with(&ordered_pages(doc)))
     {
         // Before the pages go: `drop_pages` takes the page out of every
         // destination array, and the repair reads those arrays.
-        let doomed = doomed_pages(&doc.get_pages(), dropped);
+        let table = doc.get_pages();
+        let doomed = doomed_pages(&table, dropped);
+        if reorder_to.is_none()
+            && dropped
+                .iter()
+                .filter_map(|n| table.get(n))
+                .any(|id| !doomed.contains(id))
+        {
+            let removed: HashSet<_> = dropped.iter().collect();
+            surviving_slots = Some(
+                table
+                    .iter()
+                    .filter(|(n, _)| !removed.contains(n))
+                    .map(|(_, id)| *id)
+                    .collect::<Vec<_>>(),
+            );
+        }
         crate::links::bind_numeric_links(doc, &doomed)?;
         crate::outline_repair::keep_for(doc, &doomed)?;
         drop_pages(doc, dropped)?;
     }
-    if let Some(order) = reorder_to {
+    if let Some(order) = reorder_to.or(surviving_slots.as_deref()) {
         reorder_pages(doc, order)?;
     }
     Ok(())
@@ -1972,6 +1990,69 @@ mod tests {
             "one object under two page numbers is expressible in a `/Kids` array \
              and stays expressible after a reorder"
         );
+    }
+
+    #[test]
+    fn a_turn_uses_the_same_starting_orientation_as_the_reader() {
+        for height in [612, 792] {
+            let (mut doc, a, _) = two_pages(Some(-45));
+            doc.get_dictionary_mut(a).unwrap().set(
+                "MediaBox",
+                vec![0.into(), 0.into(), 612.into(), height.into()],
+            );
+            apply_turns(&mut doc, &[(a, 1)]).unwrap();
+            assert_eq!(effective_rotation(&doc, a), 90);
+            let shown = displayed_page(&doc, a);
+            assert_eq!((shown.width, shown.height), (height as f32, 612.0));
+        }
+    }
+
+    #[test]
+    fn a_null_user_unit_uses_default_points() {
+        let (mut doc, page, _) = two_pages(None);
+        let indirect = doc.add_object(Object::Null);
+        assert_eq!(user_unit(&doc, page), Some(1.0));
+        for value in [Object::Null, Object::Reference(indirect)] {
+            doc.get_dictionary_mut(page).unwrap().set("UserUnit", value);
+            assert_eq!(user_unit(&doc, page), Some(1.0));
+        }
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("UserUnit", "wrong");
+        assert_eq!(user_unit(&doc, page), None);
+    }
+
+    #[test]
+    fn null_page_labels_and_optional_rule_entries_are_omitted() {
+        let (mut doc, _) = three_pages_with_outline();
+        let indirect = doc.add_object(Object::Null);
+        labels::remap(&mut doc, [Some(1)]).unwrap();
+        for null in [Object::Null, Object::Reference(indirect)] {
+            doc.catalog_mut().unwrap().set("PageLabels", null.clone());
+            labels::remap(&mut doc, [Some(1)]).unwrap();
+            let rule =
+                dictionary! { "P" => null.clone(), "S" => null.clone(), "St" => null.clone() };
+            doc.catalog_mut().unwrap().set(
+                "PageLabels",
+                dictionary! {
+                    "Kids" => null, "Nums" => vec![0.into(), Object::Dictionary(rule)]
+                },
+            );
+            labels::remap(&mut doc, [Some(1)]).unwrap();
+            let nums = doc
+                .catalog()
+                .unwrap()
+                .get(b"PageLabels")
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"Nums")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert_eq!(nums.len(), 2);
+            assert!(nums[1].as_dict().unwrap().is_empty());
+        }
     }
 
     #[test]

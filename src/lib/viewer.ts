@@ -2746,7 +2746,11 @@ export class Viewer {
     const visible = this.scroller.visiblePages();
     // An absolute offset can lie beyond the estimated page height, so the
     // remembered page may not be in the provisional viewport at all.
-    if (restored && !visible.includes(restored.page)) visible.push(restored.page);
+    if (restored) {
+      for (const page of this.scroller.rowOf(restored.page)) {
+        if (!visible.includes(page)) visible.push(page);
+      }
+    }
     for (const page of visible) {
       if (this.scroller.knowsPageSize(page)) continue;
       const text = this.textOn(page);
@@ -2765,7 +2769,9 @@ export class Viewer {
         size: displayedSize(shown, -this.scroller.effectiveTurns(page)),
       });
     }
-    if (!this.scroller.notePageSizes(learnt)) {
+    const layoutChanged = this.scroller.notePageSizes(learnt);
+    // Learning the exact estimate also settles a pending row and can clamp its offset.
+    if (!layoutChanged && !(restored && learnt.length && this.knowsRow(anchor))) {
       if (restored) this.rememberRestoredPoint(restored.page, restored.top);
       return;
     }
@@ -2778,13 +2784,13 @@ export class Viewer {
     // A restored point is absolute, unlike an ordinary provisional scroll.
     // Put it against the corrected layout before asking which page fills the
     // viewport: its top edge may still belong to the preceding page's gap.
-    if (restored) this.scrollTop = this.scroller.pageTopOf(anchor) + restored.top * this.zoom;
+    if (restored) this.scrollTop = this.scroller.pageTopOf(anchor) + this.restoredOffset(anchor, restored.top);
     this.applyFit(false, restored ? this.currentPage() : readingPage);
     this.scrollTop = Math.max(
       0,
       Math.min(
         this.scroller.pageTopOf(anchor) +
-          (restored ? restored.top * this.zoom : through * this.scroller.pagePitchOf(anchor)),
+          (restored ? this.restoredOffset(anchor, restored.top) : through * this.scroller.pagePitchOf(anchor)),
         this.scroller.maxScroll,
       ),
     );
@@ -3706,16 +3712,28 @@ export class Viewer {
     // to the previous page; fitting that page would choose the wrong sheet.
     // Then recompute the fit for this window and replay the absolute point.
     this.setZoom(place.zoom);
-    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);
+    this.scrollTo(this.scroller.pageTopOf(page) + this.restoredOffset(page, offset));
     this.applyFit();
-    this.scrollTo(this.scroller.pageTopOf(page) + offset * this.zoom);
+    this.scrollTo(this.scroller.pageTopOf(page) + this.restoredOffset(page, offset));
     this.rememberRestoredPoint(page, offset);
-    if (this.restoredPoint) this.requestText(page);
+    if (this.restoredPoint) {
+      for (const member of this.scroller.rowOf(page)) this.requestText(member);
+    }
     this.wake();
   }
 
+  private knowsRow(page: number): boolean {
+    return this.scroller.rowOf(page).every(member => this.scroller.knowsPageSize(member));
+  }
+
+  private restoredOffset(page: number, top: number): number {
+    const offset = top * this.zoom;
+    if (!this.knowsRow(page)) return offset;
+    return Math.min(offset, Math.max(0, this.scroller.pagePitchOf(page) - 1));
+  }
+
   private rememberRestoredPoint(page: number, top: number): void {
-    this.restoredPoint = this.scroller.knowsPageSize(page) ? null : {
+    this.restoredPoint = this.knowsRow(page) ? null : {
       page, top, scroll: this.scrollTop, zoom: this.zoom, fit: this.fit,
       turns: this.scroller.effectiveTurns(page), pages: this.pages,
     };

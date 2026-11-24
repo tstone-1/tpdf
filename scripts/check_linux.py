@@ -93,7 +93,7 @@ def main() -> int:
 
     script = f"""set -e
 source "$HOME/.cargo/env" 2>/dev/null || true
-origin='{wsl_path(REPO)}'
+origin="$1"
 if [ ! -d {CLONE}/.git ]; then git clone -q "$origin" {CLONE}; fi
 cd {CLONE}
 git fetch -q "$origin" '{REF}'
@@ -107,7 +107,7 @@ if [ ! -d dist ]; then npm ci --silent && npm run build --silent; fi
 python3 scripts/gates.py --gate clippy
 """
     done = subprocess.run(
-        ["wsl.exe", "-d", args.distro, "-e", "bash", "-s"],
+        ["wsl.exe", "-d", args.distro, "-e", "bash", "-s", "--", wsl_path(REPO)],
         input=script.encode(),
         check=False,
     )

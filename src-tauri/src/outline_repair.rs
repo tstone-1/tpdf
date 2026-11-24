@@ -326,6 +326,8 @@ fn aim_of(doc: &Document, names: &links::Destinations<'_>, item: &Dictionary) ->
         };
     }
     item.get(b"Dest")
+        .ok()
+        .filter(|v| !matches!(resolve(doc, v), Object::Null))
         .map_or(Aim::Nothing, |dest| destination(doc, names, dest))
 }
 
@@ -822,6 +824,23 @@ mod tests {
             let names = links::Destinations::of(&reopened);
             assert!(matches!(aim_of(&reopened, &names, item), Aim::Page(id) if id == page));
         }
+    }
+
+    #[test]
+    fn empty_group_headings_with_null_destinations_go_with_their_children() {
+        let (mut doc, kids) = pages(2);
+        let indirect = doc.add_object(Object::Null);
+        let entries = [
+            Dictionary::new(),
+            dictionary! {"Dest" => Object::Null},
+            dictionary! {"Dest" => indirect},
+        ]
+        .into_iter()
+        .map(|keys| entry("group", keys, vec![entry("removed", to(kids[0]), vec![])]))
+        .collect();
+        outline(&mut doc, entries);
+        keep_for(&mut doc, &doomed(&[kids[0]])).unwrap();
+        assert!(shape(&doc).is_empty());
     }
 
     /// Moving up works through more than one level, and a heading that leads
