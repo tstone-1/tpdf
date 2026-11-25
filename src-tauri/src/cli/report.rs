@@ -534,7 +534,7 @@ pub struct Signature {
     /// The field's fully qualified name.
     pub field: String,
     /// Whom the signing certificate names (its common name, or its whole
-    /// name), or empty when no certificate could be read.
+    /// name), or empty when the signing certificate could not be identified.
     pub signer: String,
     /// SHA-256 of the certificate identified by the CMS signer identifier.
     pub signer_sha256: Option<String>,

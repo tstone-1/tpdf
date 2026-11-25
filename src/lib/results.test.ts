@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 import { placeholder } from "./panelrow";
-import { leadOf, MAX_RESULT_ROWS, Results, statusFor } from "./results";
+import { leadOf, MAX_RESULT_ROWS, Results, searchNotice, statusFor } from "./results";
 import type { Match } from "./search";
 
 /** A hit on `page`, spelling its own snippet so a row can be identified. */
@@ -222,6 +222,23 @@ describe("Results", () => {
     if (notice) notice.textContent = "clobbered";
     panel.update([match(0, "cat")], -1, "cat", true);
     expect(notice?.textContent).toBe("clobbered");
+  });
+
+  it("shows why the query could not run, and clears that notice on an ordinary miss", () => {
+    const scan = { running: false, unread: 0, unsearchablePages: 0, total: 0, query: "query" };
+    for (const [problem, textless, expected] of [
+      ["Invalid pattern", false, "Invalid pattern"],
+      ["", true, "no text: scanned pages"],
+      ["", false, "No matches."],
+    ] as const) {
+      const notice = searchNotice({ ...scan, problem, textless });
+      panel.update([], -1, "query", false, 0, 0, notice);
+      expect(panel.status).toBe(expected);
+    }
+    const failed = searchNotice({ ...scan, problem: "", textless: true, unread: 1 });
+    expect(failed).toContain("reading them failed");
+    panel.update([], -1, "", false, 0, 0, "Invalid pattern");
+    expect(panel.status).toBe("Type in the find field to search.");
   });
 
   it("draws an empty pane's message where the rows would be, not above them", () => {

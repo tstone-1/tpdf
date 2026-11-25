@@ -119,7 +119,7 @@ fn a_picture_is_shown_as_large_as_the_largest_matrix_it_is_drawn_under() {
         Some(&Shown {
             width: 300.0,
             height: 200.0,
-            page: 0
+            placements: vec![(0, 300.0)]
         }),
         "the widest and the tallest of three; the widest is turned, and read by its side"
     );
@@ -128,7 +128,7 @@ fn a_picture_is_shown_as_large_as_the_largest_matrix_it_is_drawn_under() {
         Some(&Shown {
             width: 20.0,
             height: 30.0,
-            page: 0
+            placements: vec![(0, 20.0)]
         }),
         "the block's matrix and the page's, multiplied"
     );

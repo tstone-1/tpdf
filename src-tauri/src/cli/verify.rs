@@ -91,7 +91,7 @@ impl Subcommand for Verify {
 #[must_use]
 pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
     let integrity = signature.integrity.clone().unwrap_or_default();
-    let certificate = signature.certificate.as_ref();
+    let certificate = signature.certificate.as_ref().filter(|c| c.matched_signer);
     let (from, until) = certificate.map_or((String::new(), String::new()), |c| {
         (c.from.clone(), c.until.clone())
     });
@@ -119,9 +119,7 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
     report::Signature {
         document_timestamp,
         field: signature.field.clone(),
-        signer_sha256: certificate
-            .filter(|c| c.matched_signer)
-            .map(|c| c.sha256.clone()),
+        signer_sha256: certificate.map(|c| c.sha256.clone()),
         signer: certificate.map_or_else(String::new, |c| name(&c.subject_cn, &c.subject)),
         issuer: certificate.map_or_else(String::new, |c| name(&c.issuer_cn, &c.issuer)),
         claimed_time: signature.when.clone(),
@@ -877,7 +875,7 @@ fn signature_rows(signature: &report::Signature) -> Vec<String> {
         }
     };
     let who = if signature.signer.is_empty() {
-        "a certificate that could not be read".to_string()
+        "signing certificate could not be identified".to_string()
     } else {
         format!(
             "certificate issued to {} by {}",

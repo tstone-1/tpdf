@@ -14,7 +14,8 @@
  */
 
 import { pad } from "./benchtable";
-import { call } from "./ipc";
+import { call, isOpenRefusal } from "./ipc";
+import { spokenError } from "./said";
 import { fetchRequiredTile, type TileFormat } from "./tiles";
 
 interface Variant {
@@ -44,6 +45,14 @@ const VARIANTS: Variant[] = [
 ];
 
 const ROUNDS = 6;
+
+function endToEnd(row: Row): number {
+  return row.transferMs + row.decodeMs;
+}
+
+function residual(row: Row): number {
+  return endToEnd(row) - row.renderMs - row.encodeMs;
+}
 
 function median(values: number[]): number {
   if (values.length === 0) return NaN;
@@ -116,11 +125,12 @@ export async function runAutobenchIfRequested(): Promise<boolean> {
         pad("variant", 11),
         pad("render", 9, true),
         pad("encode", 9, true),
-        pad("transfer", 10, true),
+        pad("fetch", 9, true),
         pad("decode", 9, true),
-        pad("deliver", 9, true),
-        pad("KB", 9, true),
-        pad("% of render", 13, true),
+        pad("end to end", 10, true),
+        pad("residual", 9, true),
+        pad("KiB", 9, true),
+        pad("resid/render", 13, true),
       ].join(" "),
     );
     log("-".repeat(84));
@@ -131,30 +141,32 @@ export async function runAutobenchIfRequested(): Promise<boolean> {
       const encode = median(mine.map((r) => r.encodeMs));
       const transfer = median(mine.map((r) => r.transferMs));
       const decode = median(mine.map((r) => r.decodeMs));
-      // Delivery is everything the transport costs on top of producing pixels.
-      const deliver = transfer + decode;
+      // Subtract server time within each request before aggregating.
+      // Residual includes queuing, transport and client decode.
+      const ratios = mine.filter((r) => r.renderMs > 0).map((r) => 100 * residual(r) / r.renderMs);
 
       log(
         [
           pad(variant.label, 11),
           pad(render.toFixed(2), 9, true),
           pad(encode.toFixed(2), 9, true),
-          pad(transfer.toFixed(2), 10, true),
+          pad(transfer.toFixed(2), 9, true),
           pad(decode.toFixed(2), 9, true),
-          pad(deliver.toFixed(2), 9, true),
+          pad(median(mine.map(endToEnd)).toFixed(2), 10, true),
+          pad(median(mine.map(residual)).toFixed(2), 9, true),
           pad((median(mine.map((r) => r.bytes)) / 1024).toFixed(0), 9, true),
-          pad(`${((deliver / render) * 100).toFixed(0)}%`, 13, true),
+          pad(ratios.length ? `${median(ratios).toFixed(0)}%` : "n/a", 13, true),
         ].join(" "),
       );
     }
 
     log();
-    log("per-round delivery ms (transfer + decode), to expose warm-up and drift:");
+    log("per-round end-to-end ms (fetch + decode), to expose warm-up and drift:");
     for (const variant of VARIANTS) {
       const series = rows
         .filter((r) => r.label === variant.label)
         .sort((a, b) => a.round - b.round)
-        .map((r) => (r.transferMs + r.decodeMs).toFixed(2))
+        .map((r) => endToEnd(r).toFixed(2))
         .join("  ");
       log(`  ${pad(variant.label, 11)} ${series}`);
     }
@@ -163,7 +175,7 @@ export async function runAutobenchIfRequested(): Promise<boolean> {
     await call("spike_exit", { code: 0 });
   } catch (error) {
     await call("spike_print", {
-      text: `[ERROR] autobench: ${error instanceof Error ? error.message : String(error)}`,
+      text: `[ERROR] autobench: ${spokenError(isOpenRefusal(error) ? error.reason : error)}`,
     });
     await call("spike_exit", { code: 1 });
   }

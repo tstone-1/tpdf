@@ -2612,3 +2612,32 @@ fn two_wraps_that_both_move_one_paragraph_are_refused() {
         }
     }
 }
+
+#[test]
+fn wrapped_clipped_line_has_the_same_hit_bounds_after_reopening() {
+    for (target, next_y, clip_top) in [(LAST, 120, 174), (LAST, 120, 200), (NEXT, 158, 160)] {
+        let show = |name: &str, mcid: u8, y: i32| {
+            let text = format!("BT /F1 12 Tf 20 {y} Td /P <</MCID {mcid}>> BDC ({name}) Tj EMC ET");
+            if name == target {
+                format!("q 0 100 300 {} re W n {text} Q", clip_top - 100)
+            } else {
+                text
+            }
+        };
+        let body = [
+            show(FIRST, 0, 200),
+            show(WIDEST, 1, 186),
+            show(LAST, 2, 172),
+            show(NEXT, 3, next_y),
+        ]
+        .join(" ");
+        let doc = tagged(&body, &[&[0, 1, 2], &[3]]);
+        let original = run(&doc, target);
+        let change = in_default_box(&doc, index_of(&doc, WIDEST), LONGER);
+        let hit = placements(&doc, 0, std::slice::from_ref(&change)).unwrap()[&original.operator];
+        let mut saved = doc;
+        write(&mut saved, &[change]).unwrap();
+        assert_eq!(hit, run(&saved, target).display_rect);
+        assert_eq!(hit[3] - hit[1], 15.);
+    }
+}

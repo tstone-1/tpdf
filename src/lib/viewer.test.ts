@@ -1984,6 +1984,30 @@ describe("Viewer matches across a page edit", () => {
     vi.clearAllMocks();
   });
 
+  it("reveals a match past the right edge of a zoomed page", async () => {
+    core.invoke.mockImplementation(async (command: string, args: { page: number }) => {
+      if (command === "search_page") return {page: args.page, chars: 2, matches: args.page === 0
+        ? [{page: 0, start: 0, end: 1, before: "", hit: "a", after: ""}] : []};
+      if (command === "page_text") return {...pageText(), boxes: [570, 15, 580, 30, 581, 15, 589, 30]};
+      return null;
+    });
+    const viewer = build(dom);
+    try {
+      viewer.setZoomFixed(4);
+      const scroller = (viewer as unknown as {scroller: {pageOrigin(page: number): {left: number}}}).scroller;
+      const right = () => scroller.pageOrigin(0).left + 580 * viewer.currentZoom;
+      expect(right()).toBeGreaterThan(dom.root.clientWidth);
+      viewer.search("a");
+      await settle();
+      await settle();
+      expect(viewer.matchIndex).toBe(0);
+      expect(right()).toBeLessThanOrEqual(dom.root.clientWidth);
+      expect(right() - 10 * viewer.currentZoom).toBeGreaterThanOrEqual(0);
+    } finally {
+      viewer.destroy();
+    }
+  });
+
   it("navigates a cross-page hit to its first line even when the end index on page two is smaller", async () => {
     core.invoke.mockImplementation(async (command: string, args: { page: number }) => {
       if (command === "search_page") {

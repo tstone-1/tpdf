@@ -36,7 +36,22 @@
 
 import { catalog } from "./i18n";
 import { placeholder } from "./panelrow";
+import { spoken } from "./said";
+import type { SearchStatus } from "./viewer";
 import type { Match } from "./search";
+
+/** The find bar and the results list share the reason a search could not run. */
+export function searchNotice(
+  search: Pick<SearchStatus, "problem" | "textless" | "running" | "unread" | "unsearchablePages" | "total" | "query">,
+): string {
+  if (!search.query) return "";
+  if (search.problem) return spoken(search.problem);
+  if (!search.textless) return "";
+  if (search.unread || search.unsearchablePages) {
+    return statusFor(search.total, search.query, search.running, search.unsearchablePages, search.unread);
+  }
+  return search.running ? TEXT().noTextYet : TEXT().noTextScanned;
+}
 
 /** Rows drawn at once. Beyond this the panel says how many it is not showing. */
 export const MAX_RESULT_ROWS = 2000;
@@ -155,6 +170,7 @@ export class Results {
     running: boolean,
     unsearchablePages = 0,
     unread = 0,
+    notice = "",
   ): void {
     // A different array, or one that has been emptied, means a new query: the
     // rows describe matches that no longer exist and appending to them would
@@ -182,7 +198,7 @@ export class Results {
     this.built = Math.min(matches.length, MAX_RESULT_ROWS);
 
     this.highlight(current);
-    this.say(matches.length, query, running, unsearchablePages, unread);
+    this.say((query && notice) || statusFor(matches.length, query, running, unsearchablePages, unread));
   }
 
   /** Moves the highlight, scrolling the row into view if it is off screen. */
@@ -222,14 +238,7 @@ export class Results {
    * {@link status} answers the same thing it always did wherever the message
    * is drawn.
    */
-  private say(
-    total: number,
-    query: string,
-    running: boolean,
-    unsearchablePages: number,
-    unread: number,
-  ): void {
-    const text = statusFor(total, query, running, unsearchablePages, unread);
+  private say(text: string): void {
     const bare = this.built === 0;
     const wanted = bare && text !== "";
     // Two conditions, because the message is no longer the only state: a new
@@ -380,6 +389,8 @@ function trefferOf(total: number): string {
 
 const TEXT = catalog({
   "en-US": {
+    noTextScanned: "no text: scanned pages",
+    noTextYet: "no text yet",
     searchResults: "Search results",
     typeToSearch: "Type in the find field to search.",
     searching: "Searching…",
@@ -395,6 +406,8 @@ const TEXT = catalog({
     capped: (total: number, shown: number) => `${countOf(total)}, showing the first ${shown}`,
   },
   "de-DE": {
+    noTextScanned: "kein Text: gescannte Seiten",
+    noTextYet: "noch kein Text",
     searchResults: "Suchergebnisse",
     typeToSearch: "Gib einen Suchbegriff in das Suchfeld ein.",
     searching: "Suche läuft…",

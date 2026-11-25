@@ -2319,8 +2319,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   back, the archive timestamp last) and `summary` (the sentence the application shows).
 - A signature: `field`; `document_timestamp` (`true` for an RFC 3161 document or archive
   timestamp, `false` for a document signature, including one with an attached timestamp); `signer_sha256` (the signing certificate's SHA-256 in lowercase hex, or null
-  when its identity could not be established); `signer` and `issuer` (from its certificate, empty when none could
-  be read); `claimed_time` (the time the signer's computer gave; not checked);
+  when its identity could not be established); `signer` and `issuer` (from the certificate identified by SignerInfo, empty when no certificate could
+  be matched); `claimed_time` (the time the signer's computer gave; not checked);
   `covers_whole_file`; `appended_bytes` (bytes written after the signed range);
   `appendix`, `null` exactly when `appended_bytes` is 0, what those bytes changed, by the
   names the file uses and never as a verdict: `unread` (`true` when tpdf could not read it;

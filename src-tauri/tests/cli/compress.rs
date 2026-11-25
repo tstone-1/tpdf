@@ -279,6 +279,30 @@ fn preview_after_uniform_picture(report: &mut Report, dir: &Path) {
             && std::fs::read(&preview).unwrap_or_default() == made,
         &stderr,
     );
+    // Reuse the photo on both pages, but cover the first placement completely.
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"q 144 0 0 144 72 400 cm /Im Do Q 1 g 0 0 612 792 re f".to_vec(),
+    ));
+    let mut covered = doc.get_dictionary(page).unwrap().clone();
+    covered.set("Contents", content);
+    let covered = doc.add_object(covered);
+    let tree = doc.get_dictionary_mut(parent).unwrap();
+    tree.set(
+        "Kids",
+        vec![Object::Reference(covered), Object::Reference(page)],
+    );
+    tree.set("Count", 2);
+    doc.save(&input).unwrap();
+    std::fs::remove_file(&preview).unwrap();
+    let (code, json, stderr) = run();
+    report.check(
+        "a visible reuse of the same photo produces the requested preview",
+        code == 0
+            && parsed(&json)["written"] == true
+            && std::fs::read(&preview).is_ok_and(|bytes| bytes.starts_with(b"\x89PNG")),
+        &stderr,
+    );
 }
 
 pub(super) fn writes_a_smaller_copy(report: &mut Report) {

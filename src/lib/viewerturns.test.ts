@@ -403,6 +403,23 @@ describe("what a turned page does to a place in it", () => {
     viewer.destroy();
   });
 
+  it("projects destinations identically for equivalent combined turns", async () => {
+    const dom = installFakeDom();
+    const viewer = build(dom);
+    const edges = { width: 600, height: 800, left: 40, right: 250, bottom: 300 };
+    try {
+      await settle();
+      viewer.rotateBy(-1);
+      for (const [pageTurns, expected] of [[1, 120], [2, 40], [3, 500]] as const) {
+        viewer.setPageTurns(0, pageTurns);
+        expect(viewer.fileDestinationTop(0, 120, edges)).toBe(expected);
+      }
+    } finally {
+      viewer.destroy();
+      dom.restore();
+    }
+  });
+
   it("lands a destination on a turned page rather than partway down it", async () => {
     // The same rule a rotated *view* already follows, and for the same reason:
     // at a quarter turn the destination's axis is the screen's horizontal one.

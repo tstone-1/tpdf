@@ -753,19 +753,10 @@ export class Scroller {
    * their own copy of the view's number --- which is the shape `displayedSize`
    * already exists to stop.
    *
-   * Not reduced modulo four here. Every consumer either normalises (the tile
-   * request must, since the server refuses a fifth turn rather than reducing it)
-   * or does not care ({@link displayedSize} tests the parity), and reducing in
-   * two places is how one of them comes to disagree.
+   * Normalize here so navigation, saved positions and rendering share one orientation.
    */
   effectiveTurns(page: number): number {
-    return this.opts.turns + (this.pageTurns[page] ?? 0);
-  }
-
-  /** Quarter-turns a page is drawn by, normalised to 0..3. For a tile request. */
-  private requestTurns(page: number): number {
-    const turns = this.effectiveTurns(page);
-    return quarterTurns(turns);
+    return quarterTurns(this.opts.turns + (this.pageTurns[page] ?? 0));
   }
 
   /**
@@ -1812,14 +1803,23 @@ export class Scroller {
     // every one of them changes the scale every tile has to be rendered at.
     const settling = now < this.quietUntil;
 
-    const wanted: { key: TileKey; distance: number }[] = [];
+    const wanted: { key: TileKey; distance: number; visible: boolean }[] = [];
+    const viewBottom = this.scrollTop + this.opts.viewport.height;
+    const pages = this.pagesIn(top, bottom);
+    const pageDistance = (page: number): number => {
+      const box = this.boxes[page]!;
+      return Math.max(0, box.top - centre, centre - (box.top + box.heightCss));
+    };
+    pages.sort((a, b) => pageDistance(a) - pageDistance(b));
+    const offscreen: number[] = [];
 
-    for (const page of this.pagesIn(top, bottom)) {
-      // Tier 1 is asked for throughout, and that is what makes the settle
-      // invisible rather than blank: a placeholder is rendered once at a fixed
-      // 150 px and only stretched by CSS, so it survives every scale the
-      // gesture passes through and is what the reader watches move.
-      this.requestPlaceholder(page, now);
+    for (const page of pages) {
+      const pageBox = this.boxes[page]!;
+      if (pageBox.top >= viewBottom || pageBox.top + pageBox.heightCss <= this.scrollTop) {
+        offscreen.push(page);
+      } else if (this.inFlight.size < this.opts.maxInFlight) {
+        this.requestPlaceholder(page, now);
+      }
       if (settling) continue;
 
       const box = this.boxes[page];
@@ -1839,6 +1839,7 @@ export class Scroller {
           wanted.push({
             key,
             distance: Math.abs((tileTop + tileBottom) / 2 - centre),
+            visible: tileTop < viewBottom && tileBottom > this.scrollTop,
           });
         }
       }
@@ -1846,10 +1847,18 @@ export class Scroller {
 
     wanted.sort((a, b) => a.distance - b.distance);
 
-    for (const { key } of wanted) {
+    const sendSharp = (visible: boolean): void => {
+      for (const tile of wanted) {
+        if (this.inFlight.size >= this.opts.maxInFlight) return;
+        if (tile.visible === visible) this.send(tile.key);
+      }
+    };
+    sendSharp(true);
+    for (const page of offscreen) {
       if (this.inFlight.size >= this.opts.maxInFlight) break;
-      this.send(key);
+      this.requestPlaceholder(page, now);
     }
+    sendSharp(false);
   }
 
   /**
@@ -1935,7 +1944,7 @@ export class Scroller {
     return {
       doc: source.doc,
       page: source.page,
-      turns: this.requestTurns(slot),
+      turns: this.effectiveTurns(slot),
       crop: this.cropOf(slot),
       invert: this.opts.invert,
     };
@@ -2001,7 +2010,7 @@ export class Scroller {
       doc: source.doc,
       page: source.page,
       scale: this.opts.zoom * this.opts.dpr,
-      turns: this.requestTurns(key.page),
+      turns: this.effectiveTurns(key.page),
       crop: this.cropOf(key.page),
       invert: this.opts.invert,
       x: rect.x,
@@ -2164,7 +2173,7 @@ export class Scroller {
       doc: source.doc,
       page: source.page,
       scale,
-      turns: this.requestTurns(page),
+      turns: this.effectiveTurns(page),
       crop: this.cropOf(page),
       invert: this.opts.invert,
       x: 0,
@@ -2322,6 +2331,7 @@ export class Scroller {
       const pageTop = box.top;
       const pageLeft = this.pageLeftCss(page);
       const hasPlaceholder = this.placeholders.has(page);
+      const filled = blankFill(this.order[page], this.opts.invert) !== null;
 
       for (let row = 0; row < box.rows; row++) {
         const rect = this.tileRect(page, 0, row);
@@ -2342,7 +2352,7 @@ export class Scroller {
           if (across <= 0) continue;
 
           const area = overlap * across;
-          const isSharp = this.tiles.has(keyOf({ page, col, row }));
+          const isSharp = filled || this.tiles.has(keyOf({ page, col, row }));
           visible += area;
           if (isSharp) sharp += area;
           if (isSharp || hasPlaceholder) any += area;

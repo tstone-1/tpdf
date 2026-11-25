@@ -597,17 +597,16 @@ ROWS += [
         # reaches the renderer is a screenful a frame, none of it ever drawn.
         "scroller: ask for tiles while the zoom is still moving",
         "src/lib/scroller.ts",
-        "      this.requestPlaceholder(page, now);\n      if (settling) continue;",
-        "      this.requestPlaceholder(page, now);",
+        "      if (settling) continue;",
+        "      // Requests sharp tiles during zoom.",
         "asks for no sharp tile while the zoom is still moving",
     ),
     Mutation(
-        # Hold the placeholders back too, which leaves the page grey for the
-        # length of the gesture rather than stretching what is already drawn.
+        # Withhold visible previews until the zoom settles.
         "scroller: hold back placeholders during the settle as well",
         "src/lib/scroller.ts",
-        "      this.requestPlaceholder(page, now);\n      if (settling) continue;",
-        "      if (settling) continue;\n      this.requestPlaceholder(page, now);",
+        "      } else if (this.inFlight.size < this.opts.maxInFlight) {",
+        "      } else if (!settling && this.inFlight.size < this.opts.maxInFlight) {",
         "still asks for placeholders during the settle",
     ),
     Mutation(

@@ -1098,7 +1098,9 @@ A line that may break is broken where its ink fits, not only its advance
 were already held to their ink afterwards, so a last glyph reaching a tenth of a point
 past its advance refused a wrap that one word fewer on the line would have made
 (`textedit_a_wrapped_line_breaks_before_a_glyph_whose_ink_leaves_the_box`). One line has
-nowhere to break and is measured by its advance as before.
+nowhere to break and is measured by its advance as before. Ordinary wrap opportunities exclude no-break spaces (U+00A0), figure spaces (U+2007) and narrow no-break spaces (U+202F). A word too wide for a whole line still uses the character fallback.
+
+A wrap that moves a clipped neighbour uses its full ink bounds before applying the destination clip. The pending hit target therefore includes ink newly visible at the destination. To recognize a column, layout counts baselines perpendicular to the text direction in display space, including vertical text.
 
 **Not done.** A kept code whose glyph is a composite of an empty glyph is not proved blank,
 and still costs the font: Liberation Sans draws its no-break space that way. A list item of

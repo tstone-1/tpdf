@@ -19,6 +19,12 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Signature reports name the signer only when the certificate matches. The desktop and CLI describe the B-B signing time as unattested, including when a timestamp is present.
+- Bookmarks and saved positions respect combined page and view rotations. Find reveals offscreen hits horizontally, and its Results panel explains invalid patterns and scanned pages.
+- Wrapped text edits preserve no-break spaces, recognize rotated columns and place the hit target of a moved, previously clipped line at its saved bounds.
+- Plain-text redaction preflight includes shared-picture notes and concerns. The CLI submits bulk redactions in one batch. Compression can preview another placement of the same image.
+- Inserted blank sheets count as rendered immediately. Visible page previews and sharp tiles share the concurrent request limit.
+
 - Compressing a shared photo preserves its resolution at the largest placement when a PDF references the Form subtype indirectly. The preview tries other affected pages when the first looks unchanged. The CLI reports when it cannot produce a requested PNG.
 - Palette questions stay with their document. Keyboard selection survives recent-file refreshes and scrolls into view. The palette respects text composition, primary clicks, exact command titles and supplementary Unicode characters.
 - macOS reports failures that prevent the print panel from opening. Changing the print range releases preview images for pages outside the displayed group.

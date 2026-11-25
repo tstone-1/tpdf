@@ -250,8 +250,8 @@ impl Unhandled {
     #[must_use]
     pub fn taken_here(&self) -> String {
         said!(
-            "object {at} is a picture this document draws {times} time(s). It was taken off this \
-             page; it is still in the file, and on every other place that draws it",
+            "object {at} is a picture this document draws {times} time(s). When it is taken off this page, every \
+             other placement remains and the picture is still in the file",
             at = self.at,
             times = self.drawn.unwrap_or(2)
         )

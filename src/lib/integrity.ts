@@ -450,7 +450,7 @@ const TEXT = catalog({
     padesName: "PAdES level",
     pades: (level: PadesLevel): string => {
       const parts: Record<PadesLevel, string> = {
-        "B-B": "a CAdES signature with no timestamp, so its only date is the signer's own",
+        "B-B": "a CAdES signature whose signing time has not been attested",
         "B-T":
           "signed and timestamped; the document does not carry revocation data that answers for every certificate",
         "B-LT":
@@ -859,7 +859,7 @@ const TEXT = catalog({
     padesName: "PAdES-Stufe",
     pades: (level: PadesLevel): string => {
       const parts: Record<PadesLevel, string> = {
-        "B-B": "eine CAdES-Signatur ohne Zeitstempel, daher ist ihr einziges Datum das eigene des Unterzeichners",
+        "B-B": "eine CAdES-Signatur, deren Signaturzeit nicht beglaubigt wurde",
         "B-T":
           "signiert und mit Zeitstempel; das Dokument enthält keine Widerrufsdaten, die für jedes Zertifikat Auskunft geben",
         "B-LT":

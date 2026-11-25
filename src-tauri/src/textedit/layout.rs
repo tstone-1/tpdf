@@ -717,7 +717,7 @@ fn free_width(
     let columns: BTreeSet<u32> = match Axis::of((mapped(0.), mapped(probe)), probe) {
         Some(axis) => block_extent(page, run.operator, axis.axis)
             .map(|paragraph| {
-                column_runs(page, paragraph, axis.axis)
+                column_runs(page, paragraph, axis.axis, geometry)
                     .into_iter()
                     .map(|(operator, _)| operator)
                     .filter(|operator| page.blocks.get(operator) != page.blocks.get(&run.operator))
@@ -1152,7 +1152,7 @@ fn line_breaks(
                     break;
                 }
                 end = next;
-                if ch.is_whitespace() {
+                if ch.is_whitespace() && !matches!(ch, '\u{a0}' | '\u{2007}' | '\u{202f}') {
                     space = next;
                 }
             }
@@ -1710,11 +1710,13 @@ fn cascade(
         for show in &beneath[index] {
             moved.insert(*show, part);
         }
-        moves.extend(
-            blocks[index]
-                .iter()
-                .map(|(show, rect)| (*show, *rect, [by[0] * part, by[1] * part])),
-        );
+        moves.extend(blocks[index].iter().map(|(show, visible)| {
+            let bounds = page
+                .unclipped
+                .get(show)
+                .map_or(*visible, |rect| rect.map(f64::from));
+            (*show, bounds, [by[0] * part, by[1] * part])
+        }));
         reach.extend(blocks[index].iter().map(|_| reaches[index]));
     }
     Some((moved, paragraph))
@@ -1753,7 +1755,12 @@ fn cascade(
 ///   blocks are their structure elements; the level check above is not,
 ///   because a tagged page's structure already says which lines belong
 ///   together.
-fn column_runs(page: &Inspection, paragraph: [f64; 2], along: usize) -> Vec<(u32, [f64; 4])> {
+fn column_runs(
+    page: &Inspection,
+    paragraph: [f64; 2],
+    along: usize,
+    geometry: &crate::pagetree::DisplayedPage,
+) -> Vec<(u32, [f64; 4])> {
     let width = paragraph[1] - paragraph[0];
     // Per block: each run's show and hit rectangle, and the lines it has.
     type Lines = (Vec<(u32, [f64; 4])>, BTreeSet<i64>);
@@ -1770,7 +1777,9 @@ fn column_runs(page: &Inspection, paragraph: [f64; 2], along: usize) -> Vec<(u32
         let (rects, lines) = blocks.entry(*block).or_default();
         rects.push((run.operator, run.display_rect.map(f64::from)));
         // Half-point bins: a line's runs share a baseline to [`blocks`]' tolerance.
-        lines.insert((run.matrix[5] * 2.).round() as i64);
+        let [_, _, _, _, x, y] = run.matrix;
+        let origin = on_display(geometry, [x, y, x, y]);
+        lines.insert((f64::from(origin[1 - along]) * 2.).round() as i64);
     }
     let span = |rects: &[(u32, [f64; 4])]| {
         rects
@@ -1972,7 +1981,7 @@ fn wrap_room(
     let carried = underlines(page, moves, rule.1)?;
     let geometric = blocks::geometric_page(page);
     let columns: Vec<[f64; 4]> = if geometric {
-        column_runs(page, paragraph, 1 - rule.1)
+        column_runs(page, paragraph, 1 - rule.1, geometry)
             .into_iter()
             .map(|(_, rect)| rect)
             .collect()
@@ -3170,7 +3179,12 @@ impl Edit<'_> {
                 .iter()
                 .chain(&page.preserved)
                 .find(|other| other.operator == operator && !other.text.trim().is_empty())
-                .map(|other| other.display_rect.map(f64::from))
+                .map(|other| {
+                    page.unclipped
+                        .get(&operator)
+                        .unwrap_or(&other.display_rect)
+                        .map(f64::from)
+                })
         };
         let mut lowered = Vec::new();
         for show in &plan.below {
@@ -3620,4 +3634,42 @@ pub(super) fn prepare(
         placed,
         links,
     })
+}
+
+#[cfg(test)]
+mod wrapping_regressions {
+    use super::*;
+
+    #[test]
+    fn nonbreaking_spaces_keep_a_quantity_together_when_it_fits_the_next_line() {
+        for space in ['\u{00a0}', '\u{2007}', '\u{202f}'] {
+            let quantity = format!("10{space}kg");
+            let lines = line_breaks(&format!("A {quantity}"), (5., 5.), true, "width", |s| {
+                Ok(s.chars().count() as f64)
+            })
+            .unwrap();
+            assert_eq!(lines, ["A ", &quantity]);
+        }
+    }
+
+    #[test]
+    fn a_column_counts_baselines_across_the_displayed_text_direction() {
+        for (along, matrices) in [
+            (0, ["1 0 0 1 110 50", "1 0 0 1 110 64", "1 0 0 1 110 78"]),
+            (1, ["0 1 -1 0 40 110", "0 1 -1 0 54 110", "0 1 -1 0 68 110"]),
+        ] {
+            let body = matrices
+                .iter()
+                .enumerate()
+                .map(|(i, matrix)| {
+                    format!("BT /F1 12 Tf {matrix} Tm /P <</MCID {i}>> BDC (FIRST) Tj EMC ET")
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            let doc = super::super::wrap_tests::tagged(&body, &[&[0, 1, 2]]);
+            let page = inspect(&doc, 0).unwrap();
+            let geometry = crate::pagetree::displayed_page(&doc, page.id);
+            assert_eq!(column_runs(&page, [0., 36.], along, &geometry).len(), 3);
+        }
+    }
 }

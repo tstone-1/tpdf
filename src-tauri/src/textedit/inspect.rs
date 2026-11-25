@@ -771,6 +771,8 @@ pub(super) struct Found {
     pub text_spacing: BTreeMap<u32, (f64, f64)>,
     pub leads: BTreeMap<u32, Object>,
     pub gaps: BTreeMap<u32, f64>,
+    /// Display bounds before the rectangular clip, needed when moving a whole show.
+    pub unclipped: BTreeMap<u32, [f32; 4]>,
     pub compound_run_clips: BTreeMap<u32, (Vec<clipping::Region>, [f64; 4])>,
     pub contexts: BTreeMap<u32, layout::Context>,
     // The same for each read-only show a wrap may move with its line, bytes
@@ -829,6 +831,7 @@ impl Found {
             text_spacing: BTreeMap::new(),
             leads: BTreeMap::new(),
             gaps: BTreeMap::new(),
+            unclipped: BTreeMap::new(),
             compound_run_clips: BTreeMap::new(),
             contexts: BTreeMap::new(),
             held: BTreeMap::new(),
@@ -1098,6 +1101,7 @@ impl Found {
             // preview. Partly clipped source text is still editable; rejecting
             // it here would disable every other text object on the page.
             if clipping::contains(state.clip, ink_bounds).is_err() {
+                self.unclipped.insert(index as u32, self.to_display(bounds));
                 let rect = state.clip.unwrap();
                 bounds = [
                     bounds[0].clamp(rect[0], rect[2]),

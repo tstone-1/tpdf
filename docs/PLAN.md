@@ -581,39 +581,33 @@ One caveat stated honestly: this is PNG at default compression. A faster preset 
 payload for CPU and would move the text-page row, though not the vector one, since no
 codec compresses noise.
 
-### Delivery costs more than production — measured 2026-07-26
+### Tile delivery in the webview
 
-The webview half runs inside a real webview via `TPDF_AUTOBENCH=<file.pdf> npm run tauri
-dev -- --release`, which opens the document, measures, prints on stdout and exits. Text
-page, tile centred, six interleaved rounds:
+Run the checks-enabled release binary from the repository root. On macOS:
 
-| variant | render | encode | transfer | decode | **end to end** | KB |
-|---|---|---|---|---|---|---|
-| raw 1024² | 1.36 | — | 3.00 | 1.00 | **5.4 ms** | 4096 |
-| png 1024² | 1.55 | 1.41 | 4.00 | 6.00 | **13.0 ms** | 824 |
-| raw 1224×1584 | 2.29 | — | 5.00 | 0.50 | **7.8 ms** | 7574 |
-| png 1224×1584 | 2.67 | 2.50 | 6.00 | 10.00 | **21.2 ms** | 1430 |
+```sh
+npm run tauri build -- --config src-tauri/tauri.checks.conf.json --no-bundle
+TPDF_AUTOBENCH="$PWD/testdata/text-heavy.pdf" src-tauri/target/release/tpdf
+```
 
-Raw wins end to end by **2.4–2.7×**, confirming the server-side result from the other
-direction. The 2048² variants clamp to 1224×1584 — the page at 2× is smaller than the
-requested tile.
+On 2026-11-25 the macOS arm64 webview measured the centre of the first page of the
+775-page text fixture over six interleaved rounds. Times are medians in milliseconds.
+Each request's end-to-end time spans fetch, body read and bitmap decode. The residual
+subtracts the server's render and encode times from that same request. It includes
+queueing, IPC and client-side decode. Each column is aggregated independently.
 
-The more consequential finding is the ratio in the raw rows: **delivery costs 240–293% of
-rendering.** Moving 4 MB across the custom-scheme boundary takes 3 ms — about 1.3 GB/s,
-which is well short of memcpy and confirms §3's correction that a custom protocol is not a
-zero-copy fast path. Per megabyte, larger tiles are again cheaper (1.00 ms/MB at 1024²
-versus 0.74 ms/MB at 1224×1584), so the same "fewest, largest tiles" conclusion holds for
-delivery as for rendering.
+| Format and actual pixels | Render | Encode | Fetch including server | Decode | End to end | Residual | KiB |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Raw 1024 x 1024 | 1.31 | 0.00 | 3.00 | 1.00 | 3.00 | 1.74 | 4096 |
+| PNG 1024 x 1024 | 1.47 | 2.31 | 4.00 | 6.00 | 10.00 | 6.26 | 558 |
+| Raw 1224 x 1584 | 2.24 | 0.00 | 4.00 | 0.50 | 4.50 | 2.27 | 7574 |
+| PNG 1224 x 1584 | 2.45 | 4.12 | 7.00 | 10.00 | 17.00 | 10.58 | 957 |
 
-Scaled up, this is a real constraint: repainting a 1920×1080 viewport at 2× device pixel
-ratio is 33 MB of raw pixels, so ~33 ms of delivery — two frames, for a full repaint such
-as a zoom step. Scrolling only delivers the newly exposed strip and is far cheaper, but a
-zoom change is not. Whether that needs shared memory, WebGL texture upload or simply
-tolerating a two-frame zoom is now a quantified open question rather than a guess.
-
-Measurement caveat: webview `performance.now()` is clamped to 1 ms here, visible in the
-integer-valued per-round series. The 2.4× conclusion is far larger than that granularity,
-but sub-millisecond claims from this harness are not supportable.
+PNG took 3.3 and 3.8 times as long end to end at the two sizes on this fixture.
+The raw residual was 136% and 101% of rendering time, using the median of each
+request's ratio. The browser clock reported whole milliseconds per request here.
+The July 2026 table added rendering and encoding to an interval that already
+included them. Its transfer-rate and full-viewport projections are withdrawn.
 
 **Design consequence:** if encoding is ever reintroduced (for a remote or bandwidth-bound
 transport), it must not run on the render thread. At ~100% of render time it would halve
@@ -18624,9 +18618,8 @@ that it presented several genuinely unresolved questions as settled architecture
    direction for anything precision-critical, and PDFium mutation is not usable for
    redaction at all.
 2. ~~**Protocol** — custom scheme vs alternatives.~~ **Answered 2026-07-26.** 1024²–2048²
-   tiles (§4), sent as raw pixels (§3), over the custom scheme. Delivery costs 240–293% of
-   rendering, so the scheme is not a zero-copy fast path — but encoding is worse in both
-   directions, and on the startup path the whole transfer-and-decode of a 16.6 MB tile is
+   tiles (§4), sent as raw pixels (§3), over the custom scheme. The corrected webview measurement above favors raw tiles at both sizes.
+   On the startup path the whole transfer-and-decode of a 16.6 MB tile is
    8.2 ms against a 374 ms budget. Not where the time goes.
 3. ~~**How much of the shell cost is reducible?**~~ **Answered 2026-07-26** (§4). Almost
    none of it, and neither lever this question proposed exists. A smaller initial payload

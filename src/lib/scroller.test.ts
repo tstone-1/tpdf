@@ -1144,6 +1144,32 @@ describe("Scroller when the page order changes", () => {
     expect(scroller.knowsPageSize(1)).toBe(true);
   });
 
+  it("counts an inserted blank sheet as fully painted without a tile request", () => {
+    scroller.setPages([{ id: pageId(12), source: { blank: { width: 300, height: 500 } }, turns: 0 }]);
+    expect(scroller.frame(0)).toMatchObject({ any: 1, sharp: 1 });
+    expect(tiles.fetchTile).not.toHaveBeenCalled();
+  });
+
+  it("bounds first-frame previews and spends the budget inside the viewport", () => {
+    const short = { width_pt: 200, height_pt: 50 };
+    const view = new Scroller(dom.root as unknown as HTMLElement, {
+      ...options(),
+      pageCount: 30,
+      pages: [short, ...Array.from({ length: 29 }, () => short)],
+      viewport: { width: 300, height: 400 },
+      prefetchScreens: 2,
+      maxInFlight: 4,
+    });
+    const top = view.pageTopOf(10);
+    view.frame(top);
+    expect(view.outstanding).toBe(4);
+    for (const [req] of tiles.fetchTile.mock.calls) {
+      expect(view.pageTopOf(req.page)).toBeLessThan(top + 400);
+      expect(view.pageTopOf(req.page) + 50).toBeGreaterThan(top);
+    }
+    view.destroy();
+  });
+
   it("fills a page tpdf made rather than leaving the surround through it", () => {
     // The painter itself cannot be tested here --- the fake DOM's `getContext`
     // answers `null`, so no `paint*` method runs under vitest --- so the

@@ -28,8 +28,8 @@ export default {
   "the document's page labels could not be remapped":
     "Die Seitenbezeichnungen des Dokuments konnten nicht neu zugeordnet werden",
   // redact.rs: what stays, and why.
-  "object {at} is a picture this document draws {times} time(s). It was taken off this page; it is still in the file, and on every other place that draws it":
-    "Objekt {at} ist ein Bild, das dieses Dokument {times}-mal zeichnet. Es wurde von dieser Seite entfernt; es ist aber noch in der Datei und an jeder anderen Stelle, die es zeichnet",
+  "object {at} is a picture this document draws {times} time(s). When it is taken off this page, every other placement remains and the picture is still in the file":
+    "Objekt {at} ist ein Bild, das dieses Dokument {times}-mal zeichnet. Wird diese Platzierung entfernt, bleibt das Bild in der Datei und an allen anderen Stellen erhalten.",
   "object {at} is a drawing that reaches beyond the region and is not a straight line or a rectangle that can be cut at its edge, so it was left":
     "Objekt {at} ist eine Zeichnung, die über den Bereich hinausreicht und weder eine gerade Linie noch ein Rechteck ist, das sich an seinem Rand abschneiden lässt, daher blieb sie stehen",
   "object {at} is a drawing that also clips what is drawn after it, so it was left":

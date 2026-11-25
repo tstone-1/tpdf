@@ -2218,8 +2218,8 @@ ROWS += [
         # was turned still holds; only its neighbour can tell.
         "scroller: apply a page's turn to the whole view",
         "src/lib/scroller.ts",
-        "    return this.opts.turns + (this.pageTurns[page] ?? 0);",
-        "    return this.opts.turns + (this.pageTurns[0] ?? 0);",
+        "    return quarterTurns(this.opts.turns + (this.pageTurns[page] ?? 0));",
+        "    return quarterTurns(this.opts.turns + (this.pageTurns[0] ?? 0));",
         "lays the turned page out sideways and leaves its neighbour alone",
     ),
     Mutation(
@@ -2245,7 +2245,7 @@ ROWS += [
         # sideways and drawn upright inside its own box.
         "scroller: request a tile without the page's own turn",
         "src/lib/scroller.ts",
-        "      turns: this.requestTurns(key.page),",
+        "      turns: this.effectiveTurns(key.page),",
         "      turns: this.opts.turns,",
         "asks the renderer for the page's turn composed with the view's",
     ),

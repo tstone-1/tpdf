@@ -785,6 +785,8 @@ struct Inspection {
     gaps: BTreeMap<u32, f64>,
     continued: BTreeSet<u32>,
     groups: BTreeMap<u32, Vec<u32>>,
+    /// Display bounds before the rectangular clip, needed when moving a whole show.
+    unclipped: BTreeMap<u32, [f32; 4]>,
     compound_run_clips: BTreeMap<u32, (Vec<clipping::Region>, [f64; 4])>,
     contexts: BTreeMap<u32, layout::Context>,
     /// The layout context of each read-only show a wrap may move with its
@@ -1142,6 +1144,7 @@ fn inspect_pinning(
         gaps: found.gaps,
         continued: found.continued,
         groups: BTreeMap::new(),
+        unclipped: found.unclipped,
         compound_run_clips: found.compound_run_clips,
         contexts: found.contexts,
         held: found.held,

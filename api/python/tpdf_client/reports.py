@@ -945,7 +945,7 @@ class Signature(_SignatureMeasurements):
     document_timestamp: bool
     # The field's fully qualified name.
     field: str
-    # Whom the signing certificate names, or empty.
+    # Subject of the certificate matched to SignerInfo, or empty if unmatched.
     signer: str
     # Who issued that certificate, or empty.
     issuer: str

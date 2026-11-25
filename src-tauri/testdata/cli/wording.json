@@ -43349,7 +43349,7 @@
   "pades": [
     {
       "level": "B-B",
-      "sentence": "B-B by its parts — a CAdES signature with no timestamp, so its only date is the signer's own. Conformance to the standard is not tested."
+      "sentence": "B-B by its parts — a CAdES signature whose signing time has not been attested. Conformance to the standard is not tested."
     },
     {
       "level": "B-T",

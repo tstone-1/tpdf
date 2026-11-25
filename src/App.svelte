@@ -138,8 +138,6 @@
       forwardSearchFailed: (why: string) => `Forward search: ${why}`,
       waitForOther: "Wait for the other document to finish, then press the field again",
       // The find counter.
-      noTextYet: "no text yet",
-      noTextScanned: "no text: scanned pages",
       inSelection: " in selection",
       searching: "searching",
       noMatches: "no matches",
@@ -316,8 +314,6 @@
       restoreNotKept: "Die Auswahl konnte nicht gespeichert werden. Sie gilt, bis du tpdf schließt.",
       forwardSearchFailed: (why: string) => `Vorwärtssuche: ${why}`,
       waitForOther: "Warte, bis das andere Dokument fertig ist, und klicke dann erneut auf das Feld",
-      noTextYet: "noch kein Text",
-      noTextScanned: "kein Text: gescannte Seiten",
       inSelection: " in der Auswahl",
       searching: "wird gesucht",
       noMatches: "keine Treffer",
@@ -498,6 +494,7 @@
     type Offer,
     plainly,
   } from "./lib/recovery";
+  import { searchNotice } from "./lib/results";
   import { spoken, spokenError } from "./lib/said";
   import { printedLabel, printedRuns } from "./lib/pagelabels";
   import { DETAIL_START, LABEL_END, announcement, messageLines, resultTone, type MessageTone } from "./lib/messagelines";
@@ -5729,19 +5726,8 @@
   const findLabel = $derived.by(() => {
     const search = status?.search;
     if (!search || !search.query) return "";
-    // Before every other answer: a pattern that did not compile was never run,
-    // so "no matches" would be a statement about the document rather than about
-    // the query. Only a pattern can produce one.
-    if (search.problem) return spoken(search.problem);
-    if (search.textless) {
-      // Distinct from "no matches" on purpose: the query was never tested
-      // against anything, and saying so is the difference between a working
-      // search and a broken one from the reader's side.
-      // "scanned" names the cause, and the find bar then offers the remedy
-      // beside it: a counter that only said "no text to search" left the
-      // reader with nothing to do next.
-      return search.running ? TEXT().noTextYet : TEXT().noTextScanned;
-    }
+    const notice = searchNotice(search);
+    if (notice) return notice;
     // "in selection" rides on every answer below it, the empty one included: a
     // reader who is told "no matches" while the search can only see three lines
     // has been told something false about the document.
@@ -6873,6 +6859,7 @@
             next.search.running,
             next.search.unsearchablePages,
             next.search.unread,
+            searchNotice(next.search),
           );
         }
         notePlace();

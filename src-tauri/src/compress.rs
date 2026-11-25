@@ -210,13 +210,35 @@ pub struct Done {
     pub pictures_unsized: usize,
 }
 
-/// The largest size, in points, any page draws a picture at.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+/// A comparison renders two pages per candidate, so keep the four widest distinct placements.
+const PREVIEW_PAGE_LIMIT: usize = 4;
+
+#[derive(Debug, Clone, PartialEq, Default)]
 struct Shown {
     width: f64,
     height: f64,
-    /// A page where the maximum horizontal extent occurs, counted from 0.
-    page: u32,
+    /// Page number and widest horizontal extent on that page.
+    placements: Vec<(u32, f64)>,
+}
+
+impl Shown {
+    fn record(&mut self, page: u32, width: f64, height: f64) {
+        self.width = self.width.max(width);
+        self.height = self.height.max(height);
+        if let Some((_, previous)) = self.placements.iter_mut().find(|(p, _)| *p == page) {
+            *previous = previous.max(width);
+        } else if self.placements.len() < PREVIEW_PAGE_LIMIT {
+            self.placements.push((page, width));
+        } else if let Some(narrowest) = self
+            .placements
+            .iter_mut()
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+        {
+            if width > narrowest.1 {
+                *narrowest = (page, width);
+            }
+        }
+    }
 }
 
 fn integer(doc: &Document, dict: &Dictionary, key: &[u8]) -> Option<i64> {
@@ -393,20 +415,9 @@ impl Walk<'_> {
         match subtype(self.doc, &stream.dict) {
             Some(b"Image") => {
                 let page = self.page;
-                let entry = self.shown.entry(id).or_insert(Shown {
-                    page,
-                    ..Shown::default()
-                });
+                let entry = self.shown.entry(id).or_default();
                 match ctm {
-                    // The unit square under the matrix: its two sides.
-                    Some([a, b, c, d, ..]) => {
-                        let width = a.hypot(b);
-                        if width > entry.width {
-                            entry.page = page;
-                            entry.width = width;
-                        }
-                        entry.height = entry.height.max(c.hypot(d));
-                    }
+                    Some([a, b, c, d, ..]) => entry.record(page, a.hypot(b), c.hypot(d)),
                     // Drawn under a matrix that would not read: its size is
                     // not known, so it is treated as drawn very large and left.
                     None => {
@@ -628,7 +639,7 @@ struct Picture {
 }
 
 impl Picture {
-    fn size_at(&self, shown: Shown, dpi: u32) -> (usize, usize) {
+    fn size_at(&self, shown: &Shown, dpi: u32) -> (usize, usize) {
         (
             side(self.width, shown.width, f64::from(dpi)),
             side(self.height, shown.height, f64::from(dpi)),
@@ -922,7 +933,7 @@ fn shrink(
     doc: &mut Document,
     id: ObjectId,
     picture: &Picture,
-    shown: Shown,
+    shown: &Shown,
     how: Pictures,
     is_mask: bool,
 ) -> bool {
@@ -1051,7 +1062,7 @@ fn pictures(
             mask.width = mask.width.max(shown.width);
             mask.height = mask.height.max(shown.height);
         } else if picture(doc, *id, false)
-            .is_some_and(|found| shrink(doc, *id, &found, *shown, how, false))
+            .is_some_and(|found| shrink(doc, *id, &found, shown, how, false))
         {
             changed.insert(*id);
         }
@@ -1060,7 +1071,7 @@ fn pictures(
         let Some(mask) = picture(doc, id, true) else {
             continue;
         };
-        let target = mask.size_at(extent, how.dpi);
+        let target = mask.size_at(&extent, how.dpi);
         if target != (mask.width, mask.height)
             && !parents
                 .iter()
@@ -1068,7 +1079,7 @@ fn pictures(
         {
             continue;
         }
-        if shrink(doc, id, &mask, extent, how, true) {
+        if shrink(doc, id, &mask, &extent, how, true) {
             changed.insert(id);
         }
     }
@@ -1429,34 +1440,35 @@ fn preview_pages(
             let new = size(after, id)?;
             let filter = &after.get_object(id).ok()?.as_stream().ok()?.dict;
             let jpeg = filter.get(b"Filter").and_then(Object::as_name).ok() == Some(b"DCTDecode");
-            (old != new || jpeg).then_some((*shown, old, new))
+            (old != new || jpeg).then_some((shown, old, new))
         });
     let mut pages = BTreeMap::new();
     for (shown, old, new) in candidates {
         let loss = pixel_loss(old, new);
-        let best = pages.entry(shown.page).or_insert((loss, shown, old, new));
-        if loss >= best.0 {
-            *best = (loss, shown, old, new);
+        for &(page, width) in &shown.placements {
+            let best = pages.entry(page).or_insert((loss, width, old, new));
+            if loss > best.0 || (loss == best.0 && width > best.1) {
+                *best = (loss, width, old, new);
+            }
         }
     }
-    let mut pages: Vec<_> = pages.into_values().collect();
-    pages.sort_by_key(|(loss, ..)| std::cmp::Reverse(*loss));
-    // Each candidate renders two potentially large page images in the worker.
+    let mut pages: Vec<_> = pages.into_iter().collect();
+    pages.sort_by(|(_, a), (_, b)| b.0.cmp(&a.0).then_with(|| b.1.total_cmp(&a.1)));
     pages
         .into_iter()
-        .take(4)
-        .map(|(_, shown, old, new)| {
+        .take(PREVIEW_PAGE_LIMIT)
+        .map(|(page, (_, width, old, new))| {
             let dpi = |pixels: i64| -> u32 {
-                if shown.width <= 0.0 || !shown.width.is_finite() {
+                if width <= 0.0 || !width.is_finite() {
                     return 0;
                 }
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 {
-                    (pixels as f64 * 72.0 / shown.width).round() as u32
+                    (pixels as f64 * 72.0 / width).round() as u32
                 }
             };
             Focus {
-                page: shown.page,
+                page,
                 dpi_before: dpi(old.0),
                 dpi_after: dpi(new.0),
             }

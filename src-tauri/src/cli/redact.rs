@@ -862,6 +862,15 @@ pub fn plain(report: &report::Redacted) -> String {
     if report.signatures_unknown {
         lines.push("The input's signatures could not all be counted.".into());
     }
+    if report.dry_run {
+        lines.extend(
+            report
+                .reasons
+                .iter()
+                .map(|why| format!("Preflight concern: {why}")),
+        );
+        lines.extend(report.notes.iter().map(|note| format!("Note: {note}")));
+    }
     match (&report.summary, report.dry_run, report.regions) {
         (Some(summary), _, _) => lines.push(summary.clone()),
         (None, _, 0) => {
@@ -1035,24 +1044,22 @@ fn run_redact(
             command.input.clone(),
         )),
     );
+    let mut regions = Vec::new();
     for (page, areas) in &marked {
-        for area in areas {
-            edits
-                .redact(
-                    doc,
-                    u64::from(*page) + 1,
-                    area.map(|value| value / units[page]),
-                )
-                .map_err(|why| {
-                    Failure::new(
-                        Exit::Internal,
-                        format!(
-                            "page {}: a region was refused by the model: {why}",
-                            page + 1
-                        ),
-                    )
-                })?;
-        }
+        let unit = units[page];
+        regions.extend(
+            areas
+                .iter()
+                .map(|area| (u64::from(*page) + 1, area.map(|v| v / unit))),
+        );
+    }
+    if !regions.is_empty() {
+        edits.redact_many(doc, &regions).map_err(|why| {
+            Failure::new(
+                Exit::Internal,
+                format!("the model refused a redaction region: {why}"),
+            )
+        })?;
     }
     let counts: std::collections::BTreeMap<u32, usize> = marked
         .iter()

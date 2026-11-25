@@ -8999,7 +8999,16 @@ export class Viewer {
     // A third down rather than at the top edge: a hit flush against the top of
     // the viewport has no context above it and reads as though the line before
     // it is missing.
-    this.scrollTo(top - this.viewportSize().height / 3);
+    const viewport = this.viewportSize();
+    this.scrollTo(top - viewport.height / 3);
+    if (first) {
+      const origin = this.scroller.pageOrigin(match.page).left;
+      const left = origin + first.left * this.zoom;
+      const right = origin + first.right * this.zoom;
+      // Keep a visible hit still. For an overwide hit, reveal its start.
+      const delta = left < 0 || right - left > viewport.width ? left : Math.max(0, right - viewport.width);
+      if (delta !== 0) this.panBy(delta);
+    }
     this.wake();
   }
 

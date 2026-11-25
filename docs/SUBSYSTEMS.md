@@ -688,7 +688,7 @@ through `pdfium-render`; the decoder is `zune-jpeg`, as for `tpdf images`.
 A tiling pattern, annotation appearance, Type 3 glyph or graphics-state soft mask
 can draw the same image at another resolution. Images named by those resources retain their pixel dimensions. A resized transparency mask counts as a change to every
 displayed parent and can supply the before-and-after preview. Preview DPI is taken from
-a page where the image is drawn at the measured width.
+the placement on the sampled page. For a reused image the estimator keeps up to four distinct pages, preferring the widest placements. A covered picture on the first page can still supply a visible comparison on another.
 
 The window measures a temporary copy made from the current edit plan. For a picture preview, it
 asks the worker for `Request::Shrink` on the working document, including unsaved changes. On save

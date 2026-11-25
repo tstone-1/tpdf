@@ -520,7 +520,7 @@ pub fn timestamp_sentence(
 pub fn pades_sentence(level: crate::pades::Level) -> String {
     use crate::pades::Level;
     let parts = match level {
-        Level::B => "a CAdES signature with no timestamp, so its only date is the signer's own",
+        Level::B => "a CAdES signature whose signing time has not been attested",
         Level::T => {
             "signed and timestamped; the document does not carry revocation data that \
              answers for every certificate"

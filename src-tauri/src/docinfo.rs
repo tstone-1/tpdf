@@ -6165,6 +6165,15 @@ mod tests {
         let agreeing = cms_blob("Decoy", "Test Root CA", &[0x01], &[0x01]);
         let matched = parse_certificate(&agreeing).expect("a parseable blob");
         assert!(matched.matched_signer);
+        for (cert, expected) in [(certificate, ""), (matched, "Decoy")] {
+            let report = crate::cli::verify::signature_report(&Signature {
+                certificate: Some(cert),
+                ..Signature::default()
+            });
+            assert_eq!(report.signer, expected);
+            assert_eq!(report.issuer.is_empty(), expected.is_empty());
+            assert_eq!(report.signer_sha256.is_none(), expected.is_empty());
+        }
     }
 
     /// Two signatures, two signers, and a chain above each of them.

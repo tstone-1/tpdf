@@ -1330,6 +1330,23 @@ pub(super) fn pictures_in_blocks_are_removed(report: &mut Report) {
 
     // The third picture, at (300..340, 500..540), is drawn by page 2 as well.
     let (code, json, stderr, output) = redact("shared", "[305,257,20,20]");
+    let (dry_code, dry_text, _) = tool(
+        &[
+            "redact",
+            &s(&input),
+            "--regions",
+            &s(&dir.join("shared.json")),
+            "--dry-run",
+        ],
+        &[],
+    );
+    report.check(
+        "plain preflight says a shared picture remains elsewhere",
+        dry_code == 0
+            && dry_text.contains("still in the file")
+            && dry_text.contains("Nothing was written"),
+        &dry_text,
+    );
     let notes = json["notes"].to_string();
     report.check(
         "a picture another page draws too is taken off this page, and the report says it stays in the file",
