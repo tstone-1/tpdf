@@ -476,7 +476,7 @@ ROWS += [
         "  if (unread > 0) return text.unread(total, unread);", "  if (false) return text.unread(total, unread);",
         "says when a page's search failed, with or without hits"),
     Mutation("redact matches: ask only about the count", "src/App.svelte",
-        "      running: searched.searching,\n", "",
+        "    const refusal = searched.searchMarkRefusal;", "    const refusal = null;",
         "asks completeForMarking before marking, with the running scan and its unread pages"),
     Mutation("keys: highlight again for each repeat of a held h", "src/lib/appcommands.ts",
         '      if (!event.repeat) actions.markSelection("highlight");',

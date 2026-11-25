@@ -126,7 +126,7 @@ pub struct Asked {
     pub needles: Vec<String>,
     /// What the removal could not take. Not a refusal --- see `commands::redact::redact_copy`
     /// --- but a reason the file cannot be called clean, carried to the verdict.
-    pub concerns: Vec<String>,
+    pub concerns: Vec<(ReasonKind, String)>,
     /// The concerns that say [`Asked::needles`] may be short of something the
     /// regions cover: today one, a form whose answers could not be read.
     ///
@@ -197,13 +197,14 @@ pub async fn ask_redactions(
 
     let mut planned: Vec<edits::PlannedRedaction> = Vec::new();
     let mut needles: Vec<String> = Vec::new();
-    let mut concerns: Vec<String> = Vec::new();
+    let mut concerns = Vec::new();
     let mut notes: Vec<String> = Vec::new();
     let mut regions = 0usize;
     let mut shows_total = 0usize;
     let mut gate: Vec<ocr_gate::GatePage> = Vec::new();
     let mut pages: Vec<redact::PageSummary> = Vec::new();
 
+    let mut plan = edits.plan(doc)?;
     for target in targets {
         let page = target.source;
         regions += target.regions.len();
@@ -234,15 +235,17 @@ pub async fn ask_redactions(
         // [`redact::aggregate`].
         let one = redact::aggregate(page, displayed, plans, text.as_ref());
         pages.push(one.summary());
-        concerns.extend(one.concerns);
-        notes.extend(one.notes);
+        let (left, shared) = one.output_messages(&plan.pages);
+        concerns.extend(
+            left.into_iter()
+                .map(|reason| (ReasonKind::Pictures, reason)),
+        );
+        notes.extend(shared);
         needles.extend(one.needles);
         shows_total += one.shows;
         gate.push(one.gate);
         planned.push(one.planned);
     }
-
-    let mut plan = edits.plan(doc)?;
 
     // **The form answers under the regions, as needles.** A widget's answer is
     // drawn by its appearance stream rather than the page, so no plan above
@@ -275,7 +278,7 @@ pub async fn ask_redactions(
                  cannot be checked: {why}"
             );
             needles_short.push(unread.clone());
-            concerns.push(unread);
+            concerns.push((ReasonKind::Unchecked, unread));
         }
     }
     plan.redactions = planned;
@@ -292,7 +295,7 @@ pub async fn ask_redactions(
     // stating because dropping one silently is the shape that usually does.
     // `gate_at_output_slots` drops a marked page the plan does not place --- and
     // `redaction_targets` and `plan` take *two* snapshots of the model with a
-    // worker round trip between them, so the two page lists are not guaranteed
+    // short interval between them, so the two page lists are not guaranteed
     // to agree. The reason it is harmless is the space: both this and
     // `verify::Report::placed_pages` are output slots, and a page that is not in
     // the written file has no slot, so the walk cannot attribute a word to it
@@ -333,7 +336,7 @@ pub async fn ask_redactions(
                 .await
                 .and_then(|crop| page.place_on_output(crop, view.turns));
             if let Err(why) = mapped {
-                concerns.push(said!("Page {number}: the removed area could not be checked on the written page: {why}", number = page.page + 1));
+                concerns.push(unchecked_geometry(page.page, why));
                 continue;
             }
         }
@@ -345,10 +348,7 @@ pub async fn ask_redactions(
         });
         match measured {
             Ok(()) => output_gate.push(page),
-            Err(why) => concerns.push(said!(
-                "Page {number}: the removed area could not be checked on the written page: {why}",
-                number = page.page + 1
-            )),
+            Err(why) => concerns.push(unchecked_geometry(page.page, why)),
         }
     }
     // How many of the written pages came from another file, counted off the
@@ -372,6 +372,16 @@ pub async fn ask_redactions(
         inserted,
         marked,
     })
+}
+
+fn unchecked_geometry(slot: u32, why: String) -> (ReasonKind, String) {
+    (
+        ReasonKind::Unchecked,
+        said!(
+            "Page {number}: the removed area could not be checked on the written page: {why}",
+            number = slot + 1
+        ),
+    )
 }
 
 /// Runs `docs/PLAN.md` §6 step 4 over a written file, off the async runtime.
@@ -581,6 +591,61 @@ fn slots_without(
         .collect()
 }
 
+/// Whether the saved crop keeps a whole occurrence of the word. A clipped or
+/// unplaced glyph leaves the result uncertain unless another occurrence is whole.
+fn visible_occurrence(
+    text: &crate::text::PageText,
+    hits: &[crate::search::Match],
+) -> Result<bool, String> {
+    let page = [0.0, 0.0, text.width_pt, text.height_pt];
+    let uncertain_match =
+        || said!("a text match is partly clipped or could not be located on the saved page");
+    if !text.width_pt.is_finite()
+        || !text.height_pt.is_finite()
+        || text.width_pt <= 0.
+        || text.height_pt <= 0.
+    {
+        return Err(uncertain_match());
+    }
+    let mut uncertain = false;
+    for hit in hits {
+        if hit.end_page.is_some() || hit.start >= hit.end || hit.end as usize > text.len() {
+            return Err(uncertain_match());
+        }
+        let mut all_inside = true;
+        let mut all_outside = true;
+        let mut has_ink = false;
+        for index in hit.start as usize..hit.end as usize {
+            if char::from_u32(text.codes[index]).is_some_and(char::is_whitespace) {
+                continue;
+            }
+            has_ink = true;
+            let rect: Option<[f32; 4]> = text
+                .boxes
+                .get(4 * index..4 * index + 4)
+                .and_then(|values| values.try_into().ok());
+            if let Some(rect) =
+                rect.filter(|r| r.iter().all(|v| v.is_finite()) && r[0] < r[2] && r[1] < r[3])
+            {
+                all_inside &= crate::objects::contains(page, rect);
+                all_outside &= !crate::objects::overlaps(page, rect);
+            } else {
+                all_inside = false;
+                all_outside = false;
+            }
+        }
+        if has_ink && all_inside {
+            return Ok(true);
+        }
+        uncertain |= !has_ink || !all_outside;
+    }
+    if uncertain {
+        Err(uncertain_match())
+    } else {
+        Ok(false)
+    }
+}
+
 /// Where the source still shows a removed word as text, outside every marked
 /// page, as reasons for the verdict of an image-only copy.
 ///
@@ -588,8 +653,8 @@ fn slots_without(
 /// image-only copy has no text to scan, so a second copy of the name on an
 /// unmarked page came out of it as pixels and was certified (residual 42,
 /// `docs/THREAT-MODEL.md`). This asks the source's text layer instead, per
-/// page and per word, matching case as the byte scan does. `count` answers how
-/// many times a word occurs on a page of the opened document; an answer it
+/// page and per word, matching case as the byte scan does. `visible` checks the
+/// occurrence against that output placement's crop; an answer it
 /// cannot give is a reason too, because a page not searched is not a page
 /// shown clean.
 ///
@@ -600,15 +665,15 @@ fn slots_without(
 pub(crate) fn text_elsewhere(
     slots: &[(u32, u32)],
     needles: &[String],
-    count: impl Fn(u32, &str) -> Result<usize, String>,
+    mut visible: impl FnMut(u32, u32, &str) -> Result<bool, String>,
 ) -> Vec<(ReasonKind, String)> {
     let mut why = Vec::new();
     for needle in needles {
         let mut pages = std::collections::BTreeSet::new();
         for &(slot, source) in slots {
-            match count(source, needle) {
-                Ok(0) => {}
-                Ok(_) => {
+            match visible(slot, source, needle) {
+                Ok(false) => {}
+                Ok(true) => {
                     pages.insert(slot);
                 }
                 Err(e) => why.push((
@@ -651,14 +716,32 @@ pub(crate) async fn text_elsewhere_in(
             regex: false,
             bounds: None,
         };
-        text_elsewhere(&unmarked_slots(&plan), &needles, |page, needle| {
+        let mut measured: Option<(u32, crate::text::PageText)> = None;
+        text_elsewhere(&unmarked_slots(&plan), &needles, |slot, page, needle| {
             let found = ocr_gate::wait(|reply| {
                 service.search(doc, vec![page], needle.to_string(), options, None, reply)
             })?;
-            match found.problem {
-                Some(problem) => Err(problem),
-                None => Ok(found.matches.len()),
+            if let Some(problem) = found.problem {
+                return Err(problem);
             }
+            if found.matches.is_empty() {
+                return Ok(false);
+            }
+            // Search indices are independent of the crop. Its visible bounds and
+            // glyph boxes come from the same extraction, including a file CropBox.
+            // A pending turn rotates both together and leaves visibility unchanged.
+            if let Some((at, text)) = &measured {
+                if *at == slot {
+                    return visible_occurrence(text, &found.matches);
+                }
+            }
+            let crop = plan.pages[slot as usize]
+                .crop
+                .map(|rect| rect.map(|v| v as f32));
+            let text = ocr_gate::wait(|reply| service.text(doc, page, crop, reply))?;
+            let visible = visible_occurrence(&text, &found.matches);
+            measured = Some((slot, text));
+            visible
         })
     })
     .await
@@ -673,7 +756,7 @@ pub(crate) async fn text_elsewhere_in(
 /// What [`read_back`] needs from an [`Asked`], borrowed, so a test can build it.
 pub(crate) struct Parts<'a> {
     /// [`Asked::concerns`].
-    pub concerns: &'a [String],
+    pub concerns: &'a [(ReasonKind, String)],
     /// [`Asked::needles_short`].
     pub needles_short: &'a [String],
     /// [`Asked::marked`].
@@ -780,15 +863,8 @@ pub(crate) fn judge(
     let mut taken_here: Vec<String> = Vec::new();
     match written {
         Written::Rewritten { report, also } => {
-            // The objects a region covers that the removal could not take are
-            // pictures and drawings; the form that could not be read is not.
-            for concern in asked.concerns {
-                let kind = if asked.needles_short.contains(concern) {
-                    ReasonKind::Unchecked
-                } else {
-                    ReasonKind::Pictures
-                };
-                add(kind, &mut std::iter::once(concern.clone()));
+            for (kind, reason) in asked.concerns {
+                add(*kind, &mut std::iter::once(reason.clone()));
             }
             // `Report::verdict`'s order: the words found, then what could not
             // be read, then the pictures nobody read.
@@ -1066,7 +1142,7 @@ mod tests {
     /// Every part a verdict reads, each a sentence naming itself, so an
     /// assertion on `why` says which reader put each line there.
     struct Asked {
-        concerns: Vec<String>,
+        concerns: Vec<(ReasonKind, String)>,
         needles_short: Vec<String>,
         taken_here: Vec<String>,
     }
@@ -1074,7 +1150,10 @@ mod tests {
     impl Asked {
         fn full() -> Self {
             Asked {
-                concerns: vec!["page 1: object 7 was left".to_string()],
+                concerns: vec![(
+                    ReasonKind::Pictures,
+                    "page 1: object 7 was left".to_string(),
+                )],
                 needles_short: vec!["the form fields could not be read".to_string()],
                 taken_here: vec!["page 1: object 9 is still in the file".to_string()],
             }
@@ -1279,13 +1358,86 @@ mod tests {
         );
     }
 
+    fn test_page(value: &str, top: f32) -> crate::text::PageText {
+        crate::text::PageText {
+            codes: value.chars().map(u32::from).collect(),
+            boxes: value
+                .chars()
+                .flat_map(|_| [10.0, top, 20.0, top + 10.0])
+                .collect(),
+            width_pt: 100.0,
+            height_pt: 100.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_image_only_verdict_checks_text_inside_the_saved_crop() {
+        let needles = ["Footer".to_string()];
+        let assess = |page: crate::text::PageText| {
+            let elsewhere = super::text_elsewhere(&[(0, 4)], &needles, |_, _, needle| {
+                let hits = crate::search::search_page(
+                    &page,
+                    0,
+                    needle,
+                    crate::search::Options::default(),
+                    None,
+                );
+                super::visible_occurrence(&page, &hits.matches)
+            });
+            let asked = Asked {
+                concerns: Vec::new(),
+                needles_short: Vec::new(),
+                taken_here: Vec::new(),
+            };
+            judge(
+                &asked.parts(),
+                Written::Pictures { elsewhere },
+                Vec::new(),
+                CodesRead::default(),
+            )
+            .kinds
+        };
+        assert!(assess(test_page("Footer", 100.0)).is_empty());
+        assert_eq!(assess(test_page("Footer", 90.0)), [ReasonKind::Found]);
+        assert_eq!(assess(test_page("Footer", 95.0)), [ReasonKind::Unchecked]);
+        let mut missing = test_page("Footer", 120.0);
+        missing.boxes[..4].fill(0.0);
+        assert_eq!(assess(missing), [ReasonKind::Unchecked]);
+    }
+
+    #[test]
+    fn an_unmeasurable_mark_is_a_geometry_reason_only_for_the_rewrite() {
+        let reason =
+            super::unchecked_geometry(1, "A marked area extends beyond the saved page".into());
+        let asked = Asked {
+            concerns: vec![reason],
+            needles_short: Vec::new(),
+            taken_here: Vec::new(),
+        };
+        let rewrite = Written::Rewritten {
+            report: crate::verify::Report::default(),
+            also: Vec::new(),
+        };
+        let judged = judge(&asked.parts(), rewrite, Vec::new(), CodesRead::default());
+        assert_eq!(judged.kinds, [ReasonKind::Unchecked]);
+        assert!(judged.why[0].contains("Page 2"));
+        let raster = judge(
+            &asked.parts(),
+            pictures(Vec::new()),
+            Vec::new(),
+            CodesRead::default(),
+        );
+        assert!(raster.why.is_empty());
+    }
+
     #[test]
     fn a_removed_word_on_an_unmarked_page_is_a_reason_naming_the_output_page() {
         let needles = vec!["4711-0815".to_string(), "Smith".to_string()];
         // Page 5 of the opened document is output slot 1, and shows the
         // number once; nothing shows the name.
-        let why = super::text_elsewhere(&[(0, 4), (1, 5)], &needles, |page, needle| {
-            Ok(usize::from(page == 5 && needle == "4711-0815"))
+        let why = super::text_elsewhere(&[(0, 4), (1, 5)], &needles, |_, source, needle| {
+            Ok(source == 5 && needle == "4711-0815")
         });
         assert_eq!(
             why,
@@ -1297,9 +1449,9 @@ mod tests {
             )]
         );
         // The control: no hit is no reason.
-        assert!(super::text_elsewhere(&[(0, 4), (1, 5)], &needles, |_, _| Ok(0)).is_empty());
+        assert!(super::text_elsewhere(&[(0, 4), (1, 5)], &needles, |_, _, _| Ok(false)).is_empty());
         // A page that cannot be searched is not one shown clean.
-        let failed = super::text_elsewhere(&[(0, 4)], &needles[..1], |_, _| {
+        let failed = super::text_elsewhere(&[(0, 4)], &needles[..1], |_, _, _| {
             Err("the worker stopped".to_string())
         });
         assert_eq!(failed.len(), 1);

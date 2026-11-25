@@ -432,7 +432,6 @@
     type AppActions,
   } from "./lib/appcommands";
   import { CommandRegistry } from "./lib/commands";
-  import { completeForMarking } from "./lib/search";
   import { chooseTab, commentTarget, followStatus } from "./lib/documentmount";
   import {
     ContextMenu,
@@ -2321,9 +2320,8 @@
    * {@link redactSelection}'s shape over a different set of quads, and two
    * things are genuinely different rather than copied.
    *
-   * **It can refuse before it starts**, for three reasons `completeForMarking`
-   * gives: the scan is still running, a page's search failed, or there are too
-   * many. The first two were missing until 2026-10-15, so the matches found so
+   * **It can refuse before it starts**, when the scan is still running, a page's search
+   * failed, a page lacks readable character mapping, or there are too many matches. The first two were missing until 2026-10-15, so the matches found so
    * far were marked as though they were all of them. Above {@link MAX_MATCHES_TO_MARK} the
    * reader is told the number and asked to narrow the search, because the review
    * list is this subsystem's whole safety mechanism and a list nobody can read
@@ -2338,17 +2336,14 @@
   async function redactMatches(): Promise<void> {
     const view = openView, searched = viewer, model = edits;
     if (!searched || !model) return;
-    const refusal = completeForMarking({
-      running: searched.searching,
-      unread: searched.searchUnread,
-      count: searched.matchCount,
-    });
+    const refusal = searched.searchMarkRefusal;
     if (refusal) {
       say(refusal);
       return;
     }
+    const matches = searched.searchMatches;
     await model.trackSearchMarks(applyEdit(async (owner) => {
-      const found = await searched.matchQuadsByPage();
+      const found = await searched.matchQuadsByPage(matches);
       if (found === null) throw new Error(TEXT().matchPagesUnread);
       return owner.redactText(found);
     }, view, model));
@@ -2747,7 +2742,7 @@
     const placed = kind === "field"
       ? placing(
         { kind: armedField, options: armedOptions, group: armedGroup },
-        fieldBorder, formNames, edits?.state.marks ?? [], scannedForm,
+        fieldBorder, formNames, edits?.state.marks ?? [], scannedForm, edits?.state.fields,
       )
       : undefined;
     const field = placed?.field;

@@ -426,6 +426,12 @@ impl Metrics {
     /// Whether a space can be written as a glyph. TeX fonts and some subsets
     /// have none; their producers show word gaps as TJ displacements instead.
     pub(super) fn writes_space(&self) -> bool {
+        // A legacy code map can still include a space whose PDF width is
+        // zero or whose glyph was never validated. Unicode maps include only
+        // offered glyphs in their encoder.
+        if self.unicode.is_none() && self.width(b' ').is_err() {
+            return false;
+        }
         self.codes_for(" ").is_ok()
     }
 

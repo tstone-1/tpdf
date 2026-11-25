@@ -113,7 +113,7 @@ ROWS += [
         "redaction: an image-only copy reports the objects a rewrite left",
         "src/redaction_steps.rs",
         "                &mut asked.needles_short.iter().cloned(),",
-        "                &mut asked.concerns.iter().cloned(),",
+        "                &mut asked.concerns.iter().map(|(_, why)| why.clone()),",
         "an_image_only_copy_is_judged_on_what_applies_to_pictures",
     ),
     Mutation(

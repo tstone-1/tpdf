@@ -241,6 +241,17 @@ describe("Results", () => {
     expect(panel.status).toBe("Type in the find field to search.");
   });
 
+  it("qualifies the Find count when readable pages were searched alongside an unreadable page", () => {
+    for (const total of [0, 1]) {
+      const search = { problem: "", textless: false, running: false, unread: 0,
+        unsearchablePages: 0, total, query: "cat" };
+      const prefix = total === 0 ? "No matches" : "1 match";
+      expect(searchNotice({ ...search, unread: 1 })).toContain(`${prefix}. 1 page could not be searched: reading them failed`);
+      expect(searchNotice({ ...search, unsearchablePages: 1 })).toContain(`${prefix}. 1 page could not be searched`);
+      expect(searchNotice(search)).toBe("");
+    }
+  });
+
   it("draws an empty pane's message where the rows would be, not above them", () => {
     // Reported by a reader: "Type in the find field to search." sat higher than
     // the outline's "This document has no outline." and in a different grey.

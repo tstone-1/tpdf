@@ -683,6 +683,8 @@ export default {
     "Seite {n} hat mehr als {MAX_CODES} Codes; die übrigen wurden nicht mit dem Entfernten verglichen",
   "the codes on page {n} could not be read, so whether one still carries what was removed is not known: {e}":
     "Die Codes auf Seite {n} konnten nicht gelesen werden, daher ist unbekannt, ob einer noch Entferntes enthält: {e}",
+  "a text match is partly clipped or could not be located on the saved page":
+    "Eine Textfundstelle ist teilweise abgeschnitten oder konnte auf der gespeicherten Seite nicht lokalisiert werden",
   "{needle} is also shown as text on {pages}, which no region marks; the image-only copy keeps it there as a picture":
     "{needle} steht auch als Text auf {pages}, wo kein Bereich markiert ist; die Kopie nur aus Bildern behält es dort als Bild",
   "page {n} could not be searched for what was removed, so whether it still shows it is not known: {e}":

@@ -82,17 +82,17 @@ describe("completeForMarking", () => {
   it("refuses while the scan is still running", () => {
     // Mutation: the `running` test removed. Marking then took the hits found so
     // far, which is what the window did until 2026-10-15.
-    const said = completeForMarking({ running: true, unread: 0, count: 3 }) ?? "";
+    const said = completeForMarking({ running: true, unread: 0, unsearchablePages: 0, count: 3 }) ?? "";
     expect(said).toContain("still running");
     expect(said).toContain("Nothing was marked");
   });
 
   it("refuses when a page could not be searched, and says how many", () => {
     // Mutation: the `unread` test removed.
-    expect(completeForMarking({ running: false, unread: 1, count: 3 })).toContain(
+    expect(completeForMarking({ running: false, unread: 1, unsearchablePages: 0, count: 3 })).toContain(
       "1 page could not be searched",
     );
-    expect(completeForMarking({ running: false, unread: 4, count: 3 })).toContain(
+    expect(completeForMarking({ running: false, unread: 4, unsearchablePages: 0, count: 3 })).toContain(
       "4 pages could not be searched",
     );
   });
@@ -100,10 +100,79 @@ describe("completeForMarking", () => {
   it("lets a finished scan that read every page through, up to the count", () => {
     // The control: without it a function refusing everything passes the two
     // tests above.
-    expect(completeForMarking({ running: false, unread: 0, count: 3 })).toBeNull();
+    expect(completeForMarking({ running: false, unread: 0, unsearchablePages: 0, count: 3 })).toBeNull();
     expect(
-      completeForMarking({ running: false, unread: 0, count: MAX_MATCHES_TO_MARK + 1 }),
+      completeForMarking({ running: false, unread: 0, unsearchablePages: 0, count: MAX_MATCHES_TO_MARK + 1 }),
     ).not.toBeNull();
+  });
+
+  it("refuses until mapping settles, and then until an unmapped page has readable text", async () => {
+    let answer!: (pages: { composite: number; guessing: number; truncated: boolean }[]) => void;
+    let asked!: () => void;
+    const pending = new Promise<void>(resolve => { asked = resolve; });
+    core.invoke.mockImplementation((command: string) => {
+      if (command === "search_page") return Promise.resolve({
+        ...hit(0), more: [{ page: 1, matches: [], chars: 8 }],
+      });
+      if (command === "document_mapping") {
+        asked();
+        return new Promise(resolve => { answer = resolve; });
+      }
+      throw new Error(command);
+    });
+    let recovered = false;
+    const search = new Search(1, 2, () => {}, undefined, undefined, (_doc, page) => recovered && page === 1);
+    const scan = search.run("cat", 0);
+    await pending;
+    expect(search.matches).toHaveLength(1);
+    expect(search.markingRefusal).toContain("still running");
+    answer([0, 1].map(guessing => ({ composite: 1, guessing, truncated: false })));
+    await scan;
+    expect(search.markingRefusal).toContain("1 page has no readable character mapping");
+    recovered = true;
+    expect(search.markingRefusal).toBeNull();
+  });
+
+  it.each(["failed", "short", "truncated"] as const)(
+    "refuses bulk marking when a source mapping is %s", async outcome => {
+      const mapped = { guessing: 0, truncated: false, composite: 0 };
+      core.invoke.mockImplementation(async (command: string) => {
+        if (command === "search_page") return { ...hit(0), more: [hit(1)] };
+        if (outcome === "failed") throw new Error("no assessment");
+        return outcome === "short" ? [mapped] : [mapped, { ...mapped, truncated: true }];
+      });
+      const search = new Search(1, 2, () => {});
+      await search.run("cat", 0);
+      expect(search.matches).toHaveLength(2);
+      expect(search.markingRefusal).toContain("could not be checked");
+      if (outcome !== "failed") {
+        await search.run("cat", 0, undefined, [{ page: 0, from: 0, to: Infinity }]);
+        expect(search.markingRefusal).toBeNull();
+      }
+    },
+  );
+
+  it("keeps a cancelled scan incomplete when its outstanding mapping reply arrives", async () => {
+    let answer!: () => void;
+    let asked!: () => void;
+    const pending = new Promise<void>(resolve => { asked = resolve; });
+    core.invoke.mockImplementation((command: string) => {
+      if (command === "search_page") return Promise.resolve(hit(0));
+      asked();
+      return new Promise(resolve => {
+        answer = () => resolve([{ guessing: 0, truncated: false, composite: 0 }]);
+      });
+    });
+    const search = new Search(1, 1, () => {});
+    const scan = search.run("cat", 0);
+    await pending;
+    search.cancel();
+    answer();
+    await scan;
+    expect(search.matches).toHaveLength(1);
+    expect(search.markingRefusal).toContain("search did not finish");
+    await search.run("cat", 0);
+    expect(search.markingRefusal).toBeNull();
   });
 
   it("refuses a scan whose failed page is real, end to end", async () => {
@@ -112,13 +181,7 @@ describe("completeForMarking", () => {
     backend(3);
     const search = new Search(1, 6, () => {});
     await search.run("cat", 0);
-    expect(
-      completeForMarking({
-        running: search.running,
-        unread: search.unread,
-        count: search.matches.length,
-      }),
-    ).toContain("1 page could not be searched");
+    expect(search.markingRefusal).toContain("1 page could not be searched");
   });
 });
 
@@ -132,18 +195,18 @@ describe("the window's wiring", () => {
   it("asks completeForMarking before marking, with the running scan and its unread pages", () => {
     const marking = functionIn(app, "async function redactMatches(): Promise<void> {");
     expect(missingFrom(marking, [
-      "const refusal = completeForMarking({",
-      "running: searched.searching,",
-      "unread: searched.searchUnread,",
-      "count: searched.matchCount,",
+      "const refusal = searched.searchMarkRefusal;",
+      "const matches = searched.searchMatches;",
+      "const found = await searched.matchQuadsByPage(matches);",
       "model.trackSearchMarks(applyEdit(",
       "return owner.redactText(found);",
     ])).toEqual([]);
     // Asked before the quads are read: a refusal after them would mark nothing
     // either, but would cost the round trips first.
-    expect(marking.indexOf("completeForMarking(")).toBeLessThan(
-      marking.indexOf("matchQuadsByPage()"),
+    expect(marking.indexOf("searched.searchMarkRefusal")).toBeLessThan(
+      marking.indexOf("matchQuadsByPage(matches)"),
     );
+    expect(marking.indexOf("const matches = searched.searchMatches;")).toBeLessThan(marking.indexOf("applyEdit("));
     expect(missingFrom(app, ["next.search.unread,"])).toEqual([]);
   });
 });

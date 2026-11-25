@@ -116,8 +116,8 @@ export function copyOf(
     if (kind === "radio" && found.widget.name.includes(".")) return TEXT().radioInGroup;
     const now = properties(form, state, id);
     const made = placing(
-      { kind, options: kind === "dropdown" ? now?.options ?? [] : [], group: found.widget.name },
-      border, formNames, state.marks, form,
+      { kind, options: kind === "dropdown" ? now?.options ?? [] : [], group: now?.name ?? found.widget.name },
+      border, formNames, state.marks, form, state.fields,
     );
     return { ...base, kind: "field", page: found.page, note: made.name, field: { ...made.field, ...carried(now) } };
   }
@@ -128,7 +128,7 @@ export function copyOf(
   if (mark.kind !== "field" || !mark.field) return TEXT().onlyThese;
   const made = placing(
     { kind: mark.field.kind, options: mark.field.kind === "dropdown" ? mark.field.options ?? [] : [], group: mark.note },
-    mark.field.border, formNames, state.marks, form,
+    mark.field.border, formNames, state.marks, form, state.fields,
   );
   const { kind: _kind, border: _border, options: _options, ...rest } = mark.field;
   return { ...copied, kind: "field", note: made.name, field: { ...made.field, ...rest } };

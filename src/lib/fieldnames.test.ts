@@ -184,7 +184,7 @@ describe("the field a drag places", () => {
   });
 
   it("counts the values the file's group has as well", () => {
-    const form: Form = { widgets: [saved("Pay", ["Choice 1", "Choice 2"]), saved("Send", ["Choice 4"])] };
+    const form: Form = { widgets: [saved("Pay", ["Choice 1", "Choice 2"]), { ...saved("Send", ["Choice 4"]), object: [20, 0], widget: [21, 0] }] };
     expect(placing(armed("radio", { group: "Pay" }), true, [], [radio(1, "Pay", "Choice 3")], form).field.options)
       .toEqual(["Choice 4"]);
     const mapped = saved("Pay", ["1", "0"]);

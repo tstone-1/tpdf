@@ -121,26 +121,35 @@ pub(in crate::textedit) fn exercise(mut doc: Document, font: ObjectId, program_i
             }
         }
     }
-    // A fits each rectangle, but an offered replacement would escape: B at the
-    // top, D at the bottom. The last rectangle exposes integer truncation (800
-    // versus 800.1892 font units), rather than a missing whole-glyph union.
+    // The source's font envelope reaches beyond each clip: B at the top or D
+    // at the bottom. The last rectangle tests the fractional top (800.1892
+    // font units). A larger font size must also pass the clip on save.
+    let enlarged = |scan: &textedit::PageRuns| Change {
+        layout: Some(textedit::Layout {
+            width: 40.,
+            height: 42.,
+            size: 24.,
+            wrap: false,
+            font: textedit::EditFont::Original,
+            grow: false,
+            installed: None,
+        }),
+        page: 0,
+        revision: scan.revision.clone(),
+        operator: scan.runs[0].operator,
+        original: scan.runs[0].text.clone(),
+        replacement: "B".into(),
+    };
+    let control_edit = enlarged(&textedit::scan(&control, 0).unwrap());
+    textedit::write(&mut control.clone(), &[control_edit]).unwrap();
     for rect in ["0 178 300 11", "0 179 300 11", "0 178 300 11.601"] {
         let mut doc = control.clone();
         set_content(&mut doc, &format!("{rect} re W n"), &encoded);
         let objects = doc.objects.clone();
-        textedit::tests::clipped_roundtrip(&doc);
-        assert!(textedit::write(
-            &mut doc,
-            &[Change {
-                layout: None,
-                page: 0,
-                revision: Vec::new(),
-                operator: 0,
-                original: "A".into(),
-                replacement: "B".into()
-            }]
-        )
-        .is_err());
+        let scan = textedit::tests::clipped_roundtrip(&doc);
+        assert_ne!(scan.runs[0].display_rect, plain.display_rect, "{rect}");
+        let refusal = textedit::write(&mut doc, &[enlarged(&scan)]).unwrap_err();
+        assert!(refusal.contains("clips this area"), "{rect}: {refusal}");
         assert_eq!(doc.objects, objects);
     }
     // The established clip is in page coordinates. Scale the glyphs twofold
@@ -213,23 +222,29 @@ fn textedit_simple_overhang_tracks_unicode_ink_and_preserves_resources() {
         let metrics = embedded(&source, source.get_dictionary(font).unwrap()).unwrap();
         assert_eq!(metrics.horizontal_bounds("B", 1000.).unwrap(), [-10., 600.]);
         assert_eq!(metrics.horizontal_bounds("D", 1000.).unwrap(), [0., 650.]);
-        for (text, prefix, accepted) in [
-            ("BA", "40 170 30 20 re W n", false),
-            ("BA", "39 170 30 20 re W n", true),
-            ("AD", "40 170 14.4 20 re W n", false),
-            ("AD", "40 170 15.1 20 re W n", true),
-            ("AD", "80 170 28.8 20 re W n 2 0 0 1 0 0 cm", false),
-            ("AD", "80 170 30.1 20 re W n 2 0 0 1 0 0 cm", true),
+        for (text, clip, transform, fits) in [
+            ("BA", "40 170 30 20", "", false),
+            ("BA", "39 170 30 20", "", true),
+            ("AD", "40 170 14.4 20", "", false),
+            ("AD", "40 170 15.1 20", "", true),
+            ("AD", "80 170 28.8 20", "2 0 0 1 0 0 cm", false),
+            ("AD", "80 170 30.1 20", "2 0 0 1 0 0 cm", true),
         ] {
             let mut doc = source.clone();
-            set_content(&mut doc, prefix, &metrics.encode(text).unwrap());
+            set_content(
+                &mut doc,
+                &format!("{clip} re W n {transform}"),
+                &metrics.encode(text).unwrap(),
+            );
             let clipped = textedit::tests::clipped_roundtrip(&doc).runs.remove(0);
             let mut plain = source.clone();
-            set_content(&mut plain, "", &metrics.encode(text).unwrap());
+            set_content(&mut plain, transform, &metrics.encode(text).unwrap());
             let plain = textedit::scan(&plain, 0).unwrap().runs.remove(0);
-            if !prefix.contains("cm") {
-                assert_eq!(clipped.display_rect == plain.display_rect, accepted);
-            }
+            assert_eq!(
+                clipped.display_rect == plain.display_rect,
+                fits,
+                "{clip} {transform}"
+            );
         }
         for (replacement, accepted) in [("BA", false), ("AAD", false), ("AD", true), ("ABA", true)]
         {

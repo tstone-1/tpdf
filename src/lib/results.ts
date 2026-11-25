@@ -46,10 +46,10 @@ export function searchNotice(
 ): string {
   if (!search.query) return "";
   if (search.problem) return spoken(search.problem);
-  if (!search.textless) return "";
-  if (search.unread || search.unsearchablePages) {
+  if ((!search.running || search.textless) && (search.unread || search.unsearchablePages)) {
     return statusFor(search.total, search.query, search.running, search.unsearchablePages, search.unread);
   }
+  if (!search.textless) return "";
   return search.running ? TEXT().noTextYet : TEXT().noTextScanned;
 }
 

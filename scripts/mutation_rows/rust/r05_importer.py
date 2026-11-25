@@ -416,8 +416,8 @@ ROWS += [
         # somebody to look at the wrong sheet for an object that could not go.
         "redact: name a concern's page zero-based",
         "src/redact.rs",
-        'format!("page {}: {}", page + 1, object.sentence())',
-        'format!("page {}: {}", page, object.sentence())',
+        'format!("page {}: {message}", slot + 1)',
+        'format!("page {}: {message}", slot)',
         "an_object_that_cannot_be_removed_names_the_readers_page_number",
     ),
     Mutation(

@@ -13589,16 +13589,34 @@ fn radio_buttons_placed_as_marks_are_written_as_one_group() {
     assert_eq!(states, &[b"Card".to_vec(), b"Cash".to_vec()]);
     assert_eq!(form.widgets[1].display_rect, [20.0, 50.0, 32.0, 62.0]);
     assert_eq!(crate::verify::structure(&written), Vec::<String>::new());
-    // Saved again with a third button of that name, the group has three.
+    // A filled group can be renamed and extended in the same save. Its
+    // previous selection belongs to the group under the new name.
+    let object = form.widgets[0].object;
+    let mut filled = plan_of(&[0, 0]);
+    filled.forms.push(crate::forms::Change {
+        object,
+        value: crate::forms::Value::Selection(vec![1]),
+    });
+    let filled = rewrite_update(&written, &filled, Job::Save, None).expect("filled");
+    let filled_form = crate::forms::scan(&Document::load_mem(&filled).unwrap()).unwrap();
     let mut more = plan_of(&[0, 0]);
-    more.marks = vec![button("Cheque", 70.0)];
-    let again = rewrite_update(&written, &more, Job::Save, None).expect("rewritten");
+    more.field_edits.push(crate::formedit::FieldEdit {
+        widget: filled_form.widgets[0].object,
+        name: Some("Method".into()),
+        rect: None,
+        value: None,
+        remove: false,
+        props: Default::default(),
+    });
+    let mut copy = button("Cheque", 70.0);
+    copy.note = "Method".into();
+    more.marks.push(copy);
+    let again = rewrite_update(&filled, &more, Job::Save, None).expect("rewritten");
     let form = crate::forms::scan(&Document::load_mem(&again).expect("parses")).expect("a form");
     assert_eq!(form.widgets.len(), 3);
-    assert!(form
-        .widgets
-        .iter()
-        .all(|w| w.object == form.widgets[0].object));
+    assert!(form.widgets.iter().all(|w| w.name == "Method"
+        && w.object == form.widgets[0].object
+        && w.value == crate::forms::Value::Selection(vec![1])));
     // And one whose value the group has is refused, and says which.
     let mut twice = plan_of(&[0, 0]);
     twice.marks = vec![button("Card", 70.0)];

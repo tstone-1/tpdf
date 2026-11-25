@@ -1121,7 +1121,7 @@ fn run_redact(
 
     if command.dry_run {
         let mut reasons = unmarked;
-        reasons.extend(asked.concerns.iter().cloned());
+        reasons.extend(asked.concerns.iter().map(|(_, reason)| reason.clone()));
         let mut report = draft.report(false, None, reasons, None);
         // What a write would say beside its verdict whatever the verdict: a
         // picture it would take off a page and leave in the file.

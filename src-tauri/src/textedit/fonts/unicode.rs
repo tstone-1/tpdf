@@ -60,15 +60,12 @@ fn reverse(
 }
 
 // Unicode space separators can have a positive advance and no outline.
-fn spacing_character(text: &str) -> bool {
-    let mut chars = text.chars();
+pub(super) fn spacing_character(ch: char) -> bool {
     matches!(
-        chars.next(),
-        Some(
-            ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-                ..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
-        )
-    ) && chars.next().is_none()
+        ch,
+        ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
+    )
 }
 
 impl Metrics {
@@ -168,7 +165,13 @@ impl Metrics {
                     vertical[1] = vertical[1].max(top);
                     [left.min(0.), (right - width).max(0.)]
                 }
-                None if agrees && spacing_character(text) && empty => [0.; 2],
+                None if agrees
+                    && empty
+                    && text.chars().count() == 1
+                    && text.chars().all(spacing_character) =>
+                {
+                    [0.; 2]
+                }
                 // A reader positions every glyph by its PDF width. One whose
                 // program disagrees (LuaTeX writes TeX's italic correction into
                 // math widths) is measured there and kept read-only with its

@@ -4,6 +4,32 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Physical redaction size, radio groups and font spacing (2026-11-25)
+
+On macOS arm64, `raster-redact-probe` reordered a two-page document and cropped
+its UserUnit 2 page to 125 by 125 native units. Reopening the image-only copy
+gave 250 by 250 physical points. Sampling the marked area returned black and
+sampling outside it returned the original red. A verifier that derives both
+expected and actual dimensions from the same unscaled box misses this error.
+
+PDFium found the same 13-character footer in the source under three crops.
+Poppler rendered 5,448 dark pixels on the uncropped output, 2,229 on the
+partly cropped output and zero when the entire footer was cropped away.
+The verifier reported the word as found, uncertain and absent respectively.
+The compact Find counter also reports partial searches. A queued bulk mark
+refuses if the query changes while an earlier edit is pending.
+
+After selecting the second option, renaming a saved radio group and adding a
+third button, the saved file had three widgets with one field object, the new
+name and the original selection. The frontend test checks the name and next
+free export value with a pending group rename and a pending widget value edit.
+
+A WinAnsi subset with zero width for its space uses a 0.25 em displacement
+between FIRST and SECOND. The editor reads the space and writes FIRST SEND.
+With a validated space glyph, the same displacement remains ordinary positioning.
+Both the Latin and the extended Identity-H font readers accept a nonbreaking
+space whose glyph is proven empty.
+
 ### Page extraction, comment editing and tagged spans (2026-11-25)
 
 On macOS arm64, the CLI extracted a page whose luminosity mask drew an image

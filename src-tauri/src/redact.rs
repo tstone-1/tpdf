@@ -4825,7 +4825,7 @@ pub struct PageAggregate {
     pub planned: edits::PlannedRedaction,
     /// What the OCR gate is asked to look at afterwards.
     pub gate: ocr_gate::GatePage,
-    /// Objects the removal cannot take, one sentence each, page number included.
+    /// Objects the removal cannot take. Page numbers are attached once the output order is known.
     pub concerns: Vec<String>,
     /// The strings the removal takes, for the whole-file verification.
     pub needles: Vec<String>,
@@ -4876,7 +4876,28 @@ fn cut_paths(cuts: &[(usize, [f32; 4])]) -> usize {
     ordinals.len()
 }
 
+fn on_page(slot: usize, messages: &[String]) -> impl Iterator<Item = String> + '_ {
+    messages
+        .iter()
+        .map(move |message| format!("page {}: {message}", slot + 1))
+}
+
 impl PageAggregate {
+    /// Object findings and shared-image notes for each placement in the written file.
+    pub(crate) fn output_messages(&self, pages: &[edits::PageView]) -> (Vec<String>, Vec<String>) {
+        let mut concerns = Vec::new();
+        let mut notes = Vec::new();
+        if !self.concerns.is_empty() || !self.notes.is_empty() {
+            for (slot, page) in pages.iter().enumerate() {
+                if page.source == docmodel::PageSource::Baseline(self.planned.source) {
+                    concerns.extend(on_page(slot, &self.concerns));
+                    notes.extend(on_page(slot, &self.notes));
+                }
+            }
+        }
+        (concerns, notes)
+    }
+
     /// This page's counts, from the plan the writer will be handed.
     #[must_use]
     pub fn summary(&self) -> PageSummary {
@@ -4891,7 +4912,7 @@ impl PageAggregate {
             paths: self.planned.paths.len() + self.planned.form_paths.whole.len(),
             cuts: cut_paths(&self.planned.cuts) + self.planned.form_paths.cut_count(),
             taking: self.planned.taking.clone(),
-            left: self.concerns.clone(),
+            left: on_page(self.planned.source as usize, &self.concerns).collect(),
         }
     }
 }
@@ -4984,10 +5005,10 @@ pub fn aggregate(
                 .map(|(at, ordinal)| (*at, *ordinal, plan.area)),
         );
         for object in &plan.unhandled {
-            concerns.push(format!("page {}: {}", page + 1, object.sentence()));
+            concerns.push(object.sentence());
         }
         for object in &plan.shared {
-            let note = format!("page {}: {}", page + 1, object.taken_here());
+            let note = object.taken_here();
             // One picture under two regions is one thing to say.
             if !notes.contains(&note) {
                 notes.push(note);
@@ -5567,12 +5588,14 @@ mod tests {
             drawn: None,
         }];
         let one = super::aggregate(6, vec![[0.0; 4]], vec![plan], None);
-        assert_eq!(one.concerns.len(), 1);
-        assert!(
-            one.concerns[0].starts_with("page 7: "),
-            "the reader's number, not the model's: {}",
-            one.concerns[0]
-        );
+        let original = view(6, crate::docmodel::PageSource::Baseline(6));
+        let neighbour = view(0, crate::docmodel::PageSource::Baseline(0));
+        let first = one.output_messages(&[original]).0;
+        assert_eq!(first.len(), 1);
+        assert!(first[0].starts_with("page 1: "));
+        let second = one.output_messages(&[neighbour, original]).0;
+        assert!(second[0].starts_with("page 2: "));
+        assert!(one.output_messages(&[neighbour]).0.is_empty());
     }
 
     /// A page whose text could not be read is not a refusal.

@@ -290,6 +290,33 @@ export function buttonValue(widget: FormWidget, state: Pick<EditState, "fields">
   return control.kind === "radio" ? radioExport(control, control.index) : "";
 }
 
+/** Export values still occupied after pending group and widget edits. */
+export function savedRadioValues(group: string, form: Form | null, fields: readonly FieldEdited[]): Set<string> {
+  const edits = new Map(fields.map(field => [field.object.join(":"), field]));
+  const byField = new Map<string, (string | undefined)[]>();
+  for (const widget of form?.widgets ?? []) {
+    const control = widget.control;
+    if (control.kind !== "radio" || widget.name.includes(".")) continue;
+    const key = widget.object.join(":");
+    if ((edits.get(key)?.name ?? widget.name) !== group) continue;
+    let values = byField.get(key);
+    if (!values) {
+      // Each widget carries the group's full export list, even when another
+      // member has no widget on a scanned page.
+      values = control.states.map((_, index) => radioExport(control, index));
+      byField.set(key, values);
+    }
+    const edit = edits.get(widget.widget.join(":"));
+    if (edit?.removed) values[control.index] = undefined;
+    else if (edit?.value !== undefined) values[control.index] = edit.value;
+  }
+  const occupied = new Set<string>();
+  for (const values of byField.values()) {
+    for (const value of values) if (value !== undefined) occupied.add(value);
+  }
+  return occupied;
+}
+
 /** The properties of the saved field an id names, or `null` when it names none. */
 export function properties(
   form: Form,

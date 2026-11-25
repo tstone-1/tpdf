@@ -316,6 +316,7 @@ export class Search {
   /** Bumped by every `run` and `cancel`; replies from an older one are dropped. */
   private generation = 0;
 
+  private completed = false;
   private readonly mappings = new Map<number, PageMapping[] | null>();
   private readonly mappingRequests = new Map<number, Promise<void>>();
   private mappingSummary: { documents: Set<number>; guessed: PageAddress[] } | null = null;
@@ -464,14 +465,35 @@ export class Search {
     return this.scopedMappings().guessed.filter(at => !this.recovered(at.doc, at.page)).length;
   }
 
+  private *searchedAddresses(): Iterable<PageAddress> {
+    const count = this.scope?.length ?? this.pageCount;
+    for (let i = 0; i < count; i++) {
+      const at = this.addressOf(this.scope?.[i]?.page ?? i);
+      if (at) yield at;
+    }
+  }
+
+  /** Checked on the marking command only. Ordinary Find can display its known hits. */
+  get markingRefusal(): string | null {
+    const refusal = completeForMarking({
+      running: this.running, unread: this.unread,
+      unsearchablePages: this.unsearchablePages, count: this.matches.length,
+    });
+    if (refusal) return refusal;
+    if (!this.completed) return TEXT().scanIncomplete;
+    for (const at of this.searchedAddresses()) {
+      if (this.recovered(at.doc, at.page)) continue;
+      const verdict = this.mappings.get(at.doc)?.[at.page];
+      if (!verdict || verdict.truncated) return TEXT().mappingIncomplete;
+    }
+    return null;
+  }
+
   private scopedMappings(): { documents: Set<number>; guessed: PageAddress[] } {
     if (this.mappingSummary) return this.mappingSummary;
     const documents = new Set<number>();
     const guessed: PageAddress[] = [];
-    const count = this.scope?.length ?? this.pageCount;
-    for (let i = 0; i < count; i++) {
-      const at = this.addressOf(this.scope?.[i]?.page ?? i);
-      if (!at) continue;
+    for (const at of this.searchedAddresses()) {
       documents.add(at.doc);
       if (this.guessed(at)) guessed.push(at);
     }
@@ -507,6 +529,7 @@ export class Search {
 
   /** Abandons any scan in progress. */
   cancel(): void {
+    this.completed = false;
     this.generation++;
     this.running = false;
   }
@@ -750,11 +773,15 @@ export class Search {
     }
 
     for (const hit of beforeStart) this.matches.push(hit);
-    this.running = false;
-    this.elapsedMs = performance.now() - this.startedAt;
-    this.onChange();
-
+    const elapsedMs = performance.now() - this.startedAt;
+    // The match list is complete only once its source documents have also
+    // answered which pages lack readable text. A new query can start meanwhile.
     await Promise.all([...this.scopedMappings().documents].map(doc => this.ensureMapping(doc)));
+    if (generation !== this.generation) return;
+    this.completed = true;
+    this.running = false;
+    this.elapsedMs = elapsedMs;
+    this.onChange();
   }
 }
 
@@ -828,6 +855,11 @@ const TEXT = catalog({
       `${count} matches is more than the ${most} that can be marked at ` +
       `once. Every region has to be readable in the review list before anything is ` +
       `removed. Narrow the search and try again.`,
+    scanIncomplete: "The search did not finish. Nothing was marked.",
+    mappingIncomplete: "The character mapping could not be checked on every searched page. Nothing was marked.",
+    unmapped: (count: number) =>
+      `${count === 1 ? "1 page has" : `${count} pages have`} no readable character mapping. ` +
+      "Nothing was marked. Use text recognition or mark these pages by hand.",
     stillRunning:
       "The search is still running, so not every page has been searched. " +
       "Nothing was marked: wait for it to finish and try again.",
@@ -841,6 +873,11 @@ const TEXT = catalog({
       `${count} Treffer sind mehr als die ${most}, die auf einmal markiert werden können. ` +
       `Jeder Bereich muss in der Prüfliste lesbar sein, bevor etwas entfernt wird. ` +
       `Grenze die Suche ein und versuche es erneut.`,
+    scanIncomplete: "Die Suche wurde nicht abgeschlossen. Nichts wurde markiert.",
+    mappingIncomplete: "Die Zeichenzuordnung konnte nicht auf allen durchsuchten Seiten geprüft werden. Nichts wurde markiert.",
+    unmapped: (count: number) =>
+      `${count === 1 ? "1 Seite hat" : `${count} Seiten haben`} keine lesbare Zeichenzuordnung. ` +
+      "Nichts wurde markiert. Erkenne den Text oder markiere die Seiten von Hand.",
     stillRunning:
       "Die Suche läuft noch, es wurden also noch nicht alle Seiten durchsucht. " +
       "Nichts wurde markiert: Warte, bis sie fertig ist, und versuche es erneut.",
@@ -854,6 +891,9 @@ const TEXT = catalog({
       `${count} Treffer sind mehr als die ${most}, die auf einmal markiert werden können. ` +
       `Jeder Bereich muss in der Prüfliste lesbar sein, bevor etwas entfernt wird. ` +
       `Grenzen Sie die Suche ein und versuchen Sie es erneut.`,
+    unmapped: (count: number) =>
+      `${count === 1 ? "1 Seite hat" : `${count} Seiten haben`} keine lesbare Zeichenzuordnung. ` +
+      "Nichts wurde markiert. Erkennen Sie den Text oder markieren Sie die Seiten von Hand.",
     stillRunning: "Die Suche läuft noch, es wurden also noch nicht alle Seiten durchsucht. " +
       "Nichts wurde markiert: Warten Sie, bis sie fertig ist, und versuchen Sie es erneut.",
     unread: (count: number) =>
@@ -877,11 +917,13 @@ const TEXT = catalog({
  *   the count of such pages is the only thing that tells it from a page with
  *   none.
  *
- * Then the count, which {@link tooManyMatchesToMark} refuses on its own.
+ * A known missing character mapping also leaves that page unsearched until
+ * recognition supplies readable text. Then the count, which {@link tooManyMatchesToMark} refuses on its own.
  */
 export function completeForMarking(search: {
   running: boolean;
   unread: number;
+  unsearchablePages: number;
   count: number;
 }): string | null {
   if (search.running) {
@@ -890,5 +932,6 @@ export function completeForMarking(search: {
   if (search.unread > 0) {
     return TEXT().unread(search.unread);
   }
+  if (search.unsearchablePages > 0) return TEXT().unmapped(search.unsearchablePages);
   return tooManyMatchesToMark(search.count);
 }

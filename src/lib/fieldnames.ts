@@ -14,7 +14,8 @@
  * clashes with neither, so that neither refusal is what a reader meets.
  */
 
-import { radioExport, type Form } from "./forms";
+import type { Form } from "./forms";
+import { savedRadioValues, type FieldEdited } from "./savedfields";
 import type { FieldKind, MarkView, PlacedField } from "./pages";
 import { catalog } from "./i18n";
 
@@ -180,17 +181,12 @@ export function parseGroup(raw: string): { group: string } | { problem: string }
  * The values a group's buttons already have: the ones placed in this session
  * and the ones the file's form has under that name.
  */
-function radioValues(group: string, marks: readonly MarkView[], form: Form | null): Set<string> {
-  const values = new Set<string>();
+function radioValues(group: string, marks: readonly MarkView[], form: Form | null, fields: readonly FieldEdited[]): Set<string> {
+  const values = savedRadioValues(group, form, fields);
   for (const mark of marks) {
     if (mark.kind === "field" && mark.note === group && mark.field?.kind === "radio") {
       for (const value of mark.field.options ?? []) values.add(value);
     }
-  }
-  for (const widget of form?.widgets ?? []) {
-    if (widget.name !== group || widget.control.kind !== "radio") continue;
-    const control = widget.control;
-    control.states.forEach((_, index) => values.add(radioExport(control, index)));
   }
   return values;
 }
@@ -214,9 +210,10 @@ export function placing(
   formNames: readonly string[],
   marks: readonly MarkView[],
   form: Form | null,
+  fields: readonly FieldEdited[] = [],
 ): { field: PlacedField; name: string } {
   if (armed.kind === "radio") {
-    const taken = radioValues(armed.group, marks, form);
+    const taken = radioValues(armed.group, marks, form, fields);
     let n = 1;
     while (taken.has(`Choice ${n}`)) n += 1;
     return { field: { kind: "radio", border: false, options: [`Choice ${n}`] }, name: armed.group };

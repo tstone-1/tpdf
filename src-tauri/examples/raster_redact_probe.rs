@@ -174,6 +174,29 @@ fn run() -> Result<(), String> {
             "[PASS] crop + turn {turns} + {fill:?} fill + reordered pages + repeated image + vector/text carriers"
         );
     }
+    // Source page zero moves to output slot one. Only that page uses two
+    // physical points per unit. Its 125-unit crop and mask must both scale.
+    let mut scaled = source();
+    let first = scaled.get_pages()[&1];
+    scaled
+        .get_dictionary_mut(first)
+        .map_err(|e| e.to_string())?
+        .set("UserUnit", 2);
+    let scaled_path = room.join("scaled.pdf");
+    scaled.save(&scaled_path).map_err(|e| e.to_string())?;
+    let scaled_doc = OpenDocument::open(bindings, &scaled_path, None).map_err(|e| e.reason)?;
+    let out = tpdf_lib::raster_redact::rewrite(&scaled_doc, &plan(0), Fill::Black)
+        .map_err(|e| e.message)?;
+    std::fs::write(&out_path, out).map_err(|e| e.to_string())?;
+    let after = OpenDocument::open(bindings, &out_path, None).map_err(|e| e.reason)?;
+    let scaled_page = after.page(1)?;
+    if (scaled_page.width_pt(), scaled_page.height_pt()) != (250., 250.)
+        || pixel(bindings, &after, 1, 40, 210)?[..3] != [0, 0, 0]
+        || pixel(bindings, &after, 1, 110, 150)?[..3] != [230, 30, 40]
+    {
+        return Err("scaled page lost its physical dimensions or mask placement".into());
+    }
+    println!("[PASS] non-default UserUnit preserves physical crop and mask placement");
     let mut bad = plan(0);
     bad.redactions[0].areas = vec![[200.0, 200.0, 210.0, 210.0]];
     if tpdf_lib::raster_redact::rewrite(&opened, &bad, Fill::default()).is_ok() {

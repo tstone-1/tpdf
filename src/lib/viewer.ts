@@ -205,6 +205,7 @@ const TEXT = catalog({
     nothingToRecognise: "This page has no saved content to recognize.",
     pageChanged: "The page changed during recognition. Try again.",
     noWordsRecognised: "No words could be recognized on this page.",
+    searchChanged: "The search results changed. Nothing was marked.",
     notMarked: "The entire selection could not be read. No marks were added.",
     notCopied: "Some of the selected pages' text could not be read, so nothing was copied.",
     comparisonUnknown: (page: number) => `The character encoding on page ${page} could not be verified. The comparison stopped.`,
@@ -226,6 +227,7 @@ const TEXT = catalog({
     nothingToRecognise: "Diese Seite hat keinen gespeicherten Inhalt, der erkannt werden kann.",
     pageChanged: "Die Seite hat sich während der Texterkennung geändert. Versuche es erneut.",
     noWordsRecognised: "Auf dieser Seite konnten keine Wörter erkannt werden.",
+    searchChanged: "Die Suchergebnisse haben sich geändert. Nichts wurde markiert.",
     notMarked: "Die Auswahl konnte nicht vollständig gelesen werden. Es wurden keine Markierungen hinzugefügt.",
     notCopied: "Der Text einiger ausgewählter Seiten konnte nicht gelesen werden, daher wurde nichts kopiert.",
     comparisonUnknown: (page: number) => `Die Zeichenkodierung auf Seite ${page} konnte nicht geprüft werden. Der Vergleich wurde abgebrochen.`,
@@ -7449,8 +7451,10 @@ export class Viewer {
    * the reason the match painter gives --- there is no shared coordinate space
    * between two pages, so one rectangle cannot span them.
    */
-  async matchQuadsByPage(): Promise<TextRedactionGroup[] | null> {
-    const matches = this.searcher.matches;
+  async matchQuadsByPage(matches: readonly Match[] = this.searcher.matches): Promise<TextRedactionGroup[] | null> {
+    // Each query and page-order change replaces the array. The edit queue may
+    // hold the command until after that replacement, even on the same document.
+    if (this.life.ended || this.searcher.matches !== matches) throw new Error(TEXT().searchChanged);
     const halves = matches.flatMap((match, index) =>
       matchHalves([match]).map(half => ({ ...half, index })));
     const slots = [...new Set(halves.map((half) => half.slot))].sort(
@@ -7478,6 +7482,7 @@ export class Viewer {
       // map and leaves every page in its slot, and refusing for one would say
       // a page could not be read when all of them were.
       if (!this.pages.sameOrder(pages)) return null;
+      if (this.life.ended || this.searcher.matches !== matches) throw new Error(TEXT().searchChanged);
       for (const { slot, text } of chunk) {
         if (!text) return null;
         const id = pages.idOf(slot);
@@ -8957,9 +8962,9 @@ export class Viewer {
     return this.searcher.running;
   }
 
-  /** Pages the last scan could not search; see `Search.unread`. */
-  get searchUnread(): number {
-    return this.searcher.unread;
+  /** Why the current result set cannot be marked in full. */
+  get searchMarkRefusal(): string | null {
+    return this.searcher.markingRefusal;
   }
 
   /** Wall time of the last completed scan, in ms. For the check harness. */

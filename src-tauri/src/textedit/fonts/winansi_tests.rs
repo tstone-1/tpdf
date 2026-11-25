@@ -306,3 +306,32 @@ fn textedit_winansi_without_tounicode_reads_and_writes_punctuation() {
         .content = program(cmap(&[(1, 0, format0(&mac_entries()))]));
     assert!(textedit::scan(&doc, 0).is_err());
 }
+
+#[test]
+fn textedit_winansi_word_gaps_follow_the_validated_space_width() {
+    for (space_width, show, original, replacement) in [
+        (0, "[(FIRST) -250 (SECOND)]", "FIRST SECOND", "FIRST SEND"),
+        (600, "[(FIRST) -250 (SECOND)]", "FIRSTSECOND", "FIRSTSEND"),
+        (600, "[(FIRST ) (SECOND)]", "FIRST SECOND", "FIRST SEND"),
+    ] {
+        let (mut doc, font, _, _) = fixture();
+        let widths = doc
+            .get_dictionary_mut(font)
+            .unwrap()
+            .get_mut(b"Widths")
+            .unwrap();
+        widths.as_array_mut().unwrap()[0] = Object::Integer(space_width);
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let content = doc.add_object(Stream::new(
+            Dictionary::new(),
+            format!("BT /F1 12 Tf 40 180 Td {show} TJ ET").into_bytes(),
+        ));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", content);
+        let edit = change(&doc, replacement);
+        assert_eq!(edit.original, original);
+        textedit::write(&mut doc, &[edit]).unwrap();
+        assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, replacement);
+    }
+}

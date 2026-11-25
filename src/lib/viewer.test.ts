@@ -22,6 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { Serial } from "./serial";
 import { nativeCopy, setMacSpelling } from "./keys";
 import { DESTINATION_MARGIN_PT, type WebTarget } from "./outline";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
@@ -2096,6 +2097,39 @@ describe("Viewer matches across a page edit", () => {
     await settle();
     expect(viewer.position).not.toEqual(saved);
     viewer.destroy();
+  });
+
+  it("refuses a queued redaction after Find moves to a different result", async () => {
+    core.invoke.mockImplementation(async (command: string, args: { page: number; query?: string }) => {
+      if (command === "page_text") return pageText();
+      if (command !== "search_page") return null;
+      const wanted = args.query === "a" ? 0 : 2;
+      const matches = args.page === wanted
+        ? [{ page: wanted, start: 0, end: 1, before: "", hit: args.query, after: "" }] : [];
+      return { page: args.page, chars: 2, matches };
+    });
+    const viewer = build(dom);
+    try {
+      viewer.search("a");
+      await settle();
+      const matches = viewer.searchMatches;
+      expect(matches.map(hit => hit.page)).toEqual([0]);
+      const queue = new Serial();
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      void queue.run(() => held);
+      const marking = queue.run(() => viewer.matchQuadsByPage(matches));
+      viewer.search("b");
+      await settle();
+      expect(viewer.searchMatches.map(hit => hit.page)).toEqual([2]);
+      release();
+      await expect(marking).rejects.toThrow("search results changed");
+      const current = viewer.searchMatches;
+      const result = await queue.run(() => viewer.matchQuadsByPage(current));
+      expect(result?.map(group => group.page)).toEqual([viewer.pageOrder[2]!.id]);
+    } finally {
+      viewer.destroy();
+    }
   });
 
   it("matches_asked_for_before_a_page_move_are_not_marked_on_the_page_that_took_the_slot", async () => {

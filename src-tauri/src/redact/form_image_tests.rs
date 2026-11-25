@@ -520,10 +520,16 @@ fn a_picture_taken_off_a_page_and_still_in_the_file_is_a_note_and_not_a_concern(
         ],
         None,
     );
+    let placement = crate::edits::PageView {
+        id: 3,
+        source: crate::docmodel::PageSource::Baseline(2),
+        crop: None,
+        turns: 0,
+    };
     assert_eq!(
-        page.notes,
-        vec![format!("page 3: {}", stays.taken_here())],
-        "one picture under two regions is said once, with the reader's page number"
+        page.output_messages(&[placement]).1,
+        [format!("page 1: {}", stays.taken_here())],
+        "the shared picture is reported once at its new output slot"
     );
     assert!(
         page.concerns.is_empty(),

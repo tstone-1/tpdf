@@ -135,6 +135,21 @@ describe("the copy of a field of the file", () => {
     expect(saved(4)).toMatchObject({ note: "Send", field: { kind: "radio", options: ["Choice 2"] } });
   });
 
+  it("duplicates into the renamed group using its pending export values", () => {
+    const control = { kind: "radio", states: [bytes("Choice 1"), bytes("Choice 3")], unison: false, no_toggle_off: true } as const;
+    const form: Form = { widgets: [0, 1].map(index => widget(15, "Send", {
+      widget: [16 + index, 0], control: { ...control, states: [...control.states], index },
+    })) };
+    const edits: FieldEdited[] = [
+      { object: [15, 0], page: 5, removed: false, name: "Method" },
+      { object: [16, 0], page: 5, removed: false, value: "Choice 2" },
+    ];
+    const copy = () => copyOf(SAVED_BASE, RECT, state([], edits), form, ["Send"], false);
+    expect(copy()).toMatchObject({ note: "Method", field: { options: ["Choice 1"] } });
+    edits.pop();
+    expect(copy()).toMatchObject({ note: "Method", field: { options: ["Choice 2"] } });
+  });
+
   it("is refused for a kind tpdf does not place, a button inside a group of fields, and a field that is gone", () => {
     expect(saved(5)).toContain("cannot be duplicated yet");
     expect(saved(6)).toContain("cannot be duplicated yet");

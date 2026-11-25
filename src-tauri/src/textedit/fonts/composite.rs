@@ -362,7 +362,8 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
                     (right * unit - width).max(0.),
                 ];
             }
-            None if ch == b' ' && super::empty_glyph(&face, glyph) == Some(true) => {}
+            None if super::unicode::spacing_character(super::super::slot_character(ch))
+                && super::empty_glyph(&face, glyph) == Some(true) => {}
             _ => continue,
         }
         result[ch as usize] = Some(width);

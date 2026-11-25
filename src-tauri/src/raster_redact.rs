@@ -370,7 +370,15 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
         ));
     }
     let encryption = source_graph.encryption_state.take();
-    let page_boxes = crate::pagetree::displayed_boxes_from(&source_graph, plan.pages.len())?;
+    let page_geometry = crate::pagetree::pages_of(&source_graph, plan.pages.len())?
+        .into_iter()
+        .map(|id| {
+            let bounds = crate::pagetree::displayed_page(&source_graph, id).box_pt();
+            let unit = crate::pagetree::user_unit(&source_graph, id)
+                .ok_or_else(|| said!("the page has an invalid user unit"))?;
+            Ok::<_, String>((bounds, unit))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     drop(source_graph);
     let working = OwnedPdf::open(document.pdfium().bindings(), bytes, password)?;
     if working.raw.page_count() as usize != plan.pages.len() {
@@ -407,9 +415,13 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
             return Err(said!("raster redaction exceeded its time limit"));
         }
         let page = working.raw.page_cropped(slot as u32, None, &|index| {
-            page_boxes.get(index as usize).copied()
+            page_geometry.get(index as usize).map(|(bounds, _)| *bounds)
         })?;
-        let (pw, ph) = (f64::from(page.width_pt()), f64::from(page.height_pt()));
+        // PDFium maps native coordinates to the requested bitmap. The new page
+        // uses ordinary points, so size the bitmap and its placement physically.
+        let unit = page_geometry[slot].1;
+        let points = |native: f32| f64::from((f64::from(native) * unit) as f32);
+        let (pw, ph) = (points(page.width_pt()), points(page.height_pt()));
         let (width, height) = dimensions(pw, ph)?;
         total = total
             .checked_add(width * height)

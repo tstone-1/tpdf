@@ -62,18 +62,28 @@ fn update(doc: &Document, replacement: &str) -> Change {
 }
 
 #[test]
-fn ideographic_space_requires_a_verified_empty_glyph() {
-    for (mapped, accepted) in [("3000", true), ("4e00", false)] {
+fn composite_space_separators_require_a_verified_empty_glyph() {
+    for (mapped, extended, accepted) in [
+        ("00a0", false, true),
+        ("00a0", true, true),
+        ("3000", false, true),
+        ("4e00", false, false),
+    ] {
         let (mut doc, [font, _, _, mapping]) = fixture();
         let stream = doc
             .get_object_mut(mapping)
             .unwrap()
             .as_stream_mut()
             .unwrap();
-        stream.content = String::from_utf8(stream.content.clone())
+        let mut map = String::from_utf8(stream.content.clone())
             .unwrap()
-            .replace("> <0020>", &format!("> <{mapped}>"))
-            .into_bytes();
+            .replace("> <0020>", &format!("> <{mapped}>"));
+        if extended {
+            // An unused Greek entry selects the general Unicode reader.
+            assert!(map.contains("> <0041>"));
+            map = map.replace("> <0041>", "> <03b1>");
+        }
+        stream.content = map.into_bytes();
         let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
         let text = char::from_u32(u32::from_str_radix(mapped, 16).unwrap())
             .unwrap()
@@ -81,14 +91,12 @@ fn ideographic_space_requires_a_verified_empty_glyph() {
         assert_eq!(metrics.encode(&text).is_ok(), accepted);
         if accepted {
             let before = textedit::scan(&doc, 0).unwrap();
-            assert!(before.runs[0].text.contains('\u{3000}'));
-            let change = update(&doc, "IN\u{3000}IN");
+            assert_eq!(before.runs[0].text, format!("SYNTHETIC{text}FIRST"));
+            let replacement = format!("IN{text}IN");
+            let change = update(&doc, &replacement);
             let fonts = doc.objects[&font].clone();
             textedit::write(&mut doc, &[change]).unwrap();
-            assert_eq!(
-                textedit::scan(&doc, 0).unwrap().runs[0].text,
-                "IN\u{3000}IN"
-            );
+            assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, replacement);
             assert_eq!(doc.objects[&font], fonts);
         }
     }
@@ -661,31 +669,40 @@ fn textedit_composite_overhang_replacements_stay_inside_original_ink_atomically(
 
 #[test]
 fn textedit_composite_overhang_source_clips_follow_kerning_and_page_scale() {
-    for (text, kerning, prefix, accepted) in [
-        ("BA", false, "40 170 30 20 re W n", false),
-        ("BA", false, "39 170 30 20 re W n", true),
-        ("AD", false, "40 170 12 20 re W n", false),
-        ("AD", false, "40 170 13 20 re W n", true),
-        ("AD", true, "40 170 11 20 re W n", false),
-        ("AD", true, "40 170 12 20 re W n", true),
-        ("AD", false, "80 170 24 20 re W n 2 0 0 1 0 0 cm", false),
-        ("AD", false, "80 170 25 20 re W n 2 0 0 1 0 0 cm", true),
+    for (text, kerning, clip, transform, fits) in [
+        ("BA", false, "40 170 30 20", "", false),
+        ("BA", false, "39 170 30 20", "", true),
+        ("AD", false, "40 170 12 20", "", false),
+        ("AD", false, "40 170 13 20", "", true),
+        ("AD", true, "40 170 11 20", "", false),
+        ("AD", true, "40 170 12 20", "", true),
+        ("AD", false, "80 170 24 20", "2 0 0 1 0 0 cm", false),
+        ("AD", false, "80 170 25 20", "2 0 0 1 0 0 cm", true),
         (
             "AD",
             false,
-            "40 170 12 20 re W n -1 0 0 1 0 0 cm -1 0 0 1 0 0 cm",
+            "40 170 12 20",
+            "-1 0 0 1 0 0 cm -1 0 0 1 0 0 cm",
             false,
         ),
     ] {
         let (mut doc, font) = overhang_fixture(-10, 250);
-        overhang_content(&mut doc, font, text, prefix, kerning);
+        overhang_content(
+            &mut doc,
+            font,
+            text,
+            &format!("{clip} re W n {transform}"),
+            kerning,
+        );
         let clipped = textedit::tests::clipped_roundtrip(&doc).runs.remove(0);
         let (mut plain, font) = overhang_fixture(-10, 250);
-        overhang_content(&mut plain, font, text, "", kerning);
+        overhang_content(&mut plain, font, text, transform, kerning);
         let plain = textedit::scan(&plain, 0).unwrap().runs.remove(0);
-        if !prefix.contains("cm") {
-            assert_eq!(clipped.display_rect == plain.display_rect, accepted);
-        }
+        assert_eq!(
+            clipped.display_rect == plain.display_rect,
+            fits,
+            "{clip} {transform}"
+        );
     }
 }
 

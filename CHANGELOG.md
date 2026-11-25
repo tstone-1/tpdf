@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Image-only redaction preserves physical page dimensions on PDFs with a custom page unit. Verification accounts for cropped text and reports findings against the saved page order.
+- Bulk redaction checks that the requested search is complete and still current. Find reports when a page could not be searched.
+- Duplicating a renamed radio button preserves its group and uses the next available value.
+- Text editing preserves displacement-based word gaps in embedded WinAnsi fonts with an unusable space and accepts validated nonbreaking spaces in Latin Identity-H fonts.
+
 - Extracted pages preserve artwork painted through inherited soft-mask resources. Partial imports refuse ambiguous image dependencies.
 - Comment edits preserve spacing and respect annotation locks. Comments marked NoView no longer intercept clicks.
 - Fill Form skips fields removed or cropped away. Text editing preserves accessibility text shared with nested spans.

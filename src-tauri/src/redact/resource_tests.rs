@@ -158,7 +158,7 @@ fn draws_on(doc: &Document, page: ObjectId) -> usize {
 }
 
 /// Whether anything in the document still refers to the picture.
-fn named(f: &Fixture) -> bool {
+fn named(doc: &Document, target: ObjectId) -> bool {
     fn refers(object: &Object, id: ObjectId) -> bool {
         match object {
             Object::Reference(other) => *other == id,
@@ -168,10 +168,7 @@ fn named(f: &Fixture) -> bool {
             _ => false,
         }
     }
-    f.doc
-        .objects
-        .values()
-        .any(|object| refers(object, f.picture))
+    doc.objects.values().any(|object| refers(object, target))
 }
 
 #[test]
@@ -198,7 +195,10 @@ fn a_picture_is_found_and_taken_wherever_the_page_keeps_its_names() {
         assert_eq!((took.removed, took.shows_before), (1, 1), "{kept:?}");
         assert_eq!(draws_on(&f.doc, f.pages[0]), 0, "{kept:?}");
         // Nothing names it any more, so the sweep takes its bytes.
-        assert!(!named(&f), "{kept:?}: the picture is still named");
+        assert!(
+            !named(&f.doc, f.picture),
+            "{kept:?}: the picture is still named"
+        );
     }
 }
 
@@ -223,7 +223,10 @@ fn a_picture_other_pages_draw_from_the_same_list_goes_page_by_page() {
             1,
             "{kept:?}: the other page was touched"
         );
-        assert!(named(&f), "{kept:?}: the other page still needs the name");
+        assert!(
+            named(&f.doc, f.picture),
+            "{kept:?}: the other page still needs the name"
+        );
         // The second page redacted as well: nothing draws it now, the name
         // goes, and with it the last reference to the picture.
         assert_eq!(
@@ -234,7 +237,7 @@ fn a_picture_other_pages_draw_from_the_same_list_goes_page_by_page() {
         remove_images(&mut f.doc, f.pages[1], &[0], 1)
             .unwrap_or_else(|why| panic!("{kept:?}: {why}"));
         assert!(
-            !named(&f),
+            !named(&f.doc, f.picture),
             "{kept:?}: no page draws it and it is still named"
         );
     }
@@ -265,7 +268,7 @@ fn a_picture_other_pages_draw_from_the_same_list_goes_page_by_page() {
         remove_images(&mut f.doc, f.pages[0], &[0], 1)
             .unwrap_or_else(|why| panic!("{kept:?}: {why}"));
         assert_eq!(draws_on(&f.doc, f.pages[0]), 0, "{kept:?}");
-        assert!(!named(&f), "{kept:?}");
+        assert!(!named(&f.doc, f.picture), "{kept:?}");
     }
     // And pages that each keep their own names are counted by reference, as
     // before: two lists naming one picture are two references.
@@ -294,16 +297,16 @@ fn the_nearest_list_that_names_a_picture_is_the_one_it_is_drawn_through() {
         .get_dictionary_mut(f.pages[0])
         .unwrap()
         .set("Resources", own);
+    assert!(named(&f.doc, other));
     assert_eq!(shared_draws(&f.doc, f.pages[0], 1, 0).images, vec![None]);
     remove_images(&mut f.doc, f.pages[0], &[0], 1).expect("removed");
     assert_eq!(draws_on(&f.doc, f.pages[0]), 0);
     // The page's own name is gone, and with it the last reference to `other`.
-    let refers_to_other = f.doc.objects.values().any(|object| match object {
-        Object::Dictionary(dict) => format!("{dict:?}").contains(&format!("{other:?}")),
-        _ => false,
-    });
-    assert!(!refers_to_other, "the page still names the picture it drew");
+    assert!(
+        !named(&f.doc, other),
+        "the page still names the picture it drew"
+    );
     // The inherited one is untouched, for the second page.
-    assert!(named(&f));
+    assert!(named(&f.doc, f.picture));
     assert_eq!(draws_on(&f.doc, f.pages[1]), 1);
 }
