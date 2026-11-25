@@ -120,6 +120,39 @@ fn a_box_beside_a_taller_field_is_in_that_fields_row() {
 }
 
 #[test]
+fn a_tall_control_does_not_break_the_row_of_a_later_checkbox() {
+    let first = ("first", [100, 160, 150, 180]);
+    let tall = ("tall", [220, 99, 260, 179]);
+    let tick = ("tick", [10, 166, 22, 178]);
+    let (mut doc, page) = page_of(&[first, tall, tick], false, 0);
+    sort(&mut doc, page).unwrap();
+    assert_eq!(names(&doc, page), ["tick", "first", "tall"]);
+}
+
+#[test]
+fn direct_and_indirect_widget_rectangles_produce_the_same_tab_order() {
+    for indirect in [false, true] {
+        let (mut doc, page) = page_of(&[D, A], false, 0);
+        if indirect {
+            for entry in super::annots(&doc, page).unwrap().clone() {
+                let id = entry.as_reference().unwrap();
+                let rect = doc
+                    .get_dictionary(id)
+                    .unwrap()
+                    .get(b"Rect")
+                    .unwrap()
+                    .clone();
+                let rect = doc.add_object(rect);
+                doc.get_dictionary_mut(id).unwrap().set("Rect", rect);
+            }
+        }
+        assert_eq!(count(&doc, page), 2);
+        assert_eq!(sort(&mut doc, page), Ok(true));
+        assert_eq!(names(&doc, page), ["a", "d"]);
+    }
+}
+
+#[test]
 fn fields_at_one_place_keep_the_order_they_had() {
     let first = ("first", [20, 160, 120, 180]);
     let second = ("second", [20, 160, 120, 180]);

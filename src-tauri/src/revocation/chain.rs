@@ -420,13 +420,11 @@ pub fn along(
     let own = judge_under(leaf, issuer_at(0), &everything, pools, moment, now, budget);
     let mut certificates = vec![judged(leaf, own.clone())];
     let mut dropped = 0;
-    // The last is the root the store ended at, which nobody asks about, and so
-    // is a certificate the document shows to be a cross-certificate of a root.
+    // Only the last certificate is the trust anchor for this path. A
+    // cross-certificate below it is subject to revocation by its issuer, even
+    // when the file also carries its self-signed counterpart.
     let below_root = vouched.len().saturating_sub(1);
     for (at, certificate) in vouched.iter().enumerate().take(below_root).skip(1) {
-        if anchor_of(certificate, &everything).is_some() {
-            break;
-        }
         let issuer = issuer_at(at);
         if no_check(certificate) {
             continue;

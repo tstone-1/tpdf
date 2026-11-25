@@ -29,8 +29,10 @@ pub const PREVIEW_CLSID: &str = "{7D5A3B9E-2C41-4E8F-9A6B-1F0C3D5E7A22}";
 const PREVHOST_APPID: &str = "{6d2b5079-2f0b-48dd-ab7f-97cec514d30b}";
 /// Where a preview handler is listed for the user.
 const PREVIEW_LIST: &str = r"Software\Microsoft\Windows\CurrentVersion\PreviewHandlers";
-/// The value in tpdf's class key holding the class id it replaced.
-const PREVIOUS: &str = "tpdf_previous";
+/// The exact default value tpdf replaced. Absence means there was no user value.
+const PREVIOUS: &str = "tpdf_previous_value";
+/// Older versions stored an empty string when the machine alone supplied the handler.
+const LEGACY_PREVIOUS: &str = "tpdf_previous";
 /// `.pdf`'s shell extensions, of which tpdf takes two.
 const SHELLEX: &str = r"Software\Classes\.pdf\ShellEx";
 
@@ -86,6 +88,15 @@ pub enum Hive {
 /// The few registry operations this needs. A name of `""` is a key's default
 /// value. Every write is to the current user's hive.
 pub trait Registry {
+    /// Asks the Shell which CLSID it resolves for the PDF handler, including
+    /// registrations on the active ProgID.
+    ///
+    /// # Errors
+    ///
+    /// The Shell could not resolve the association.
+    fn effective(&self, slot: Slot) -> Result<Option<String>, String>;
+    /// Makes changes visible to the Shell before asking it to resolve them.
+    fn announce(&self);
     /// A string value, or `None` when the key or the value is not there.
     ///
     /// # Errors
@@ -140,15 +151,6 @@ fn present(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.trim().is_empty())
 }
 
-/// The class id Explorer uses for `slot`: the user's, else the machine's,
-/// which is how Windows merges the two.
-fn current(registry: &dyn Registry, slot: Slot) -> Result<Option<String>, String> {
-    Ok(match present(registry.get(Hive::User, &slot.key(), "")?) {
-        Some(clsid) => Some(clsid),
-        None => present(registry.get(Hive::Machine, &slot.key(), "")?),
-    })
-}
-
 /// What a class calls itself, else its id.
 fn name_of(registry: &dyn Registry, clsid: &str) -> Result<String, String> {
     for hive in [Hive::User, Hive::Machine] {
@@ -171,7 +173,7 @@ fn name_of(registry: &dyn Registry, clsid: &str) -> Result<String, String> {
 ///
 /// The registry refused a read.
 pub fn owner(registry: &dyn Registry, slot: Slot) -> Result<Owner, String> {
-    Ok(match current(registry, slot)? {
+    Ok(match registry.effective(slot)? {
         None => Owner::Nobody,
         Some(clsid) if clsid.eq_ignore_ascii_case(slot.ours()) => Owner::Tpdf,
         Some(clsid) => Owner::Other {
@@ -217,32 +219,52 @@ pub fn enable(registry: &mut dyn Registry, dll: &str, replace: bool) -> Result<S
     let mut taken = Vec::new();
     let mut left = Vec::new();
     for slot in Slot::ALL {
-        match owner(registry, slot)? {
-            Owner::Other { name } if !replace => {
+        if let Owner::Other { name } = owner(registry, slot)? {
+            if !replace {
                 left.push((slot, name));
                 continue;
             }
-            Owner::Other { .. } => {
-                // The user's own value, or none when the machine's answered:
-                // that one shows again by itself when tpdf's is gone.
-                let previous =
-                    present(registry.get(Hive::User, &slot.key(), "")?).unwrap_or_default();
-                registry.remove_tree(&class_key(slot.ours()))?;
-                write_class(registry, slot, dll)?;
+        }
+        // The effective provider may come from a ProgID. The only value
+        // to put back is the one we actually overwrite in the user's hive.
+        let previous = registry.get(Hive::User, &slot.key(), "")?;
+        if !previous
+            .as_deref()
+            .is_some_and(|id| id.eq_ignore_ascii_case(slot.ours()))
+        {
+            registry.remove_tree(&class_key(slot.ours()))?;
+            if let Some(previous) = previous {
                 registry.set(&class_key(slot.ours()), PREVIOUS, &previous)?;
             }
-            Owner::Nobody => {
-                registry.remove_tree(&class_key(slot.ours()))?;
-                write_class(registry, slot, dll)?;
-            }
-            // Written again, so a copy of tpdf that moved serves from where it is now.
-            Owner::Tpdf => write_class(registry, slot, dll)?,
         }
+        // An already registered copy may have moved. Keep its saved value.
+        write_class(registry, slot, dll)?;
         registry.set(&slot.key(), "", slot.ours())?;
         taken.push(slot);
     }
     if taken.contains(&Slot::Preview) {
         registry.set(PREVIEW_LIST, PREVIEW_CLSID, Slot::Preview.title())?;
+    }
+    if taken.is_empty() {
+        return Ok(said_enabled(&taken, &left));
+    }
+    registry.announce();
+    let mut refused = false;
+    for &slot in &taken {
+        if owner(registry, slot)? != Owner::Tpdf {
+            // A higher-priority association can win even after our write.
+            // Restore this slot rather than leave a dormant override.
+            unregister(registry, slot)?;
+            refused = true;
+        }
+    }
+    if refused {
+        registry.remove_if_empty(PREVIEW_LIST)?;
+        registry.remove_if_empty(SHELLEX)?;
+        registry.announce();
+        return Err(said!(
+            "Explorer did not select tpdf for all requested PDF handlers. Check which handlers Explorer uses."
+        ));
     }
     Ok(said_enabled(&taken, &left))
 }
@@ -287,6 +309,33 @@ fn said_enabled(taken: &[Slot], left: &[(Slot, String)]) -> String {
     }
 }
 
+/// Restore only the extension value tpdf still owns. A value changed by a
+/// different program, its neighbouring named values, and its subkeys survive.
+fn unregister(registry: &mut dyn Registry, slot: Slot) -> Result<(), String> {
+    let class = class_key(slot.ours());
+    let ours = registry
+        .get(Hive::User, &slot.key(), "")?
+        .is_some_and(|id| id.eq_ignore_ascii_case(slot.ours()));
+    if ours {
+        let previous = match registry.get(Hive::User, &class, PREVIOUS)? {
+            Some(value) => Some(value),
+            None => present(registry.get(Hive::User, &class, LEGACY_PREVIOUS)?),
+        };
+        match previous {
+            Some(previous) => registry.set(&slot.key(), "", &previous)?,
+            None => {
+                registry.remove_value(&slot.key(), "")?;
+                registry.remove_if_empty(&slot.key())?;
+            }
+        }
+    }
+    registry.remove_tree(&class)?;
+    if slot == Slot::Preview {
+        registry.remove_value(PREVIEW_LIST, PREVIEW_CLSID)?;
+    }
+    Ok(())
+}
+
 /// Turns tpdf's handlers off, puts back what it replaced for this user, and
 /// removes every key it wrote. Returns the sentence for the reader.
 ///
@@ -295,26 +344,23 @@ fn said_enabled(taken: &[Slot], left: &[(Slot, String)]) -> String {
 /// The registry refused, partway; running it again finishes.
 pub fn disable(registry: &mut dyn Registry) -> Result<String, String> {
     for slot in Slot::ALL {
-        let ours = present(registry.get(Hive::User, &slot.key(), "")?)
-            .is_some_and(|clsid| clsid.eq_ignore_ascii_case(slot.ours()));
-        if ours {
-            let previous = present(registry.get(Hive::User, &class_key(slot.ours()), PREVIOUS)?);
-            match previous {
-                Some(previous) => registry.set(&slot.key(), "", &previous)?,
-                None => registry.remove_tree(&slot.key())?,
-            }
-        }
-        registry.remove_tree(&class_key(slot.ours()))?;
+        unregister(registry, slot)?;
     }
-    registry.remove_value(PREVIEW_LIST, PREVIEW_CLSID)?;
     registry.remove_if_empty(PREVIEW_LIST)?;
     registry.remove_if_empty(SHELLEX)?;
+    registry.announce();
     // Built from the last slot back, each sentence carrying the ones after it,
     // as in `said_enabled`.
     let mut back = Vec::new();
     for slot in Slot::ALL {
-        if let Owner::Other { name } = owner(registry, slot)? {
-            back.push((slot, name));
+        match owner(registry, slot)? {
+            Owner::Other { name } => back.push((slot, name)),
+            Owner::Nobody => {}
+            Owner::Tpdf => {
+                return Err(said!(
+                    "Explorer still uses tpdf for a PDF handler after its per-user registration was removed."
+                ));
+            }
         }
     }
     let mut rest: Option<String> = None;
@@ -371,7 +417,7 @@ pub fn dll_beside(executable: &Path) -> Result<PathBuf, String> {
 /// Explorer the associations changed after each write.
 #[cfg(windows)]
 pub mod windows {
-    use super::{Hive, Registry};
+    use super::{Hive, Registry, Slot};
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     use windows_sys::Win32::System::Registry::{
         RegCloseKey, RegDeleteKeyValueW, RegDeleteKeyW, RegDeleteTreeW, RegGetValueW,
@@ -387,6 +433,45 @@ pub mod windows {
     pub struct Hkcu;
 
     impl Registry for Hkcu {
+        fn effective(&self, slot: Slot) -> Result<Option<String>, String> {
+            use windows_sys::Win32::Foundation::{ERROR_NO_ASSOCIATION, S_OK};
+            use windows_sys::Win32::UI::Shell::{
+                AssocQueryStringW, ASSOCF_NOTRUNCATE, ASSOCSTR_SHELLEXTENSION,
+            };
+            // A brace-delimited CLSID is 38 UTF-16 units, plus the terminator.
+            let mut clsid = [0u16; 39];
+            let mut length = clsid.len() as u32;
+            // SAFETY: both input strings are NUL-terminated, and the output
+            // holds exactly the number of UTF-16 units the call may write.
+            let status = unsafe {
+                AssocQueryStringW(
+                    ASSOCF_NOTRUNCATE,
+                    ASSOCSTR_SHELLEXTENSION,
+                    windows_sys::w!(".pdf"),
+                    wide(slot.id()).as_ptr(),
+                    clsid.as_mut_ptr(),
+                    &raw mut length,
+                )
+            };
+            if status == ::windows::core::HRESULT::from_win32(ERROR_NO_ASSOCIATION).0 {
+                return Ok(None);
+            }
+            if status == S_OK && clsid[0] != 0 {
+                if let Some(end) = clsid.iter().position(|&unit| unit == 0) {
+                    return Ok(Some(String::from_utf16_lossy(&clsid[..end])));
+                }
+            }
+            Err(said!(
+                "Windows could not identify the PDF handler for {interface} (error {status})",
+                interface = slot.id(),
+                status = format_args!("{status:#010x}")
+            ))
+        }
+
+        fn announce(&self) {
+            announce();
+        }
+
         fn get(&self, hive: Hive, key: &str, name: &str) -> Result<Option<String>, String> {
             let root = match hive {
                 Hive::User => HKEY_CURRENT_USER,
@@ -536,7 +621,12 @@ pub mod windows {
             }
             if keys == 0 && values == 0 {
                 // SAFETY: the name is NUL-terminated.
-                unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, name.as_ptr()) };
+                let status = unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, name.as_ptr()) };
+                if status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND {
+                    return Err(said!(
+                        "the registry could not remove {key} (error {status})"
+                    ));
+                }
             }
             Ok(())
         }
@@ -545,12 +635,14 @@ pub mod windows {
     /// Tells Explorer the file associations changed, so an open window picks
     /// the handlers up without signing out.
     pub fn announce() {
-        use windows_sys::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
+        use windows_sys::Win32::UI::Shell::{
+            SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_FLUSH, SHCNF_IDLIST,
+        };
         // SAFETY: both item pointers may be null for this event.
         unsafe {
             SHChangeNotify(
                 SHCNE_ASSOCCHANGED as i32,
-                SHCNF_IDLIST,
+                SHCNF_IDLIST | SHCNF_FLUSH,
                 std::ptr::null(),
                 std::ptr::null(),
             )
@@ -578,9 +670,6 @@ pub fn run(change: Option<(bool, bool)>) -> Result<(String, Handlers), String> {
             }
             Some((false, _)) => Some(disable(&mut registry)?),
         };
-        if said.is_some() {
-            windows::announce();
-        }
         let state = state(&registry)?;
         Ok((said.unwrap_or_else(|| described(&state)), state))
     }
@@ -613,6 +702,8 @@ mod tests {
     struct Map {
         user: BTreeMap<(String, String), String>,
         machine: BTreeMap<(String, String), String>,
+        /// The effective ProgID's key, when the test gives it a handler.
+        progid: Option<String>,
         /// Keys that exist with nothing in them.
         empty_user_keys: std::collections::BTreeSet<String>,
     }
@@ -622,6 +713,23 @@ mod tests {
     }
 
     impl Registry for Map {
+        fn effective(&self, slot: Slot) -> Result<Option<String>, String> {
+            let progid = self
+                .progid
+                .as_ref()
+                .map(|id| format!(r"Software\Classes\{id}\ShellEx\{}", slot.id()));
+            for key in progid.iter().chain(std::iter::once(&slot.key())) {
+                for hive in [Hive::User, Hive::Machine] {
+                    if let Some(clsid) = present(self.get(hive, key, "")?) {
+                        return Ok(Some(clsid));
+                    }
+                }
+            }
+            Ok(None)
+        }
+
+        fn announce(&self) {}
+
         fn get(&self, hive: Hive, key: &str, name: &str) -> Result<Option<String>, String> {
             let map = match hive {
                 Hive::User => &self.user,
@@ -672,7 +780,7 @@ mod tests {
                 .any(|(k, _)| *k == key || k.starts_with(&prefix))
                 || self.empty_user_keys.iter().any(|k| k.starts_with(&prefix));
             if !holds {
-                self.empty_user_keys.remove(&key);
+                self.remove_tree(&key)?;
             }
             Ok(())
         }
@@ -761,7 +869,7 @@ mod tests {
         // The machine's handler is masked, not written down: it comes back by itself.
         assert_eq!(
             map.get(Hive::User, &preview, PREVIOUS).unwrap().as_deref(),
-            Some("")
+            None
         );
     }
 
@@ -836,6 +944,126 @@ mod tests {
         let before = map.clone();
         disable(&mut map).unwrap();
         assert_eq!(map, before);
+    }
+
+    #[test]
+    fn removing_the_override_preserves_named_values_and_child_keys_in_the_same_slot() {
+        let mut map = build_machine();
+        let slot = Slot::Preview.key();
+        map.set(&slot, "existing", "keep me").unwrap();
+        enable(&mut map, DLL_AT, true).unwrap();
+        let child = format!(r"{slot}\Another setting");
+        map.set(&child, "", "also keep me").unwrap();
+        disable(&mut map).unwrap();
+        assert_eq!(map.get(Hive::User, &slot, "").unwrap(), None);
+        assert_eq!(
+            map.get(Hive::User, &slot, "existing").unwrap().as_deref(),
+            Some("keep me")
+        );
+        assert_eq!(
+            map.get(Hive::User, &child, "").unwrap().as_deref(),
+            Some("also keep me")
+        );
+        assert_eq!(
+            state(&map).unwrap().preview,
+            Owner::Other {
+                name: "PDF Preview Handler".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_progid_only_provider_is_named_and_requires_consent() {
+        let mut map = build_machine();
+        map.machine
+            .remove(&(fold(&Slot::Preview.key()), String::new()));
+        let id = "Example.Pdf";
+        map.progid = Some(id.into());
+        let registration = format!(r"Software\Classes\{id}\ShellEx\{}", Slot::Preview.id());
+        map.machine
+            .insert((fold(&registration), String::new()), EDGE.into());
+
+        let provider = Owner::Other {
+            name: "PDF Preview Handler".into(),
+        };
+        assert_eq!(state(&map).unwrap().preview, provider);
+        let said = enable(&mut map, DLL_AT, false).unwrap();
+        assert!(said.contains("PDF Preview Handler"), "{said}");
+        assert_eq!(state(&map).unwrap().preview, provider);
+        assert_eq!(map.get(Hive::User, &Slot::Preview.key(), "").unwrap(), None);
+        assert_eq!(
+            map.get(Hive::User, &class_key(PREVIEW_CLSID), "").unwrap(),
+            None
+        );
+
+        // Even with consent a registry write may not change Shell resolution.
+        // Keep the free thumbnail slot. Roll back the ineffective preview write.
+        let refused =
+            enable(&mut map, DLL_AT, true).expect_err("Shell still returns the ProgID's handler");
+        assert!(refused.contains("did not select tpdf"), "{refused}");
+        assert_eq!(
+            state(&map).unwrap(),
+            Handlers {
+                thumbnail: Owner::Tpdf,
+                preview: provider
+            }
+        );
+        assert_eq!(map.get(Hive::User, &Slot::Preview.key(), "").unwrap(), None);
+        assert_eq!(
+            map.get(Hive::User, PREVIEW_LIST, PREVIEW_CLSID).unwrap(),
+            None
+        );
+        assert_eq!(
+            map.get(Hive::User, &class_key(PREVIEW_CLSID), "").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn existing_installations_restore_their_original_value_and_empty_backup_convention() {
+        let mut map = build_machine();
+        for slot in Slot::ALL {
+            map.set(&slot.key(), "", slot.ours()).unwrap();
+        }
+        map.set(&class_key(THUMBNAIL_CLSID), LEGACY_PREVIOUS, "oldClsId")
+            .unwrap();
+        map.set(&class_key(PREVIEW_CLSID), LEGACY_PREVIOUS, "")
+            .unwrap();
+        enable(&mut map, DLL_AT, true).unwrap();
+        disable(&mut map).unwrap();
+        assert_eq!(
+            map.get(Hive::User, &Slot::Thumbnail.key(), "")
+                .unwrap()
+                .as_deref(),
+            Some("oldClsId")
+        );
+        assert_eq!(map.get(Hive::User, &Slot::Preview.key(), "").unwrap(), None);
+    }
+
+    #[test]
+    fn an_existing_empty_default_value_is_put_back_as_empty() {
+        let mut map = build_machine();
+        map.set(&Slot::Preview.key(), "", "").unwrap();
+        enable(&mut map, DLL_AT, true).unwrap();
+        disable(&mut map).unwrap();
+        assert_eq!(
+            map.get(Hive::User, &Slot::Preview.key(), "")
+                .unwrap()
+                .as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn removing_a_user_override_does_not_claim_the_machine_has_stopped_using_tpdf() {
+        let mut map = build_machine();
+        map.machine.insert(
+            (fold(&Slot::Thumbnail.key()), String::new()),
+            THUMBNAIL_CLSID.into(),
+        );
+        assert!(disable(&mut map)
+            .expect_err("machine still uses tpdf")
+            .contains("still uses tpdf"));
     }
 
     #[test]

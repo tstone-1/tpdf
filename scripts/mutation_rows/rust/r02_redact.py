@@ -24,7 +24,7 @@ ROWS += [
         # second visit reads the 90 the first wrote and leaves 180.
         "save: turn a shared page once per page number rather than once per object",
         "src/save.rs",
-        "    turn_pages(&mut doc, &agreed_turns(&turns)?, &written)?;",
+        "    turn_pages(&mut doc, &final_turns, &written)?;",
         "    turn_pages(&mut doc, &turns, &written)?;",
         "a_page_reached_twice_is_turned_once",
     ),

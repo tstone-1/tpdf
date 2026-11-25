@@ -12,6 +12,27 @@
  * offered, so running one says what is there.
  */
 
+import { catalog, type UiLocale } from "./i18n";
+import { spoken, spokenError } from "./said";
+
+const TEXT = catalog({
+  "en-US": {
+    thumbnails: (name: string) => `In Explorer, PDF thumbnails come from ${name}. Replace it with tpdf?`,
+    preview: (name: string) => `In Explorer, the preview pane comes from ${name}. Replace it with tpdf?`,
+    both: (thumb: string, pane: string) => `In Explorer, PDF thumbnails come from ${thumb}, and the preview pane comes from ${pane}. Replace them with tpdf?`,
+    restore: "Turning tpdf's off later puts back what it replaced.",
+  },
+  "de-DE": {
+    thumbnails: (name: string) => `Im Explorer kommen die PDF-Miniaturansichten von ${name}. Soll tpdf sie übernehmen?`,
+    preview: (name: string) => `Im Explorer kommt die PDF-Vorschau von ${name}. Soll tpdf sie übernehmen?`,
+    both: (thumb: string, pane: string) => `Im Explorer kommen die PDF-Miniaturansichten von ${thumb} und die PDF-Vorschau von ${pane}. Soll tpdf beides übernehmen?`,
+    restore: "Wenn du die Funktion später ausschaltest, stellt tpdf die bisherige Zuordnung wieder her.",
+  },
+  "de-DE-formal": {
+    restore: "Wenn Sie die Funktion später ausschalten, stellt tpdf die bisherige Zuordnung wieder her.",
+  },
+});
+
 /** `explorer::Owner` in `src-tauri/src/explorer.rs`. */
 export type ExplorerOwner = { kind: "nobody" } | { kind: "tpdf" } | { kind: "other"; name: string };
 
@@ -39,14 +60,14 @@ export interface ExplorerDeps {
  * The question to ask before turning tpdf's handlers on, or `null` when
  * nothing of another program's would be replaced.
  */
-export function replaceQuestion(state: ExplorerState): string | null {
-  const others: string[] = [];
-  if (state.thumbnail.kind === "other") others.push(`PDF thumbnails come from ${state.thumbnail.name}`);
-  if (state.preview.kind === "other") others.push(`the preview pane comes from ${state.preview.name}`);
-  if (!others.length) return null;
-  const said = others.join(", and ");
-  return `In Explorer, ${said}. Replace ${others.length > 1 ? "them" : "it"} with tpdf? ` +
-    "Turning tpdf's off later puts back what it replaced.";
+export function replaceQuestion({ thumbnail, preview }: ExplorerState, locale?: UiLocale): string | null {
+  const words = TEXT(locale);
+  let question: string;
+  if (thumbnail.kind === "other" && preview.kind === "other") question = words.both(thumbnail.name, preview.name);
+  else if (thumbnail.kind === "other") question = words.thumbnails(thumbnail.name);
+  else if (preview.kind === "other") question = words.preview(preview.name);
+  else return null;
+  return `${question} ${words.restore}`;
 }
 
 export class ExplorerIntegration {
@@ -55,7 +76,7 @@ export class ExplorerIntegration {
   /** Counts the questions, so an answer can tell whether it is the newest. */
   private asked = 0;
 
-  constructor(private readonly deps: ExplorerDeps) {}
+  constructor(private readonly deps: ExplorerDeps, private readonly locale?: UiLocale) {}
 
   /** Whether turning on (`on`) or off is offered. */
   offered(on: boolean): boolean {
@@ -91,12 +112,12 @@ export class ExplorerIntegration {
       let replace = false;
       if (on) {
         const state = await this.deps.read();
-        const question = state ? replaceQuestion(state) : null;
+        const question = state ? replaceQuestion(state, this.locale) : null;
         if (question) replace = await this.deps.confirm(question);
       }
-      this.deps.say(await this.deps.apply(on, replace));
+      this.deps.say(spoken(await this.deps.apply(on, replace), this.locale));
     } catch (why) {
-      this.deps.say(String(why));
+      this.deps.say(spokenError(why, this.locale));
     }
     await this.refresh();
   }

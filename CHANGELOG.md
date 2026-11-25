@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Signature verification follows the cross-signed authorities on the trusted path. Archive timestamps receive credit for sealing validation data only when the timestamped revision contains it. Embedded timestamps can use issuer certificates stored in the PDF.
+- Adding fields preserves an author's tab order. Explicit sorting follows the final page rotation and includes fields with indirect rectangles and mixed heights. On-page signing buttons now follow the same eligibility rules as the command palette.
+- Windows Explorer integration checks the active PDF handler and preserves other programs' registry settings on removal. Its confirmation and results follow the interface language.
+- The Mac build declares macOS 13 as its minimum, matching the bundled PDF engine. The command palette refreshes keyboard labels after an input-source change, and Finder instructions include the final step to restore the default PDF application.
+
 - Editing a caption refuses a deletion that would move the next edit to a different position. Text wrapping keeps columns separate when a label ends with a cursor movement across the gutter.
 - Windows tabs distinguish case-sensitive file names and still reuse filesystem aliases. Comparison and side-by-side commands accept the exact case of each displayed name.
 - Linked scrolling advances through facing pages in order and keeps its alignment when a background tab closes. Resizing a pane preserves the reading position on tall pages.

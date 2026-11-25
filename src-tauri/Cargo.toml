@@ -294,7 +294,7 @@ base64 = "0.23"
 # `Zlib OR Apache-2.0 OR MIT`, so no licensing question (AGENTS.md).
 [target.'cfg(target_os = "macos")'.dependencies]
 # Keychain-protected signature storage; already used by the TLS verifier. MIT OR Apache-2.0.
-security-framework = "3"
+security-framework = { version = "3", features = ["macos-12"] }
 # `CFDate`, the moment `trust.rs` evaluates a chain at (`SecTrustSetVerifyDate`).
 # Already in the tree beneath `security-framework`; MIT OR Apache-2.0.
 core-foundation = "0.10"

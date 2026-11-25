@@ -69,7 +69,8 @@ fn widgets(doc: &Document, page: ObjectId) -> Vec<Listed> {
             if dict.get(b"Subtype").and_then(Object::as_name).ok()? != b"Widget" {
                 return None;
             }
-            let numbers = dict.get(b"Rect").and_then(Object::as_array).ok()?;
+            let rectangle = doc.dereference(dict.get(b"Rect").ok()?).ok()?.1;
+            let numbers = rectangle.as_array().ok()?;
             let [a, b, c, d] = numbers.as_slice() else {
                 return None;
             };
@@ -77,7 +78,10 @@ fn widgets(doc: &Document, page: ObjectId) -> Vec<Listed> {
             for (out, value) in in_page.iter_mut().zip([a, b, c, d]) {
                 *out = f64::from(value.as_float().ok()?);
             }
-            if !in_page.iter().all(|v| v.is_finite()) {
+            if !in_page.iter().all(|v| v.is_finite())
+                || in_page[2] < in_page[0]
+                || in_page[3] < in_page[1]
+            {
                 return None;
             }
             let rect = crate::text::to_device(
@@ -98,24 +102,28 @@ fn widgets(doc: &Document, page: ObjectId) -> Vec<Listed> {
 
 /// The widgets in reading order: rows from the top, each from the left.
 ///
-/// Two widgets are in one row when the lower one's middle is no lower than
+/// Two widgets are in one row when the lower one's middle is above
 /// the bottom of the row's first, so a checkbox beside a taller text field is
 /// in that field's row. Widgets that tie keep the order they were listed in.
 fn by_position(listed: &[Listed]) -> Vec<ObjectId> {
     let mut order: Vec<&Listed> = listed.iter().collect();
     order.sort_by(|a, b| a.rect[1].total_cmp(&b.rect[1]));
-    let mut out = Vec::with_capacity(order.len());
-    let mut at = 0;
-    while at < order.len() {
-        let bottom = order[at].rect[3];
-        let mut row: Vec<&Listed> = order[at..]
-            .iter()
-            .take_while(|one| {
-                (one.rect[1] + one.rect[3]) / 2.0 < bottom || one.slot == order[at].slot
-            })
-            .copied()
-            .collect();
-        at += row.len();
+    // A tall control can start before a short neighbour whose middle still
+    // belongs to an earlier row. Each new row's bottom is at least as low as
+    // every earlier bottom: its middle cleared them all. Binary search finds
+    // the first fitting row without rescanning the pending widgets per row.
+    let mut rows: Vec<(f64, Vec<&Listed>)> = Vec::new();
+    for one in order {
+        let middle = f64::midpoint(f64::from(one.rect[1]), f64::from(one.rect[3]));
+        let at = rows.partition_point(|(bottom, _)| *bottom <= middle);
+        if let Some((_, row)) = rows.get_mut(at) {
+            row.push(one);
+        } else {
+            rows.push((f64::from(one.rect[3]), vec![one]));
+        }
+    }
+    let mut out = Vec::with_capacity(listed.len());
+    for (_, mut row) in rows {
         row.sort_by(|a, b| a.rect[0].total_cmp(&b.rect[0]));
         out.extend(row.iter().map(|one| one.widget));
     }

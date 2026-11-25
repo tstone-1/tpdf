@@ -2081,6 +2081,147 @@
         [
           {
             "from": 0,
+            "to": 1
+          }
+        ],
+        [
+          {
+            "from": 1,
+            "to": 2
+          }
+        ]
+      ],
+      "name": "tagged-footer",
+      "order": [
+        0,
+        1
+      ],
+      "route": "tagged",
+      "text": {
+        "artifacts": [
+          [
+            2,
+            3
+          ]
+        ],
+        "boxes": [
+          20.0,
+          80.0,
+          26.0,
+          90.0,
+          20.0,
+          30.0,
+          26.0,
+          40.0,
+          20.0,
+          750.0,
+          26.0,
+          760.0
+        ],
+        "codes": [
+          66,
+          78,
+          70
+        ],
+        "extract_ms": 0.0,
+        "height_pt": 841.8898,
+        "quarter_turns": 0,
+        "runs": [
+          {
+            "end": 1,
+            "path": [
+              "P"
+            ],
+            "start": 0,
+            "tag": "P"
+          },
+          {
+            "end": 2,
+            "path": [
+              "Note"
+            ],
+            "start": 1,
+            "tag": "Note"
+          }
+        ],
+        "width_pt": 595.2756
+      }
+    },
+    {
+      "lines": [
+        [
+          {
+            "from": 1,
+            "to": 2
+          }
+        ],
+        [
+          {
+            "from": 0,
+            "to": 1
+          }
+        ],
+        [
+          {
+            "from": 2,
+            "to": 3
+          }
+        ]
+      ],
+      "name": "incomplete-with-footer",
+      "order": [
+        1,
+        0,
+        2
+      ],
+      "route": "geometric",
+      "text": {
+        "artifacts": [
+          [
+            2,
+            3
+          ]
+        ],
+        "boxes": [
+          20.0,
+          80.0,
+          26.0,
+          90.0,
+          20.0,
+          30.0,
+          26.0,
+          40.0,
+          20.0,
+          750.0,
+          26.0,
+          760.0
+        ],
+        "codes": [
+          66,
+          78,
+          70
+        ],
+        "extract_ms": 0.0,
+        "height_pt": 841.8898,
+        "quarter_turns": 0,
+        "runs": [
+          {
+            "end": 1,
+            "path": [
+              "P"
+            ],
+            "start": 0,
+            "tag": "P"
+          }
+        ],
+        "width_pt": 595.2756
+      }
+    },
+    {
+      "lines": [
+        [
+          {
+            "from": 0,
             "to": 9
           }
         ],

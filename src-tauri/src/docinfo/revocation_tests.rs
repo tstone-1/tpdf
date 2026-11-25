@@ -211,6 +211,37 @@ fn an_authority_the_document_shows_revoked_leaves_the_signer_judged_now() {
 }
 
 #[test]
+fn a_timestamp_intermediate_in_the_dss_completes_the_same_chain_as_one_in_the_token() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let issuing = w
+        .tsa_root
+        .intermediate("tpdf test timestamp issuing authority", 0x54, 4);
+    let mut tsa = TestTsa::under(&issuing, &Default::default());
+    for (in_token, in_dss) in [(false, false), (false, true), (true, false)] {
+        tsa.carried.clear();
+        let mut certificates = vec![w.ca.certificate.clone(), w.tsa.root.clone()];
+        if in_token {
+            tsa.carried.push(issuing.certificate.clone());
+        }
+        if in_dss {
+            certificates.push(issuing.certificate.clone());
+        }
+        let bytes = signed(&w.signer, &[], G, &tsa);
+        let bytes = with_dss(&bytes, &certificates, &[], &[]);
+        let signature = read(&bytes, &anchors(&w));
+        let authority = signature.timestamp.unwrap().trust.unwrap().standing;
+        assert_eq!(authority == Standing::Trusted, in_token || in_dss);
+        assert_eq!(
+            signature.trust.unwrap().standing == Standing::TrustedAtTimestamp,
+            in_token || in_dss
+        );
+    }
+}
+
+#[test]
 fn an_authority_whose_issuer_is_not_in_the_document_has_revocation_data_that_cannot_be_checked() {
     // The token carries the authority's certificate alone; a /DSS with the
     // response and without the root that signed it cannot be checked.
@@ -992,6 +1023,45 @@ fn read_all(bytes: &[u8], anchors: &[Vec<u8>]) -> Vec<Signature> {
         .collect()
 }
 
+#[test]
+fn a_document_timestamp_only_seals_validation_data_present_in_its_revision() {
+    let w = world();
+    let signed = signed(&w.signer, &[], G, &w.tsa);
+    let certificates = [w.ca.certificate.clone(), w.tsa.root.clone()];
+    let responses = [
+        ocsp(&w.signer.certificate, &w.ca, Says::Good),
+        ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+    ];
+    let add_data = |bytes: &[u8]| with_dss(bytes, &certificates, &responses, &[]);
+    let stamp = |bytes: &[u8]| archived(bytes, &w.tsa, G + DAY, false);
+    let level = |bytes: &[u8]| read_all(bytes, &anchors(&w))[0].pades;
+    use crate::pades::Level::{Lt, Lta};
+    let sealed = stamp(&add_data(&signed));
+    assert_eq!(level(&sealed), Some(Lta));
+    assert_eq!(level(&add_data(&stamp(&signed))), Some(Lt));
+    // Even a further revision that adds another issuer keeps the earlier proof.
+    let mut extended = certificates.to_vec();
+    extended.push(TestCa::new("tpdf test unrelated issuer", 0x79).certificate);
+    assert_eq!(
+        level(&with_dss(&sealed, &extended, &responses, &[])),
+        Some(Lta)
+    );
+
+    // An identical DSS can be proved from the bytes when no hash budget remains.
+    let unchanged = add_data(&sealed);
+    let roots = anchors(&w);
+    let mut reported = read_all(&unchanged, &roots);
+    let document = Document::load_mem(&unchanged).expect("a document");
+    let judging = Judging::of(
+        &document,
+        &mut Limits::default(),
+        crate::trust::Anchors::Only(&roots),
+        NOW,
+    );
+    assign_pades(&mut reported, &document, &unchanged, None, &judging, &mut 0);
+    assert_eq!(reported[0].pades, Some(Lta));
+}
+
 /// A signature timestamped at `G` by an authority whose certificate ran out
 /// ten days later --- before `NOW`.
 fn stamped_by_a_lapsed_authority(w: &World) -> Vec<u8> {
@@ -1504,37 +1574,56 @@ fn the_anchor_the_store_ended_at_is_not_asked_about_though_it_issued_nothing_to_
 }
 
 #[test]
-fn a_cross_certificate_of_a_root_the_document_carries_ends_the_stores_chain_too() {
+fn the_stores_trust_anchor_decides_whether_a_cross_certificate_needs_revocation() {
     if !has_store() {
         return;
     }
-    // The store goes through the cross-certificate to the root it trusts; the
-    // document carries the self-issued twin, as DigiCert's and Sectigo's do.
     let w = world();
-    let their_root = TestCa::new("tpdf test second root", 0x75);
-    let cross = w.ca.cross(&their_root, 0x32);
-    let signer = their_root.issue("tpdf test signer under it", 0x6d, 8, None);
-    let bytes = signed(&signer, &[cross, their_root.certificate.clone()], G, &w.tsa);
+    let newer = TestCa::new("tpdf test second root", 0x75);
+    let cross = w.ca.cross(&newer, 0x32);
+    let signer = newer.issue("tpdf test signer under it", 0x6d, 8, None);
+    let bytes = signed(
+        &signer,
+        &[cross.clone(), newer.certificate.clone()],
+        G,
+        &w.tsa,
+    );
     let bytes = with_dss(
         &bytes,
-        std::slice::from_ref(&w.tsa.root),
+        &[w.ca.certificate.clone(), w.tsa.root.clone()],
         &[
-            ocsp(&signer.certificate, &their_root, Says::Good),
+            ocsp(&signer.certificate, &newer, Says::Good),
+            ocsp(
+                &cross,
+                &w.ca,
+                Says::Revoked {
+                    at: G - DAY,
+                    reason: Some(2),
+                },
+            ),
             ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
         ],
         &[],
     );
-    let signature = read(&bytes, &anchors(&w));
-    assert_eq!(
-        signature.trust.as_ref().map(|t| t.standing),
-        Some(Standing::TrustedAtTimestamp)
-    );
-    let chain = signature.revocation_chain.expect("a chain");
-    assert_eq!(
-        (chain.standing, chain.certificates.len()),
-        (Status::Good, 1),
-        "{chain:?}"
-    );
+    for (root, expected, count) in [
+        (w.ca.certificate, Status::Revoked, 2),
+        (newer.certificate, Status::Good, 1),
+    ] {
+        let signature = read(&bytes, &[root, w.tsa.root.clone()]);
+        assert_eq!(
+            signature.trust.as_ref().unwrap().standing,
+            Standing::TrustedAtTimestamp
+        );
+        let chain = signature.revocation_chain.as_ref().unwrap();
+        assert_eq!(
+            (chain.standing, chain.certificates.len()),
+            (expected, count)
+        );
+        assert_eq!(
+            crate::cli::verify::passes_strict(&crate::cli::verify::signature_report(&signature)),
+            expected == Status::Good
+        );
+    }
 }
 
 #[test]

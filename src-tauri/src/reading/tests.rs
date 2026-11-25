@@ -197,6 +197,25 @@ pub(crate) fn cases() -> Vec<Case> {
         text: separated,
     });
 
+    // A note printed above the body, but tagged after it, and a page footer
+    // explicitly excluded from the structure tree.
+    let mut footer = page(vec![vec![
+        (66, [20.0, 80.0, 26.0, 90.0]),
+        (78, [20.0, 30.0, 26.0, 40.0]),
+        (70, [20.0, 750.0, 26.0, 760.0]),
+    ]]);
+    footer.runs = vec![run("P", 0, 1), run("Note", 1, 2)];
+    footer.artifacts = vec![[2, 3]];
+    out.push(Case {
+        name: "tagged-footer",
+        text: footer.clone(),
+    });
+    footer.runs.pop();
+    out.push(Case {
+        name: "incomplete-with-footer",
+        text: footer,
+    });
+
     // Rotation: the same interleaved page at each turn.
     for turns in 1..=3u8 {
         out.push(Case {
@@ -542,11 +561,34 @@ fn tags_that_leave_a_visible_character_unclaimed_are_not_used() {
 #[test]
 fn every_order_is_a_permutation_of_the_page() {
     for case in cases() {
-        let mut order = read(&case.text).order();
+        let reading = read(&case.text);
+        let mut order = reading.order();
         order.sort_unstable();
-        let all: Vec<usize> = (0..case.text.codes.len()).collect();
+        let all: Vec<usize> = (0..case.text.codes.len())
+            .filter(|&index| {
+                reading.route == Route::Geometric
+                    || !case
+                        .text
+                        .artifacts
+                        .iter()
+                        .any(|&[start, end]| (start as usize..end as usize).contains(&index))
+            })
+            .collect();
         assert_eq!(order, all, "{}", case.name);
     }
+}
+
+#[test]
+fn only_a_complete_tagged_page_omits_its_footer() {
+    let tagged = case("tagged-footer");
+    let reading = read(&tagged);
+    assert_eq!(reading.route, Route::Tagged);
+    assert_eq!(text_of(&tagged, &reading.lines), ["B", "N"]);
+
+    let incomplete = case("incomplete-with-footer");
+    let reading = read(&incomplete);
+    assert_eq!(reading.route, Route::Geometric);
+    assert_eq!(text_of(&incomplete, &reading.lines), ["N", "B", "F"]);
 }
 
 #[test]

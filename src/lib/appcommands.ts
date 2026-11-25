@@ -39,7 +39,7 @@ import {
 } from "./attachments";
 import { CommandRegistry } from "./commands";
 import { attachKeywords } from "./keywords";
-import { BINDINGS, copyInterfaceText, inTextField, isLinux, isMac, label, matches, type BoundCommand } from "./keys";
+import { copyInterfaceText, inTextField, isLinux, isMac, label, matches } from "./keys";
 import {
   describeRange,
   describeSplit,
@@ -3492,26 +3492,6 @@ export interface PaletteLike {
   open(): void;
   close(): void;
   askFor(id: string): void;
-}
-
-/**
- * Re-renders every command's advertised shortcut from the binding table.
- *
- * Called once, after the platform has said what this keyboard prints --- see
- * `keys.ts`'s {@link setPrintedKeys} and `src-tauri/src/keylayout.rs`. A command
- * registers with the label that can be rendered synchronously, which for a
- * binding naming a physical key is the character it declares; this replaces that
- * with the key the reader can actually see on the keyboard in front of them.
- *
- * Mutating the registered commands rather than rebuilding the registry, because
- * a rebuild would drop the recent-command list and re-run every registration for
- * a change that touches one string. A command with no binding is left alone: its
- * `keys` is undefined and the palette shows no shortcut, which is right.
- */
-export function relabelCommands(registry: CommandRegistry): void {
-  for (const command of registry.all()) {
-    if (command.id in BINDINGS) command.keys = label(command.id as BoundCommand);
-  }
 }
 
 /** What {@link handleWindowKey} reaches for. */

@@ -1737,6 +1737,7 @@ jobs:
             || { echo "::error::not signed with a Developer ID identity"; exit 1; }
           codesign -dv --verbose=4 "$APP" 2>&1 | grep -q "flags=.*runtime" \
             || { echo "::error::hardened runtime missing - notarization cannot succeed"; exit 1; }
+          python3 scripts/check_toolchain.py --macos-bundle "$APP"
           xcrun stapler validate "$APP"
           spctl -a -vvv -t exec "$APP" 2>&1 | grep -q "source=Notarized Developer ID" \
             || { echo "::error::Gatekeeper does not see this as notarized"; exit 1; }

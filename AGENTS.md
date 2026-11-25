@@ -313,13 +313,11 @@ The memory measurements and Linux bound are in the detailed gate notes below.
 For Windows DLL initialization failures under an outer execution sandbox, see
 `docs/DETAIL.md`, *Quality gates: release workflow and Windows measurements*.
 
-The root `.cargo/config.toml` supplies the same macOS deployment target as
-`bundle.macOS.minimumSystemVersion` in `src-tauri/tauri.conf.json`. Keep them
-together; the toolchain gate checks agreement. An unset value in plain Cargo
-versus Tauri's `10.13` invalidated `ring` and Objective-C dependency build scripts
-on every switch between gates and application builds. Cargo reads configuration
-from the invocation directory's ancestors, so run from this checkout, including
-when using `--manifest-path`. Explicit environment overrides remain possible.
+Keep the macOS target in `.cargo/config.toml` and `src-tauri/tauri.conf.json`
+in sync with the pinned PDFium minimum (13.0). The toolchain gate checks both;
+release verification checks the packaged binaries. Run Cargo from this checkout,
+also with `--manifest-path`, so it sees the root config. See `BUILD.md` for the
+build-cache rationale and environment override.
 
 That is a deviation from the portfolio rule, which says a release checklist must state
 every gating command verbatim with its flags. The rule exists because a hand-copied

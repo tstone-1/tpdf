@@ -4270,22 +4270,35 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     }
     let written = write_marks(&mut doc, &plan.marks, &sites, &order, replies)?;
 
-    // The order Tab takes a page's fields in. Every page when the plan asks,
-    // and otherwise a page this write added a field to, if its fields were in
-    // reading order before: a form made here stays in order as it grows, and
-    // an order somebody else chose on purpose is not undone by one new field.
-    for page in crate::pagetree::ordered_pages(&doc) {
-        let (had, ordered) = tabbed.get(&page).copied().unwrap_or((0, true));
-        let grew = crate::taborder::count(&doc, page) > had;
-        if plan.tab_order || (grew && ordered) {
-            crate::taborder::sort(&mut doc, page)?;
-        }
-    }
-
     // After the deletion, and it has to be: `drop_pages` removes objects, and a
     // rotation written onto a page that is about to go is work thrown away. The
     // ids are unaffected --- the survivors are the same objects they were.
-    turn_pages(&mut doc, &agreed_turns(&turns)?, &written)?;
+    let final_turns = agreed_turns(&turns)?;
+    turn_pages(&mut doc, &final_turns, &written)?;
+
+    // Place marks before rotating, but read the field rows in the final display.
+    // An explicit tab mode takes precedence over the incidental annotation order.
+    for (page, turn) in final_turns {
+        let (had, ordered) = tabbed.get(&page).copied().unwrap_or((0, true));
+        let grew = crate::taborder::count(&doc, page) > had;
+        let mode = doc
+            .get_dictionary(page)
+            .map_err(|e| e.to_string())?
+            .get(b"Tabs")
+            .ok();
+        let automatic = match mode {
+            None => grew && ordered,
+            Some(mode) => {
+                doc.dereference(mode)
+                    .and_then(|(_, value)| value.as_name())
+                    .is_ok_and(|name| name == b"R")
+                    && (grew || turn != 0)
+            }
+        };
+        if plan.tab_order || automatic {
+            crate::taborder::sort(&mut doc, page)?;
+        }
+    }
 
     // After `write_marks` for the same reason `apply_turns` is: a mark's quads
     // are in the display space the file had when it was opened, and cropping

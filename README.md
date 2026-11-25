@@ -26,7 +26,7 @@ Take the file for your computer from the
 
 | Computer | File | Notes |
 |---|---|---|
-| Mac with Apple silicon | `tpdf_<version>_aarch64.dmg` | Signed and notarized. Or `brew install --cask tstone-1/tpdf/tpdf` |
+| Mac with Apple silicon, macOS 13 or later | `tpdf_<version>_aarch64.dmg` | Signed and notarized. Or `brew install --cask tstone-1/tpdf/tpdf` |
 | Windows, 64-bit | `tpdf_<version>_x64-setup.exe` | Installs for your user account, no administrator rights. Code-signed, see below. Or `winget install tstone-1.tpdf` |
 | Linux, x86-64: Ubuntu 24.04 or newer, Debian 13 or newer, and their relatives | `tpdf_<version>_amd64.deb` | `sudo apt install ./tpdf_<version>_amd64.deb`; brings Tesseract for text recognition |
 | Linux, x86-64: any other distribution with glibc 2.39 or newer (Fedora 40 or newer, for example) | `tpdf_<version>_amd64.AppImage` | `chmod +x` it and run it; nothing is installed |
@@ -1483,8 +1483,9 @@ the page as it is displayed:
   For a CAdES signature that holds it also names the **PAdES level** it has the parts of —
   `B-B`, `B-T`, `B-LT` or `B-LTA` — as the properties dialog does under Format. The level is
   read from the answers above and is never rounded up: an archive timestamp over a signature
-  whose revocation data does not answer for every certificate is `B-T`. It is not a
-  conformance test, and each answer says so.
+  whose revocation data does not answer for every certificate is `B-T`. Validation data first
+  added after the archive timestamp can establish `B-LT`. A timestamp over that data is required
+  for `B-LTA`. Each answer states that full conformance is untested.
   Nothing is fetched to check a signature, so a document carrying no revocation data is
   reported as not checked for it. When a signature carries an intact timestamp from an
   authority this computer trusts, its signer is judged at the time that timestamp attests

@@ -1,7 +1,7 @@
 import type { EditState } from "./edits";
 import type { Anchor } from "./popup";
 import type { FieldEdited, FieldProps } from "./savedfields";
-import { isEmptySignature } from "./signfield";
+import { emptySignatureFields } from "./signfield";
 import { catalog } from "./i18n";
 import { spoken } from "./said";
 
@@ -335,10 +335,11 @@ export class FormLayer {
     host.append(this.node);
     // A split view can mount the same PDF object numbers twice in this document.
     const prefix = `form-${++nextLayerId}`;
+    const signable = new Set(this.sign ? emptySignatureFields(form) : []);
     const blocked = new Set(form.widgets.filter((w) => w.reason !== null).map((w) => fieldKey(w.object)));
     for (const widget of form.widgets) {
       // A place for a signature is pressed, not typed into.
-      if (this.sign && isEmptySignature(widget)) {
+      if (signable.has(widget)) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "form-sign";

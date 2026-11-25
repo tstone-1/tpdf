@@ -26,14 +26,22 @@ export function isEmptySignature(widget: FormWidget): boolean {
   return widget.control.kind === "signature" && !widget.control.signed;
 }
 
+// Scans are replaced on reopen. Pending edits live outside the scanned form.
+const signable = new WeakMap<Form, readonly FormWidget[]>();
+
 /**
  * The signature fields somebody can sign, in the order the form lists them.
  * A field shown in several places is left out: a signature goes in one.
  */
-export function emptySignatureFields(form: Form | null): FormWidget[] {
+export function emptySignatureFields(form: Form | null): readonly FormWidget[] {
   if (!form) return [];
-  return form.widgets.filter((widget) =>
-    isEmptySignature(widget) && form.widgets.filter((other) => other.name === widget.name).length === 1);
+  const known = signable.get(form);
+  if (known) return known;
+  const counts = new Map<string, number>();
+  for (const widget of form.widgets) counts.set(widget.name, (counts.get(widget.name) ?? 0) + 1);
+  const fields = form.widgets.filter((widget) => isEmptySignature(widget) && counts.get(widget.name) === 1);
+  signable.set(form, fields);
+  return fields;
 }
 
 /**

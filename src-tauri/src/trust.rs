@@ -713,10 +713,10 @@ pub(crate) mod platform {
     }
 
     /// The chain `trust` assembled when it was last evaluated, signer first.
-    #[allow(deprecated)] // `chain()` is macOS 12; the bundle targets 10.13.
     pub fn chain_of(trust: &SecTrust) -> Vec<Vec<u8>> {
-        (0..trust.certificate_count())
-            .filter_map(|at| trust.certificate_at_index(at))
+        trust
+            .chain()
+            .iter()
             .map(|certificate| certificate.to_der())
             .collect()
     }

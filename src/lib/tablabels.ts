@@ -8,8 +8,6 @@
 
 /** The sizes offered, in CSS pixels, smallest first. */
 export const TAB_LABEL_SIZES: readonly number[] = [9, 10, 11, 12, 13, 14, 16];
-const SMALLEST = 9;
-const LARGEST = 16;
 /** The default: smaller than the 13 px body text, which made the strip tall. */
 export const DEFAULT_TAB_LABEL_SIZE = 11;
 
@@ -30,8 +28,8 @@ export class TabLabelSize {
   /** The current size in CSS pixels. */
   get px(): number { return this.#px; }
 
-  get canGrow(): boolean { return this.#px < LARGEST; }
-  get canShrink(): boolean { return this.#px > SMALLEST; }
+  get canGrow(): boolean { return this.#px !== TAB_LABEL_SIZES.at(-1); }
+  get canShrink(): boolean { return this.#px !== TAB_LABEL_SIZES[0]; }
   get isDefault(): boolean { return this.#px === DEFAULT_TAB_LABEL_SIZE; }
 
   /** One step larger or smaller (`1` or `-1`), or back to the default (`0`). */

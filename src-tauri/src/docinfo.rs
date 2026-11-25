@@ -758,14 +758,23 @@ fn scan_judged(
     let mut signatures = if readable {
         let mut budget = crate::integrity::MAX_HASHED;
         let judging = Judging::of(document, &mut limits, anchors, now);
-        read_signatures(
+        let mut signatures = read_signatures(
             document,
             bytes.len() as u64,
             bytes,
             &mut limits,
             &mut budget,
             &judging,
-        )
+        );
+        assign_pades(
+            &mut signatures,
+            document,
+            bytes,
+            password,
+            &judging,
+            &mut budget,
+        );
+        signatures
     } else {
         Vec::new()
     };
@@ -785,7 +794,6 @@ fn scan_judged(
         let end = (bytes.len() as u64).saturating_sub(signature.appended_bytes);
         signature.appendix = Some(read_appendix(bytes, end as usize, password));
     }
-    crate::pades::assign(&mut signatures);
 
     let catalog = if readable {
         document.catalog().ok()
@@ -1338,6 +1346,78 @@ fn read_signatures(
     out
 }
 
+/// A later document timestamp seals validation data only when the data was
+/// already in its revision. The CMS of either signature is at the byte-range
+/// hole the integrity check matched to it, so only the shared DSS can have
+/// come from a subsequent revision. Read that DSS from the timestamp's prefix
+/// and ask the same signature checks with it. Use the current field walk so
+/// the indices and any later archive moments still refer to the same fields.
+fn assign_pades(
+    signatures: &mut [Signature],
+    document: &Document,
+    bytes: &[u8],
+    password: Option<&str>,
+    judging: &Judging<'_>,
+    budget: &mut u64,
+) {
+    let mut revisions = std::collections::BTreeMap::new();
+    let mut current_dss = None;
+    let count = signatures.len();
+    crate::pades::assign_with_seals(signatures, |at, stamp_at, stamp| {
+        if stamp.covers_whole_file {
+            return true;
+        }
+        // At most one extra read per eligible timestamp, at most MAX_SIGNATURES
+        // of those. Cache just the verdicts and share the document's hash budget.
+        let proved: &mut Vec<bool> = revisions.entry(stamp_at).or_insert_with(|| {
+            let Some(end) = (bytes.len() as u64).checked_sub(stamp.appended_bytes) else {
+                return Vec::new();
+            };
+            // end fits usize because it is at most bytes.len().
+            let Ok(prefix) = load_revision(&bytes[..end as usize], password) else {
+                return Vec::new();
+            };
+            if prefix.is_encrypted() {
+                return Vec::new();
+            }
+            let material = read_dss(&prefix);
+            drop(prefix);
+            // Unrelated appends often leave all validation inputs identical.
+            // Compare the bounded DER and read limits before spending any more
+            // of the document's hash budget. The per-signature CMS is already
+            // tied to its original bytes by the integrity check.
+            if material == *current_dss.get_or_insert_with(|| read_dss(document)) {
+                return vec![true; count];
+            }
+            if *budget == 0 {
+                return Vec::new();
+            }
+            let historical = Judging::from_material(material, judging.anchors, judging.now);
+            let mut limits = Limits::default();
+            let reports = read_signatures(
+                document,
+                bytes.len() as u64,
+                bytes,
+                &mut limits,
+                budget,
+                &historical,
+            );
+            let Some(archive) = reports.get(stamp_at) else {
+                return Vec::new();
+            };
+            let archive = std::slice::from_ref(archive);
+            reports
+                .iter()
+                .map(|s| {
+                    crate::pades::level_with_seals(s, archive, |_, _| true)
+                        == Some(crate::pades::Level::Lta)
+                })
+                .collect()
+        });
+        proved.get(at) == Some(&true)
+    });
+}
+
 /// Every signed signature field's `/Contents` --- the CMS, or for a document
 /// timestamp the token, ended where its structure ends --- by the field's
 /// full name, in the order [`read_signatures`] reports the fields, and the
@@ -1632,8 +1712,7 @@ fn read_signature(
             blob,
             &mut limits.timestamps_unread,
             budget,
-            judging.anchors,
-            judging.now,
+            judging,
             archive,
         ) {
             own.extend(&crate::revocation::Material::of_cms(&bytes));
@@ -1833,11 +1912,19 @@ impl<'a> Judging<'a> {
         let material = read_dss(document);
         limits.revocation_unread += material.unread;
         limits.revocation_dropped += material.dropped;
+        Self::from_material(material, anchors, now)
+    }
+
+    fn from_material(
+        material: crate::revocation::Material,
+        anchors: crate::trust::Anchors<'a>,
+        now: u64,
+    ) -> Self {
         Judging {
             anchors,
             now,
             dss: crate::revocation::Pool::new(&material),
-            dss_certificates: material.certificates.clone(),
+            dss_certificates: material.certificates,
         }
     }
 }
@@ -2259,8 +2346,8 @@ fn read_timestamp(
     anchors: crate::trust::Anchors<'_>,
     now: u64,
 ) -> Option<Timestamp> {
-    read_timestamp_token(blob, unread, budget, anchors, now, None)
-        .map(|(timestamp, _, _)| timestamp)
+    let judging = Judging::from_material(crate::revocation::Material::default(), anchors, now);
+    read_timestamp_token(blob, unread, budget, &judging, None).map(|(timestamp, _, _)| timestamp)
 }
 
 /// [`read_timestamp`], with the token's own bytes beside it, which the scan needs
@@ -2270,8 +2357,7 @@ fn read_timestamp_token(
     blob: &[u8],
     unread: &mut usize,
     budget: &mut u64,
-    anchors: crate::trust::Anchors<'_>,
-    now: u64,
+    judging: &Judging<'_>,
     archive: Option<u64>,
 ) -> Option<(Timestamp, Vec<u8>, Vec<Vec<u8>>)> {
     use cms::content_info::ContentInfo;
@@ -2309,8 +2395,7 @@ fn read_timestamp_token(
         &token,
         crate::integrity::token::Target::Signature(signer.signature.as_bytes()),
         budget,
-        anchors,
-        now,
+        judging,
         archive,
     );
     Some((checked, token, vouched))
@@ -2324,8 +2409,7 @@ fn checked(
     token: &[u8],
     target: crate::integrity::token::Target<'_>,
     budget: &mut u64,
-    anchors: crate::trust::Anchors<'_>,
-    now: u64,
+    judging: &Judging<'_>,
     archive: Option<u64>,
 ) -> (Timestamp, Vec<Vec<u8>>) {
     let integrity = crate::integrity::token::check(token, target, budget);
@@ -2337,8 +2421,20 @@ fn checked(
     let purpose = crate::trust::Purpose::Timestamping;
     let (trust, vouched) = attested
         .then(|| match archive {
-            Some(at) => crate::trust::of_blob_at(token, &[], purpose, at, anchors),
-            None => crate::trust::of_blob_vouching(token, &[], purpose, now, anchors),
+            Some(at) => crate::trust::of_blob_at(
+                token,
+                &judging.dss_certificates,
+                purpose,
+                at,
+                judging.anchors,
+            ),
+            None => crate::trust::of_blob_vouching(
+                token,
+                &judging.dss_certificates,
+                purpose,
+                judging.now,
+                judging.anchors,
+            ),
         })
         .unzip();
     let timestamp = Timestamp {
@@ -2669,6 +2765,20 @@ pub(crate) fn locked_for(document: &Document, target: Option<&str>) -> Result<bo
     Ok(locked)
 }
 
+/// A signed prefix must parse on its own. Recovery could use a previous
+/// trailer and silently return the wrong revision.
+fn load_revision(bytes: &[u8], password: Option<&str>) -> lopdf::Result<Document> {
+    Document::load_mem_with_options(
+        bytes,
+        LoadOptions {
+            strict: true,
+            max_decompressed_size: Some(MAX_DECODE),
+            password: password.map(str::to_string),
+            ..Default::default()
+        },
+    )
+}
+
 /// What the bytes after `end` added to the document, by comparing two parses.
 ///
 /// `end` is where a signature's `/ByteRange` stops, so `bytes[..end]` is the
@@ -2712,19 +2822,7 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
         return unread;
     }
 
-    let load = |slice: &[u8]| {
-        Document::load_mem_with_options(
-            slice,
-            LoadOptions {
-                // A recovered prefix may end mid-object and cannot establish
-                // which objects belonged to the signed revision.
-                strict: true,
-                max_decompressed_size: Some(MAX_DECODE),
-                password: password.map(str::to_string),
-                ..Default::default()
-            },
-        )
-    };
+    let load = |slice: &[u8]| load_revision(slice, password);
 
     // Both parses, or nothing. A whole document that parses beside a prefix that
     // does not is exactly the case where guessing would be worst: every object

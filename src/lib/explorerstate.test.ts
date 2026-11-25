@@ -90,6 +90,27 @@ describe("Explorer integration", () => {
     void integration;
   });
 
+  it.each(["de-DE", "de-DE-formal"] as const)("shows the question and result in %s", async (locale) => {
+    const both = { thumbnail: { kind: "other", name: "ACME" }, preview: edge } as const;
+    expect(replaceQuestion(fresh, locale)).toContain("PDF-Vorschau von PDF Preview Handler");
+    const question = replaceQuestion(both, locale);
+    expect(question).toContain("PDF-Miniaturansichten von ACME und die PDF-Vorschau von PDF Preview Handler");
+    expect(question).toContain(locale === "de-DE" ? "Wenn du" : "Wenn Sie");
+    const shown: string[] = [];
+    const integration = new ExplorerIntegration({
+      read: async () => both,
+      apply: async (on) => {
+        if (!on) throw new Error("Explorer's handlers could not be changed: ACME");
+        return "Explorer now shows PDF thumbnails with tpdf.";
+      },
+      say: (line) => shown.push(line), confirm: async () => true, changed: () => {},
+    }, locale);
+    await integration.run(true);
+    await integration.run(false);
+    expect(shown).toEqual(["Der Explorer zeigt PDF-Miniaturansichten jetzt mit tpdf.",
+      "Die Erweiterungen des Explorers konnten nicht geändert werden: ACME"]);
+  });
+
   it("names what would be replaced, one or both", () => {
     expect(replaceQuestion(fresh)).toBe(
       "In Explorer, the preview pane comes from PDF Preview Handler. Replace it with tpdf? " +

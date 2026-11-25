@@ -1163,7 +1163,7 @@ ROWS += [
         "        if (question) replace = true;",
         "asks before replacing another program's handler and passes the answer on"),
     Mutation("explorer: the preview pane's owner not named", "src/lib/explorerstate.ts",
-        '  if (state.preview.kind === "other") others.push(`the preview pane comes from ${state.preview.name}`);\n',
+        '  else if (preview.kind === "other") question = words.preview(preview.name);\n',
         "",
         "names what would be replaced, one or both"),
 ]

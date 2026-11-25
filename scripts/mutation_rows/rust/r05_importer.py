@@ -1525,10 +1525,8 @@ ROWS += [
     Mutation(
         "strict parsing: recover a damaged signed prefix",
         "src/docinfo.rs",
-        "                // which objects belonged to the signed revision.\n"
-        "                strict: true,",
-        "                // which objects belonged to the signed revision.\n"
-        "                strict: false,",
+        "            strict: true,",
+        "            strict: false,",
         "an_appendix_whose_signed_prefix_is_unparseable_is_reported_as_unread",
     ),
     Mutation(

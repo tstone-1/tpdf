@@ -18,6 +18,7 @@ Usage:
 
 import json
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -92,6 +93,46 @@ def commit_hash(argv: "list[str]") -> "str | None":
     return hit.group(1) if hit else None
 
 
+def version_tuple(value: str) -> tuple[int, int, int]:
+    parts = value.split(".")
+    if len(parts) > 3 or not all(part.isdecimal() for part in parts):
+        raise ValueError(f"invalid deployment target {value!r}")
+    major, minor, patch = (parts + ["0", "0"])[:3]
+    return int(major), int(minor), int(patch)
+
+
+def check_macos_images(minimum: str, images: list[Path]) -> None:
+    floor = version_tuple(minimum)
+    for image in images:
+        output = subprocess.run(["otool", "-arch", "all", "-l", image], text=True,
+                                capture_output=True, check=True).stdout
+        targets = []
+        for command in output.split("Load command ")[1:]:
+            if "cmd LC_BUILD_VERSION" in command:
+                pattern = r"^\s*minos ([\d.]+)$"
+            elif "cmd LC_VERSION_MIN_MACOSX" in command:
+                pattern = r"^\s*version ([\d.]+)$"
+            else:
+                continue
+            match = re.search(pattern, command, re.MULTILINE)
+            if not match:
+                raise ValueError(f"{image.name}: unreadable deployment target")
+            targets.append(match[1])
+        if not targets or any(version_tuple(target) > floor for target in targets):
+            raise ValueError(f"{image.name}: targets {targets}, bundle minimum {minimum}")
+
+
+def check_macos_bundle(bundle: Path, minimum: str) -> None:
+    contents = bundle / "Contents"
+    with (contents / "Info.plist").open("rb") as source:
+        info = plistlib.load(source)
+    if info.get("LSMinimumSystemVersion") != minimum:
+        raise ValueError(f"packaged Info.plist must declare macOS {minimum}")
+    engine, = contents.rglob("libpdfium.dylib")
+    check_macos_images(minimum, [contents / "MacOS" / info["CFBundleExecutable"],
+                                 contents / "MacOS/tpdf-cli", engine])
+
+
 def main() -> int:
     """Compares the pin against what is actually running."""
     # Tauri supplies this environment variable to Cargo. Plain Cargo must use
@@ -104,6 +145,19 @@ def main() -> int:
     minimum = config.get("bundle", {}).get("macOS", {}).get("minimumSystemVersion")
     if not isinstance(deployment, str) or not deployment or deployment != minimum:
         print("[FAIL] Cargo and Tauri macOS deployment targets must match.", file=sys.stderr)
+        return 1
+
+    try:
+        if sys.argv[1:]:
+            if len(sys.argv) != 3 or sys.argv[1] != "--macos-bundle":
+                raise ValueError("usage: check_toolchain.py [--macos-bundle APP]")
+            check_macos_bundle(Path(sys.argv[2]), minimum)
+            print(f"[OK] packaged binaries support the declared macOS {minimum} target")
+            return 0
+        if sys.platform == "darwin":
+            check_macos_images(minimum, [ROOT / "vendor/pdfium/lib/libpdfium.dylib"])
+    except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
+        print(f"[FAIL] macOS deployment target: {error}", file=sys.stderr)
         return 1
 
     pin = pinned_channel()

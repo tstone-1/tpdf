@@ -165,6 +165,12 @@ it then replaces. The store construction and the offline flags are shared with
 real-store instrument and the sandbox measurement; `docs/THREAT-MODEL.md` §T6.22 the
 residuals.
 
+The OS trust check takes issuer certificates from the document's DSS for both
+signers and embedded timestamp authorities. Revocation follows the path the OS
+selected, including any cross-certificate below its trust anchor. A B-LTA
+result requires sufficient validation data in the archive timestamp's covered
+revision. Validation data appended later can establish B-LT.
+
 **A visible appearance (2026-09-27)** is chosen in the same chooser, invisible by default. The
 placement reuses the viewer's crop drag as `ArmedTool` `place` (`Viewer.armPlacement`, one
 rectangle, answered `null` by Escape, another tool or the viewer going); `signing.ts` reads the

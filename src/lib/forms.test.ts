@@ -249,6 +249,20 @@ describe("Tab in the form's controls", () => {
     return { layer, inputs, revealed, tab };
   }
 
+  it("offers only a signature field that can be signed by its unique name", () => {
+    const signature: FormWidget = { ...text, name: "Witness", value: "", reason: "This field type is not supported yet",
+      control: { kind: "signature", signed: false } };
+    const widgets = [signature, { ...signature, widget: [61, 0] as [number, number] },
+      { ...signature, object: [62, 0] as [number, number], name: "Approval" }];
+    const signed: string[] = [];
+    new FormLayer(dom.root as unknown as HTMLElement, { widgets }, () => null,
+      async () => {}, () => {}, () => {}, (widget) => signed.push(widget.name));
+    const buttons = dom.root.children[0]!.children;
+    expect(buttons.map(button => button.getAttribute("aria-label"))).toEqual(["Sign Approval"]);
+    buttons[0]!.dispatch("click", {});
+    expect(signed).toEqual(["Approval"]);
+  });
+
   it("keeps radio groups separate across two mounted views", () => {
     const radio: FormWidget = { ...text, value: [0], control: {
       kind: "radio", index: 0, states: [[65]], unison: false, no_toggle_off: true } };

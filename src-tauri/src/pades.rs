@@ -10,9 +10,8 @@
 //! token is attested, the document's own revocation data answered `good` for
 //! every certificate, a later document timestamp is attested. What is **not**
 //! done is a conformance test --- the signed attributes a profile requires,
-//! the algorithms it permits, the order the standard fixes for adding
-//! validation data. A validator does those; this does not, and
-//! [`crate::words::pades_sentence`] ends every answer by saying so.
+//! or the algorithms it permits. [`crate::words::pades_sentence`] states the
+//! scope of the check.
 //!
 //! **Nothing is named for a signature that does not hold.** A level is a
 //! statement about a signature, and one that is broken, altered or unchecked
@@ -125,8 +124,11 @@ fn reaches_past<S: Evidence>(later: &S, earlier: &S) -> bool {
 }
 
 /// Document timestamps that are attested and reach past `signature`'s range.
-fn sealing<'a, S: Evidence>(signature: &'a S, all: &'a [S]) -> impl Iterator<Item = &'a S> {
-    all.iter().filter(move |other| {
+fn sealing<'a, S: Evidence>(
+    signature: &'a S,
+    all: &'a [S],
+) -> impl Iterator<Item = (usize, &'a S)> {
+    all.iter().enumerate().filter(move |(_, other)| {
         other.kind() == DOCUMENT_TIMESTAMP
             && holds(*other)
             && other.token().is_some_and(|t| t.attested)
@@ -136,8 +138,19 @@ fn sealing<'a, S: Evidence>(signature: &'a S, all: &'a [S]) -> impl Iterator<Ite
 
 /// The level `signature` has the parts of, among `all` the document's
 /// signatures, or `None` when it is not a PAdES signature that holds.
+/// Without earlier revisions available, only a timestamp covering the whole
+/// current file can establish that it sealed the validation data.
 #[must_use]
 pub fn level<S: Evidence>(signature: &S, all: &[S]) -> Option<Level> {
+    level_with_seals(signature, all, |_, stamp| stamp.appended_bytes() == 0)
+}
+
+/// As `level`, with the caller checking for data sealed in earlier revisions.
+pub(crate) fn level_with_seals<S: Evidence>(
+    signature: &S,
+    all: &[S],
+    mut seals_data: impl FnMut(usize, &S) -> bool,
+) -> Option<Level> {
     if !signature.signed() || signature.kind() != CADES || !holds(signature) {
         return None;
     }
@@ -155,13 +168,15 @@ pub fn level<S: Evidence>(signature: &S, all: &[S]) -> Option<Level> {
         |chain: Option<&Chain>| chain.is_some_and(|c| c.standing == Status::Good && c.dropped == 0);
     let dated_by_good_authority = match own {
         Some(token) => good(token.revocation_chain),
-        None => sealing(signature, all).any(|stamp| good(stamp.revocation_chain())),
+        None => sealing(signature, all).any(|(_, stamp)| good(stamp.revocation_chain())),
     };
     if !good(signature.revocation_chain()) || !dated_by_good_authority {
         return Some(Level::T);
     }
     // B-LTA: a document timestamp, itself answered for, over all of that.
-    if sealing(signature, all).any(|stamp| good(stamp.revocation_chain())) {
+    if sealing(signature, all)
+        .any(|(at, stamp)| good(stamp.revocation_chain()) && seals_data(at, stamp))
+    {
         Some(Level::Lta)
     } else {
         Some(Level::Lt)
@@ -170,9 +185,21 @@ pub fn level<S: Evidence>(signature: &S, all: &[S]) -> Option<Level> {
 
 /// Sets the level on every signature of a document.
 pub fn assign<S: Evidence>(signatures: &mut [S]) {
+    assign_with_seals(signatures, |_, _, stamp| stamp.appended_bytes() == 0);
+}
+
+pub(crate) fn assign_with_seals<S: Evidence>(
+    signatures: &mut [S],
+    mut seals_data: impl FnMut(usize, usize, &S) -> bool,
+) {
     let levels: Vec<Option<Level>> = signatures
         .iter()
-        .map(|signature| level(signature, signatures))
+        .enumerate()
+        .map(|(at, signature)| {
+            level_with_seals(signature, signatures, |stamp_at, stamp| {
+                seals_data(at, stamp_at, stamp)
+            })
+        })
         .collect();
     for (signature, level) in signatures.iter_mut().zip(levels) {
         signature.set_level(level);

@@ -432,7 +432,6 @@
   import {
     handleWindowKey,
     registerAppCommands,
-    relabelCommands,
     togglePalette,
     type AppActions,
   } from "./lib/appcommands";
@@ -510,7 +509,7 @@
   import * as validationData from "./lib/validationdata";
   import { emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
   import { openWithPassword } from "./lib/unlock";
-  import { inTextField, isLinux, isMac, label, revealTitle, setPrintedKeys } from "./lib/keys";
+  import { inTextField, isLinux, isMac, label, revealTitle } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
@@ -2043,8 +2042,8 @@
     explorerOffered: (on) => explorer.offered(on),
     makeDefaultPdfApp: () => {
       void call("default_pdf_app").then(
-        (said) => tell(said),
-        (why: unknown) => tell(String(why)),
+        (line) => tell(spoken(line)),
+        (why: unknown) => tell(spokenError(why)),
       );
     },
     // Wrapped rather than passed straight through, because a check that lands on
@@ -5771,6 +5770,7 @@
       // After the spike entry points, which exit the process: none of them mount
       // the shell, and a palette attached to `document.body` would outlive it.
       palette = new Palette(commands, {
+        ...(isMac() && { keyboardPositions: () => call("keyboard_positions") }),
         turnPage: (forward) => (forward ? viewer?.nextPage() : viewer?.previousPage()),
       });
 
@@ -5874,22 +5874,7 @@
       // takes an argument opens the palette rather than running anything, so
       // installing the menu first would put a live item in the bar with nowhere
       // for its value to be typed.
-      // Before the menu, and before anything reads a shortcut label. The
-      // platform is asked what this keyboard prints on the keys a binding can
-      // name by position --- `keylayout.rs` has why it has to be asked at all ---
-      // and the labels are re-rendered from the answer. A failure here is quiet:
-      // the labels stay as the characters their bindings declare, which is what
-      // the palette showed before any of this existed.
-      try {
-        setPrintedKeys(
-          await call("keyboard_positions"),
-        );
-        relabelCommands(commands);
-      } catch {
-        // Deliberately silent. Nothing is broken -- a shortcut still works and
-        // is still advertised, under the spelling a US keyboard would use.
-      }
-
+      await palette.refreshShortcuts();
       await installMenu();
       // The window can leave full screen without tpdf: the green button on
       // macOS, the platform's own key. The chrome and the viewer follow it.

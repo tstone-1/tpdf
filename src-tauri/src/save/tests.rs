@@ -12896,59 +12896,104 @@ fn field_plan(name: &str, kind: crate::formfields::Kind, quad: crate::docmodel::
     plan
 }
 
-#[test]
-fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwise() {
-    use crate::formfields::Kind;
-    let at = |left: f32, top: f32| crate::docmodel::Quad {
+fn tab_field(name: &str, left: f32, top: f32) -> crate::edits::PlannedMark {
+    let quad = crate::docmodel::Quad {
         left,
         top,
         right: left + 100.0,
         bottom: top + 20.0,
     };
-    let field = |name: &str, quad| field_plan(name, Kind::Text, quad).marks.remove(0);
-    // The names of the first page's widgets in the order it lists them, and
-    // what it says of tabbing.
-    let listed = |bytes: &[u8]| {
-        let doc = Document::load_mem(bytes).expect("parses");
-        let page = crate::pagetree::ordered_pages(&doc)[0];
-        let dict = doc.get_dictionary(page).unwrap();
-        let annots = doc
-            .dereference(dict.get(b"Annots").unwrap())
-            .unwrap()
-            .1
-            .as_array()
-            .unwrap()
-            .clone();
-        let names: Vec<String> = annots
-            .iter()
-            .map(|entry| {
-                let raw = doc
-                    .get_dictionary(entry.as_reference().unwrap())
-                    .unwrap()
-                    .get(b"T")
-                    .unwrap()
-                    .as_str()
-                    .unwrap()
-                    .to_vec();
-                crate::annots::decode_text_string(&raw)
-            })
-            .collect();
-        let tabs = dict
-            .get(b"Tabs")
-            .ok()
-            .map(|t| t.as_name().unwrap().to_vec());
-        (names, tabs)
-    };
-    // Placed bottom first, right before left: written top first, left first.
+    field_plan(name, crate::formfields::Kind::Text, quad)
+        .marks
+        .remove(0)
+}
+
+fn made_tab_form() -> Vec<u8> {
     let mut plan = plan_of(&[0, 0]);
     plan.marks = vec![
-        field("Third", at(20.0, 90.0)),
-        field("Second", at(150.0, 30.0)),
-        field("First", at(20.0, 30.0)),
+        tab_field("Third", 20.0, 90.0),
+        tab_field("Second", 150.0, 30.0),
+        tab_field("First", 20.0, 30.0),
     ];
-    let made = rewrite_update(&two_blank_pages(), &plan, Job::Save, None).expect("rewritten");
+    rewrite_update(&two_blank_pages(), &plan, Job::Save, None).expect("rewritten")
+}
+
+/// The names in the first page's annotation list, and its tab instruction.
+fn listed_tabs(bytes: &[u8]) -> (Vec<String>, Option<Vec<u8>>) {
+    let doc = Document::load_mem(bytes).expect("parses");
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let dict = doc.get_dictionary(page).unwrap();
+    let annots = doc
+        .dereference(dict.get(b"Annots").unwrap())
+        .unwrap()
+        .1
+        .as_array()
+        .unwrap()
+        .clone();
+    let names: Vec<String> = annots
+        .iter()
+        .map(|entry| {
+            let raw = doc
+                .get_dictionary(entry.as_reference().unwrap())
+                .unwrap()
+                .get(b"T")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_vec();
+            crate::annots::decode_text_string(&raw)
+        })
+        .collect();
+    let tabs = dict
+        .get(b"Tabs")
+        .ok()
+        .map(|t| t.as_name().unwrap().to_vec());
+    (names, tabs)
+}
+
+#[test]
+fn a_combined_rotation_and_tab_order_uses_the_final_display() {
+    let made = made_tab_form();
+    let mut plan = plan_of(&[1, 0]);
+    plan.tab_order = true;
+    let turned = rewrite_update(&made, &plan, Job::Save, None).expect("rotated");
+    assert_eq!(listed_tabs(&turned).0, ["Third", "First", "Second"]);
+
+    // /Tabs /R already asks for the final rows even without a new command.
+    plan.tab_order = false;
+    let automatic = rewrite_update(&made, &plan, Job::Save, None).expect("rotated");
+    assert_eq!(listed_tabs(&automatic), listed_tabs(&turned));
+}
+
+#[test]
+fn automatic_tab_order_preserves_an_explicit_column_mode_until_rows_are_requested() {
+    let mut doc = Document::load_mem(&made_tab_form()).unwrap();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    doc.get_dictionary_mut(page).unwrap().set("Tabs", "C");
+    let mut foreign = Vec::new();
+    doc.save_to(&mut foreign).unwrap();
+
+    for turns in [0, 1] {
+        let mut plan = plan_of(&[turns, 0]);
+        plan.marks = vec![tab_field("Zeroth", 20.0, 5.0)];
+        let kept = rewrite_update(&foreign, &plan, Job::Save, None).unwrap();
+        let (names, mode) = listed_tabs(&kept);
+        assert_eq!(names, ["First", "Second", "Third", "Zeroth"]);
+        assert_eq!(mode.as_deref(), Some(b"C".as_slice()));
+    }
+    let mut plan = plan_of(&[1, 0]);
+    plan.tab_order = true;
+    let changed = rewrite_update(&foreign, &plan, Job::Save, None).unwrap();
+    let (names, mode) = listed_tabs(&changed);
+    assert_eq!(names, ["Third", "First", "Second"]);
+    assert_eq!(mode.as_deref(), Some(b"R".as_slice()));
+}
+
+#[test]
+fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwise() {
+    let made = made_tab_form();
     assert_eq!(
-        listed(&made),
+        listed_tabs(&made),
         (
             vec!["First".to_string(), "Second".into(), "Third".into()],
             Some(b"R".to_vec())
@@ -12956,9 +13001,12 @@ fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwis
     );
     // One more, added above the others, takes its place among them.
     let mut more = plan_of(&[0, 0]);
-    more.marks = vec![field("Zeroth", at(20.0, 5.0))];
+    more.marks = vec![tab_field("Zeroth", 20.0, 5.0)];
     let grown = rewrite_update(&made, &more, Job::Save, None).expect("rewritten");
-    assert_eq!(listed(&grown).0, ["Zeroth", "First", "Second", "Third"]);
+    assert_eq!(
+        listed_tabs(&grown).0,
+        ["Zeroth", "First", "Second", "Third"]
+    );
 
     // A file whose fields are listed in another order on purpose: built by
     // putting the list back to front and taking the instruction off.
@@ -12986,11 +13034,11 @@ fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwis
     doc.get_dictionary_mut(page).unwrap().remove(b"Tabs");
     let mut foreign = Vec::new();
     doc.save_to(&mut foreign).expect("serialises");
-    assert_eq!(listed(&foreign).0, ["Third", "Second", "First"]);
+    assert_eq!(listed_tabs(&foreign).0, ["Third", "Second", "First"]);
     // A field added to it goes last, and the order it had is left.
     let added = rewrite_update(&foreign, &more, Job::Save, None).expect("rewritten");
     assert_eq!(
-        listed(&added),
+        listed_tabs(&added),
         (
             vec![
                 "Third".to_string(),
@@ -13015,7 +13063,7 @@ fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwis
         props: Default::default(),
     }];
     let kept = rewrite_update(&foreign, &answered, Job::Save, None).expect("rewritten");
-    assert_eq!(listed(&kept).1, None);
+    assert_eq!(listed_tabs(&kept).1, None);
     // And so does a file whose fields are in order and that gains none: a
     // save that adds no field says nothing about tabbing.
     let mut plain = Document::load_mem(&made).expect("parses");
@@ -13033,14 +13081,14 @@ fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwis
         props: Default::default(),
     }];
     let same = rewrite_update(&untold, &renamed, Job::Save, None).expect("rewritten");
-    assert_eq!(listed(&same).1, None);
+    assert_eq!(listed_tabs(&same).1, None);
     // Asked for, it is put in reading order, new field and all.
     let mut asked = plan_of(&[0, 0]);
     asked.marks = more.marks.clone();
     asked.tab_order = true;
     let ordered = rewrite_update(&foreign, &asked, Job::Save, None).expect("rewritten");
     assert_eq!(
-        listed(&ordered),
+        listed_tabs(&ordered),
         (
             vec![
                 "Zeroth".to_string(),

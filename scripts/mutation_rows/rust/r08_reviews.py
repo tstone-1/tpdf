@@ -2588,8 +2588,8 @@ ROWS += [
     Mutation(
         "explorer: another program's handler replaced without consent",
         "src/explorer.rs",
-        "            Owner::Other { name } if !replace => {",
-        "            Owner::Other { name } if !replace && false => {",
+        "            if !replace {",
+        "            if false {",
         "a_free_slot_is_taken_and_one_the_machine_owns_is_left_unless_replaced",
     ),
     Mutation(
@@ -2602,29 +2602,29 @@ ROWS += [
     Mutation(
         "explorer: what was replaced not put back",
         "src/explorer.rs",
-        "                Some(previous) => registry.set(&slot.key(), \"\", &previous)?,",
-        "                Some(_) => registry.remove_tree(&slot.key())?,",
+        "            Some(previous) => registry.set(&slot.key(), \"\", &previous)?,",
+        "            Some(_) => registry.remove_value(&slot.key(), \"\")?,",
         "a_handler_the_user_had_is_put_back_after_being_replaced",
     ),
     Mutation(
         "explorer: the preview list keeps tpdf",
         "src/explorer.rs",
-        "    registry.remove_value(PREVIEW_LIST, PREVIEW_CLSID)?;\n",
+        "        registry.remove_value(PREVIEW_LIST, PREVIEW_CLSID)?;\n",
         "",
         "turning_it_off_leaves_the_users_hive_as_it_was_before",
     ),
     Mutation(
         "explorer: an emptied ShellEx key left behind",
         "src/explorer.rs",
-        "    registry.remove_if_empty(SHELLEX)?;\n",
-        "",
+        "    registry.remove_if_empty(SHELLEX)?;\n    registry.announce();",
+        "    registry.announce();",
         "turning_it_off_leaves_the_users_hive_as_it_was_before",
     ),
     Mutation(
         "explorer: a moved copy keeps the old DLL path",
         "src/explorer.rs",
-        "            Owner::Tpdf => write_class(registry, slot, dll)?,",
-        "            Owner::Tpdf => {}",
+        "        write_class(registry, slot, dll)?;",
+        "        if registry.get(Hive::User, &slot.key(), \"\")?.as_deref() != Some(slot.ours()) { write_class(registry, slot, dll)?; }",
         "turning_it_on_twice_keeps_what_the_first_time_replaced",
     ),
     Mutation(

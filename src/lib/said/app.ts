@@ -154,6 +154,12 @@ export default {
     "Das Vorschaufenster gehört weiterhin zu {name}; erneutes Einschalten kann das ersetzen. {rest}",
   "Nothing changed.": "Es hat sich nichts geändert.",
   "Nothing changed. {rest}": "Es hat sich nichts geändert. {rest}",
+  "Windows could not identify the PDF handler for {interface} (error {status})":
+    "Windows konnte die PDF-Erweiterung für {interface} nicht bestimmen (Fehler {status})",
+  "Explorer did not select tpdf for all requested PDF handlers. Check which handlers Explorer uses.":
+    "Der Explorer hat tpdf nicht für alle angeforderten PDF-Erweiterungen ausgewählt. Bitte die verwendeten Erweiterungen prüfen.",
+  "Explorer still uses tpdf for a PDF handler after its per-user registration was removed.":
+    "Der Explorer verwendet tpdf weiterhin für eine PDF-Erweiterung, obwohl die Registrierung für dieses Benutzerkonto entfernt wurde.",
   "Explorer now shows PDF thumbnails with tpdf.": "Der Explorer zeigt PDF-Miniaturansichten jetzt mit tpdf.",
   "Explorer now shows PDF thumbnails with tpdf. {rest}":
     "Der Explorer zeigt PDF-Miniaturansichten jetzt mit tpdf. {rest}",
@@ -201,8 +207,8 @@ export default {
   "your PATH could not be written (error {status})": "Dein PATH konnte nicht geschrieben werden (Fehler {status})",
 
   // defaultapp.rs
-  'To change that, select a PDF in Finder, choose Get Info, and pick another application under "Open with".':
-    "Um das zu ändern, wähle im Finder ein PDF aus, dann „Informationen“, und such dir unter „Öffnen mit“ eine andere App aus.",
+  'To change that, select a PDF in Finder, choose Get Info, and pick another application under "Open with", then click "Change All".':
+    "Um das zu ändern, wähle im Finder ein PDF aus, dann „Informationen“, wähle unter „Öffnen mit“ eine andere App und klicke auf „Alle ändern“.",
   'To change that, open a PDF\'s properties in your file manager and choose another application under "Open With".':
     "Um das zu ändern, öffne im Dateimanager die Eigenschaften eines PDFs und wähle unter „Öffnen mit“ eine andere App.",
   "tpdf already opens PDF documents.": "tpdf öffnet PDF-Dokumente bereits.",
@@ -358,8 +364,8 @@ export const sie = {
     "Ihr PATH enthält Text, den tpdf nicht lesen kann, daher lässt tpdf ihn unverändert",
   "your PATH could not be written (error {status})":
     "Ihr PATH konnte nicht geschrieben werden (Fehler {status})",
-  'To change that, select a PDF in Finder, choose Get Info, and pick another application under "Open with".':
-    "Um das zu ändern, wählen Sie im Finder ein PDF aus, dann „Informationen“, und suchen Sie sich unter „Öffnen mit“ eine andere App aus.",
+  'To change that, select a PDF in Finder, choose Get Info, and pick another application under "Open with", then click "Change All".':
+    "Um das zu ändern, wählen Sie im Finder ein PDF aus, dann „Informationen“, wählen Sie unter „Öffnen mit“ eine andere App und klicken Sie auf „Alle ändern“.",
   'To change that, open a PDF\'s properties in your file manager and choose another application under "Open With".':
     "Um das zu ändern, öffnen Sie im Dateimanager die Eigenschaften eines PDFs und wählen Sie unter „Öffnen mit“ eine andere App.",
   "this copy of tpdf is not an application: open tpdf from the Applications folder":

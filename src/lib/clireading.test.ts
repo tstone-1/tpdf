@@ -32,7 +32,9 @@ const cases = reading.cases as unknown as Case[];
 
 describe("the command-line tool's reading order", () => {
   it("covers both routes, every rotation and the degenerate pages", () => {
-    expect(cases.length).toBe(28);
+    expect(cases.length).toBe(30);
+    const artifactRoutes = cases.filter((c) => c.text.artifacts?.length).map((c) => c.route);
+    expect(artifactRoutes.sort()).toEqual(["geometric", "tagged"]);
     // A line in two halves: by the tags, by the geometry, right to left, with
     // one word written the other way, with a combining mark in it, and beside
     // type of another size.

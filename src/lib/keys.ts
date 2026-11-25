@@ -20,6 +20,7 @@
  * they are handled.
  */
 
+import type { CommandRegistry } from "./commands";
 import { spokenError } from "./said";
 import { catalog, UI_LOCALE, type UiLocale } from "./i18n";
 
@@ -458,7 +459,7 @@ const PRINTED: Record<string, string> = {};
 /**
  * Records what this keyboard prints, so labels can name the key a reader sees.
  *
- * Called once at startup with the platform's answer --- see `keylayout.rs` for
+ * Called at startup and when the palette opens with the platform's answer --- see `keylayout.rs` for
  * why the platform has to be asked at all: `navigator.keyboard.getLayoutMap()`
  * is the browser API for this and WebKit does not implement it.
  *
@@ -470,6 +471,26 @@ const PRINTED: Record<string, string> = {};
 export function setPrintedKeys(printed: Record<string, string>): void {
   for (const key of Object.keys(PRINTED)) delete PRINTED[key];
   Object.assign(PRINTED, printed);
+}
+
+/**
+ * Re-renders every command's advertised shortcut from the binding table.
+ *
+ * Called after the platform has said what this keyboard prints --- see
+ * `keys.ts`'s {@link setPrintedKeys} and `src-tauri/src/keylayout.rs`. A command
+ * registers with the label that can be rendered synchronously, which for a
+ * binding naming a physical key is the character it declares; this replaces that
+ * with the key the reader can actually see on the keyboard in front of them.
+ *
+ * Mutating the registered commands rather than rebuilding the registry, because
+ * a rebuild would drop the recent-command list and re-run every registration for
+ * a change that touches one string. A command with no binding is left alone: its
+ * `keys` is undefined and the palette shows no shortcut, which is right.
+ */
+export function relabelCommands(registry: CommandRegistry): void {
+  for (const command of registry.all()) {
+    if (command.id in BINDINGS) command.keys = label(command.id as BoundCommand);
+  }
 }
 
 /** The string the palette shows for a bound command. */

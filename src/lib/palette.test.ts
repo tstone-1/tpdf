@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandRegistry } from "./commands";
 import { pick, type Embedded } from "./attachments";
+import { label, setPrintedKeys } from "./keys";
 import { runMenuCommand } from "./menubar";
 import { askedName, Palette } from "./palette";
 import { FakeElement, installFakeDom, type FakeDom } from "./testdom";
@@ -70,6 +71,34 @@ function asked(enabled = () => true) {
   palette.askFor("edit.insertPages.range");
   return { palette, events, key, type };
 }
+
+it("refreshes the printed shortcut on reopening and ignores an older layout answer", async () => {
+  const replies: Array<(keys: Record<string, string>) => void> = [];
+  const registry = new CommandRegistry();
+  const sidebar = { id: "view.toggleSidebar", title: "Sidebar", keys: "initial", run: () => {} };
+  registry.register(sidebar);
+  const palette = new Palette(registry, {
+    keyboardPositions: () => new Promise(resolve => replies.push(resolve)),
+  });
+  try {
+    palette.open();
+    palette.close();
+    palette.open();
+    replies[1]!({ Backslash: "#" });
+    await Promise.resolve();
+    expect(sidebar.keys).toBe(label("view.toggleSidebar"));
+    expect(sidebar.keys).toContain("#");
+    const rows = document.body as unknown as FakeElement;
+    const visible = (node: FakeElement): boolean => node.textContent === sidebar.keys || node.children.some(visible);
+    expect(visible(rows)).toBe(true);
+    replies[0]!({});
+    await Promise.resolve();
+    expect(sidebar.keys).toContain("#");
+  } finally {
+    palette.destroy();
+    setPrintedKeys({});
+  }
+});
 
 describe("leaving the palette's argument question", () => {
   it("is not a dismissal when the question is answered", () => {

@@ -20,7 +20,7 @@
 
 import type { Command, CommandRegistry, Ranked } from "./commands";
 import { catalog } from "./i18n";
-import { isMac } from "./keys";
+import { isMac, setPrintedKeys, relabelCommands } from "./keys";
 
 const TEXT = catalog({
   "en-US": {
@@ -37,6 +37,8 @@ const TEXT = catalog({
 
 /** What the palette may do to the document behind it. */
 export interface PaletteOptions {
+  /** The active input source can change while the window is open. */
+  keyboardPositions?: () => Promise<Record<string, string>>;
   /**
    * Turns the document one page forward or back. Page Up and Page Down call it
    * while a value is being typed, since the input has focus and the viewer
@@ -93,6 +95,8 @@ export class Palette {
   private readonly heard: HTMLDivElement;
   private readonly turnPage: ((forward: boolean) => void) | null;
   private readonly namesAreSpoken: boolean;
+  private readonly keyboardPositions: PaletteOptions["keyboardPositions"];
+  private layoutRequest = 0;
 
   private results: Ranked[] = [];
   private selected = 0;
@@ -110,6 +114,7 @@ export class Palette {
 
   constructor(registry: CommandRegistry, options: PaletteOptions = {}) {
     this.registry = registry;
+    this.keyboardPositions = options.keyboardPositions;
     this.turnPage = options.turnPage ?? null;
     this.namesAreSpoken = options.namesAreSpoken ?? !isMac();
 
@@ -167,6 +172,7 @@ export class Palette {
   }
 
   destroy(): void {
+    this.layoutRequest++;
     this.backdrop.remove();
   }
 
@@ -201,6 +207,22 @@ export class Palette {
     this.input.value = "";
     this.refresh();
     this.input.focus();
+    void this.refreshShortcuts();
+  }
+
+  async refreshShortcuts(): Promise<void> {
+    if (!this.keyboardPositions) return;
+    const request = ++this.layoutRequest;
+    let printed: Record<string, string>;
+    try {
+      printed = await this.keyboardPositions();
+    } catch {
+      return; // Keep the last known labels when the platform cannot answer.
+    }
+    if (request !== this.layoutRequest) return;
+    setPrintedKeys(printed);
+    relabelCommands(this.registry);
+    if (this.isOpen && !this.asking) this.paint();
   }
 
   /**

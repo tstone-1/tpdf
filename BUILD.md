@@ -100,8 +100,10 @@ Plain Cargo and Tauri builds share the macOS deployment-target default in
 `.cargo/config.toml` and `src-tauri/tauri.conf.json`; the toolchain gate checks
 that they agree. Run Cargo from within this checkout so it finds the root
 configuration. A shell override still takes precedence and can invalidate the
-cache. The value preserves Tauri's existing `10.13` setting; it is not evidence
-that the application or bundled PDFium works on that OS version.
+cache. The macOS 13.0 minimum follows the pinned arm64 PDFium library. The release
+check compares the final bundle's Info.plist with the deployment targets in its
+app executable, CLI and PDFium. Binary metadata establishes a minimum for
+packaging; testing on the oldest supported OS is a separate runtime check.
 
 Protected signature storage can be exercised with synthetic maximum-size pixels:
 `cargo test --manifest-path src-tauri/Cargo.toml --lib native_store_roundtrips_maximum_pixels_and_forgets -- --ignored --nocapture`.

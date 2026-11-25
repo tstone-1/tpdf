@@ -21,7 +21,7 @@
 fn change_back() -> String {
     said!(
         "To change that, select a PDF in Finder, choose Get Info, and pick another \
-         application under \"Open with\"."
+         application under \"Open with\", then click \"Change All\"."
     )
 }
 #[cfg(target_os = "linux")]
@@ -207,6 +207,10 @@ mod tests {
         assert!(said(Some(ours), ours, false)
             .expect("set")
             .starts_with("tpdf now opens"));
+        #[cfg(any(target_os = "macos", windows))]
+        assert!(said(Some(ours), ours, false)
+            .unwrap()
+            .contains("Change All"));
         // The system answers with or without the trailing slash of a directory.
         assert!(said(Some("/Applications/tpdf.app/"), ours, false).is_ok());
         assert_eq!(

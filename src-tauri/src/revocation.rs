@@ -323,7 +323,7 @@ impl Revocation {
 }
 
 /// Revocation data as found, before any of it is parsed: DER, bounded.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Material {
     /// Candidate issuer certificates, DER.
     pub certificates: Vec<Vec<u8>>,
