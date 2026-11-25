@@ -132,9 +132,10 @@ export function signatureCanvas(image: SignatureImage): HTMLCanvasElement {
 }
 
 /** Fit within the dragged rectangle while preserving the signature's proportions. */
-export function fitSignature(rect: { left: number; top: number; right: number; bottom: number }, image: { width: number; height: number }) {
-  const scale = Math.min((rect.right - rect.left) / image.width, (rect.bottom - rect.top) / image.height);
-  return { ...rect, right: rect.left + image.width * scale, bottom: rect.top + image.height * scale };
+export function fitSignature(rect: { left: number; top: number; right: number; bottom: number }, image: { width: number; height: number; aspect?: number }) {
+  const aspect = image.aspect ?? image.width / image.height;
+  const height = Math.min((rect.right - rect.left) / aspect, rect.bottom - rect.top);
+  return { ...rect, right: rect.left + aspect * height, bottom: rect.top + height };
 }
 
 /** Store pixels in the same unturned display space as the mark's rectangle. */

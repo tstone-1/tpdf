@@ -66,6 +66,8 @@ import { catalog } from "./i18n";
 const TEXT = catalog({
   "en-US": {
     file: "File",
+    otherSide: "Move tab to other side",
+    toggleScroll: "Toggle synchronized scrolling",
     edit: "Edit",
     arrange: "Arrange",
     form: "Form",
@@ -76,6 +78,8 @@ const TEXT = catalog({
   },
   "de-DE": {
     file: "Datei",
+    otherSide: "Tab auf die andere Seite verschieben",
+    toggleScroll: "Synchrones Scrollen umschalten",
     edit: "Bearbeiten",
     arrange: "Anordnen",
     form: "Formular",
@@ -649,7 +653,8 @@ export function buildMenu(registry: CommandRegistry): SectionSpec[] {
         {
           kind: "command",
           id: command.id,
-          title: command.title,
+          title: entry === "view.moveToOtherSide" ? TEXT().otherSide
+            : entry === "view.syncScrolling" ? TEXT().toggleScroll : command.title,
           accelerator: acceleratorFor(command.id),
           enabled: command.enabled?.() ?? true,
         },

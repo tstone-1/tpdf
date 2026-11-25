@@ -401,6 +401,7 @@ export default {
   "IDTree node": "IDTree-Knoten",
 
   // textedit/fonts/added.rs
+  "the bundled font cannot write U+{code:04X}": "Die mitgelieferte Schrift kann U+{code} nicht schreiben",
   "no bundled font has a glyph for U+{code:04X}": "Keine mitgelieferte Schrift hat eine Glyphe für U+{code}",
   "a character no bundled font has": "Ein Zeichen, das keine mitgelieferte Schrift hat",
   "a line's character is in no subset made for the write":

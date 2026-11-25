@@ -233,12 +233,8 @@ pub fn check(added: &AddedText) -> Result<(), String> {
     if text.chars().any(char::is_control) {
         return Err(said!("the text {text:?} has a control character in it"));
     }
-    if !crate::textbox::encodable(text) && !crate::textedit::AddedFont::covers(text) {
-        return Err(said!(
-            "the text {text:?} has characters tpdf has no font for: it writes Latin, Greek, \
-             Cyrillic, Chinese, Japanese and Korean, and not scripts that join or reorder \
-             their letters, such as Arabic, Hebrew, Hindi or Thai"
-        ));
+    if !crate::textbox::encodable(text) {
+        crate::textedit::AddedFont::check_writable(text)?;
     }
     let mut rest = text.as_str();
     while let Some(open) = rest.find('{') {
@@ -598,17 +594,10 @@ impl Face<'_> {
         }
     }
 
-    fn cap_height(&self) -> f64 {
+    fn vertical_metrics(&self, text: &str) -> Result<(f64, f64), String> {
         match self {
-            Face::Helvetica => CAP_HEIGHT,
-            Face::Embedded(font) => font.cap_height(),
-        }
-    }
-
-    fn descent(&self) -> f64 {
-        match self {
-            Face::Helvetica => DESCENT,
-            Face::Embedded(font) => font.descent(),
+            Face::Helvetica => Ok((CAP_HEIGHT, DESCENT)),
+            Face::Embedded(font) => font.vertical_metrics(text),
         }
     }
 }
@@ -664,7 +653,7 @@ fn show(
     let size = f64::from(line.size) / unit;
     let margin = f64::from(line.margin) / unit;
     let advance = face.advance(text, size)?;
-    let (cap_height, descent) = (face.cap_height(), face.descent());
+    let (cap_height, descent) = face.vertical_metrics(text)?;
 
     // The anchor, in the displayed page's space: points from its top-left
     // corner, y down. A middle row puts the capitals' middle on the anchor.
@@ -712,6 +701,10 @@ fn show(
     let (sin, cos) = f64::from(line.angle).to_radians().sin_cos();
     // Test each word's box: a space can position the ink but cannot paint it.
     let half_height = size * (cap_height + descent) / 2.0;
+    let x = x + along + advance / 2.0;
+    let y = y + below - size * cap_height / 2.0;
+    let along = -advance / 2.0;
+    let below = size * cap_height / 2.0;
     let v = below - size * cap_height + half_height;
     let c = cos.abs();
     let s = sin.abs();
@@ -979,6 +972,50 @@ mod tests {
         assert!(shown(&doc, 0).is_empty());
         assert_eq!(shown(&doc, 1), ["Page 5 of 7"]);
         assert_eq!(shown(&doc, 3), ["Page 7 of 7"]);
+    }
+
+    #[test]
+    fn rotating_an_edge_label_preserves_its_center() {
+        let width = crate::textbox::advance("REVIEWMARK", 32.);
+        for angle in [0., 90., 180.] {
+            let mut doc = document(1, 0, b"");
+            let line = AddedText {
+                size: 32.,
+                angle,
+                position: Position::MiddleLeft,
+                ..AddedText::watermark("REVIEWMARK")
+            };
+            write(&mut doc, &[line]).unwrap();
+            let m = matrix(&doc, 0);
+            let center_x = m[4] + m[0] * width / 2. + m[2] * 16. * CAP_HEIGHT;
+            let center_y = m[5] + m[1] * width / 2. + m[3] * 16. * CAP_HEIGHT;
+            assert!((center_x - (36. + width / 2.)).abs() < 0.001);
+            assert!((center_y - 421.).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn disjoint_lines_keep_their_font_metrics() {
+        let mut cjk = AddedText::page_numbers();
+        cjk.text = "中文".into();
+        cjk.pages = Some(vec![0]);
+        let mut greek = cjk.clone();
+        greek.text = "Σελίδα".into();
+        greek.pages = Some(vec![1]);
+        let mut single = document(2, 0, b"");
+        write(&mut single, std::slice::from_ref(&cjk)).unwrap();
+        let mut both = document(2, 0, b"");
+        write(&mut both, &[cjk, greek]).unwrap();
+        assert_eq!(matrix(&single, 0), matrix(&both, 0));
+    }
+
+    #[test]
+    fn added_spacing_is_writable_and_an_unwritable_accent_is_named_at_validation() {
+        let mut line = AddedText::watermark("Total\u{202f}: 42");
+        check(&line).unwrap();
+        write(&mut document(1, 0, b""), std::slice::from_ref(&line)).unwrap();
+        line.text = "Cafe\u{301}".into();
+        assert!(check(&line).unwrap_err().contains("U+0301"));
     }
 
     #[test]

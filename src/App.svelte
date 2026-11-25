@@ -506,7 +506,7 @@
   import * as validationData from "./lib/validationdata";
   import { emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
   import { openWithPassword } from "./lib/unlock";
-  import { inTextField, isLinux, isMac, label, revealTitle } from "./lib/keys";
+  import { inTextField, isLinux, isMac, label, matches, revealTitle } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
@@ -1609,6 +1609,22 @@
         menu?.removeAttribute("open");
       }
     }
+  }
+
+  function modalOwnsCommands(): boolean {
+    return Boolean(webLinkDialog?.isOpen || propertiesDialog?.isOpen || printPreviewDialog?.isOpen
+      || compressDialog?.isOpen || document.querySelector("dialog[open]"));
+  }
+
+  function onKeyCapture(event: KeyboardEvent): void {
+    // WKWebView needs AppKit's paste action even inside a dialog which stops
+    // keydown propagation. Keep the field focused for that action.
+    if (!event.isComposing && inTextField(event) && matches("edit.pastePicture", event) && appActions.pasteKey()) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    closeZoomOnEscape(event);
   }
 
   function closeZoomOnEscape(event: KeyboardEvent): void {
@@ -2799,6 +2815,8 @@
     if (cut && marks.length !== named.length) { say(TEXT().nothingCopied); return; }
     const page = marks[0]?.page;
     if (page === undefined) return;
+    const frame = mounted.clipboardFrame(page);
+    if (!frame) return;
     const refused = marks.flatMap((mark) => notCopied(mark.kind, mark.is_reply) ?? []);
     if (cut && refused.length > 0) {
       say(refused[0] ?? null);
@@ -2836,7 +2854,7 @@
       current = selected(model.state).map(withDraft);
       if (current.length !== named.length) return;
     }
-    const { copied, refused: unread } = markClipboard.copy(current, { doc: model.doc, page, unit }, pixels, cut);
+    const { copied, refused: unread } = markClipboard.copy(current, { doc: model.doc, page, unit, frame }, pixels, cut);
     if (copied === 0) {
       asDocument(view, () => say(unread[0] ?? TEXT().nothingCopied));
       return;
@@ -2864,7 +2882,9 @@
       if (!copied.length || !stillIn(view, model, mounted) || mounted.frontPageId !== page) return;
       const unit = await model.pageUnit(page);
       if (!stillIn(view, model, mounted) || mounted.frontPageId !== page || markClipboard.marks !== copied) return;
-      held = markClipboard.marksAtUnit(unit);
+      const frame = mounted.clipboardFrame(page);
+      if (!frame) return;
+      held = markClipboard.forPaste(unit, frame.turns);
     } catch (error) { if (stillIn(view, model, mounted)) say(spokenError(error)); return; }
     const landed = mounted.placePasted(held, markClipboard.onItsOwnPage(model.doc, page));
     if (!landed) return;
@@ -4999,7 +5019,7 @@
       if (!event) return;
       menuInstalled = true;
       await listen<string>(event, (chosen) => {
-        if (!webLinkDialog?.isOpen) runMenuCommand(commands, palette, chosen.payload);
+        if (!modalOwnsCommands()) runMenuCommand(commands, palette, chosen.payload);
       });
     } catch (e) {
       // Shown, not swallowed. A menu that failed to build is invisible by
@@ -5694,7 +5714,7 @@
    * gives: ⌘K was unreachable by any check while it lived in this file.
    */
   function onWindowKey(event: KeyboardEvent) {
-    if (webLinkDialog?.isOpen || propertiesDialog?.isOpen || printPreviewDialog?.isOpen || compressDialog?.isOpen) return;
+    if (modalOwnsCommands()) return;
     // First, and it has to be: Escape closes the menu rather than the find bar,
     // and the arrows walk its rows rather than scrolling the document under it.
     // A closed menu consumes nothing, so this costs one boolean per keystroke.
@@ -6102,6 +6122,7 @@
           // Through the registry, not the actions behind it: a reader reaches a
           // command by its id, and the enablement guard is part of the chain.
           run: (id) => commands.run(id),
+          documentBusy: () => busyNow,
           viewer: () => viewer,
           root: () => surface,
           // The **model's** marks and pages, which is the independent end of
@@ -7359,7 +7380,7 @@
    */
 </script>
 
-<svelte:window onkeydown={onWindowKey} onpaste={onPaste} onkeydowncapture={closeZoomOnEscape} onpointerdown={closeZoomOutside} />
+<svelte:window onkeydown={onWindowKey} onpaste={onPaste} onkeydowncapture={onKeyCapture} onpointerdown={closeZoomOutside} />
 
 <main class:full-screen={screenMode !== "window"}>
   <header>

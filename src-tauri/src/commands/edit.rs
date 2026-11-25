@@ -809,18 +809,19 @@ fn check_picture_length(length: usize) -> Result<(), String> {
 /// A file read one byte past the limit, or a paste preflighted before cloning.
 fn decoded(outside: &dyn save::Outside, bytes: &[u8]) -> Result<tauri::ipc::Response, String> {
     check_picture_length(bytes.len())?;
-    let image = outside
+    let (image, aspect) = outside
         .picture(bytes)
         .map_err(|why| said!("the picture was not used: {why}", why = why.message))?;
-    Ok(tauri::ipc::Response::new(picture_reply(&image)))
+    Ok(tauri::ipc::Response::new(picture_reply(&image, aspect)))
 }
 
 /// A decoded picture as the webview reads it: width and height as four bytes
-/// each, little endian, then the pixels.
-fn picture_reply(image: &crate::signature::Image) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + image.rgba.len());
+/// each, its display aspect as a little-endian f64, then the pixels.
+fn picture_reply(image: &crate::signature::Image, aspect: f64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(16 + image.rgba.len());
     out.extend_from_slice(&image.width.to_le_bytes());
     out.extend_from_slice(&image.height.to_le_bytes());
+    out.extend_from_slice(&aspect.to_le_bytes());
     out.extend_from_slice(&image.rgba);
     out
 }

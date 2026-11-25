@@ -27,6 +27,8 @@ export interface PicturePixels {
   width: number;
   height: number;
   rgba: Uint8Array<ArrayBuffer>;
+  /** Display width divided by height when imported pixels have a stated density. */
+  aspect?: number;
 }
 
 /** Longest side of a placed picture: `PICTURE_SIDE` in `signature.rs`. */
@@ -36,18 +38,19 @@ export const PICTURE_PIXELS = 4 * 1024 * 1024;
 
 /**
  * The pixels in a decoding command's reply: width and height as four bytes
- * each, little endian, then four bytes a pixel (`picture_reply` in
+ * each, display aspect as a little-endian float64, then four bytes a pixel (`picture_reply` in
  * `commands/edit.rs`). Refuses a reply whose parts do not add up, or that is
  * past a placed picture's limits, rather than drawing a wrong picture.
  */
 export function readPicture(reply: ArrayBuffer): PicturePixels {
   const bad = new Error(TEXT().damaged);
-  if (reply.byteLength < 8) throw bad;
+  if (reply.byteLength < 16) throw bad;
   const view = new DataView(reply);
   const width = view.getUint32(0, true), height = view.getUint32(4, true);
-  if (!width || !height || width > PICTURE_SIDE || height > PICTURE_SIDE || width * height > PICTURE_PIXELS
-      || reply.byteLength !== 8 + width * height * 4) throw bad;
-  return { width, height, rgba: new Uint8Array(reply, 8) };
+  const aspect = view.getFloat64(8, true);
+  if (!Number.isFinite(aspect) || aspect <= 0 || !width || !height || width > PICTURE_SIDE || height > PICTURE_SIDE || width * height > PICTURE_PIXELS
+      || reply.byteLength !== 16 + width * height * 4) throw bad;
+  return { width, height, aspect, rgba: new Uint8Array(reply, 16) };
 }
 
 /**

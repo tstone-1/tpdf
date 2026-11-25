@@ -702,6 +702,7 @@ pub enum Reply {
     Picture {
         width: u32,
         height: u32,
+        aspect: f64,
     },
     /// A visible signature's appearance, drawn as PNG.
     SignaturePreview(crate::sign_prepare::Preview),
@@ -1562,6 +1563,7 @@ mod tests {
                 rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
             }),
             Reply::Picture {
+                aspect: 0.75,
                 width: 3,
                 height: 4,
             },

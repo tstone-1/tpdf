@@ -274,6 +274,14 @@ pub(super) fn operations(report: &mut Report) {
             json!([{"op":"insert_blank","after":0,"width":1e100,"height":10}]),
         ),
         ("unavailable undo", json!([{"op":"undo"}])),
+        (
+            "extra Undo field",
+            json!([{"op":"rotate","page":1,"degrees":90},{"op":"undo","steps":2}]),
+        ),
+        (
+            "extra Redo field",
+            json!([{"op":"rotate","page":1,"degrees":90},{"op":"undo"},{"op":"redo","steps":2}]),
+        ),
         ("unknown operation", json!([{"op":"rotat","page":1}])),
         (
             "unknown field",

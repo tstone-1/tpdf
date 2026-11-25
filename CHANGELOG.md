@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Edge watermarks rotate about the text center. Added text preserves narrow no-break spaces, reports unsupported combining accents before writing, and keeps CJK headers in position when other pages use a different font.
+- Pasted marks retain their displayed orientation across rotated pages. Imported pictures preserve their stated proportions, and valid long picture notes survive cut and paste.
+- On macOS, document dialogs block native editing shortcuts and text fields accept keyboard paste. Split-view menu labels describe both directions of each command.
+- JSON edit plans refuse extra fields on Undo and Redo. Text replacements refuse a soft hyphen that would appear as an ordinary hyphen.
+
 - Anchored signatures keep the selected occurrence when another match has no measurable rectangle. Visible signing checks that the field is visible on its page. Hidden signature metadata can use Unicode, and duplicate registrations of one certificate count as one CLI choice.
 - A graphics-only figure can contain font setup without blocking nearby text edits. Reusing an image within a figure counts its decoded bytes once.
 - Context menus take keyboard focus. Web-link confirmation keeps focus until dismissed, and links in the accessible reading tree can be activated directly.

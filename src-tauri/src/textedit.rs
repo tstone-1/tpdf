@@ -1424,6 +1424,13 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
         if !seen.insert((change.page, change.operator)) {
             return Err(said!("duplicate text replacement"));
         }
+        // WinAnsi and the bundled fallback both paint a discretionary hyphen
+        // as visible ink even mid-word. Decide before choosing either font.
+        if change.replacement.contains('\u{ad}') {
+            return Err(said!(
+                "the text contains a soft hyphen. Remove it or use an ordinary hyphen"
+            ));
+        }
         if change.replacement.chars().count() > MAX_TEXT
             || change.replacement.chars().any(|ch| {
                 (ch.is_control() && !(ch == '\n' && change.layout.as_ref().is_some_and(|l| l.wrap)))

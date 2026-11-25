@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 import { describe as describeMark, MarkClipboard, notCopied, shapeOf } from "./markclipboard";
 import { pageId, type MarkKind, type MarkView } from "./pages";
 
+const frame = { turns: 0, width_pt: 600, height_pt: 800, crop: { width_pt: 600, height_pt: 800, left: 0, top: 0 } };
+
 function mark(kind: MarkKind, id = 1): MarkView {
   return {
     id,
@@ -37,7 +39,7 @@ describe("notCopied", () => {
 describe("a copied mark", () => {
   it("refuses a cut containing a threaded reply and retains the previous clipboard", () => {
     const clipboard = new MarkClipboard();
-    const source = { doc: 1, unit: 1, page: pageId(3) };
+    const source = { frame, doc: 1, unit: 1, page: pageId(3) };
     clipboard.copy([mark("stamp")], source);
     const result = clipboard.copy([mark("square"), { ...mark("note", 2), is_reply: true }], source, new Map(), true);
     expect(result.copied).toBe(0);
@@ -78,8 +80,8 @@ describe("a copied picture", () => {
     expect(describeMark(picture, pixels)).toMatchObject({ kind: "picture", picture: pixels });
     expect(typeof describeMark(picture)).toBe("string");
     const clipboard = new MarkClipboard();
-    expect(clipboard.copy([picture], { doc: 1, unit: 1, page: pageId(3) }).copied).toBe(0);
-    expect(clipboard.copy([picture], { doc: 1, unit: 1, page: pageId(3) }, new Map([[1, pixels]])).copied).toBe(1);
+    expect(clipboard.copy([picture], { frame, doc: 1, unit: 1, page: pageId(3) }).copied).toBe(0);
+    expect(clipboard.copy([picture], { frame, doc: 1, unit: 1, page: pageId(3) }, new Map([[1, pixels]])).copied).toBe(1);
     expect(clipboard.marks[0]?.picture).toBe(pixels);
   });
 
@@ -92,7 +94,7 @@ describe("a copied picture", () => {
 describe("MarkClipboard", () => {
   it("holds what was copied and says why the rest was not", () => {
     const clipboard = new MarkClipboard();
-    const result = clipboard.copy([mark("square", 1), mark("highlight", 2)], { doc: 1, unit: 1, page: pageId(3) });
+    const result = clipboard.copy([mark("square", 1), mark("highlight", 2)], { frame, doc: 1, unit: 1, page: pageId(3) });
     expect(result.copied).toBe(1);
     expect(result.refused).toHaveLength(1);
     expect(clipboard.marks.map((one) => one.kind)).toEqual(["square"]);
@@ -103,7 +105,7 @@ describe("MarkClipboard", () => {
     expect(clipboard.sameSelection([7], [8])).toBe(false);
     expect(clipboard.sameSelection([7], [])).toBe(false);
     expect(clipboard.sameSelection([7, 8], [8, 7])).toBe(true);
-    const from = { doc: 1, unit: 1, page: pageId(2) };
+    const from = { frame, doc: 1, unit: 1, page: pageId(2) };
     clipboard.copy([mark("ellipse")], from);
     const result = clipboard.copy([mark("square"), mark("picture")], from, new Map(), true);
     expect(result.copied).toBe(0);
@@ -112,8 +114,8 @@ describe("MarkClipboard", () => {
 
   it("keeps what it held when nothing new can be copied", () => {
     const clipboard = new MarkClipboard();
-    clipboard.copy([mark("square")], { doc: 1, unit: 1, page: pageId(3) });
-    clipboard.copy([mark("highlight")], { doc: 2, unit: 1, page: pageId(1) });
+    clipboard.copy([mark("square")], { frame, doc: 1, unit: 1, page: pageId(3) });
+    clipboard.copy([mark("highlight")], { frame, doc: 2, unit: 1, page: pageId(1) });
     expect(clipboard.marks.map((one) => one.kind)).toEqual(["square"]);
     expect(clipboard.onItsOwnPage(1, pageId(3))).toBe(true);
   });
@@ -121,7 +123,7 @@ describe("MarkClipboard", () => {
   it("knows the page the marks came from, in that document only", () => {
     const clipboard = new MarkClipboard();
     expect(clipboard.onItsOwnPage(1, pageId(3))).toBe(false);
-    clipboard.copy([mark("ellipse")], { doc: 1, unit: 1, page: pageId(3) });
+    clipboard.copy([mark("ellipse")], { frame, doc: 1, unit: 1, page: pageId(3) });
     expect(clipboard.onItsOwnPage(1, pageId(3))).toBe(true);
     expect(clipboard.onItsOwnPage(1, pageId(4))).toBe(false);
     expect(clipboard.onItsOwnPage(2, pageId(3))).toBe(false);
@@ -131,19 +133,19 @@ describe("MarkClipboard", () => {
 it("preserves physical rectangles, stroke points and widths across page units", () => {
   const clipboard = new MarkClipboard();
   for (const [from, to] of [[1, 2], [2, 1]] as const) {
-    clipboard.copy([mark("square"), mark("line", 2)], { doc: 1, unit: from, page: pageId(3) });
-    const [box, line] = clipboard.marksAtUnit(to);
+    clipboard.copy([mark("square"), mark("line", 2)], { frame, doc: 1, unit: from, page: pageId(3) });
+    const [box, line] = clipboard.forPaste(to, 0);
     expect(box!.quads.map(n => n * to)).toEqual(mark("square").quads.map(n => n * from));
     expect(line!.strokes[0]!.map(n => n * to)).toEqual(mark("line").strokes[0]!.map(n => n * from));
     expect(line!.width * to).toBe(mark("line").width * from);
-    expect(clipboard.marksAtUnit(from)).toBe(clipboard.marks);
-    expect(() => clipboard.marksAtUnit(1000)).toThrow("stroke width");
+    expect(clipboard.forPaste(from, 0)).toBe(clipboard.marks);
+    expect(() => clipboard.forPaste(1000, 0)).toThrow("stroke width");
   }
 });
 
 it("pastes the copy in progress and ignores an older copy that finishes later", async () => {
   const clipboard = new MarkClipboard();
-  const source = { doc: 1, unit: 2, page: pageId(3) };
+  const source = { frame, doc: 1, unit: 2, page: pageId(3) };
   let finishFirst!: () => void, finishSecond!: () => void;
   const first = new Promise<void>(resolve => { finishFirst = resolve; });
   const second = new Promise<void>(resolve => { finishSecond = resolve; });
@@ -162,4 +164,16 @@ it("pastes the copy in progress and ignores an older copy that finishes later", 
   await Promise.all([older, newer]);
   expect(await olderPaste).toEqual([]);
   expect(clipboard.marks.map(mark => mark.kind)).toEqual(["line"]);
+});
+
+it("pastes a turned page's picture and stroke in their displayed orientation", () => {
+  const clipboard = new MarkClipboard();
+  const stored = { width: 1, height: 2, rgba: new Uint8Array([10, 0, 0, 255, 20, 0, 0, 255]) };
+  clipboard.copy([mark("picture"), mark("line", 2)], { doc: 1, unit: 1, page: pageId(3), frame: { ...frame, turns: 1 } }, new Map([[1, stored]]));
+  const [picture, line] = clipboard.forPaste(1, 0);
+  expect(picture!.quads).toEqual([730, 10, 780, 110]);
+  expect(picture!.picture?.width).toBe(2);
+  expect([...(picture!.picture?.rgba ?? [])]).toEqual([20, 0, 0, 255, 10, 0, 0, 255]);
+  expect(line!.strokes).toEqual([[778, 12, 732, 108]]);
+  expect(clipboard.forPaste(1, 1)[0]!.picture).toBe(stored);
 });

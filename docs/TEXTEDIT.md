@@ -22,6 +22,9 @@ replacements need existing validated glyphs and must fit the original width.
 checks contained preview/save pixel agreement and unchanged adjacent pixels;
 request examples are in `src-tauri/src/probes/text_edit_roundtrip.rs`. Keep private inputs,
 request files and outputs in ignored directories, never in fixtures or assertions.
+A replacement containing a soft hyphen (U+00AD) is refused before font selection.
+WinAnsi encodes it as a visible hyphen. The bundled Noto font can extract the
+requested character while painting the same pixels as an ordinary hyphen.
 The preview uses the placement computed for the complete pending batch. Before saving,
 the writer compares the replacement lines across edits on each page, using the line's
 cross-axis to measure grazing at every page rotation. Installed-font lookup can proceed

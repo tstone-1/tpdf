@@ -25,7 +25,6 @@ import {
   MENU_LAYOUT,
   menuEnablement,
   NOT_IN_MENU,
-  NO_ACCELERATOR,
   runMenuCommand,
   SEPARATOR,
 } from "./menubar";
@@ -161,7 +160,7 @@ describe("accelerators the menu may claim", () => {
     // The load-bearing case. `handleWindowKey` guards undo with `inTextField`
     // precisely so that ⌘Z in the find bar is text undo; a menu accelerator
     // fires before the page sees the key and would undo that guard.
-    for (const id of Object.keys(NO_ACCELERATOR)) {
+    for (const id of ["edit.undo", "edit.redo", "edit.copy", "edit.selectAll", "edit.pastePicture", "edit.clearSelection"]) {
       expect(acceleratorFor(id)).toBeNull();
     }
     // ...and the control: each of them *has* a binding, so the null above is a
@@ -200,6 +199,12 @@ describe("accelerators the menu may claim", () => {
 });
 
 describe("buildMenu", () => {
+  it("gives state-changing split commands stable native titles", () => {
+    const items = buildMenu(registry()).flatMap(section => section.items);
+    expect(items).toContainEqual(expect.objectContaining({ id: "view.moveToOtherSide", title: "Move tab to other side" }));
+    expect(items).toContainEqual(expect.objectContaining({ id: "view.syncScrolling", title: "Toggle synchronized scrolling" }));
+  });
+
   it("carries the command's own title rather than a copy", () => {
     const commands = registry();
     const file = buildMenu(commands).find((section) => section.title === "File");

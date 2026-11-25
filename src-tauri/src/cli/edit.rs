@@ -198,8 +198,8 @@ enum Operation {
         page: u32,
         object: (u32, u16),
     },
-    Undo,
-    Redo,
+    Undo {},
+    Redo {},
 }
 
 /// Appended to a refusal that naming a font in the operation would answer.
@@ -623,13 +623,13 @@ fn apply(
                         model.discard(1, *object, id)?;
                     }
                 }
-                Operation::Undo => {
+                Operation::Undo {} => {
                     if !state.can_undo {
                         return Err("nothing to undo".into());
                     }
                     model.undo(1)?;
                 }
-                Operation::Redo => {
+                Operation::Redo {} => {
                     if !state.can_redo {
                         return Err("nothing to redo".into());
                     }
@@ -893,6 +893,8 @@ mod tests {
             r#"{"schema":2,"operations":[{"op":"undo"}]}"#,
             r#"{"schema":1,"operations":[]}"#,
             r#"{"schema":1,"operations":[{"op":"rotate","page":1,"degrees":90,"degres":180}]}"#,
+            r#"{"schema":1,"operations":[{"op":"undo","steps":2}]}"#,
+            r#"{"schema":1,"operations":[{"op":"redo","steps":2}]}"#,
             r#"{"schema":1,"operations":[{"op":"undo"}],"force":true}"#,
             r#"{"schema":1,"operations":[{"op":"redact","page":1}]}"#,
             r#"{"schema":1,"operations":[{"op":"undo","op":"redo"}]}"#,

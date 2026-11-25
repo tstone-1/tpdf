@@ -967,7 +967,7 @@ ROWS += [
         "{ dx: 0, dy: 0 }, pageSize);",
         "is where they were, a step down and to the right on their own page, and inside the page"),
     Mutation("paste: strokes left behind", "src/lib/viewer.ts",
-        "          const back = moved(this.viewRectOn(slot, [x, y, x, y]));",
+        "          const back = moved({ left: x, top: y, right: x, bottom: y });",
         "          const back = [x, y];",
         "is where they were, a step down and to the right on their own page, and inside the page"),
 ]
@@ -987,7 +987,7 @@ ROWS += [
 # --- pictures, 2026-10-15 ------------------------------------------------------------
 ROWS += [
     Mutation("picture: a reply of any length", "src/lib/picture.ts",
-        "      || reply.byteLength !== 8 + width * height * 4) throw bad;",
+        "      || reply.byteLength !== 16 + width * height * 4) throw bad;",
         "      ) throw bad;",
         "refuses a reply whose parts do not add up or that is past a placed picture's limits"),
     Mutation("picture: no pixel limit on a reply", "src/lib/picture.ts",
@@ -1219,12 +1219,12 @@ ROWS += [
 # --- Input from outside a window check, 2026-11-12 ---------------------------------------
 ROWS += [
     Mutation("outside input: the check's own key events counted as a person's", "src/lib/outsideinput.ts",
-        "    if (event.isTrusted) heard.push((event as KeyboardEvent).key);",
-        "    heard.push((event as KeyboardEvent).key);",
+        "    if (!event.isTrusted) return;",
+        "",
         "ignores the check's own dispatched events"),
     Mutation("outside input: a real key press not recorded", "src/lib/outsideinput.ts",
-        "    if (event.isTrusted) heard.push((event as KeyboardEvent).key);",
-        "    void event;",
+        '    heard.push(navigation.has(key) ? key : "key press");',
+        "    void key;",
         "names a real key press and a real wheel turn"),
     Mutation("outside input: the wheel listener left on the window", "src/lib/outsideinput.ts",
         "    target.removeEventListener(\"wheel\", wheel, true);\n",

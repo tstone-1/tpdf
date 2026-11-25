@@ -16,7 +16,10 @@
 import { catalog } from "./i18n";
 import type { MarkKind, MarkView, PageId, StampName } from "./pages";
 import { hasStrokes } from "./markband";
-import type { PicturePixels } from "./picture";
+import { rotatePixels, type PicturePixels } from "./picture";
+import { rotateSignature } from "./signature";
+import { viewRect } from "./comments";
+import { intoCrop, type CropGeometry } from "./crop";
 
 const TEXT = catalog({
   "en-US": {
@@ -58,6 +61,7 @@ export interface CopiedFrom {
   doc: number;
   page: PageId;
   unit: number;
+  frame: { turns: number; crop: CropGeometry; width_pt: number; height_pt: number };
 }
 
 /**
@@ -190,19 +194,39 @@ export class MarkClipboard {
     return this.held;
   }
 
-  /** Convert native coordinates and stroke widths before the destination's fit check. */
-  marksAtUnit(unit: number): readonly CopiedMark[] {
-    const scale = (this.source?.unit ?? unit) / unit;
-    if (scale === 1) return this.held;
+  /** Return displayed geometry for the destination's fit check and pixels in its storage orientation. */
+  forPaste(unit: number, destinationTurns: number): readonly CopiedMark[] {
+    if (!this.source) return [];
+    const { frame } = this.source;
+    const scale = this.source.unit / unit;
+    const rotate = frame.turns - destinationTurns;
+    if (scale === 1 && !frame.turns && !rotate && !frame.crop.left && !frame.crop.top) return this.held;
     // The annotation command clamps native nib widths outside this range.
     // Refuse the group before placing its first mark if a stroke would change.
     if (this.held.some(mark => hasStrokes(mark.kind) && (mark.width * scale < 0.25 || mark.width * scale > 24))) {
       throw new Error(TEXT().nib);
     }
-    const scaled = (values: number[]) => values.map(value => value * scale);
-    return this.held.map(mark => ({
-      ...mark, quads: scaled(mark.quads), strokes: mark.strokes.map(scaled), width: mark.width * scale,
-    }));
+    const display = (left: number, top: number, right: number, bottom: number) =>
+      viewRect(intoCrop([left, top, right, bottom], frame.crop), frame.turns, frame.width_pt, frame.height_pt);
+    return this.held.map(mark => {
+      const quads: number[] = [];
+      for (let i = 0; i < mark.quads.length; i += 4) {
+        const box = display(mark.quads[i]!, mark.quads[i + 1]!, mark.quads[i + 2]!, mark.quads[i + 3]!);
+        quads.push(box.left * scale, box.top * scale, box.right * scale, box.bottom * scale);
+      }
+      const strokes = mark.strokes.map(stroke => {
+        const points: number[] = [];
+        for (let i = 0; i < stroke.length; i += 2) {
+          const x = stroke[i]!, y = stroke[i + 1]!;
+          const point = display(x, y, x, y);
+          points.push(point.left * scale, point.top * scale);
+        }
+        return points;
+      });
+      return { ...mark, quads, strokes, width: mark.width * scale,
+        ...(mark.picture && { picture: rotatePixels(mark.picture, rotate) }),
+        ...(mark.image && { image: rotateSignature(mark.image, rotate) }) };
+    });
   }
 
   /**

@@ -21,8 +21,8 @@ ROWS = [
     Mutation(
         "added text: a script with no font written",
         "src/addedtext.rs",
-        "    if !crate::textbox::encodable(text) && !crate::textedit::AddedFont::covers(text) {",
-        "    if false && !crate::textbox::encodable(text) && !crate::textedit::AddedFont::covers(text) {",
+        "    if !crate::textbox::encodable(text) {",
+        "    if false && !crate::textbox::encodable(text) {",
         "what_cannot_be_written_is_refused_before_anything_is",
     ),
     Mutation(

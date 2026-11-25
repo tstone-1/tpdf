@@ -273,13 +273,22 @@ fn textedit_winansi_without_tounicode_reads_and_writes_punctuation() {
     // their Unicode value; the same table offers the section sign beside them.
     let mut aliased = unicode_entries();
     aliased.extend([(0xA0, glyph('A')), (0xAD, glyph('B'))]);
-    for alias in ["\u{a0}", "\u{ad}"] {
+    for (alias, reason) in [
+        (
+            "\u{a0}",
+            "the font has no validated glyph for this character",
+        ),
+        (
+            "\u{ad}",
+            "the text contains a soft hyphen. Remove it or use an ordinary hyphen",
+        ),
+    ] {
         let (mut doc, _) = unmapped(aliased.clone());
         let objects = doc.objects.clone();
         let edit = change(&doc, &format!("FIRST{alias}"));
         assert_eq!(
             textedit::write(&mut doc, &[edit]).unwrap_err(),
-            "the font has no validated glyph for this character",
+            reason,
             "{alias:?}"
         );
         assert_eq!(doc.objects, objects);

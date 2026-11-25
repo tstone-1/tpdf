@@ -500,7 +500,7 @@ pub(super) fn parse_names(stream: &Stream) -> Result<Box<[Option<Option<u8>>; 25
 
 // Identity-H codes and scalar UTF-16BE targets are two bytes. A range expands
 // only into unique printable Latin-1 or en dash. Individual bfchar entries may
-// also name the four exact ligature sequences; ranges cannot expand sequences.
+// also name the exact sequences listed in `ligatures::GLYPHS`; ranges cannot expand sequences.
 pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u16, u8>, String> {
     let invalid = || said!("unsupported or ambiguous two-byte character map");
     let word = |object: &Object| -> Result<u16, String> {

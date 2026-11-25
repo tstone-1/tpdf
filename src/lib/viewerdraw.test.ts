@@ -199,6 +199,18 @@ describe("a pending picture placement", () => {
     viewer.destroy();
   });
 
+  it("places decoded pixels at their declared display aspect", async () => {
+    const canvas = vi.spyOn(picture, "pictureCanvas").mockReturnValue(document.createElement("canvas"));
+    const viewer = build();
+    try {
+      await settle();
+      await viewer.requestPicture(async () => ({ ...pixels, aspect: 0.5 }), () => true);
+      drag({ x: 100, y: 100 }, { x: 200, y: 200 });
+      const [l, t, r, b] = drawn[0]!.shape.quads;
+      expect((r! - l!) / (b! - t!)).toBeCloseTo(0.5);
+    } finally { canvas.mockRestore(); viewer.destroy(); }
+  });
+
   it("arms only the last picture requested and only in its original view", async () => {
     const canvas = vi.spyOn(picture, "pictureCanvas").mockReturnValue(document.createElement("canvas"));
     const viewer = build();

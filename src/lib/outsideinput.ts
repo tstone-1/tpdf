@@ -13,11 +13,15 @@
  * never mistaken for a person.
  */
 
+const navigation = new Set(["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Tab", "Escape"]);
+
 /** Starts listening on `target`; the returned function stops and says what came. */
 export function listenForOutsideInput(target: EventTarget): () => string[] {
   const heard: string[] = [];
   const key = (event: Event): void => {
-    if (event.isTrusted) heard.push((event as KeyboardEvent).key);
+    if (!event.isTrusted) return;
+    const key = (event as KeyboardEvent).key;
+    heard.push(navigation.has(key) ? key : "key press");
   };
   const wheel = (event: Event): void => {
     if (event.isTrusted) heard.push("wheel");

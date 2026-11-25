@@ -303,7 +303,11 @@ fn srgb_rgba(
     Ok(data)
 }
 
-fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec<u8>, u8), String> {
+fn png(
+    bytes: &[u8],
+    (width, height): (u32, u32),
+    refusal: &str,
+) -> Result<(Vec<u8>, u8, f64), String> {
     let invalid = |_| refusal.to_string();
     let pixels = width as usize * height as usize;
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
@@ -326,7 +330,7 @@ fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec<
         return Err(refusal.into());
     }
     reader.finish().map_err(invalid)?;
-    let orientation = crate::imagepages::png_orientation(reader.info());
+    let (orientation, density) = crate::imagepages::png_properties(reader.info());
     let gray = match frame.color_type {
         png::ColorType::Rgba if size == pixels * 4 => false,
         png::ColorType::GrayscaleAlpha if size == pixels * 2 => true,
@@ -339,10 +343,14 @@ fn png(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec<
         moxcms::Layout::Rgba
     };
     let rgba = srgb_rgba(decoded, width as usize, layout, profile.as_ref(), "PNG")?;
-    Ok((rgba, orientation))
+    Ok((rgba, orientation, density.map_or(1., |(x, y)| y / x)))
 }
 
-fn jpeg(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec<u8>, u8), String> {
+fn jpeg(
+    bytes: &[u8],
+    (width, height): (u32, u32),
+    refusal: &str,
+) -> Result<(Vec<u8>, u8, f64), String> {
     let invalid = |_| refusal.to_string();
     let facts = crate::imagepages::jpeg_facts(bytes)?;
     let gray = facts.components == 1;
@@ -385,7 +393,11 @@ fn jpeg(bytes: &[u8], (width, height): (u32, u32), refusal: &str) -> Result<(Vec
     let mut data = vec![0; pixels * layout.channels()];
     decoder.decode_into(&mut data).map_err(invalid)?;
     let rgba = srgb_rgba(data, width as usize, layout, profile.as_ref(), "JPEG")?;
-    Ok((rgba, facts.orientation))
+    Ok((
+        rgba,
+        facts.orientation,
+        facts.dpi.map_or(1., |(x, y)| y / x),
+    ))
 }
 
 // `trimSignature` in `signature.ts`: the box of the pixels that are not
@@ -551,8 +563,16 @@ pub fn oriented(image: Image, orientation: u8) -> Image {
 /// `PICTURE.invalid` for what the grammar or the decoder refuses, and
 /// [`CLEAR`] for a picture with nothing to see.
 pub fn decode_picture(bytes: &[u8]) -> Result<Image, String> {
+    Ok(placed_picture(bytes)?.0)
+}
+
+/// The decoded pixels and their upright display width divided by height.
+///
+/// # Errors
+/// Returns the same input and decoder refusals as [`decode_picture`].
+pub fn placed_picture(bytes: &[u8]) -> Result<(Image, f64), String> {
     let size = dimensions_within(bytes, &PICTURE)?;
-    let (rgba, orientation) = if bytes.starts_with(&PNG) {
+    let (rgba, orientation, pixel_aspect) = if bytes.starts_with(&PNG) {
         png(bytes, size, PICTURE.invalid)?
     } else {
         jpeg(bytes, size, PICTURE.invalid)?
@@ -567,7 +587,13 @@ pub fn decode_picture(bytes: &[u8]) -> Result<Image, String> {
     if !image.valid_picture() {
         return Err(CLEAR.into());
     }
-    Ok(image)
+    let aspect = f64::from(size.0) / f64::from(size.1) * pixel_aspect;
+    let upright_aspect = if orientation >= 5 {
+        aspect.recip()
+    } else {
+        aspect
+    };
+    Ok((image, upright_aspect))
 }
 
 #[cfg(test)]

@@ -3088,7 +3088,7 @@ pub trait Rewriter: Send {
     /// # Errors
     ///
     /// What `decode_picture` refuses.
-    fn picture(&self, bytes: &[u8]) -> Result<crate::signature::Image, Refusal>;
+    fn picture(&self, bytes: &[u8]) -> Result<(crate::signature::Image, f64), Refusal>;
 
     /// Writes the bytes of the embedded file at `index` of the document in
     /// `source`, decoded, into `out`, and answers how many.
@@ -3198,8 +3198,8 @@ impl Rewriter for Here {
         Ok((bytes.len(), pages))
     }
 
-    fn picture(&self, bytes: &[u8]) -> Result<crate::signature::Image, Refusal> {
-        Ok(crate::signature_import::decode_picture(bytes)?)
+    fn picture(&self, bytes: &[u8]) -> Result<(crate::signature::Image, f64), Refusal> {
+        Ok(crate::signature_import::placed_picture(bytes)?)
     }
 
     fn attachment(

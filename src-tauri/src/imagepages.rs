@@ -211,7 +211,7 @@ pub(crate) struct JpegFacts<'a> {
     height: u32,
     pub(crate) components: u8,
     pub(crate) orientation: u8,
-    dpi: Option<(f64, f64)>,
+    pub(crate) dpi: Option<(f64, f64)>,
 }
 
 pub(crate) fn jpeg_facts(bytes: &[u8]) -> Result<JpegFacts<'_>, String> {
@@ -480,12 +480,38 @@ impl PngCalibration {
     }
 }
 
-pub(crate) fn png_orientation(info: &png::Info<'_>) -> u8 {
-    info.exif_metadata
+pub(crate) fn png_properties(info: &png::Info<'_>) -> (u8, Option<(f64, f64)>) {
+    let (dpi, relative) = info.pixel_dims.map_or((None, None), |dims| {
+        let (x, y) = (f64::from(dims.xppu), f64::from(dims.yppu));
+        match dims.unit {
+            png::Unit::Meter => {
+                // pHYs rounds to whole pixels per metre. Recover an integer DPI
+                // when it produces exactly the stored value (e.g. 72 -> 2835).
+                let dpi = |per_metre: f64| {
+                    let measured = per_metre * 0.0254;
+                    let whole = measured.round();
+                    if (whole / 0.0254).round() == per_metre {
+                        whole
+                    } else {
+                        measured
+                    }
+                };
+                let density = (dpi(x), dpi(y));
+                // Fitted renders can be outside the manual DPI range. Physical
+                // PNG units are explicit, and placement bounds the page size.
+                ((x > 0.0 && y > 0.0).then_some(density), None)
+            }
+            png::Unit::Unspecified => (None, relative_density(x, y)),
+        }
+    });
+    let exif = info
+        .exif_metadata
         .as_deref()
         .and_then(exif_properties)
-        .and_then(|e| e.orientation)
-        .unwrap_or(1)
+        .unwrap_or_default();
+    let orientation = exif.orientation.unwrap_or(1);
+    let dpi = dpi.or(exif.dpi).or(relative);
+    (orientation, dpi)
 }
 
 fn srgb_profile(gray: bool) -> Vec<u8> {
@@ -525,29 +551,6 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
     if reader.info().width != width || reader.info().height != height {
         return Err(said!("its header and its picture disagree about its size"));
     }
-    let (dpi, relative) = reader.info().pixel_dims.map_or((None, None), |dims| {
-        let (x, y) = (f64::from(dims.xppu), f64::from(dims.yppu));
-        match dims.unit {
-            png::Unit::Meter => {
-                // pHYs rounds to whole pixels per metre. Recover an integer DPI
-                // when it produces exactly the stored value (e.g. 72 -> 2835).
-                let dpi = |per_metre: f64| {
-                    let measured = per_metre * 0.0254;
-                    let whole = measured.round();
-                    if (whole / 0.0254).round() == per_metre {
-                        whole
-                    } else {
-                        measured
-                    }
-                };
-                let density = (dpi(x), dpi(y));
-                // Fitted renders can be outside the manual DPI range. Physical
-                // PNG units are explicit, and placement bounds the page size.
-                ((x > 0.0 && y > 0.0).then_some(density), None)
-            }
-            png::Unit::Unspecified => (None, relative_density(x, y)),
-        }
-    });
     let size = reader
         .output_buffer_size()
         .filter(|size| *size <= pixels * 4)
@@ -569,14 +572,7 @@ fn png(bytes: &[u8]) -> Result<Picture, String> {
     }
     // An eXIf chunk can follow the image data.
     reader.finish().map_err(undecodable)?;
-    let exif = reader
-        .info()
-        .exif_metadata
-        .as_deref()
-        .and_then(exif_properties)
-        .unwrap_or_default();
-    let orientation = exif.orientation.unwrap_or(1);
-    let dpi = dpi.or(exif.dpi).or(relative);
+    let (orientation, dpi) = png_properties(reader.info());
     let embedded = reader.info().icc_profile.as_deref();
     validate_profile(embedded, gray, "PNG")?;
     let intent = reader.info().srgb.filter(|_| embedded.is_none());

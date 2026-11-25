@@ -1090,7 +1090,7 @@ impl Rewriter for InWorker {
         awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Refusal::failed)?
     }
 
-    fn picture(&self, bytes: &[u8]) -> Result<crate::signature::Image, Refusal> {
+    fn picture(&self, bytes: &[u8]) -> Result<(crate::signature::Image, f64), Refusal> {
         // Started over the warm-up document, as `images` is; the picture is the
         // second mapping and the only thing the request reads.
         let seed = crate::worker_child::WARM_DOCUMENT;
@@ -1106,7 +1106,12 @@ impl Rewriter for InWorker {
             if !answered.ok {
                 return Err(Refusal::from(answered.error));
             }
-            let Some(Reply::Picture { width, height }) = answered.reply else {
+            let Some(Reply::Picture {
+                width,
+                height,
+                aspect,
+            }) = answered.reply
+            else {
                 return Err(said!("the worker answered the picture with something else").into());
             };
             let expected = (width as usize)
@@ -1121,10 +1126,10 @@ impl Rewriter for InWorker {
                 rgba: worker.tile.copy_front(length)?,
             };
             // Held to the model's own limits before anything else sees it.
-            if !image.valid_picture() {
+            if !image.valid_picture() || !aspect.is_finite() || aspect <= 0. {
                 return Err(said!("the worker answered with a picture past its limits").into());
             }
-            Ok(image)
+            Ok((image, aspect))
         });
         // The picture's segment is this function's and outlives the wait.
         let answer = awaited(&rx, DEFAULT_DEADLINE, pid)?;

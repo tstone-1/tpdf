@@ -8,11 +8,12 @@ import { PICTURE_PIXELS, PICTURE_SIDE, PictureCache, pastedBytes, pastedPicture,
 
 /** A reply as `picture_reply` in `commands/edit.rs` lays it out. */
 function reply(width: number, height: number, rgba: number[]): ArrayBuffer {
-  const out = new Uint8Array(8 + rgba.length);
+  const out = new Uint8Array(16 + rgba.length);
   const view = new DataView(out.buffer);
   view.setUint32(0, width, true);
   view.setUint32(4, height, true);
-  out.set(rgba, 8);
+  view.setFloat64(8, width / height, true);
+  out.set(rgba, 16);
   return out.buffer;
 }
 

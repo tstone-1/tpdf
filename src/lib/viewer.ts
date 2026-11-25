@@ -4750,6 +4750,12 @@ export class Viewer {
     return uncropped(size.width_pt, size.height_pt);
   }
 
+  /** Capture the page coordinates used for a mark at the instant it is copied. */
+  clipboardFrame(id: PageId) {
+    const slot = this.pages.slotOfId(id);
+    return slot === undefined ? null : { ...this.turnsOn(slot), crop: this.cropAt(slot) };
+  }
+
   /**
    * A rectangle from the file, placed under the crop and every turn in force.
    *
@@ -5053,8 +5059,8 @@ export class Viewer {
    * Where pasted marks land: on the page in front, at the place they had on
    * their own page, moved a step down and to the right when `step` is set, and
    * kept inside the page all together, as {@link copiesOfPicked} keeps a
-   * duplicate. Rectangles and points are in the file's space for their page and
-   * come back in it for this one. `null` with no page in front.
+   * duplicate. Input rectangles and points are in displayed coordinates and
+   * come back in the destination file's space. `null` with no page in front.
    */
   placePasted(
     shapes: readonly { quads: readonly number[]; strokes: readonly (readonly number[])[] }[],
@@ -5070,7 +5076,7 @@ export class Viewer {
       }
       return out;
     };
-    const laid = shapes.map((shape) => rects(shape.quads).map((rect) => this.viewRectOn(slot, rect)));
+    const laid = shapes.map((shape) => rects(shape.quads).map(([left, top, right, bottom]) => ({ left, top, right, bottom })));
     const pageSize = this.laidSize(slot);
     const quads = laid.flat();
     const by = together(quads, step ? { dx: COPY_STEP, dy: COPY_STEP } : { dx: 0, dy: 0 }, pageSize);
@@ -5089,7 +5095,7 @@ export class Viewer {
         for (let one = 0; one + 1 < stroke.length; one += 2) {
           const x = stroke[one] ?? 0;
           const y = stroke[one + 1] ?? 0;
-          const back = moved(this.viewRectOn(slot, [x, y, x, y]));
+          const back = moved({ left: x, top: y, right: x, bottom: y });
           points.push(back[0], back[1]);
         }
         return points;

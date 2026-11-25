@@ -1953,12 +1953,12 @@ fn picture_in_a_worker(report: &mut Report) {
     use tpdf_lib::save::Rewriter as _;
     let jpeg: &[u8] = include_bytes!("../src/textedit/images/synthetic-rgb.jpg");
     let outside = tpdf_lib::save::InWorker::at(library_dir());
-    let here = tpdf_lib::signature_import::decode_picture(jpeg);
+    let here = tpdf_lib::signature_import::placed_picture(jpeg);
     match outside.picture(jpeg) {
         Ok(image) => report.check(
             "the worker's picture is the decoder's, pixel for pixel",
             here.as_ref().is_ok_and(|here| *here == image),
-            &format!("{} x {}", image.width, image.height),
+            &format!("{} x {}", image.0.width, image.0.height),
         ),
         Err(why) => report.check("the worker decodes the picture", false, &why.message),
     }

@@ -17,8 +17,11 @@ describe("input from outside a window check", () => {
     const target = fakeTarget();
     const stop = listenForOutsideInput(target as unknown as EventTarget);
     target.fire("keydown", { isTrusted: true, key: "PageDown" });
+    target.fire("keydown", { isTrusted: true, key: "q" });
     target.fire("wheel", { isTrusted: true });
-    expect(stop()).toEqual(["PageDown", "wheel"]);
+    const heard = stop();
+    expect(heard).toEqual(["PageDown", "key press", "wheel"]);
+    expect(outsideInputNote(heard)).not.toContain("q");
   });
 
   it("ignores the check's own dispatched events", () => {

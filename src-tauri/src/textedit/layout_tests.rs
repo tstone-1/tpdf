@@ -21,6 +21,22 @@ fn edit(doc: &Document, replacement: &str, width: f64, height: f64, wrap: bool) 
 }
 
 #[test]
+fn a_soft_hyphen_is_refused_before_font_selection() {
+    let source = tests::with_content(b"BT /F1 12 Tf 40 180 Td (Original text) Tj ET");
+    for layout in [false, true] {
+        let mut draft = edit(&source, "co\u{ad}op", 100., 24., false);
+        if !layout {
+            draft.layout = None;
+        }
+        assert!(write(&mut source.clone(), std::slice::from_ref(&draft))
+            .unwrap_err()
+            .contains("soft hyphen"));
+        draft.replacement = "co-op".into();
+        write(&mut source.clone(), &[draft]).unwrap();
+    }
+}
+
+#[test]
 fn resized_text_preserves_later_cursor_line_origin_and_resources() {
     let mut doc = tests::with_content(
         b"BT /F1 12 Tf 40 180 Td (A) Tj 100 0 Td (NEIGHBOUR) Tj 0 -60 Td (SECOND) Tj ET",

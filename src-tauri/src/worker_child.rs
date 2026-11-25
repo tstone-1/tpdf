@@ -768,14 +768,15 @@ fn handle(
             None => Response::err(
                 "this worker was not started with a picture, so it has none to decode",
             ),
-            Some(picture) => match crate::signature_import::decode_picture(picture.as_slice()) {
+            Some(picture) => match crate::signature_import::placed_picture(picture.as_slice()) {
                 // Into the tile mapping, as a tile's pixels are, and refused
                 // rather than cut short when they do not fit.
-                Ok(image) if image.rgba.len() <= tile.len() => {
+                Ok((image, aspect)) if image.rgba.len() <= tile.len() => {
                     tile.as_mut_slice()[..image.rgba.len()].copy_from_slice(&image.rgba);
                     Response {
                         bytes: image.rgba.len(),
                         ..Response::reply(Reply::Picture {
+                            aspect,
                             width: image.width,
                             height: image.height,
                         })

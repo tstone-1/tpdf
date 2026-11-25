@@ -88,6 +88,7 @@ export interface MarkCheckHost {
    * what can be wrong.
    */
   run: (id: string) => boolean;
+  documentBusy: () => boolean;
   /** The live viewer, for where things are on screen and for the overlay. */
   viewer: () => Viewer | null;
   /**
@@ -625,6 +626,34 @@ async function run(host: MarkCheckHost): Promise<void> {
         pasted && copy?.kind === "picture" && same.length === pixels.length && same.every((value, at) => value === pixels[at]),
         copy ? `a ${copy.kind} of ${same.length} bytes` : copied ? "nothing pasted" : "the copy held no picture",
       );
+      if (copy?.picture) {
+        viewer.showMark(copy.id);
+        if (!await settle(() => viewer.markOpen === copy.id)) throw new Error("picture note did not open");
+        const note = "漢".repeat(23_000);
+        viewer.markNoteField.value = note;
+        viewer.markNoteField.dispatchEvent(new Event("input", { bubbles: true }));
+        const cut = host.run("edit.cutMark") && await settle(() => !host.marks().some(mark => mark.id === copy.id));
+        const turns = () => host.pages().find(page => page.id === copy.page)?.turns;
+        const start = turns();
+        const turned = cut && host.run("edit.rotatePageClockwise") && await settle(() => turns() !== start);
+        before = new Set(host.marks().map(mark => mark.id));
+        const pasted = turned && host.run("edit.pasteMark") && await settle(() => added(before, host.marks()) !== null);
+        const restored = pasted ? added(before, host.marks()) : null;
+        const rgba = restored ? await host.picturePixels(restored.id) : new Uint8Array();
+        const { width, height } = copy.picture;
+        // After a clockwise page turn, native pixel (x,y) must move to (y,w-1-x).
+        const sameOnScreen = rgba.length === same.length && same.every((byte, i) => {
+          const pixel = Math.floor(i / 4);
+          const target = (width - 1 - pixel % width) * height + Math.floor(pixel / width);
+          return rgba[4 * target + i % 4] === byte;
+        });
+        check("cut and paste retains a long picture note and visual orientation after a page turn",
+          restored?.note === note && sameOnScreen, `cut=${cut} turned=${turned} pasted=${pasted}`);
+        if (turned) {
+          host.run("edit.rotatePageCounterClockwise");
+          if (!await settle(() => turns() === start)) throw new Error("page rotation did not return");
+        }
+      }
     } else {
       report.skip("a copied picture pastes as the same picture", "no picture was placed");
     }
@@ -676,8 +705,29 @@ async function run(host: MarkCheckHost): Promise<void> {
       field.focus();
       field.dispatchEvent(new KeyboardEvent("keydown", { key: "v", code: "KeyV", metaKey: true, bubbles: true, cancelable: true }));
       const pasted = await settle(() => field.value === "pasted by Cmd-V");
-      check("and Cmd-V in a text field pastes text", pasted, `the field holds ${JSON.stringify(field.value)}`);
+      check("and Cmd-V in a text field pastes text", pasted, "seeded clipboard text");
       field.remove();
+      for (const [command, selector] of [
+        ["file.addWatermark", ".tpdf-add-text[open] input"],
+        ["file.protect", ".tpdf-new-password[open] input[type=password]"],
+      ] as const) {
+        const count = host.marks().length;
+        const opened = host.run(command)
+          && await settle(() => document.querySelector(selector) !== null);
+        const input = document.querySelector<HTMLInputElement>(selector);
+        if (!opened || !input) throw new Error(`${command} did not open its text field`);
+        input.focus();
+        input.select();
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "v", code: "KeyV", metaKey: true, bubbles: true, cancelable: true }));
+        const received = await settle(() => input.value === "pasted by Cmd-V");
+        check(`Cmd-V pastes text inside the ${command} dialog`, received && host.marks().length === count
+          && viewer.drawArmed !== "picture", "field and underlying document checked");
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        // Closing the dialog and releasing its document task are separate steps.
+        if (!await settle(() => document.querySelector(selector) === null && !host.documentBusy())) {
+          throw new Error(`${command} did not release the document after closing`);
+        }
+      }
     }
 
     // --- A measurement ------------------------------------------------------

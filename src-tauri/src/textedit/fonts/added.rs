@@ -12,7 +12,7 @@
 //! alone. Each character is set in Noto Sans when it has a glyph there and in
 //! the CJK font otherwise, and a line switches font where its characters do.
 //! Neither font shapes text, and neither has Arabic, Hebrew, the Indic scripts
-//! or Thai, so text in those is refused by [`AddedFont::covers`] rather than
+//! or Thai, so text in those is refused by [`AddedFont::check_writable`] rather than
 //! drawn as the wrong glyphs.
 
 use lopdf::{Document, ObjectId};
@@ -36,8 +36,6 @@ pub(crate) struct Piece {
 /// set in it.
 pub(crate) struct AddedFont {
     parts: [Option<(Font, Metrics)>; 2],
-    cap_height: f64,
-    descent: f64,
 }
 
 /// The faces of [`STYLES`], parsed.
@@ -58,16 +56,6 @@ fn font_for(faces: &[Face<'_>; 2], ch: char) -> Option<usize> {
 }
 
 impl AddedFont {
-    /// Whether every character of `text`, line breaks aside, is in one of the
-    /// bundled fonts.
-    pub(crate) fn covers(text: &str) -> bool {
-        faces().is_ok_and(|faces| {
-            text.chars()
-                .filter(|ch| *ch != '\n')
-                .all(|ch| font_for(&faces, ch).is_some())
-        })
-    }
-
     /// The subsets holding every character of `texts`.
     ///
     /// # Errors
@@ -94,17 +82,7 @@ impl AddedFont {
                 parts[at] = Some(Font::subset(STYLES[at], wanted)?);
             }
         }
-        // Placed by Noto Sans's measures when it sets any of the text, since
-        // its capitals are the ones a centred line is centred on.
-        let face = &faces[usize::from(parts[0].is_none())];
-        let em = f64::from(face.units_per_em());
-        Ok(AddedFont {
-            parts,
-            cap_height: face
-                .capital_height()
-                .map_or(0.714, |height| f64::from(height) / em),
-            descent: -f64::from(face.descender()) / em,
-        })
+        Ok(AddedFont { parts })
     }
 
     /// `text` as pieces, one per change of font.
@@ -172,13 +150,40 @@ impl AddedFont {
         Ok(ids)
     }
 
-    /// The capital height as a fraction of the size.
-    pub(crate) fn cap_height(&self) -> f64 {
-        self.cap_height
+    /// Use the same glyph validation as the subset writer, before accepting the line.
+    pub(crate) fn check_writable(text: &str) -> Result<(), String> {
+        let faces = faces()?;
+        for ch in text.chars().collect::<std::collections::BTreeSet<_>>() {
+            let Some(at) = font_for(&faces, ch) else {
+                return Err(said!(
+                    "the text {text:?} has characters tpdf has no font for: it writes Latin, Greek, \
+                     Cyrillic, Chinese, Japanese and Korean, and not scripts that join or reorder \
+                     their letters, such as Arabic, Hebrew, Hindi or Thai"
+                ));
+            };
+            Font::measure(&faces[at], STYLES[at], ch.encode_utf8(&mut [0; 4]), false).map_err(
+                |_| {
+                    said!(
+                        "the bundled font cannot write U+{code:04X}",
+                        code = u32::from(ch)
+                    )
+                },
+            )?;
+        }
+        Ok(())
     }
 
-    /// The descender, positive, as a fraction of the size.
-    pub(crate) fn descent(&self) -> f64 {
-        self.descent
+    /// Use the capital height and descent of the face setting this line's
+    /// capitals. Other lines may independently require another subset.
+    pub(crate) fn vertical_metrics(&self, text: &str) -> Result<(f64, f64), String> {
+        let faces = faces()?;
+        let sans = self.parts[0].is_some() && text.chars().any(|ch| has(&faces[0], ch));
+        let face = &faces[usize::from(!sans)];
+        let em = f64::from(face.units_per_em());
+        Ok((
+            face.capital_height()
+                .map_or(0.714, |height| f64::from(height) / em),
+            -f64::from(face.descender()) / em,
+        ))
     }
 }

@@ -249,6 +249,9 @@ fn unitless_density_preserves_the_picture_and_page_proportions() {
             .write_image_data(&[128; 64])
             .unwrap();
         for bytes in [&png, &jpeg] {
+            let (pixels, aspect) = crate::signature_import::placed_picture(bytes).unwrap();
+            assert_eq!((pixels.width, pixels.height), (8, 8));
+            assert_eq!(aspect, f64::from(expected[0]) / f64::from(expected[1]));
             for (dpi, dimensions) in [(None, expected), (Some(144), [4.0, 4.0])] {
                 let pdf = read_back_picture(bytes, Options { dpi, ..own() });
                 let page = pdf.get_pages()[&1];

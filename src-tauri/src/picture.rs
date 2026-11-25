@@ -11,8 +11,8 @@
 //! the rest            width * height * 4 bytes of straight-alpha RGBA
 //! ```
 //!
-//! Nothing here decodes a picture file. The webview decoded it, as it decodes
-//! a signature image; what arrives is pixels, checked for their count here and
+//! A sandboxed worker decodes the source image. The webview uploads the
+//! resulting pixels with the placement, checked for their count here and
 //! for their limits by the model, as every other mark is.
 
 use std::sync::Arc;
@@ -23,9 +23,9 @@ use crate::docmodel::MarkKind;
 use crate::edits::NewMark;
 use crate::signature;
 
-/// Longest JSON part of an upload. A mark's note is bounded far below this by
-/// `edits::too_long`, so a longer header is not a mark.
-pub const HEADER_MAX: usize = 64 * 1024;
+/// JSON can use six bytes per note character (an escaped control). Reserve
+/// another 4 KiB for the picture's bounded placement fields and author.
+pub const HEADER_MAX: usize = 6 * crate::textbox::MAX_NOTE_CHARS + 4096;
 
 /// What the JSON part says.
 #[derive(Deserialize)]
@@ -111,6 +111,17 @@ mod tests {
         let image = upload.mark.image.unwrap();
         assert_eq!((image.width, image.height), (2, 1));
         assert_eq!(image.rgba, rgba);
+    }
+
+    #[test]
+    fn the_longest_serialized_note_fits_the_picture_transport() {
+        let mut mark: serde_json::Value = serde_json::from_str(&header("picture", 1, 1)).unwrap();
+        for ch in ['漢', '\u{1}'] {
+            let note = ch.to_string().repeat(crate::textbox::MAX_NOTE_CHARS);
+            mark["mark"]["note"] = note.clone().into();
+            let upload = parse(&body(&mark.to_string(), &[0, 0, 0, 255])).unwrap();
+            assert_eq!(upload.mark.note, note);
+        }
     }
 
     #[test]

@@ -822,8 +822,8 @@ ROWS += [
     Mutation(
         "visual signature: stretch outside the placement rectangle",
         "src/lib/signature.ts",
-        "Math.min((rect.right - rect.left) / image.width, (rect.bottom - rect.top) / image.height)",
-        "Math.max((rect.right - rect.left) / image.width, (rect.bottom - rect.top) / image.height)",
+        "Math.min((rect.right - rect.left) / aspect, rect.bottom - rect.top)",
+        "Math.max((rect.right - rect.left) / aspect, rect.bottom - rect.top)",
         "fits a wide signature without stretching or escaping the dragged rectangle",
     ),
     Mutation(

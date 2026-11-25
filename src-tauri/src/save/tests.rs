@@ -6397,7 +6397,7 @@ impl Rewriter for FakeWriter {
         Ok((bytes.len() + self.overstate_by, inputs.each.len() as u32))
     }
 
-    fn picture(&self, _bytes: &[u8]) -> Result<crate::signature::Image, Refusal> {
+    fn picture(&self, _bytes: &[u8]) -> Result<(crate::signature::Image, f64), Refusal> {
         Err("a fake writer decodes no picture".into())
     }
 

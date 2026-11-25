@@ -164,7 +164,7 @@ impl Font {
     /// and that glyph's advance as its width, and the metrics that write them.
     /// With `identity` the code is the glyph id, for a CID-keyed CFF program,
     /// which has no CIDToGIDMap; otherwise codes count up from 1.
-    fn measure(
+    pub(super) fn measure(
         face: &ttf_parser::Face<'_>,
         style: u8,
         text: &str,

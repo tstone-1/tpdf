@@ -1753,6 +1753,13 @@ ROWS += [
         "withholds a chord a text field claims",
     ),
     Mutation(
+        "menu: native Undo claims text undo",
+        "src/lib/menubar.ts",
+        '  "edit.undo": "⌘Z is text undo inside the find field; handleWindowKey guards it",',
+        "",
+        "withholds a chord a text field claims",
+    ),
+    Mutation(
         # Let a punctuation key into the menu. An accelerator names a physical
         # key and `matches` reads the character it produced, so on the German
         # layout this advertises Cmd-# beside a command whose palette entry says

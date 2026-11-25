@@ -619,6 +619,10 @@ segments. A PNG with gamma or chromaticity metadata uses CalGray or CalRGB when
 it carries neither an ICC profile nor an sRGB declaration. Untagged pictures use
 DeviceGray or DeviceRGB. Both picture placement and document creation apply PNG
 eXIf orientation. Physical pHYs density takes precedence over EXIF resolution.
+The picture worker returns both the sampled pixels and the upright display aspect.
+The drag preview and placement use that aspect, so rectangular pixels retain their shape.
+Cut and copy capture the source crop and turns. Paste converts geometry and pixel
+orientation to the destination page before creating the new mark.
 CLI renders record pixels per metre in pHYs for named files and stdout. PNG import uses positive metered densities, including fitted renders below 30 or above 2,400 DPI. Import recovers the original integer
 DPI when it rounds to the stored density, so a 72 DPI render imports at one point
 per pixel. A JPEG uses a physical JFIF density first, then EXIF resolution in inches or centimetres.
@@ -953,11 +957,11 @@ chosen per character, Noto Sans first, because neither font holds every line alo
 has no accented Greek and Noto Sans no ideographs, measured with `fontTools` over both programs.
 The same measurement found neither font with a single glyph of Arabic, Hebrew, Syriac, Thaana,
 N'Ko, the Indic scripts, Sinhala, Thai, Lao, Tibetan, Myanmar, Khmer, Mongolian, Ethiopic,
-Armenian or Cherokee, so `AddedFont::covers` refusing what no font holds refuses every script
-that needs shaping. Two gaps it does not close: conjoining Hangul jamo (U+1100 to U+11FF) are in
-the CJK font and are drawn one by one rather than as syllables, and a combining mark is drawn at
-its glyph's default offset rather than positioned on its base. Korean and accented letters are
-usually typed precomposed, which is drawn correctly; the decomposed forms are untested. It runs in `save::rewrite` after the page
+Armenian or Cherokee, so the added-text preflight refuses characters outside the bundled fonts. It also checks that
+each glyph has writable metrics. Narrow no-break spaces retain their measured advance. A
+zero-advance combining mark is refused with its Unicode code point; precomposed accented letters
+are supported. Conjoining Hangul jamo are drawn individually. Each line uses its own font's
+vertical metrics, even when another page needs a different subset. It runs in `save::rewrite` after the page
 surgery, so the fields count the pages of the file written, and after the redactions and the
 sweep, because a redaction addresses content streams by position and a stream added in front
 would move them. It is `Plan::added_text`, empty out of the model like `text_layers`, and

@@ -17,6 +17,8 @@ import type { OpenCheckHost } from "./opencheck";
 import { pause, settle, type Report } from "./checkreport";
 import { DIALOG_CLASS } from "./addtextdialog";
 import { suggestedName } from "./addtext";
+import { emit } from "@tauri-apps/api/event";
+import { isMac } from "./keys";
 
 const DIALOG_MS = 5000;
 const WRITE_MS = 30_000;
@@ -61,6 +63,26 @@ export async function addTextCheck(host: OpenCheckHost, expected: string, report
   await host.open(source); await host.idle();
   const pages = host.edits()?.state.pages.length ?? 0;
   if (pages < 2) throw new Error("the phase needs a document of two pages or more");
+
+  if (isMac()) {
+    const turns = () => host.edits()?.state.pages[0]?.turns;
+    const rotate = () => emit("menu://run", "edit.rotatePageClockwise");
+    const before = turns();
+    host.run("file.properties");
+    const panel = document.querySelector<HTMLElement>('.tpdf-properties [role="dialog"]');
+    if (!panel || !await settle(() => panel.offsetParent !== null, DIALOG_MS)) throw new Error("properties did not open");
+    await rotate();
+    await pause(150);
+    await host.idle();
+    report.check("the native Rotate command leaves the modal document alone",
+      turns() === before && !host.edits()?.state.can_undo, "properties open");
+    panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await rotate();
+    report.check("the same native Rotate command works after dismissal",
+      await settle(() => turns() !== before && host.edits()?.state.can_undo === true, DIALOG_MS), "properties dismissed");
+    host.run("edit.undo");
+    await host.idle();
+  }
 
   // ---- 1. Page numbers: a field that is not one is refused, then the copy is written.
   const before = host.saveSuggestions().length;
