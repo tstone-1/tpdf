@@ -200,6 +200,10 @@ editable choices), and single/multiple-selection lists are supported. XFA,
 read-only, password, file-select, comb and rich-text controls are not editable; a
 rich-text control is one with a `/RV` value, since Acrobat sets the rich-text flag on
 fields that hold only plain text.
+The terminal field owns its name and properties. Editing either through one widget
+must survive removing that widget or extracting a page containing another widget of
+the same field. A widget owns its rectangle and removal. Check final field names
+across the whole hierarchy: an unnamed group adds no component to a qualified name.
 Fields are made by `formfields.rs`: `Plan.new_fields` carries them to the same
 rewrite, which adds them before it writes answers. Text (single or multiline), checkbox, dropdown and empty
 signature fields each use a single object for the field and its widget. Radio buttons
@@ -256,7 +260,9 @@ answers and its final set of button names.
 Document tabs retain backend handles and edit journals in `src/lib/documenttabs.ts`.
 Only the active tab mounts a Viewer and Sidebar; switching commits open note fields,
 drains pending edits, and keeps the reading position, search scope and sidebar choice.
-Save/reload replaces the handle in the same tab. File writes block tab transitions;
+Save/reload replaces the handle in the same tab. Reload settles drafts in every
+view sharing that document. An unfinished draft in a different document stays in
+its pane. File writes block tab transitions;
 tab closure releases its handle, and window closure checks all tabs for unsaved work.
 Foreground and background opens resolve file identity before allocating a journal.
 Reload checks the journal and live drafts again after acquiring the replacement.

@@ -912,11 +912,8 @@
    *
    * Rejects when a draft cannot be committed, with the sentence to show.
    */
-  async function settleDrafts(only?: Edits | null): Promise<void> {
-    const settle = (restoreFocus: boolean) => {
-      if (only === undefined || (only && only === edits)) return settleView(restoreFocus);
-    };
-    await Promise.all([settle(true), ...stage.parked.map((id) => asDocument(id, () => settle(false)))]);
+  function settleDrafts(only?: Edits | null): Promise<void> {
+    return stage.settleDrafts(only, () => edits, settleView);
   }
 
   async function settleView(restoreFocus: boolean): Promise<void> {
@@ -3555,7 +3552,7 @@
    */
   async function fillCommentWords(): Promise<void> {
     const source = rawComments;
-    if (!source) return;
+    if (!source || !sidebar?.shown || sidebar.tab !== "comments") return;
     // The walk waits for a page at a time, and the reader may change sides
     // while it does. Each round's reading and each round's writing runs as the
     // document the walk was started in. The viewer and the document's walk
@@ -3567,8 +3564,8 @@
     // them; what stays here is the wiring. The comments are slotted again
     // every round, as the document they are in is now.
     await walk.fill({
-      comments: () => asDocument(id, () => rawComments === source
-        ? commentsIn(source.items, edits?.map ?? NO_PAGES, edits?.state.notes)
+      comments: () => asDocument(id, () => rawComments === source && sidebar?.shown && sidebar.tab === "comments"
+        ? commentsIn(source.items, edits?.map ?? NO_PAGES, edits?.state.notes, edits?.state.discards)
         : null) ?? null,
       text: (slot) => reader ? reader.unturnedText(slot) : Promise.resolve(null),
       found: (words) => asDocument(id, () => {
@@ -5361,10 +5358,11 @@
       if (!current() || !promptUnaskedNow(error)) return false;
       // What happens, and the settling that comes before a reload nobody is
       // asked about, are `onDiskChange`'s.
+      const model = edits;
       return onDiskChange({
         mode: () => diskChangeMode,
         name: () => title,
-        settle: settleDrafts,
+        settle: () => settleDrafts(model),
         dirty: () => dirty,
         current,
         reload: reloadAnyway,
@@ -5410,8 +5408,10 @@
 
   /** Opens the sidebar if it is closed, on the tab asked for. */
   function showTab(tab: Tab) {
-    if (!sidebarShown) toggleSidebar();
+    // Select first so opening a hidden sidebar on Outline does not resume
+    // a Comments walk on the tab that is about to disappear.
     sidebar?.selectTab(tab);
+    if (!sidebarShown) toggleSidebar();
   }
 
   /**
@@ -6615,6 +6615,7 @@
       // finding those words is one text extraction per page carrying one. So
       // it is paid for by a reader who opens that tab, and by nobody else ---
       // a document opened, read and closed on the outline costs none of it.
+      onCommentsShown: () => void fillCommentWords(),
       onTab: (tab) => chooseTab(tab, {
         commentWords: () => void fillCommentWords(),
         redactionWords: () => void fillRedactionWords(),
@@ -6961,15 +6962,21 @@
     // out arrive as it, and a control that lays itself out from its own key
     // handler does not: the reader may be in the other side then, and the
     // variables are that document's.
-    const anchored = (widget: Form["widgets"][number]) => {
+    const effective = (widget: Form["widgets"][number]) => {
       const rect = asDocument(view, () => controlRect(widget, formEditing, edits?.state ?? null)) ?? null;
-      return rect ? mounted.formAnchor({ page: widget.page, display_rect: rect }) : null;
+      return rect ? { page: widget.page, display_rect: rect } : null;
     };
-    return new FormLayer(host, form, anchored,
+    return new FormLayer(host, form, (widget) => {
+      const at = effective(widget);
+      return at && mounted.formAnchor(at);
+    },
       // For this document by name: a control commits when it loses the
       // keyboard, and the press that took it may have been in the other side.
       async (object, value) => { await applyEdit((model) => model.fill(object, value), view); },
-      (widget) => mounted.showForm(widget),
+      (widget) => {
+        const at = effective(widget);
+        if (at) mounted.showForm(at);
+      },
       // What a control has to say, and a press on a place for a signature,
       // are this document's for the same reason.
       (message) => { asDocument(view, () => say(message)); },
@@ -7246,12 +7253,12 @@
       settlingOpen = !discard;
       // The replacement file is open. Confirmed Reload drops its document's
       // drafts on teardown, leaving editors in unrelated panes alone.
-      if (discard) await editing.run(async () => {});
-      else await settleDocument(afterWrite ? written?.edits : undefined);
-      keepActiveTab();
       // A save or a reload opens the file again in the tab it is shown in.
       // The tab the reader is in when the file is shown in two.
       const replacing = override ? tabs.forPath(path, tabs.active) : undefined;
+      if (discard) await editing.run(async () => {});
+      else await settleDocument((replacing ?? written)?.edits);
+      keepActiveTab();
       if (replacing && !afterWrite && !discard) {
         // A slow open leaves the original controls live. Another draft may
         // also have appeared while the previous edits were settling.

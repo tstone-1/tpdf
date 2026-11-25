@@ -1533,8 +1533,8 @@ ROWS += [
         "now === this.judged || this.clock()", "this.clock()",
         "reports a changed file once, and only after the stamp held still"),
     Mutation("disk watch: report a file whose bytes did not change", "src/lib/diskwatch.ts",
-        "      if ((await this.probe.differs(doc, path)) === false) {",
-        "      if ((await this.probe.differs(doc, path)) === undefined) {",
+        "        if (differs === false) {",
+        "        if (differs === undefined) {",
         "compares a touched file by content once, and stays quiet"),
     # The `opened` half only. Dropping the `now` half changes nothing: a `null`
     # now equals the `null` that `judged` starts at, so the next line returns.

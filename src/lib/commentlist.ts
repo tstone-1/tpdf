@@ -78,16 +78,9 @@ export class CommentList {
   private readonly opts: CommentListOptions;
 
   private comments: Comments | null = null;
-  /**
-   * The words each comment covers, for the ones that have been looked up.
-   *
-   * Held here rather than folded into the comments, because they are not the
-   * document's --- they are recovered from the page's text and arrive long after
-   * the scan does. Keeping them separate means a repaint for any other reason
-   * cannot lose them, and a comment nobody has looked words up for is simply
-   * absent rather than holding an empty string that means two things.
-   */
-  private readonly words = new Map<number, string>();
+  /** Bare rows awaiting a page's words. Rebuilt with the list. */
+  private readonly wordRows = new Map<number, { body: HTMLElement; comment: Comment }>();
+  private readonly prefix: string;
   /** Whether an answer has arrived, as distinct from an empty one having. */
   private loaded = false;
   private rows: CommentRow[] = [];
@@ -101,6 +94,7 @@ export class CommentList {
 
   constructor(host: HTMLElement, opts: CommentListOptions) {
     this.opts = opts;
+    this.prefix = host.id;
 
     // A live region, like the outline's cap notice and the results panel's
     // status: it appears after the reader is already in the panel.
@@ -205,9 +199,6 @@ export class CommentList {
   setComments(comments: Comments | null): void {
     this.loaded = true;
     this.comments = comments;
-    // Ids are per document, so a stale entry would put one document's sentence
-    // on another document's highlight --- and it would look entirely plausible.
-    this.words.clear();
     this.focused = null;
     this.selected = null;
     this.paint();
@@ -236,6 +227,7 @@ export class CommentList {
   private paint(): void {
     this.list.replaceChildren();
     this.elements.clear();
+    this.wordRows.clear();
     this.rows = [];
 
     const limits = this.comments?.limits;
@@ -277,24 +269,13 @@ export class CommentList {
    * on a document with comments on many pages. So the one line that changed is
    * the one line rewritten.
    *
-   * Merged rather than replaced, for the same reason: each call carries one
-   * page's answers, and replacing the map would erase the pages already known.
+   * Each call carries one page's answers. Rows from earlier pages keep the
+   * words already drawn on them.
    */
   setWords(words: ReadonlyMap<number, string>): void {
-    for (const [id, covered] of words) this.words.set(id, covered);
-    // Every row that *could* be listed by its covered words, not only the ones
-    // this call carried. The rows are then whatever the map says, so the merge
-    // above is load-bearing rather than an implementation detail --- clearing
-    // the map instead of merging into it now takes the pages that answered
-    // earlier back to their fallback, where before it changed nothing visible
-    // and a mutation saying so survived.
-    //
-    // Bounded by the comments that want words, which is what a caller is looking
-    // them up for, rather than by the 5,000 rows the scan may hold.
-    for (const { comment } of this.rows) {
-      if (!needsWords(comment)) continue;
-      const body = bodyOf(this.elements.get(comment.id));
-      if (body) this.draw(body, comment);
+    for (const [id, covered] of words) {
+      const row = this.wordRows.get(id);
+      if (row) this.draw(row.body, row.comment, covered);
     }
   }
 
@@ -306,8 +287,8 @@ export class CommentList {
    * the first. `data-own` is what a check and a test read; the italics are what
    * a reader sees, and both come off the same value.
    */
-  private draw(body: HTMLElement, comment: Comment): void {
-    const line = summaryOf(comment, this.words.get(comment.id) ?? "");
+  private draw(body: HTMLElement, comment: Comment, covered = ""): void {
+    const line = summaryOf(comment, covered);
     body.dataset.own = line.own ? "yes" : "no";
     body.textContent = line.text;
     body.style.cssText =
@@ -327,19 +308,20 @@ export class CommentList {
     const element = document.createElement("div");
     element.setAttribute("role", "option");
     element.setAttribute("aria-selected", "false");
-    element.id = rowId(comment.id);
+    element.id = `${this.prefix}-row-${comment.id}`;
     element.dataset.id = String(comment.id);
     element.tabIndex = comment.id === this.focused ? 0 : -1;
     element.style.cssText =
       "display:flex;gap:0.5rem;align-items:baseline;cursor:default;" +
       `padding:0.3rem 0.7rem 0.3rem ${10 + depth * INDENT}px;` +
       (depth > 0 ? "border-left:2px solid color-mix(in srgb, currentColor 20%, transparent);" : "");
-    if (comment.reply_to !== null && this.elements.has(comment.reply_to)) {
+    const parent = comment.reply_to === null ? undefined : this.elements.get(comment.reply_to);
+    if (parent) {
       // Points at the row this answers, so the relationship is audible and not
       // only an indent. Only when that row is present: a reply whose parent was
       // cut is drawn as a root, and naming an element that is not there tells a
       // screen reader to read nothing.
-      element.setAttribute("aria-describedby", rowId(comment.reply_to));
+      element.setAttribute("aria-describedby", parent.id);
     }
 
     const page = document.createElement("span");
@@ -354,6 +336,7 @@ export class CommentList {
     const body = document.createElement("div");
     body.dataset.part = "body";
     this.draw(body, comment);
+    if (needsWords(comment)) this.wordRows.set(comment.id, { body, comment });
 
     const byline = document.createElement("div");
     byline.dataset.part = "byline";
@@ -447,25 +430,6 @@ export class CommentList {
     // them through would move the page as well as the selection.
     event.stopPropagation();
   };
-}
-
-/**
- * A row's first-line element, walked by position rather than found by selector.
- *
- * `rowText` says why: the fake DOM the unit tests run against matches selectors
- * by tag name only, so a `[data-part=body]` lookup returns nothing there and a
- * row that was never redrawn is indistinguishable from one that was.
- */
-function bodyOf(row: HTMLElement | undefined): HTMLElement | null {
-  if (!row) return null;
-  const [, text] = [...row.children] as HTMLElement[];
-  const [body] = [...(text?.children ?? [])] as HTMLElement[];
-  return body ?? null;
-}
-
-/** The DOM id of a row, so a reply can name the row it answers. */
-function rowId(id: number): string {
-  return `tpdf-comment-${id}`;
 }
 
 /** The comment id a row element carries, or `null` for anything else. */

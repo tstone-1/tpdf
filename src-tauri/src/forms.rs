@@ -730,7 +730,10 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                     if raw.len() > 1024 {
                         return Err(said!("This form contains an oversized field name"));
                     }
-                    names.push(crate::annots::decode_text_string(raw));
+                    let part = crate::annots::decode_text_string(raw);
+                    if !part.is_empty() {
+                        names.push(part);
+                    }
                 }
                 at = d.get(b"Parent").and_then(Object::as_reference).ok();
             }

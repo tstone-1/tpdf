@@ -370,7 +370,7 @@ export interface Commands {
     reply: Recognised;
   };
   recognise_page: { args: { doc: DocHandle; page: number; language: string | null }; reply: PageText };
-  search_text: { args: { page: number; codes: number[]; query: string; options: SearchOptions; carry?: Carry | undefined }; reply: PageMatches };
+  search_text: { args: { page: number; codes: number[]; query: string; options: SearchOptions & { bounds?: [number, number] }; carry?: Carry | undefined }; reply: PageMatches };
   ocr_cancel: { args: { run: number }; reply: void };
   ocr_languages: { args: NoArgs; reply: Offered };
   hidden_text: { args: { doc: DocHandle; run: number }; reply: HiddenText };
@@ -618,7 +618,7 @@ export interface Commands {
        */
       pages?: FilePage[] | undefined;
       query: string;
-      options: SearchOptions;
+      options: SearchOptions & { bounds?: [number, number] };
       carry?: Carry | undefined;
     };
     reply: PageMatches;

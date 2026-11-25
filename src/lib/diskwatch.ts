@@ -215,6 +215,8 @@ export class DiskWatch {
   private seen: string | null = null;
   private seenAt = 0;
   private judged: string | null = null;
+  /** The current stable stamp compared different, but its notice may still be waiting. */
+  private changed = false;
   private checking = false;
 
   /**
@@ -254,15 +256,20 @@ export class DiskWatch {
       }
       if (now !== this.seen) {
         this.seen = now;
+        this.changed = false;
         this.seenAt = this.clock();
         return;
       }
       if (now === this.judged || this.clock() - this.seenAt < WATCH_INTERVAL_MS) return;
       // The stamp differs and held still for a whole interval. Only now is the
       // file read. `null` counts as changed: the stamp already says it is.
-      if ((await this.probe.differs(doc, path)) === false) {
-        this.judged = now;
-        return;
+      if (!this.changed) {
+        const differs = await this.probe.differs(doc, path);
+        if (differs === false) {
+          this.judged = now;
+          return;
+        }
+        this.changed = differs === true;
       }
       if (await this.report(doc)) this.judged = now;
     } catch {

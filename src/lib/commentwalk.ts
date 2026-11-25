@@ -37,7 +37,7 @@ import type { PageText } from "./text";
 export interface CommentWalk {
   /**
    * The comments with their pages as the document is now, or null once the
-   * document the walk began in has gone. Asked again every round.
+   * document has gone or its comments panel is hidden. Asked every round.
    */
   comments: () => readonly Comment[] | null;
   /** The comments whose words have been asked for, by id. Added to here. */

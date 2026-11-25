@@ -897,9 +897,10 @@ export async function commentChecks(
   } else {
     const row = sidebar.comments.elementFor(reply.id);
     const describes = row?.getAttribute("aria-describedby") ?? "";
+    const parent = sidebar.comments.elementFor(reply.reply_to!);
     check(
       "a reply is drawn under the comment it answers",
-      describes === `tpdf-comment-${reply.reply_to}`,
+      !!parent && !!describes && document.getElementById(describes) === parent,
       `describedby=${describes || "(none)"} for a reply to #${reply.reply_to}`,
     );
   }

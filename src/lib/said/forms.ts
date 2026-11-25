@@ -201,6 +201,8 @@ export default {
   "`{name}` is given two names": "`{name}` bekommt zwei Namen",
   "`{name}` can be moved and not resized: {reason}, so tpdf cannot redraw it":
     "`{name}` lässt sich verschieben, aber nicht in der Größe ändern: {reason}, deshalb kann tpdf es nicht neu zeichnen",
+  "Invalid widget pages for a shared field change": "Ungültige Seitenangaben für ein gemeinsam verwendetes Formularfeld",
+  "Could not check every field name in this form": "Nicht alle Feldnamen in diesem Formular konnten geprüft werden",
   "`{name}`: another field has this name": "`{name}`: Ein anderes Feld hat diesen Namen",
 
   // edits.rs

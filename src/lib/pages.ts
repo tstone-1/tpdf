@@ -373,6 +373,8 @@ export interface RegionPlan {
  * not import the module that talks to Tauri.
  */
 export interface MarkView {
+  /** Physical points per page unit of a saved field. */
+  fieldUnit?: number;
   /** Present for a note attached to an existing comment. */
   is_reply?: boolean;
   id: number;

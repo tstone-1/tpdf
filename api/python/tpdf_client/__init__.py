@@ -846,6 +846,8 @@ class Tpdf:
         Regions are {'page': 1, 'rect': [x, y, width, height]} in display points
         from top-left, sent through stdin. pages limits searches only; regions
         name their own pages. Matching ignores case unless case_sensitive=True.
+        A text or pattern search raises CommandError with exit_code=3 if a selected
+        page has extracted characters whose mapping is guessed or unknown.
         A dry run (output optional) writes nothing and has verified=None.
         fill is the colour of the boxes drawn over what went: 'black', 'white'
         or 'red'. White boxes cannot be seen on white paper.

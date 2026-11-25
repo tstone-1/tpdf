@@ -149,6 +149,25 @@ describe("AccessibleText and a change of order", () => {
     return parts.join("");
   }
 
+  it("updates a visible article when a late mapping verdict arrives", () => {
+    const dom = installFakeDom();
+    try {
+      const layer = new AccessibleText(dom.root as never, 1);
+      const sync = (unreadable: boolean) =>
+        layer.sync([0], () => page([72, 105]) as never, () => unreadable);
+      sync(false);
+      const initial = layer.elementFor(0);
+      expect(said(dom.root)).toContain("Hi");
+      sync(true);
+      const withheld = layer.elementFor(0);
+      expect(withheld).not.toBe(initial);
+      expect(said(dom.root)).toContain("cannot be read");
+      expect(said(dom.root)).not.toContain("Hi");
+      sync(true);
+      expect(layer.elementFor(0)).toBe(withheld);
+    } finally { dom.restore(); }
+  });
+
   it("replaces a visible page after OCR and after its recovered text is cleared", () => {
     const dom = installFakeDom();
     try {

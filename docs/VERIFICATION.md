@@ -4,6 +4,20 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Shared form fields, selected search and text redaction (2026-11-25)
+
+On macOS arm64, the form writer renamed a two-page field and changed its
+tooltip through its first widget. Extracting only page two and reopening
+the PDF preserved both changes. A separate writer test refused a rename
+that would create a second `Box.Second` through an unnamed group.
+
+In a selection covering the middle two characters of `aaaa`, literal and
+pattern searches for `aa` both returned the selected pair. The surrounding
+letters remained available to the snippet and whole-word check. On page one
+of `encodings.pdf`, a text redaction returned exit 3 and identified the guessed
+encoding. The same query returned exit 0 with zero matches on page three.
+A rectangle-only dry run on page one accepted the rectangle.
+
 ### Graphic export, page destinations and text mapping (2026-11-23)
 
 On macOS arm64, a 120 by 24 point rectangle exported at 600 DPI contained

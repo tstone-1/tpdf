@@ -5887,6 +5887,7 @@ dependencies = [
  "quick-xml",
  "rc2",
  "regex",
+ "regex-automata",
  "reqwest",
  "rsa",
  "rustls",

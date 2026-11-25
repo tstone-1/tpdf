@@ -1144,6 +1144,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             tail: Some(search::Carry {
                 page: 1,
                 from: 1190,
+                available_from: 1190,
                 codes: vec![113, 117, 105],
             }),
             more: vec![search::PageMatches {

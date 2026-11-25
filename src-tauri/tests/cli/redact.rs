@@ -2581,6 +2581,65 @@ pub(super) fn refusals_write_nothing(report: &mut Report) {
         );
     }
 
+    if let Some(encoded) = fixture("encodings.pdf") {
+        for (page, guessed) in [("1", true), ("3", false)] {
+            let (code, json, stderr) = run(
+                &strings(&[
+                    "redact",
+                    &s(&encoded),
+                    "-o",
+                    &s(&out),
+                    "--pages",
+                    page,
+                    "--text",
+                    "Encoding probe ABC",
+                    "--json",
+                ]),
+                &[],
+            );
+            let expected = if guessed {
+                code == 3
+                    && json["error"]["kind"] == "refused"
+                    && stderr.contains("page 1")
+                    && stderr.contains("guessed encoding")
+            } else {
+                code == 0 && json["written"] == false && json["searches"][0]["matches"] == 0
+            };
+            report.check(
+                &format!(
+                    "redaction distinguishes incomplete search from a reliable miss on page {page}"
+                ),
+                expected && !out.exists(),
+                &format!("exit {code}: {stderr} {json}"),
+            );
+        }
+        let rectangle = dir.join("encoded-region.json");
+        std::fs::write(&rectangle, r#"[{"page":1,"rect":[20,20,30,30]}]"#).expect("region");
+        let (code, json, stderr) = run(
+            &strings(&[
+                "redact",
+                &s(&encoded),
+                "-o",
+                &s(&out),
+                "--regions",
+                &s(&rectangle),
+                "--dry-run",
+                "--json",
+            ]),
+            &[],
+        );
+        report.check(
+            "a rectangle on a page with guessed characters needs no text search",
+            code == 0 && json["regions"] == 1 && !out.exists(),
+            &format!("exit {code}: {stderr} {json}"),
+        );
+    } else {
+        report.skip(
+            "redaction search with guessed characters",
+            "encodings.pdf is not generated",
+        );
+    }
+
     // A signed document.
     match fixture("incr-signed.pdf") {
         None => report.skip(

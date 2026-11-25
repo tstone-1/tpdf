@@ -132,6 +132,8 @@ export interface SidebarOptions {
    * every state the tab is ever in rather than every state but the first.
    */
   onTab: (tab: Tab) => void;
+  /** Resume a paused word lookup when this pane's Comments panel becomes visible again. */
+  onCommentsShown?: () => void;
   /** What the marks tab needs. */
   marks: MarkListOptions;
   /** What the redactions tab needs. */
@@ -362,9 +364,11 @@ export class Sidebar {
    * one of them ends up forgotten and a strip renders behind a closed sidebar.
    */
   setVisible(shown: boolean): void {
+    const resumeComments = shown && !this.visibleNow && this.showing === "comments";
     this.visibleNow = shown;
     this.host.style.display = shown ? "flex" : "none";
     this.strip?.setActive(shown && this.showing === "pages");
+    if (resumeComments) this.opts.onCommentsShown?.();
   }
 
   /** The page strip, or `null` when the sidebar was built without one. */

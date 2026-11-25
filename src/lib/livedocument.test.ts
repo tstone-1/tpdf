@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Stage, blankLive, capture, install, scoped, type Slots } from "./livedocument";
 import { functionIn, missingFrom } from "./sourcetext";
+import { onDiskChange } from "./diskwatch";
 import app from "../App.svelte?raw";
 
 interface Toy {
@@ -256,6 +257,34 @@ describe("work done within a document", () => {
     expect(v.now().id).toBe(-1);
     expect(v.stage.holds(2)).toBe(false);
     expect(v.stage.parked).toEqual([1]);
+  });
+});
+
+describe("reloading one model in a split window", () => {
+  it.each([false, true])("settles a parked invalid draft only for a shared model (shared=%s)", async shared => {
+    const v = variables();
+    const left = {}, right = shared ? left : {};
+    v.open(1, "left");
+    v.stage.park();
+    v.open(2, "right");
+    const model = () => v.now().id === 1 ? left : right;
+    const settled: number[] = [];
+    const outcome: string[] = [];
+    await onDiskChange({
+      mode: () => "reload",
+      name: () => "right.pdf",
+      settle: () => v.stage.settleDrafts(right, model, async () => {
+        settled.push(v.now().id);
+        if (v.now().id === 1) throw new Error("invalid left draft");
+      }),
+      dirty: () => false,
+      current: () => true,
+      reload: () => outcome.push("reloaded"),
+      say: prompt => outcome.push(...prompt.offers),
+    });
+    expect(settled).toEqual(shared ? [2, 1] : [2]);
+    expect(outcome).toEqual(shared ? ["saveCopy", "reload"] : ["reloaded"]);
+    expect(v.stage.focused).toBe(2);
   });
 });
 

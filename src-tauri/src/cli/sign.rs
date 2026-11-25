@@ -644,6 +644,7 @@ const ANCHOR_SEARCH: crate::search::Options = crate::search::Options {
     match_case: false,
     whole_word: false,
     regex: false,
+    bounds: None,
 };
 
 /// Finds the anchor on its page and returns the signature's rectangle,

@@ -303,6 +303,7 @@ fn queries(command: &Search) -> Result<Vec<(SearchKind, String, Prepared)>, Stri
                 match_case: command.case_sensitive,
                 whole_word: command.whole_word,
                 regex: kind == SearchKind::Pattern,
+                bounds: None,
             };
             let compiled = Prepared::new(query, options)
                 .map_err(|problem| format!("`{flag} {query}`: {problem}"))?;

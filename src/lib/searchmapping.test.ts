@@ -43,9 +43,7 @@ function noHits(page: number) {
 /**
  * Runs a one-page scan that finds nothing, against the given mapping reply.
  *
- * The scan has to *complete* and find *nothing*, because that is the only path
- * that asks for the mapping at all --- a reader who finds hits never pays for
- * the parse.
+ * A completed scan learns the mapping of every searched source document.
  */
 async function scanFindingNothing(pages: unknown[]): Promise<number> {
   core.invoke.mockImplementation((command: string, args: { page?: number }) => {
@@ -129,6 +127,71 @@ describe("Search across pages of another file", () => {
 });
 
 describe("Search.unsearchablePages", () => {
+  it("uses the selected placements and their own documents for mapping and recovery", async () => {
+    const original = { doc: 1, page: filePage(1) };
+    const readable = { doc: 1, page: filePage(0) };
+    const imported = { doc: 2, page: filePage(0) };
+    let placements = [readable, original];
+    const recovered = new Set<string>();
+    core.invoke.mockImplementation((command: string, args: { doc: number; page: number }) =>
+      Promise.resolve(command === "document_mapping"
+        ? (args.doc === 1 ? [mapping(0), mapping(1)] : [mapping(1)])
+        : noHits(args.page)));
+    const search = new Search(1, 2, () => {}, slot => placements[slot], undefined,
+      (doc, page) => recovered.has(`${doc}/${page}`));
+    await search.run("cat", 0);
+    expect(search.unsearchablePages).toBe(1);
+    placements = [readable];
+    search.setPages(1);
+    expect(search.unsearchablePages).toBe(0);
+    placements = [readable, imported];
+    search.setPages(2);
+    await search.run("cat", 0);
+    expect(search.unsearchablePages).toBe(1);
+    expect(search.unreadablePage(imported)).toBe(true);
+    expect(search.unreadablePage(readable)).toBe(false);
+    await search.run("cat", 0, undefined, [{ page: 0, from: 0, to: Infinity }]);
+    expect(search.unsearchablePages).toBe(0);
+    recovered.add("2/0");
+    expect(search.unreadablePage(imported)).toBe(false);
+    expect(core.invoke.mock.calls.filter(([cmd]) => cmd === "document_mapping")).toHaveLength(2);
+  });
+
+  it("resolves joins in document order and presents results starting at the current page", async () => {
+    const search = new Search(1, 3, () => {}, undefined, async args => {
+      expect(args.pages).toEqual([0, 1, 2]);
+      const hit = (page: number) => ({page, start: 0, end: 2, before: "", hit: "go go", after: ""});
+      return {page: 0, chars: 2, matches: [], more: [
+        {page: 1, chars: 5, matches: [{...hit(0), endPage: 1}]},
+        {page: 2, chars: 5, matches: [hit(2)]},
+      ]};
+    });
+    core.invoke.mockResolvedValue([]);
+    await search.run("go go", 1);
+    expect(search.matches.map(m => [m.page, m.endPage])).toEqual([[2, undefined], [0, 1]]);
+  });
+
+  it("sends each selected interval to the matcher across request and file boundaries", async () => {
+    const requests: unknown[] = [];
+    const placements = [0, 1, 2, 3].map(page => ({ doc: 1, page: filePage(page) }));
+    placements[3] = { doc: 2, page: filePage(0) };
+    const search = new Search(1, 4, () => {}, slot => placements[slot], async args => {
+      requests.push(args);
+      const answer = (page: number) => ({page, matches: [], chars: 10,
+        tail: { page, from: 0, codes: [65] }});
+      return { ...answer(args.page), more: args.pages?.slice(1).map(answer) ?? [] };
+    });
+    core.invoke.mockResolvedValue([]);
+    await search.run("a a", 0, undefined, [
+      {page: 0, from: 1, to: Infinity}, {page: 1, from: 0, to: Infinity},
+      {page: 2, from: 0, to: Infinity}, {page: 3, from: 0, to: 2},
+    ]);
+    expect(requests).toHaveLength(3);
+    expect(requests[0]).toMatchObject({doc: 1, page: 0, options: {bounds: [1, 0xffffffff]}});
+    expect(requests[1]).toMatchObject({doc: 1, pages: [1, 2], carry: {page: 0}});
+    expect(requests[2]).toMatchObject({doc: 2, page: 0, options: {bounds: [0, 2]}, carry: {page: 2}});
+  });
+
   it("counts an unmapped page again only after its OCR text is cleared", async () => {
     let recovered = false;
     core.invoke.mockResolvedValue([mapping(1)]);

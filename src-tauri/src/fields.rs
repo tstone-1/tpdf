@@ -47,7 +47,7 @@
 //! than dropped in silence. Stopping quietly reads as a form with nothing more
 //! in it, which is the ordinary case and therefore the reassuring one.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
@@ -305,6 +305,74 @@ pub fn qualified_name(prefix: &str, partial: &str) -> String {
     }
 }
 
+const NAME_BOUNDS: Bounds = Bounds {
+    nodes: 4096,
+    depth: Some(32),
+    dedup: true,
+    names: false,
+    order: Order::Document,
+};
+
+/// Check final names in document order, including fields behind unnamed
+/// grouping nodes. A prefix is interned so children below equivalent paths
+/// compare equal without copying all their ancestors' text for each child.
+pub(crate) fn check_renames(
+    doc: &Document,
+    renames: &BTreeMap<ObjectId, String>,
+    removed: &BTreeSet<ObjectId>,
+) -> Result<(), String> {
+    let mut path = vec![0usize];
+    let mut prefixes = HashMap::new();
+    let mut owners = HashMap::new();
+    let mut collision = None;
+    let mut oversized = false;
+    let cut = walk(doc, &NAME_BOUNDS, |node| {
+        path.truncate(node.depth as usize + 1);
+        let mut prefix = *path.last().expect("root prefix");
+        if node.id.is_some_and(|id| removed.contains(&id)) {
+            return Flow::Leaf;
+        }
+        let renamed = node.id.and_then(|id| renames.get(&id));
+        let raw = node
+            .dict
+            .and_then(|d| d.get(b"T").ok())
+            .and_then(|t| crate::encoding::resolve(doc, t).as_str().ok());
+        if raw.is_some_and(|t| t.len() > 1024) {
+            oversized = true;
+            return Flow::Leaf;
+        }
+        let name = renamed.cloned().unwrap_or_else(|| {
+            raw.map(crate::annots::decode_text_string)
+                .unwrap_or_default()
+        });
+        if !name.is_empty() {
+            // The requested name cannot contain a dot, but producers can have
+            // used one. Their visible full name still occupies that same path.
+            for part in name.split('.') {
+                let next = prefixes.len() + 1;
+                prefix = *prefixes.entry((prefix, part.to_owned())).or_insert(next);
+            }
+            if let Some(previously_renamed) = owners.insert(prefix, renamed.is_some()) {
+                if previously_renamed || renamed.is_some() {
+                    collision = Some(name);
+                }
+            }
+        }
+        path.push(prefix);
+        Flow::Descend
+    });
+    if oversized {
+        return Err(said!("This form contains an oversized field name"));
+    }
+    if cut.unreadable_root || cut.dropped != 0 || cut.too_deep != 0 {
+        return Err(said!("Could not check every field name in this form"));
+    }
+    if let Some(name) = collision {
+        return Err(said!("`{name}`: another field has this name"));
+    }
+    Ok(())
+}
+
 /// Every fully qualified name in the form that has **one part**: a field
 /// with a `/T` whose ancestors, if it has any, have none.
 ///
@@ -348,15 +416,8 @@ pub fn one_part_names(doc: &Document) -> Result<HashSet<String>, String> {
 ///
 /// As [`one_part_names`].
 pub fn one_part_fields(doc: &Document) -> Result<Vec<(Option<ObjectId>, String)>, String> {
-    let bounds = Bounds {
-        nodes: 4096,
-        depth: Some(32),
-        dedup: true,
-        names: false,
-        order: Order::Document,
-    };
     let mut names = Vec::new();
-    let cut = walk(doc, &bounds, |node| {
+    let cut = walk(doc, &NAME_BOUNDS, |node| {
         let name = node
             .dict
             .map(|field| partial_name(doc, field))

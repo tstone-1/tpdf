@@ -1818,8 +1818,8 @@ ROWS += [
         # asserted the invariant it was breaking.
         "regex: compile a pattern case-sensitively whatever the option says",
         "src/search.rs",
-        "        .case_insensitive(!match_case)",
-        "        .case_insensitive(false)",
+        ".case_insensitive(!match_case)",
+        ".case_insensitive(false)",
         "an_upper_case_pattern_matches_lower_case_text",
     ),
     Mutation(
@@ -1827,8 +1827,8 @@ ROWS += [
         # that turns the option *on* can see it.
         "regex: always ignore case, whatever the option says",
         "src/search.rs",
-        "        .case_insensitive(!match_case)",
-        "        .case_insensitive(true)",
+        ".case_insensitive(!match_case)",
+        ".case_insensitive(true)",
         "an_upper_case_pattern_still_distinguishes_case_when_asked",
     ),
     Mutation(
@@ -1938,8 +1938,8 @@ ROWS += [
     Mutation(
         "match: let occurrences overlap",
         "src/search.rs",
-        "            // `aa` occurs once in `aaa`, not twice.\n            at += needle.chars.len();",
-        "            // `aa` occurs once in `aaa`, not twice.\n            at += 1;",
+        "        at = end;\n        while at < stop && hay.source[at] == hay.source[end - 1] {\n            at += 1;\n        }",
+        "        at = start + 1;",
         "matches_do_not_overlap",
     ),
     Mutation(
@@ -1991,8 +1991,8 @@ ROWS += [
     Mutation(
         "whole word: skip the whole span after rejecting a candidate",
         "src/search.rs",
-        "                // caught the restructure that introduced the regex path.\n                at += 1;",
-        "                // caught the restructure that introduced the regex path.\n                at += needle.chars.len();",
+        "            at = if regex_hay.is_some() { end } else { start + 1 };",
+        "            at = end;",
         "a_rejected_candidate_does_not_hide_the_one_overlapping_it",
     ),
     Mutation(

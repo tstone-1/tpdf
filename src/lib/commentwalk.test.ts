@@ -109,6 +109,26 @@ describe("what one document's comment walk keeps", () => {
     expect(read).toEqual([2]);
   });
 
+  it("keeps the in-flight page when hidden and resumes from the next one", async () => {
+    const state = new CommentWords();
+    let visible = true;
+    const read: number[] = [];
+    const walk = fillOver(() => visible ? [bare(1, 2), bare(2, 3)] : null, read);
+    let answer!: (page: PageText) => void;
+    const pending = new Promise<PageText>(resolve => { answer = resolve; });
+    const first = state.fill({ ...walk, text: slot => { read.push(slot); return pending; } });
+    expect(read).toEqual([2]);
+    visible = false;
+    answer(EMPTY);
+    await first;
+    expect(read).toEqual([2]);
+    expect([...state.words.keys()]).toEqual([1]);
+    visible = true;
+    await state.fill(walk);
+    expect(read).toEqual([2, 3]);
+    expect([...state.words.keys()]).toEqual([1, 2]);
+  });
+
   it("asks across calls for a comment a deletion moved into a slot already read", async () => {
     // The trap "An 'already asked' set keyed by a slot is renumbered by the
     // next deletion", across two walks rather than inside one: slot 5 was

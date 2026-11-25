@@ -1892,7 +1892,7 @@ export class Viewer {
       () => this.onSearchProgress(),
       (slot) => this.pages.addressOf(slot, opts.doc),
       this.recovery.search,
-      (page) => this.recovery.has(opts.doc, page),
+      (doc, page) => this.recovery.has(doc, page),
     );
 
     this.surfaceHost = document.createElement("div");
@@ -5165,7 +5165,7 @@ export class Viewer {
     want: { dx: number; dy: number },
   ): { dx: number; dy: number } {
     const mark = this.markById(id);
-    const least = mark?.kind === "field" ? leastSide(mark.field?.kind) : 4;
+    const least = mark?.kind === "field" ? leastSide(mark.field?.kind) / (mark.fieldUnit ?? 1) : 4;
     const next = grown(base, want.dx, want.dy, this.laidSize(slot), least);
     return { dx: next.right - base.right, dy: next.bottom - base.bottom };
   }
@@ -6291,7 +6291,7 @@ export class Viewer {
    * changes are only remembered: nothing has been drawn without them.
    */
   setFieldEdits(
-    widgets: readonly Pick<import("./forms").FormWidget, "widget" | "page">[],
+    widgets: readonly Pick<import("./forms").FormWidget, "widget" | "object" | "page">[],
     fields: readonly FieldEdited[],
   ): boolean {
     const pages = redrawn(widgets, this.fieldEdits, fields);
@@ -6310,7 +6310,7 @@ export class Viewer {
     this.scrollToDestination(slot, Math.max(0, this.viewRectOn(slot, rect).top));
   }
 
-  showForm(widget: import("./forms").FormWidget): void {
+  showForm(widget: Pick<import("./forms").FormWidget, "page" | "display_rect">): void {
     const slot = this.pages.slotOf(widget.page);
     if (slot !== undefined) {
       this.scrollToFileRect(slot, widget.display_rect);
@@ -9091,13 +9091,16 @@ export class Viewer {
     // most one fetch per document however often this runs, and it is off the
     // startup path -- which is the only place its measured 0.1--11.9 ms would
     // matter, since warm startup has ~25 ms of margin against its target.
-    this.searcher.ensureMapping();
+    for (const slot of visible) {
+      const at = this.pages.addressOf(slot, this.opts.doc);
+      if (at) void this.searcher.ensureMapping(at.doc);
+    }
     this.a11y.sync(
       visible,
       (slot) => this.textOn(slot),
       (slot) => {
-        const source = this.pages.sourceOf(slot);
-        return source !== undefined && !this.recovery.has(this.opts.doc, source) && this.searcher.unreadablePage(source);
+        const source = this.pages.addressOf(slot, this.opts.doc);
+        return source !== undefined && this.searcher.unreadablePage(source);
       },
     );
     this.a11y.announce(this.currentPage());

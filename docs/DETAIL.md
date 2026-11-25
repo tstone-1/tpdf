@@ -155,8 +155,9 @@ build; `--checks` instead requires every entry and bounds its size.
 
 Two crates carry the search.
 
-`regex` (MIT OR Apache-2.0) reads a reader's pattern, and it was already in the tree
-transitively through the toolchain, so declaring it added no package. `caseless` (MIT) does
+`regex-automata` (MIT OR Apache-2.0), already shipped through `regex`, searches a bounded
+interval while preserving page context for regex anchors. The matcher accepts non-overlapping
+ranges in the original page's characters, including across page breaks. `caseless` (MIT) does
 Unicode case folding, which is what makes `strasse` find `Straße`: `char::to_lowercase` is
 defined for *displaying* text and leaves a sharp s alone, and folding is the operation defined
 for caseless *matching*. It brings `unicode-normalization` (MIT OR Apache-2.0) with

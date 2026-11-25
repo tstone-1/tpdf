@@ -49,7 +49,7 @@ use crate::text::PageText;
 pub const COMMAND: Registered = Registered {
     name: "redact",
     usage: "redact <in.pdf> -o <out.pdf> (--text STR | --pattern REGEX | --regions FILE|-)...\n        [--case-sensitive] [--pages 1-3,7] [--dry-run] [--invalidate-signatures]\n        [--fill black|white|red] [--password-env VAR] [--force] [--json]",
-    summary: "Removes every match of each --text and --pattern (found as the\n            viewer's search finds it) and every rectangle a --regions file\n            names, writes the result to -o, and reads it back. Exit 0 with a\n            copy written means it was proved clean; 1 means it was written and\n            could not be, with every reason. When nothing matched, nothing is\n            written and the exit code is 0; with --force over an existing -o\n            file the run is refused (3) and the file is left as it was. --dry-run writes nothing and says what would go.\n            --fill is the colour of the boxes drawn over what went: black\n            unless you say white or red.\n            A signed document is refused unless --invalidate-signatures.",
+    summary: "Removes every match of each --text and --pattern (found as the\n            viewer's search finds it) and every rectangle a --regions file\n            names, writes the result to -o, and reads it back. Exit 0 with a\n            copy written means it was proved clean; 1 means it was written and\n            could not be, with every reason. Text searches refuse pages with unreliable\n            character mappings. When nothing matched, nothing is\n            written and the exit code is 0; with --force over an existing -o\n            file the run is refused (3) and the file is left as it was. --dry-run writes nothing and says what would go.\n            --fill is the colour of the boxes drawn over what went: black\n            unless you say white or red.\n            A signed document is refused unless --invalidate-signatures.",
     parse: boxed,
 };
 
@@ -106,6 +106,7 @@ fn options(kind: SearchKind, case_sensitive: bool) -> Options {
         match_case: case_sensitive,
         whole_word: false,
         regex: kind == SearchKind::Pattern,
+        bounds: None,
     }
 }
 
@@ -606,6 +607,40 @@ pub fn signed_refusal(shown: &str, state: Option<SignedState>, invalidate: bool)
     }
 }
 
+/// A query can certify absence only when the characters being searched are
+/// reliable. Apply the same check on the input and on the written copy.
+fn redaction_search(
+    service: &RenderService,
+    doc: u32,
+    pages: &[u32],
+    queries: &[(SearchKind, String, Prepared)],
+) -> Result<Found, WalkError> {
+    if queries.is_empty() {
+        return Ok(Found::default());
+    }
+    let mut mapping = None;
+    limited_search(queries, pages, MAX_MATCHES_TO_MARK, |at| {
+        if mapping.is_none() {
+            mapping = Some(wait(|reply| service.mapping(doc, reply))?);
+        }
+        let page = mapping.as_ref().and_then(|pages| pages.get(at as usize));
+        match super::text::page_encoding(page) {
+            report::Encoding::Guessed => {
+                return Err(
+                    "some characters have a guessed encoding, so matches may be missing".into(),
+                );
+            }
+            report::Encoding::Unknown => {
+                return Err(
+                    "the character mapping could not be checked, so matches may be missing".into(),
+                );
+            }
+            report::Encoding::Stated => {}
+        }
+        wait(|reply| service.text(doc, at, None, reply))
+    })
+}
+
 /// Searches the written file again, for the reasons a hit there is.
 ///
 /// Every failure is a reason: a file that could not be reopened or a page that
@@ -635,9 +670,7 @@ fn search_back(
             )]
         }
     };
-    let reasons = match limited_search(queries, pages, MAX_MATCHES_TO_MARK, |at| {
-        wait(|reply| service.text(info.id, at, None, reply))
-    }) {
+    let reasons = match redaction_search(service, info.id, pages, queries) {
         Err(WalkError::Limit) => vec![format!(
             "the written file still has more than {MAX_MATCHES_TO_MARK} matches"
         )],
@@ -966,9 +999,7 @@ fn run_redact(
         ));
     }
 
-    let mut found = limited_search(&queries, &pages, MAX_MATCHES_TO_MARK, |at| {
-        wait(|reply| service.text(doc, at, None, reply))
-    }).map_err(|why| match why {
+    let mut found = redaction_search(&service, doc, &pages, &queries).map_err(|why| match why {
         WalkError::Page(why) => Failure::new(Exit::Refused, format!("{shown}: {why}, so nothing was marked and nothing was written")),
         WalkError::Limit => Failure::new(Exit::Refused, format!("more than {MAX_MATCHES_TO_MARK} matches; nothing was written --- narrow the search, or redact fewer pages at a time with --pages")),
     })?;

@@ -17,6 +17,15 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.15] - Unreleased
+
+- Text-based CLI redaction identifies pages whose character mapping could hide matches and refuses the operation before writing.
+- Shared form fields keep their new name and properties when a widget is removed or a single page is extracted. Renaming checks the full field name, including through unnamed groups.
+- Moving a form control respects the page's unit scale. Keyboard navigation follows moved fields, appearance changes refresh every widget of the field, and an existing maximum text length no longer blocks an unrelated property edit.
+- Find in Selection can match at the start of the selection even when another match would overlap it. Search counts each source character once and reports unreadable pages in the chosen scope, including imported pages. The screen reader updates when a visible page's character mapping becomes known.
+- A document can reload while another pane has an unfinished edit. A deferred file-change notification reuses the comparison for the same file revision.
+- Switching away from Comments pauses text extraction. Returning resumes it, and screen readers resolve replies to the parent comment in the correct pane.
+
 ## [26.11.14] - 2026-11-24
 
 - Editing a tagged word made of several fragments keeps it editable after saving. Correcting a centred heading preserves its position when the PDF includes spacing after the final glyph.

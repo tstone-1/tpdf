@@ -165,6 +165,27 @@ describe("DiskWatch", () => {
     await watch.check(1, "a.pdf");
     await watch.check(1, "a.pdf");
     expect(reported).toEqual([1, 1, 1]);
+    expect(state.reads).toBe(1);
+    state.now = "30:3";
+    await watch.check(1, "a.pdf");
+    await watch.check(1, "a.pdf");
+    expect(state.reads).toBe(2);
+    expect(reported).toEqual([1, 1, 1, 1]);
+  });
+
+  it("rechecks an inconclusive comparison when the notice was deferred", async () => {
+    const { state, probe, tick } = scripted();
+    const reported: number[] = [];
+    const watch = new DiskWatch(probe, doc => (reported.push(doc), false), tick);
+    state.now = "10:2";
+    state.differs = null;
+    await watch.check(1, "a.pdf");
+    await watch.check(1, "a.pdf");
+    state.differs = false;
+    await watch.check(1, "a.pdf");
+    await watch.check(1, "a.pdf");
+    expect(state.reads).toBe(2);
+    expect(reported).toEqual([1]);
   });
 
   it("starts over for another document", async () => {

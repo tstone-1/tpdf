@@ -72,6 +72,8 @@ export function radioExport(control: Extract<FormControl, { kind: "radio" }>, in
 
 /** Mirrors the worker's AcroForm reply. Object ids name shared fields. */
 export interface FormWidget {
+  /** Physical points per native page unit. Absent for unit scale. */
+  unit?: number;
   object: [number, number];
   widget: [number, number];
   page: number;
@@ -139,11 +141,13 @@ function given<K extends keyof FieldProps>(
   widgets: readonly FormWidget[],
   part: K,
 ): FieldProps[K] | undefined {
+  // New edits address the terminal field. A widget-addressed edit from an
+  // earlier caller still applies to every widget of the same field.
+  const direct = fields.find((edit) => fieldKey(edit.object) === fieldKey(widget.object))?.props?.[part];
+  if (direct !== undefined || fields.length === 0) return direct;
   const own = widgets.filter((other) => fieldKey(other.object) === fieldKey(widget.object));
-  return fields
-    .filter((edit) => own.some((other) => fieldKey(other.widget) === fieldKey(edit.object)))
-    .map((edit) => edit.props?.[part])
-    .find((value) => value !== undefined);
+  return fields.find((edit) => edit.props?.[part] !== undefined
+    && own.some((other) => fieldKey(other.widget) === fieldKey(edit.object)))?.props?.[part];
 }
 
 /**

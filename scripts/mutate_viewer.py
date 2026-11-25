@@ -646,8 +646,8 @@ MUTATIONS = [
         # that runs over the break cannot be found.
         "a page break is not looked across at all",
         "src-tauri/src/search.rs",
-        "        let tail = self.tail_of(codes, page);",
-        "        let tail = None;",
+        "            .filter(|_| to as usize >= codes.len());",
+        "            .filter(|_| false);",
         "a phrase is found across a page break",
     ),
     Mutation(
@@ -663,15 +663,15 @@ MUTATIONS = [
     Mutation(
         "a hit that starts outside the selection is kept",
         "src/lib/search.ts",
-        "            m.start >= startsIn.from &&",
-        "            true &&",
+        "bounds: [range.from, Math.min(range.to, 0xffffffff)]",
+        "bounds: [0, Math.min(range.to, 0xffffffff)]",
         "a scoped search looks only inside the selection",
     ),
     Mutation(
         "a hit that ends outside the selection is kept",
         "src/lib/search.ts",
-        "            m.end <= endsIn.to",
-        "            true",
+        "bounds: [range.from, Math.min(range.to, 0xffffffff)]",
+        "bounds: [range.from, 0xffffffff]",
         "a scoped search looks only inside the selection",
     ),
     Mutation(
@@ -777,7 +777,7 @@ MUTATIONS = [
         # answer reached a reader until this corpus was opened in a window.
         "encoding: report no unsearchable page whatever the backend said",
         "src/lib/search.ts",
-        "    return this.mapping.filter((page, index) => page.guessing > 0 && !this.recovered(filePage(index))).length;",
+        "    return this.scopedMappings().guessed.filter(at => !this.recovered(at.doc, at.page)).length;",
         "    return 0;",
         "the pages whose text is a guess reach the frontend",
         runner="viewer-encodings",

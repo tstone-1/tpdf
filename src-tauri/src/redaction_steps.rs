@@ -649,6 +649,7 @@ pub(crate) async fn text_elsewhere_in(
             match_case: true,
             whole_word: false,
             regex: false,
+            bounds: None,
         };
         text_elsewhere(&unmarked_slots(&plan), &needles, |page, needle| {
             let found = ocr_gate::wait(|reply| {

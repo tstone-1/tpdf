@@ -746,13 +746,13 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       const journalled = () => host.edits()?.state.fields ?? [];
       await settle(() => journalled().length === 2, SETTLE_MS);
       await host.idle();
-      const first = after.widgets.find((widget) => widget.name === "Pay")?.widget.join();
+      const field = after.widgets[second]?.object.join();
       const by = (object: string | undefined) => journalled().find((edit) => edit.object.join() === object);
       check(
-        "applying a new value and a tooltip journals the value for that button and the tooltip for the group's first",
+        "applying a new value and a tooltip journals the value for the button and the tooltip for its field",
         journalled().length === 2 && by(after.widgets[second]?.widget.join())?.value === "By post"
           && by(after.widgets[second]?.widget.join())?.props === undefined
-          && by(first)?.props?.tooltip === "How to pay" && by(first)?.value === undefined,
+          && by(field)?.props?.tooltip === "How to pay" && by(field)?.value === undefined,
         JSON.stringify(journalled()),
       );
       host.run("edit.undo");

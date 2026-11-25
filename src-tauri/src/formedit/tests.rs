@@ -1995,3 +1995,174 @@ fn a_new_limit_checks_the_existing_reset_value() {
         .contains("default value"));
     assert!(!f.doc.get_dictionary(text.object).unwrap().has(b"MaxLen"));
 }
+
+#[test]
+fn a_shared_field_keeps_its_rename_and_properties_when_one_widget_is_removed() {
+    for legacy_widget_key in [false, true] {
+        let mut f = fixture();
+        let pair = widgets(&f.doc, "Pair");
+        let mut rename = named(&pair[0], "Survives");
+        rename.props.tooltip = Some("Shared tip".into());
+        let edits = if legacy_widget_key {
+            rename.remove = true;
+            vec![rename]
+        } else {
+            rename.widget = pair[0].object;
+            vec![gone(&pair[0]), rename]
+        };
+        apply(&mut f.doc, &edits).unwrap();
+        let reopened = Document::load_mem(&bytes(&f.doc)).unwrap();
+        let survivor = one(&reopened, "Survives");
+        assert_eq!(survivor.widget, pair[1].widget);
+        assert_eq!(survivor.tooltip, "Shared tip");
+        assert_eq!(survivor.value, pair[1].value);
+    }
+}
+
+#[test]
+fn a_rename_cannot_repeat_a_qualified_name_through_an_unnamed_subgroup() {
+    let mut f = with_group(Some("Box"));
+    let inner = one(&f.doc, "Box.Inner");
+    let group = f
+        .doc
+        .get_dictionary(inner.object)
+        .unwrap()
+        .get(b"Parent")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let other = one(&f.doc, "Notes");
+    let nested = f.doc.add_object(
+        dictionary! { "Parent" => group, "Kids" => vec![Object::Reference(other.object)] },
+    );
+    let siblings = super::siblings(&f.doc, other.object).unwrap();
+    super::take(&mut f.doc, &siblings, other.object).unwrap();
+    f.doc
+        .get_dictionary_mut(other.object)
+        .unwrap()
+        .set("Parent", nested);
+    f.doc
+        .get_dictionary_mut(group)
+        .unwrap()
+        .get_mut(b"Kids")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .push(nested.into());
+    assert_eq!(one(&f.doc, "Box.Notes").object, other.object);
+    f.doc
+        .get_dictionary_mut(nested)
+        .unwrap()
+        .set("T", Object::string_literal(""));
+    assert_eq!(one(&f.doc, "Box.Notes").object, other.object);
+    let before = bytes(&f.doc);
+    assert!(apply(&mut f.doc, &[named(&inner, "Notes")])
+        .unwrap_err()
+        .contains("another field has this name"));
+    assert_eq!(bytes(&f.doc), before);
+    apply(
+        &mut f.doc,
+        &[named(&inner, "Notes"), named(&other, "Inner")],
+    )
+    .unwrap();
+    assert_eq!(one(&f.doc, "Box.Notes").object, inner.object);
+    assert_eq!(one(&f.doc, "Box.Inner").object, other.object);
+    // A producer can also encode the dotted spelling as one partial name.
+    let literal = one(&f.doc, "Name");
+    f.doc
+        .get_dictionary_mut(literal.object)
+        .unwrap()
+        .set("T", Object::string_literal("Box.Taken"));
+    assert!(apply(&mut f.doc, &[named(&inner, "Taken")])
+        .unwrap_err()
+        .contains("another field has this name"));
+}
+
+#[test]
+fn moving_a_checkbox_preserves_its_physical_size_on_scaled_pages() {
+    for unit in [1, 3] {
+        let mut f = fixture();
+        f.doc
+            .get_dictionary_mut(f.pages[0])
+            .unwrap()
+            .set("UserUnit", unit);
+        let checkbox = NewField {
+            name: "Physical".into(),
+            kind: Kind::Checkbox,
+            page: 0,
+            rect: [12., 12., 12., 12.],
+            tooltip: None,
+            required: false,
+            max_length: None,
+            border: true,
+            options: vec![],
+            text_size: None,
+            default_value: None,
+        };
+        add(&mut f.doc, &[checkbox]).unwrap();
+        let before = one(&f.doc, "Physical");
+        let [x, y, r, b] = before.display_rect;
+        let moved = [x + 1., y + 1., r + 1., b + 1.];
+        apply(&mut f.doc, &[to(&before, moved)]).unwrap();
+        let reopened = Document::load_mem(&bytes(&f.doc)).unwrap();
+        let after = one(&reopened, "Physical");
+        assert_eq!(after.display_rect, moved);
+        assert_eq!((after.rect[2] - after.rect[0]) * after.unit, 12.);
+        assert!(apply(&mut f.doc, &[to(&after, [0., 0., 1., 1.])]).is_err());
+    }
+}
+
+#[test]
+fn extracting_the_second_widget_writes_a_field_edit_made_on_the_first_page() {
+    use crate::edits::{Edits, FieldPatch, FieldTarget};
+    let mut f = fixture();
+    let pair = widgets(&f.doc, "Pair");
+    let second = pair[1].widget;
+    let source = super::list_at(&f.doc, f.pages[0], b"Annots").unwrap();
+    let dest = super::list_at(&f.doc, f.pages[1], b"Annots").unwrap();
+    super::take(&mut f.doc, &source, second).unwrap();
+    super::items_mut(&mut f.doc, &dest)
+        .unwrap()
+        .push(second.into());
+    f.doc
+        .get_dictionary_mut(second)
+        .unwrap()
+        .set("P", f.pages[1]);
+    assert_eq!(
+        widgets(&f.doc, "Pair")
+            .iter()
+            .map(|w| w.page)
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
+    let edits = Edits::default();
+    edits.open(1, 2, None);
+    let page = edits.state(1).unwrap().pages[0].id;
+    edits
+        .refield(
+            1,
+            vec![FieldTarget {
+                object: pair[0].object,
+                page,
+                patch: FieldPatch {
+                    name: Some("Shared".into()),
+                    field_pages: vec![0, 1],
+                    props: Props {
+                        tooltip: Some("Kept".into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            }],
+            0,
+        )
+        .unwrap();
+    let plan = edits.plan_subset(1, &[1]).unwrap();
+    let output =
+        crate::save::rewrite_update(&bytes(&f.doc), &plan, crate::save::Job::Save, None).unwrap();
+    let reopened = Document::load_mem(&output).unwrap();
+    let kept = one(&reopened, "Shared");
+    assert_eq!(kept.page, 0);
+    assert_eq!(kept.tooltip, "Kept");
+    assert_eq!(kept.value, pair[1].value);
+}

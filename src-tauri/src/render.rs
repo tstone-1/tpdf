@@ -3256,6 +3256,7 @@ mod tests {
         match_case: false,
         whole_word: false,
         regex: false,
+        bounds: None,
     };
 
     #[test]

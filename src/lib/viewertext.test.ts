@@ -402,8 +402,8 @@ describe("Reading a page's text, and asking for it again", () => {
       real(slot);
     };
     const widgets = [
-      { widget: [11, 0] as [number, number], page: 1 },
-      { widget: [12, 0] as [number, number], page: 0 },
+      { object: [10, 0] as [number, number], widget: [11, 0] as [number, number], page: 1 },
+      { object: [10, 0] as [number, number], widget: [12, 0] as [number, number], page: 0 },
     ];
     const moved = { object: [11, 0] as [number, number], page: 4, rect: [1, 2, 3, 4] as [number, number, number, number], removed: false };
 
@@ -420,6 +420,12 @@ describe("Reading a page's text, and asking for it again", () => {
     expect(viewer.setFieldEdits([], [moved])).toBe(false);
     expect(viewer.setFieldEdits(widgets, [moved])).toBe(false);
     expect(repainted).toEqual([0, 2, 0, 2]);
+    repainted.length = 0;
+    const sized = { object: widgets[0]!.object, page: 4, props: { text_size: 16 }, removed: false };
+    expect(viewer.setFieldEdits(widgets, [sized])).toBe(true);
+    expect(repainted).toEqual([0, 1, 2]);
+    expect(viewer.setFieldEdits(widgets, [])).toBe(true);
+    expect(repainted).toEqual([0, 1, 2, 0, 1, 2]);
   });
 
   it("selects a whole page, after the page above went", async () => {

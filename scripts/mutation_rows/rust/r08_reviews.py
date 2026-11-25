@@ -1257,8 +1257,8 @@ ROWS += [
     Mutation(
         "field names: visit a group that holds itself until the budget is gone",
         "src/fields.rs",
-        "        depth: Some(32),\n        dedup: true,\n        names: false,",
-        "        depth: Some(32),\n        dedup: false,\n        names: false,",
+        "    depth: Some(32),\n    dedup: true,\n    names: false,",
+        "    depth: Some(32),\n    dedup: false,\n    names: false,",
         "the_names_of_a_tree_past_the_bounds_are_refused_and_not_cut_short",
     ),
     Mutation(

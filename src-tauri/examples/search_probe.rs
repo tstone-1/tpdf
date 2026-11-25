@@ -247,6 +247,7 @@ fn options_of(value: &serde_json::Value) -> Options {
         match_case: flag("matchCase"),
         whole_word: flag("wholeWord"),
         regex: flag("regex"),
+        bounds: None,
     }
 }
 

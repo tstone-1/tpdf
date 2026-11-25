@@ -52,6 +52,12 @@ describe("what the panel shows and reads", () => {
     expect(read(now, { ...shown(now), options: "North\n\nSouth" })).toHaveProperty("problem");
   });
 
+  it("preserves an imported character limit when only its tooltip changes", () => {
+    const now = { ...TEXT, maxLength: 32767 };
+    expect(read(now, { ...shown(now), tooltip: "New" })).toEqual({ ...now, tooltip: "New" });
+    expect(read(now, { ...shown(now), maxLength: "32768" })).toHaveProperty("problem");
+  });
+
   it("changes only Required on an imported multiline field", () => {
     const now = { ...TEXT, multiline: true, required: false, textSize: 9.125,
       tooltip: " Field\r\nhelp ", defaultValue: "North\rEast" };
@@ -376,26 +382,39 @@ describe("a radio button of the file", () => {
     expect(again.asked[0]?.options).toEqual(["Later"]);
   });
 
-  it("takes a new value as a change to that button, and the group's properties under its first", async () => {
+  it("takes a new value as a change to that button, and the group's properties under the field", async () => {
     const valued = deps({ form, picked: picked(2), answer: (now) => ({ ...now, options: ["Bank"] }) });
     await expect(changeProperties(valued.deps)).resolves.toBe(true);
     expect(valued.made).toEqual([{ object: [32, 0], page: 5, patch: { value: "Bank" } }]);
-    // Both at once are two widgets in one change.
+    // The property and value reach the field and widget in one undo step.
     const both = deps({ form, picked: picked(2), answer: (now) => ({ ...now, tooltip: "Which", options: ["Bank"] }) });
     await changeProperties(both.deps);
     expect(both.made).toEqual([
-      { object: [31, 0], page: 5, patch: { props: { tooltip: "Which" } } },
+      { object: [30, 0], page: 5, patch: { props: { tooltip: "Which" }, field_pages: [0] } },
       { object: [32, 0], page: 5, patch: { value: "Bank" } },
     ]);
     expect(both.sent).toEqual([2]);
-    // On the group's first button they are one widget, changed once.
+    // The first button is also distinct from the group.
     const first = deps({ form, picked: picked(1), answer: (now) => ({ ...now, tooltip: "Which", options: ["Bank"] }) });
     await changeProperties(first.deps);
-    expect(first.made).toEqual([{ object: [31, 0], page: 5, patch: { props: { tooltip: "Which" }, value: "Bank" } }]);
+    expect(first.made).toEqual([
+      { object: [30, 0], page: 5, patch: { props: { tooltip: "Which" }, field_pages: [0] } },
+      { object: [31, 0], page: 5, patch: { value: "Bank" } },
+    ]);
     // A tooltip alone names no value, and the value is never sent as choices.
     const tip = deps({ form, picked: picked(2), answer: (now) => ({ ...now, tooltip: "Which" }) });
     await changeProperties(tip.deps);
-    expect(tip.made).toEqual([{ object: [31, 0], page: 5, patch: { props: { tooltip: "Which" } } }]);
+    expect(tip.made).toEqual([{ object: [30, 0], page: 5, patch: { props: { tooltip: "Which" }, field_pages: [0] } }]);
+  });
+
+  it("combines a radio value and tooltip when the widget is the terminal field", async () => {
+    const radio = button(30, 0);
+    const merged: Form = { widgets: [{ ...radio, value: [0], control: {
+      kind: "radio", index: 0, states: [bytes("Card")], unison: false, no_toggle_off: true,
+    } }] };
+    const run = deps({ form: merged, picked: picked(0), answer: (now) => ({ ...now, tooltip: "Which", options: ["Bank"] }) });
+    await expect(changeProperties(run.deps)).resolves.toBe(true);
+    expect(run.made).toEqual([{ object: [30, 0], page: 5, patch: { props: { tooltip: "Which" }, value: "Bank" } }]);
   });
 
   it("is refused a value another button of its group has, as the file or the reader gave it", async () => {

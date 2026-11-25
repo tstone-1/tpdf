@@ -209,16 +209,14 @@ describe("runFrom", () => {
     expect(runFrom(plan(0, 5), 0, of)).toEqual([]);
   });
 
-  it("takes a page scoped to part of itself into a run like any other", () => {
-    // What the doc comment says and the loop does: the scope is applied when a
-    // reply is filed, by the one function both paths share, so a selection
-    // that begins and ends inside a page is still one request.
+  it("splits a run when the selected character interval changes", () => {
     const scoped: ScopeRange[] = [
       { page: 4, from: 120, to: Infinity },
       { page: 5, from: 0, to: Infinity },
       { page: 6, from: 0, to: 37 },
     ];
-    expect(runFrom(scoped, 0, same)).toEqual([4, 5, 6]);
+    expect(runFrom(scoped, 0, same)).toEqual([4]);
+    expect(runFrom(scoped, 1, same)).toEqual([5]);
   });
 
   it("answers a single entry with a run of one, which is the per-page path", () => {

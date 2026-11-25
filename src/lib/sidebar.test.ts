@@ -53,6 +53,7 @@ describe("Sidebar keyboard activation", () => {
     tabs: string[] = [],
     webbed: WebTarget[] = [],
     destinationTop?: (page: number, top: number | null) => number | null,
+    onCommentsShown = () => {},
   ): Sidebar {
     const bar = new Sidebar(dom.root as unknown as HTMLElement, {
       ...(destinationTop ? { destinationTop } : {}),
@@ -70,6 +71,7 @@ describe("Sidebar keyboard activation", () => {
       hidden: { onPick: () => {} },
       changes: { onPick: () => {} },
       onTab: (tab) => tabs.push(tab),
+      onCommentsShown,
       pages: {
         doc: 1,
         pageCount: 40,
@@ -117,6 +119,22 @@ describe("Sidebar keyboard activation", () => {
     bar.selectTab("marks");
     expect(tabs).toEqual(["outline", "comments", "marks"]);
     expect(bar.tab).toBe("marks");
+  });
+
+  it("resumes a selected comments tab once when its sidebar becomes visible", () => {
+    const resumed = vi.fn();
+    const tabs: string[] = [];
+    const bar = tree([], tabs, [], undefined, resumed);
+    bar.selectTab("comments");
+    bar.setVisible(false);
+    bar.setVisible(true);
+    bar.setVisible(true);
+    expect(resumed).toHaveBeenCalledTimes(1);
+    bar.selectTab("marks");
+    bar.setVisible(false);
+    bar.setVisible(true);
+    expect(resumed).toHaveBeenCalledTimes(1);
+    expect(tabs).toEqual(["outline", "comments", "marks"]);
   });
 
   it("has a tab for text the pages do not show, and hands a check's result to it", () => {

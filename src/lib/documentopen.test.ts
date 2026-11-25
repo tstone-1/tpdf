@@ -462,13 +462,26 @@ describe("the document tasks in App.svelte", () => {
   });
 });
 
+it("scopes both disk reload settlements to the model being replaced, including its other views", () => {
+  expect(missingFrom(app, ["const model = edits; return onDiskChange({", "settle: () => settleDrafts(model),"])).toEqual([]);
+  expect(missingFrom(functionIn(app, "async function openDocument("), [
+    "const replacing = override ? tabs.forPath(path, tabs.active) : undefined;",
+    "else await settleDocument((replacing ?? written)?.edits);",
+  ])).toEqual([]);
+  expect(missingFrom(functionIn(app, "function settleDrafts("), [
+    "return stage.settleDrafts(only, () => edits, settleView);",
+  ])).toEqual([]);
+});
+
 describe("the comment-word walk in App.svelte", () => {
   it("hands the walk this document's comments, its set and its viewer", () => {
     // The walk and the set it keeps are `commentwalk.ts`, tested there.
+    expect(missingFrom(app, ["onCommentsShown: () => void fillCommentWords(),"])).toEqual([]);
     expect(missingFrom(functionIn(app, "async function fillCommentWords("), [
       "const id = openView, reader = viewer, walk = commentWords;",
+      'if (!source || !sidebar?.shown || sidebar.tab !== "comments") return;',
       "await walk.fill({",
-      "comments: () => asDocument(id, () => rawComments === source ? commentsIn(source.items, edits?.map ?? NO_PAGES, edits?.state.notes) : null) ?? null,",
+      "comments: () => asDocument(id, () => rawComments === source && sidebar?.shown && sidebar.tab === \"comments\" ? commentsIn(source.items, edits?.map ?? NO_PAGES, edits?.state.notes, edits?.state.discards) : null) ?? null,",
       "if (rawComments !== source) return false;",
       "if (words.size > 0) sidebar?.setCommentWords(words);",
     ])).toEqual([]);
@@ -655,6 +668,8 @@ describe("the open's wiring in App.svelte", () => {
   it("places a form control, runs what it says and a press on a place for a signature, as the form's own document", () => {
     expect(missingFrom(functionIn(app, "function buildFormLayer("), [
       "const rect = asDocument(view, () => controlRect(widget, formEditing, edits?.state ?? null)) ?? null;",
+      "const at = effective(widget);\n      return at && mounted.formAnchor(at);",
+      "const at = effective(widget);\n        if (at) mounted.showForm(at);",
       "(message) => { asDocument(view, () => say(message)); },",
       "if (!readerIsIn(view, openView, () => focusSide(panes.sideOf(view)))) {",
     ])).toEqual([]);

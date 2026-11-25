@@ -223,16 +223,16 @@ ROWS += [
         # A field under a group with no name of its own has the same full name
         # as a top-level field, so taking the name makes two fields one.
         "form rename: a name taken from a field under an unnamed group",
-        "src/formedit.rs",
-        "        if !taken && !named_above(doc, *field) {",
-        "        if !taken && false {",
+        "src/fields.rs",
+        "        if !name.is_empty() {\n            // The requested name",
+        "        if name.is_empty() { return Flow::Leaf; }\n        if !name.is_empty() {\n            // The requested name",
         "a_rename_cannot_take_the_name_of_a_field_under_an_unnamed_group",
     ),
     Mutation(
         "form rename: every group above a field read as unnamed",
-        "src/formedit.rs",
-        "        if named {\n            return true;\n        }",
-        "        if named {\n            return false;\n        }",
+        "src/fields.rs",
+        '        let mut prefix = *path.last().expect("root prefix");',
+        '        let mut prefix = 0;',
         "a_field_under_an_unnamed_group_cannot_take_a_top_level_name",
     ),
 ]

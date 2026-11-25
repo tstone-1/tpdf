@@ -554,6 +554,8 @@ pub struct NoteEdit {
 /// put back the version before without knowing what kind of change it was.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct FieldChange {
+    /// Baseline pages displaying a separately addressed terminal field.
+    pub field_pages: Vec<u32>,
     /// Its new rectangle, in the page's display space. `None` leaves it.
     pub rect: Option<Quad>,
     /// The field's new name. `None` leaves it.
@@ -2999,19 +3001,46 @@ impl Doc {
     /// Every changed field of the file, in page order and by object within a
     /// page, with the page each is on.
     pub fn field_changes(&self) -> Vec<(PageId, ObjectId, FieldChange)> {
-        self.now
-            .order
-            .iter()
-            .flat_map(|page| {
-                self.now
-                    .refields
-                    .iter()
-                    .filter(move |(_, (on, _))| on == page)
-                    .filter_map(move |(object, (_, version))| {
-                        Some((*page, *object, self.field_changes.get(version)?.clone()))
-                    })
-            })
-            .collect()
+        self.field_changes_on(
+            self.now
+                .order
+                .iter()
+                .map(|id| (*id, self.now.pages[id].source)),
+        )
+    }
+
+    /// Keep local edits on their widget's page and shared edits on any page
+    /// displaying the terminal field, including in a page extraction.
+    pub fn field_changes_on(
+        &self,
+        pages: impl Iterator<Item = (PageId, PageSource)>,
+    ) -> Vec<(PageId, ObjectId, FieldChange)> {
+        if self.now.refields.is_empty() {
+            return Vec::new();
+        }
+        let mut positions = HashMap::new();
+        let mut baseline = HashMap::new();
+        for (slot, (page, source)) in pages.enumerate() {
+            positions.insert(page, slot);
+            if let PageSource::Baseline(number) = source {
+                baseline.entry(number).or_insert(page);
+            }
+        }
+        let mut kept = Vec::new();
+        for (&object, &(page, version)) in &self.now.refields {
+            let change = &self.field_changes[&version];
+            let page = if positions.contains_key(&page) {
+                page
+            } else if let Some(&surviving) = change.field_pages.iter().find_map(|n| baseline.get(n))
+            {
+                surviving
+            } else {
+                continue;
+            };
+            kept.push((page, object, change.clone()));
+        }
+        kept.sort_by_key(|(page, object, _)| (positions[page], *object));
+        kept
     }
 
     /// How many versions of field changes are held. The accounting

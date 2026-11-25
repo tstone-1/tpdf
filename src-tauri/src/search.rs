@@ -110,6 +110,7 @@
 //! by then --- and what makes a line break count as a boundary.
 
 use caseless::Caseless;
+use regex_automata::{meta::Regex, util::syntax, Input};
 
 use crate::text::PageText;
 
@@ -130,6 +131,9 @@ pub struct Options {
     /// characters. A pattern that does not compile is reported rather than
     /// quietly matching nothing --- see [`PageMatches::problem`].
     pub regex: bool,
+    /// Selected scalar interval on this page. Omitted for a full page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<[u32; 2]>,
 }
 
 /// A run of characters matching a query, as half-open character indices into
@@ -218,6 +222,10 @@ pub struct Carry {
     pub page: u32,
     /// Index in that page of the first of them.
     pub from: u32,
+    /// Earlier source characters may provide word context, but have already
+    /// matched or precede the selection and cannot begin another hit.
+    #[serde(default)]
+    pub available_from: u32,
     /// The characters, in order.
     pub codes: Vec<u32>,
 }
@@ -456,12 +464,15 @@ const PATTERN_SIZE_LIMIT: usize = 1 << 20;
 /// The `i` flag is the fix rather than folding the pattern: it composes with a
 /// haystack that is already lowercase, it leaves every class and escape alone, and
 /// it is what a reader means by "ignore case" on a pattern.
-fn compile(pattern: &str, match_case: bool) -> Result<regex::Regex, String> {
-    regex::RegexBuilder::new(pattern)
-        .case_insensitive(!match_case)
-        .size_limit(PATTERN_SIZE_LIMIT)
-        .dfa_size_limit(PATTERN_SIZE_LIMIT)
-        .build()
+fn compile(pattern: &str, match_case: bool) -> Result<Regex, String> {
+    Regex::builder()
+        .syntax(syntax::Config::new().case_insensitive(!match_case))
+        .configure(
+            Regex::config()
+                .nfa_size_limit(Some(PATTERN_SIZE_LIMIT))
+                .hybrid_cache_capacity(PATTERN_SIZE_LIMIT),
+        )
+        .build(pattern)
         .map_err(|e| {
             // The crate's own message is several lines with a caret diagram in
             // it, which is right for a terminal and wrong for a one-line find
@@ -543,7 +554,7 @@ pub struct Prepared {
     /// The query, folded. Empty means nothing can match --- see [`Prepared::find_in`].
     needle: Folded,
     /// The compiled pattern, on the regex path only.
-    pattern: Option<regex::Regex>,
+    pattern: Option<Regex>,
     options: Options,
     /// Whether a hit may straddle a page break, and how much tail that needs.
     carry: Option<usize>,
@@ -620,7 +631,7 @@ impl Prepared {
     /// Every non-overlapping occurrence in one page's characters.
     #[must_use]
     pub fn find_in(&self, codes: &[u32], page: u32) -> Vec<Match> {
-        find_prepared(self, codes, page, usize::MAX)
+        find_prepared(self, codes, page, 0, usize::MAX)
     }
 
     /// One page's answer, and the break before it when there is a carry.
@@ -637,13 +648,26 @@ impl Prepared {
         carry: Option<&Carry>,
         limit: usize,
     ) -> PageMatches {
-        let tail = self.tail_of(codes, page);
-        // Non-overlapping matches can cross a single break at most once.
-        let mut matches =
-            carry.map_or_else(Vec::new, |carry| find_across(self, codes, page, carry));
-        matches.truncate(limit);
+        let [from, to] = self.options.bounds.unwrap_or([0, u32::MAX]);
+        let mut matches = Vec::new();
+        if let Some(carry) = carry.filter(|_| from == 0 && limit > 0) {
+            matches = find_across(self, codes, page, carry);
+        }
+        let consumed = matches.last().map_or(from, |hit| hit.end);
         if matches.len() < limit {
-            matches.extend(find_prepared(self, codes, page, limit - matches.len()));
+            matches.extend(find_prepared(
+                self,
+                codes,
+                page,
+                consumed,
+                limit - matches.len(),
+            ));
+        }
+        let mut tail = self
+            .tail_of(codes, page)
+            .filter(|_| to as usize >= codes.len());
+        if let Some(tail) = &mut tail {
+            tail.available_from = matches.last().map_or(from, |hit| hit.end);
         }
         PageMatches {
             page,
@@ -663,6 +687,7 @@ impl Prepared {
         Some(Carry {
             page,
             from: from as u32,
+            available_from: 0,
             codes: codes[from..].to_vec(),
         })
     }
@@ -670,7 +695,13 @@ impl Prepared {
 
 /// [`Prepared::find_in`]'s body, a free function so the walk below reads as it
 /// did when the query was rebuilt here.
-fn find_prepared(prepared: &Prepared, codes: &[u32], page: u32, limit: usize) -> Vec<Match> {
+fn find_prepared(
+    prepared: &Prepared,
+    codes: &[u32],
+    page: u32,
+    consumed: u32,
+    limit: usize,
+) -> Vec<Match> {
     let needle = &prepared.needle;
     let options = prepared.options;
     // Nothing this page can say makes a barren query match --- see
@@ -695,52 +726,60 @@ fn find_prepared(prepared: &Prepared, codes: &[u32], page: u32, limit: usize) ->
     // Accepted hits, as half-open indices into the folded sequence.
     let mut spans: Vec<(usize, usize)> = Vec::new();
 
-    if let Some(pattern) = &prepared.pattern {
-        let (haystack, at_byte) = hay.as_str();
-        for found in pattern.find_iter(&haystack) {
-            if found.range().is_empty() {
-                continue;
-            }
-            let at = at_byte[found.start()] as usize;
-            let end = at_byte[found.end()] as usize;
-            // Rejected outright rather than retried one character along, which
-            // is the opposite of the literal path below and is right here:
-            // `find_iter` has already chosen where the hits are, and a reader
-            // who wants a boundary inside a pattern can write `\b`.
-            if whole(at, end) {
-                spans.push((at, end));
-                if spans.len() == limit {
-                    break;
-                }
-            }
-        }
-    } else {
-        let mut at = 0usize;
-        while at + needle.chars.len() <= hay.chars.len() {
+    let [from, to] = options.bounds.unwrap_or([0, u32::MAX]);
+    let mut at = hay
+        .source
+        .partition_point(|source| *source < from.max(consumed));
+    let stop = hay.source.partition_point(|source| *source < to);
+    if at >= stop {
+        return Vec::new();
+    }
+    let regex_hay = prepared.pattern.as_ref().map(|pattern| {
+        let (text, at_byte) = hay.as_str();
+        let byte_end = at_byte.partition_point(|n| (*n as usize) < stop);
+        (pattern, text, at_byte, byte_end)
+    });
+    while at < stop {
+        let (start, end) = if let Some((pattern, text, at_byte, byte_end)) = &regex_hay {
+            // A bounded input retains page context for anchors and word
+            // boundaries, even when a greedy match stops at the selection end.
+            let byte_start = at_byte.partition_point(|n| (*n as usize) < at);
+            let Some(found) = pattern.find(Input::new(text).span(byte_start..*byte_end)) else {
+                break;
+            };
+            (
+                at_byte[found.start()] as usize,
+                at_byte[found.end()] as usize,
+            )
+        } else {
             let end = at + needle.chars.len();
+            if end > stop {
+                break;
+            }
             if hay.chars[at..end] != needle.chars[..] {
                 at += 1;
                 continue;
             }
-            if !whole(at, end) {
-                // One character, not the needle's length. A rejected candidate
-                // is not a match, and the next one may start inside it: `ab-a`
-                // occurs twice in `ab-ab-a`, overlapping, and only the second is
-                // a whole word. Skipping the span would walk past it.
-                //
-                // Collecting the spans first and filtering them afterwards
-                // loses exactly this, and did: the test named for it is what
-                // caught the restructure that introduced the regex path.
-                at += 1;
-                continue;
-            }
-            spans.push((at, end));
-            if spans.len() == limit {
-                break;
-            }
-            // Non-overlapping, which is what a reader counting hits expects:
-            // `aa` occurs once in `aaa`, not twice.
-            at += needle.chars.len();
+            (at, end)
+        };
+        if start == end {
+            at = start + 1;
+            continue;
+        }
+        if !whole(start, end) {
+            // Regex hits follow the engine's non-overlapping iteration. A
+            // literal rejected at a word boundary can overlap a later hit.
+            at = if regex_hay.is_some() { end } else { start + 1 };
+            continue;
+        }
+        spans.push((start, end));
+        if spans.len() == limit {
+            break;
+        }
+        // Several folded letters may come from the same printed character.
+        at = end;
+        while at < stop && hay.source[at] == hay.source[end - 1] {
+            at += 1;
         }
     }
 
@@ -854,6 +893,17 @@ fn find_across(prepared: &Prepared, codes: &[u32], page: u32, carry: &Carry) -> 
         }
 
         let stop = last + 1;
+        let start = carry.from.saturating_add(first as u32);
+        let right_end = (stop - split) as u32;
+        if start < carry.available_from
+            || prepared
+                .options
+                .bounds
+                .is_some_and(|[_, to]| right_end > to)
+        {
+            at += 1;
+            continue;
+        }
         matches.push(Match {
             page: carry.page,
             // Saturating, because `from` is the caller's claim about a page this
@@ -864,8 +914,8 @@ fn find_across(prepared: &Prepared, codes: &[u32], page: u32, carry: &Carry) -> 
             // into a small *plausible* one, so the result would scroll to a real
             // position on the previous page and nothing downstream could tell.
             // Clamped, it stays impossible and reads as the nonsense it is.
-            start: carry.from.saturating_add(first as u32),
-            end: (stop - split) as u32,
+            start,
+            end: right_end,
             end_page: Some(page),
             // Context from the joined text on the left and from this page on the
             // right, which is what a reader sees either side of the break.
@@ -939,24 +989,28 @@ mod tests {
         match_case: false,
         whole_word: false,
         regex: false,
+        bounds: None,
     };
     /// Case distinguished, everything else as `PLAIN`.
     const CASED: Options = Options {
         match_case: true,
         whole_word: false,
         regex: false,
+        bounds: None,
     };
     /// A boundary required at both ends, everything else as `PLAIN`.
     const WORDS: Options = Options {
         match_case: false,
         whole_word: true,
         regex: false,
+        bounds: None,
     };
     /// The query is a pattern, everything else as `PLAIN`.
     const PATTERN: Options = Options {
         match_case: false,
         whole_word: false,
         regex: true,
+        bounds: None,
     };
 
     /// Finds, and asserts the query was runnable at all.
@@ -1075,6 +1129,89 @@ mod tests {
     }
 
     #[test]
+    fn non_overlap_is_measured_on_source_characters_before_the_limit() {
+        for options in [PLAIN, PATTERN] {
+            let search = Prepared::new("s", options).unwrap();
+            assert_eq!(search.find_in(&page("Maß").codes, 0).len(), 1);
+            assert_eq!(search.find_in(&page("Mass").codes, 0).len(), 2);
+            let hits = search
+                .search_page_up_to(&page("Maßs").codes, 0, None, 2)
+                .matches;
+            assert_eq!(
+                hits.iter().map(|m| (m.start, m.end)).collect::<Vec<_>>(),
+                [(2, 3), (3, 4)]
+            );
+        }
+    }
+
+    #[test]
+    fn a_selected_range_is_applied_before_matching_and_preserves_page_context() {
+        for kind in [PLAIN, PATTERN] {
+            let options = Options {
+                bounds: Some([1, 3]),
+                ..kind
+            };
+            let selected = find_in(&page("aaaa"), 0, "aa", options);
+            assert_eq!((selected[0].start, selected[0].end), (1, 3));
+            assert_eq!((&*selected[0].before, &*selected[0].after), ("a", "a"));
+            assert_eq!(find_in(&page("aaa"), 0, "aa", kind)[0].start, 0);
+            assert!(find_in(
+                &page("aaaa"),
+                0,
+                "aa",
+                Options {
+                    whole_word: true,
+                    ..options
+                }
+            )
+            .is_empty());
+        }
+        let options = Options {
+            bounds: Some([1, 3]),
+            ..PATTERN
+        };
+        assert_eq!(find_in(&page("aaaa"), 0, "a+", options)[0].hit, "aa");
+        for query in ["^aa", "aa$", r"\baa", r"aa\b"] {
+            assert!(find_in(&page("aaaa"), 0, query, options).is_empty());
+        }
+    }
+
+    #[test]
+    fn joins_and_whole_page_hits_share_their_consumed_characters() {
+        let search = Prepared::new("go go", PLAIN).unwrap();
+        for pages in [["go", "go go"], ["go go", "go"]] {
+            let first = search.search_page(&page(pages[0]).codes, 0, None);
+            let second = search.search_page(&page(pages[1]).codes, 1, first.tail.as_ref());
+            assert_eq!(first.matches.len() + second.matches.len(), 1, "{pages:?}");
+        }
+        let first = search.search_page(&page("go").codes, 0, None);
+        let second = search.search_page(&page("go go go").codes, 1, first.tail.as_ref());
+        assert_eq!(second.matches.len(), 2);
+        assert_eq!(second.matches[1].start, 3);
+    }
+
+    #[test]
+    fn both_halves_of_a_join_must_be_selected() {
+        let previous =
+            |bounds| search_page(&page("x go"), 3, "go go", Options { bounds, ..PLAIN }, None);
+        let next = |prior: PageMatches, bounds| {
+            search_page(
+                &page("go x"),
+                0,
+                "go go",
+                Options { bounds, ..PLAIN },
+                prior.tail.as_ref(),
+            )
+            .matches
+        };
+        assert!(next(previous(Some([3, 4])), None).is_empty());
+        assert!(next(previous(Some([2, 3])), None).is_empty());
+        assert!(next(previous(None), Some([1, 4])).is_empty());
+        assert!(next(previous(None), Some([0, 1])).is_empty());
+        assert_eq!(next(previous(Some([2, 4])), Some([0, 2])).len(), 1);
+    }
+
+    #[test]
     fn a_match_at_the_very_end_is_found() {
         let text = "journal catalog";
         let found = find_in(&page(text), 0, "catalog", PLAIN);
@@ -1187,7 +1324,8 @@ mod tests {
                 Options {
                     match_case: true,
                     whole_word: true,
-                    regex: false
+                    regex: false,
+                    bounds: None,
                 }
             )
             .len(),
@@ -1439,6 +1577,7 @@ mod tests {
         let carry = Carry {
             page: 0,
             from: u32::MAX - 5,
+            available_from: 0,
             codes: "at the foot: raster".chars().map(|ch| ch as u32).collect(),
         };
         let found = search_page(

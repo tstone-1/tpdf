@@ -317,6 +317,25 @@ export class Stage<T, Id extends number = number> {
   }
 
   /**
+   * Starts committing drafts before yielding. Views of the same file share an
+   * edit model, so a reload must settle every view holding that model. Window
+   * operations that replace the whole workspace pass undefined to settle all.
+   */
+  async settleDrafts<M extends object>(
+    only: M | null | undefined,
+    model: () => M | null,
+    settle: (restoreFocus: boolean) => Promise<void>,
+  ): Promise<void> {
+    const pending: Promise<void>[] = [];
+    const start = (focused: boolean) => {
+      if (only === undefined || (only !== null && only === model())) pending.push(settle(focused));
+    };
+    start(true);
+    for (const id of this.parked) this.within(id, () => start(false));
+    await Promise.all(pending);
+  }
+
+  /**
    * Runs `work` once as every mounted document: the one in the slots first,
    * then each parked one through {@link within}.
    *

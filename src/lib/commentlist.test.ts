@@ -64,8 +64,8 @@ describe("CommentList", () => {
     dom.restore();
   });
 
-  function panel(): CommentList {
-    return new CommentList(dom.root as unknown as HTMLElement, {
+  function panel(host = dom.root as unknown as HTMLElement): CommentList {
+    return new CommentList(host, {
       onPick: (id) => picked.push(id),
     });
   }
@@ -114,12 +114,30 @@ describe("CommentList", () => {
   it("names the row a reply answers, and only when that row is there", () => {
     const list = panel();
     list.setComments(comments([comment({ id: 0 }), comment({ id: 1, reply_to: 0 })]));
-    expect(list.elementFor(1)?.getAttribute("aria-describedby")).toBe("tpdf-comment-0");
+    expect(list.elementFor(0)?.id).toBeTruthy();
+    expect(list.elementFor(1)?.getAttribute("aria-describedby")).toBe(list.elementFor(0)?.id);
     // The control: a reply whose parent is not in the list is drawn as a root,
     // and naming an element that is not there tells a screen reader to read
     // nothing.
     list.setComments(comments([comment({ id: 5, reply_to: 4 })]));
     expect(list.elementFor(5)?.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("resolves replies to their own panel when comment ids repeat in two panes", () => {
+    const lists = ["left", "right"].map(id => {
+      const host = document.createElement("div");
+      host.id = id;
+      (dom.root as unknown as HTMLElement).appendChild(host);
+      const list = panel(host);
+      list.setComments(comments([comment({ id: 0, body: id }), comment({ id: 1, reply_to: 0 })]));
+      return list;
+    });
+    const rows = lists.flatMap(list => [list.elementFor(0)!, list.elementFor(1)!]);
+    expect(new Set(rows.map(row => row.id)).size).toBe(rows.length);
+    for (const list of lists) {
+      const target = list.elementFor(1)!.getAttribute("aria-describedby");
+      expect(rows.find(row => row.id === target)).toBe(list.elementFor(0));
+    }
   });
 
   it("is one tab stop", () => {
@@ -251,6 +269,22 @@ describe("CommentList", () => {
     list.setWords(new Map([[1, "first page"]]));
     list.setWords(new Map([[2, "second page"]]));
     expect(list.rowText(1).body).toBe("first page");
+    expect(list.rowText(2).body).toBe("second page");
+  });
+
+  it("leaves a previous page's row untouched when new words arrive", () => {
+    const list = panel();
+    list.setComments(comments([1, 2].map(id =>
+      comment({ id, page: id, kind: "highlight", body: "", quads: BARE_QUADS }))));
+    list.setWords(new Map([[1, "first page"]]));
+    const body = list.elementFor(1)!.children[1]!.children[0]!;
+    let writes = 0;
+    Object.defineProperty(body, "textContent", {
+      get: () => "first page",
+      set: () => { writes++; },
+    });
+    list.setWords(new Map([[2, "second page"]]));
+    expect(writes).toBe(0);
     expect(list.rowText(2).body).toBe("second page");
   });
 

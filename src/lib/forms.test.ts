@@ -4,6 +4,7 @@ import {
   ringFrom,
   type FormWidget,
 } from "./forms";
+import { controlRect } from "./savedfields";
 import { FakeElement, installFakeDom, type FakeDom } from "./testdom";
 
 const text: FormWidget = {
@@ -492,6 +493,27 @@ describe("Tab in the form's controls", () => {
 
     expect(clicked).toEqual([2]);
     expect(inputs.map((input) => input.focused)).toEqual([false, false, true]);
+    layer.destroy();
+  });
+
+  it("tabs to a moved field after scrolling its effective rectangle into view", () => {
+    const second: FormWidget = { ...text, object: [30, 0], widget: [30, 0] };
+    const state = { fields: [{ object: second.widget, page: 0, removed: false,
+      rect: [10, 1520, 110, 1540] as [number, number, number, number] }] };
+    let scroll = 0;
+    const layer = new FormLayer(dom.root as unknown as HTMLElement, { widgets: [text, second] },
+      (widget) => {
+        const [left, top, right, bottom] = controlRect(widget, false, state)!;
+        return { left, right, top: top - scroll, bottom: bottom - scroll };
+      }, async () => {}, (widget) => { scroll = controlRect(widget, false, state)![1]; }, () => {});
+    const node = dom.root.children[0]!;
+    node.clientHeight = 700;
+    layer.layout();
+    expect(node.children[1]!.style.display).toBe("none");
+    node.children[0]!.dispatch("keydown", { key: "Tab", shiftKey: false, preventDefault() {} });
+    expect(scroll).toBe(1520);
+    expect(node.children[1]!.style.display).toBe("block");
+    expect(node.children[1]!.focused).toBe(true);
     layer.destroy();
   });
 

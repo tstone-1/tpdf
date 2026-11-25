@@ -237,10 +237,12 @@ export class AccessibleText {
     }
 
     for (const page of [...wanted].sort((a, b) => a - b)) {
-      if (this.pages.has(page)) continue;
-      const content = text(page);
-      if (!content) continue;
       const cannotRead = unreadable(page);
+      const previous = this.built.get(page);
+      if (previous?.unreadable === cannotRead) continue;
+      const content = previous?.content ?? text(page);
+      if (!content) continue;
+      if (previous) this.invalidatePage(page);
       const element = this.build(page, content, cannotRead);
       this.pages.set(page, element);
       this.built.set(page, { content, unreadable: cannotRead });

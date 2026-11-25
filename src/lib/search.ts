@@ -123,22 +123,8 @@ export interface ScopeRange {
 /**
  * Where a scan may look, or `null` for the whole document.
  *
- * ## It is filtered here rather than in the backend
- *
- * `search.rs` could take a range and refuse to look outside it, and the result
- * would be identical --- a hit is in scope when it lies entirely inside the
- * range, and that test needs nothing the frontend does not have. What the
- * backend *would* change is two things that should not change: the whole-word
- * boundary is decided by the characters either side of a hit on the **page**,
- * so a selection cutting through the middle of a word must not make that half a
- * whole word; and a snippet's context is the page's text around the hit, which
- * is what a reader wants to see even when the words either side were not
- * selected. Both are right by default when the scope is applied to the results
- * and wrong by default when it is applied to the haystack.
- *
- * The scan cost is unchanged: the pages outside the scope are never asked
- * about, which is the part that would have mattered, and that is a decision
- * about the walk rather than about the matching.
+ * The matcher receives the selected interval before it accepts non-overlapping
+ * hits. Snippets and word boundaries still use the surrounding page text.
  *
  * ## It is a snapshot, not a live reading of the selection
  *
@@ -160,6 +146,7 @@ export type SearchScope = ScopeRange[];
 export interface Carry {
   page: number;
   from: number;
+  availableFrom?: number;
   codes: number[];
 }
 
@@ -219,12 +206,8 @@ export const RUN_PAGES = 16;
  * pages that do not touch.
  *
  * Returns the *slots*, and a run of one is the caller's signal to use the
- * single-page path. An entry's `from` and `to` are not read here: a page scoped
- * to part of itself joins a run like any other, because the backend is asked
- * about whole pages on both paths and the scope is applied afterwards, by the
- * one `file` both paths share. A hit spanning a break is clipped there against
- * the entry of the page it starts on and the entry of the page it ends on,
- * whichever request it came back in.
+ * single-page path. A run shares one set of search options, so a different
+ * selected interval also starts a new run.
  */
 export function runFrom(
   plan: ScopeRange[],
@@ -232,10 +215,12 @@ export function runFrom(
   addressOf: (slot: number) => PageAddress | undefined,
 ): number[] {
   const run: number[] = [];
+  const first = plan[at];
   let previous: PageAddress | undefined;
   for (let step = at; step < plan.length && run.length < RUN_PAGES; step++) {
     const entry = plan[step];
     if (entry === undefined) break;
+    if (first && (entry.from !== first.from || entry.to !== first.to)) break;
     const source = addressOf(entry.page);
     if (source === undefined) break;
     const last = run[run.length - 1];
@@ -331,28 +316,9 @@ export class Search {
   /** Bumped by every `run` and `cancel`; replies from an older one are dropped. */
   private generation = 0;
 
-  /**
-   * Per-page character-mapping verdicts, or null until the backend is asked.
-   *
-   * Asked for at most once per document. **Not once per search**, and an earlier
-   * version of this comment claimed a reader who finds hits never pays for it,
-   * which stopped being true the moment the accessibility layer became the
-   * second consumer: `Viewer.syncAccessibleText` calls `ensureMapping` every
-   * frame, so in practice the fetch happens on the first frame after open, for
-   * any document that renders text.
-   *
-   * That is affordable because it was measured rather than assumed --- 0.1 ms to
-   * 11.9 ms across the fixtures, tracking object count rather than file size ---
-   * and because it is off the startup path, which is where the ~25 ms of margin
-   * against the 300 ms target lives.
-   */
-  private mapping: PageMapping[] | null = null;
-
-  /** Whether the backend has already been asked, so it is asked at most once. */
-  private mappingAsked = false;
-
-  /** Whether the backend has *answered*, either way. */
-  private mappingSettled = false;
+  private readonly mappings = new Map<number, PageMapping[] | null>();
+  private readonly mappingRequests = new Map<number, Promise<void>>();
+  private mappingSummary: { documents: Set<number>; guessed: PageAddress[] } | null = null;
 
   /** The query being scanned for, or "". */
   query = "";
@@ -438,7 +404,7 @@ export class Search {
       page: filePage(slot),
     }),
     private readonly ask: (args: Commands["search_page"]["args"]) => Promise<PageMatches> = args => call("search_page", args),
-    private readonly recovered: (page: FilePage) => boolean = () => false,
+    private readonly recovered: (doc: number, page: FilePage) => boolean = () => false,
   ) {
     this.doc = doc;
     this.pageCount = pageCount;
@@ -474,6 +440,7 @@ export class Search {
     // where its pages went, for the reason the matches are: a selection over
     // three pages one of which is gone, or which no longer follow one another,
     // is not a selection the reader made.
+    this.mappingSummary = null;
     this.scope = null;
     this.clear();
   }
@@ -490,69 +457,52 @@ export class Search {
     return this.scanned > 0 && this.charsSeen === 0;
   }
 
-  /**
-   * How many pages store text no search can read.
-   *
-   * Zero until a completed scan has found nothing and the backend has answered,
-   * so a reader who finds hits is never told about it. Zero also when the
-   * question could not be settled --- an unreadable page and an *unknown* page
-   * are different, and only the first is worth interrupting a reader over. The
-   * unknown case is deliberately silent rather than cautious: a warning on every
-   * encrypted document, which `lopdf` cannot paginate, would be a false alarm
-   * far more often than a true one.
-   */
+  /** Count the searched slots, including repeated placements and imported pages.
+   * A known unreadable page qualifies both a positive and a zero hit count.
+   * Unknown mappings produce no claim about the page. */
   get unsearchablePages(): number {
-    if (this.mapping === null) return 0;
-    return this.mapping.filter((page, index) => page.guessing > 0 && !this.recovered(filePage(index))).length;
+    return this.scopedMappings().guessed.filter(at => !this.recovered(at.doc, at.page)).length;
   }
 
-  /**
-   * Whether this page's text is PDFium's guess rather than the document's.
-   *
-   * False until the mapping has been fetched, and false for a page nobody could
-   * judge --- unknown is not unreadable. Used by the accessibility layer, which
-   * would otherwise read the guess aloud as though it were the page.
-   */
-  unreadablePage(source: FilePage): boolean {
-    // A page of the *file*, unlike everything else here: the mapping comes from
-    // `document_mapping`, which reports one entry per page of the file, and it
-    // does not change when a page is deleted.
-    const entry = this.mapping?.[source];
+  private scopedMappings(): { documents: Set<number>; guessed: PageAddress[] } {
+    if (this.mappingSummary) return this.mappingSummary;
+    const documents = new Set<number>();
+    const guessed: PageAddress[] = [];
+    const count = this.scope?.length ?? this.pageCount;
+    for (let i = 0; i < count; i++) {
+      const at = this.addressOf(this.scope?.[i]?.page ?? i);
+      if (!at) continue;
+      documents.add(at.doc);
+      if (this.guessed(at)) guessed.push(at);
+    }
+    return this.mappingSummary = { documents, guessed };
+  }
+
+  private guessed(at: PageAddress): boolean {
+    const entry = this.mappings.get(at.doc)?.[at.page];
     return entry !== undefined && entry.guessing > 0;
   }
 
-  /**
-   * Whether the backend has answered, either way.
-   *
-   * For the check harness, and it is what makes that check able to fail. Almost
-   * every document has no unreadable page, so the assertion there is a negative
-   * one --- "the reader is told nothing" --- and a negative assertion made before
-   * the answer has arrived is satisfied by the answer never arriving. Waiting on
-   * `unsearchablePages` instead cannot serve: on those documents the value it
-   * would wait for is the value it starts at.
-   *
-   * True after a failed fetch as well as a successful one. The distinction this
-   * draws is asked-and-answered against still-in-flight; what the answer *was*
-   * is `unsearchablePages`, which reports zero for "clean" and for "nobody
-   * knows" alike, deliberately.
-   */
-  get mappingKnown(): boolean {
-    return this.mappingSettled;
+  unreadablePage(at: PageAddress): boolean {
+    return this.guessed(at) && !this.recovered(at.doc, at.page);
   }
 
-  /**
-   * Fetches the mapping if it has not been fetched, and repaints if it changed.
-   *
-   * Public because there are two consumers and only one of them is a search.
-   * The accessibility layer needs it for every document it renders text for, not
-   * only for a search that found nothing --- a screen-reader user who never
-   * searches would otherwise be read the guess aloud, which is the worst of the
-   * three symptoms and the one whose reader can least easily tell.
-   *
-   * Safe to call every frame: the fetch happens at most once per document.
-   */
-  ensureMapping(): void {
-    void this.learnMapping(this.generation);
+  /** True once all documents represented in the scope have answered. */
+  get mappingKnown(): boolean {
+    return [...this.scopedMappings().documents].every(doc => this.mappings.has(doc));
+  }
+
+  ensureMapping(doc = this.doc): Promise<void> {
+    let requested = this.mappingRequests.get(doc);
+    if (!requested) {
+      requested = call("document_mapping", { doc }).catch(() => null).then(mapping => {
+        this.mappings.set(doc, mapping);
+        this.mappingSummary = null;
+        this.onChange();
+      });
+      this.mappingRequests.set(doc, requested);
+    }
+    return requested;
   }
 
   /** Abandons any scan in progress. */
@@ -606,6 +556,7 @@ export class Search {
     this.unread = 0;
     this.problem = "";
     this.scope = scope;
+    this.mappingSummary = null;
     this.toScan = scope ? scope.length : this.pageCount;
     if (!query) {
       this.onChange();
@@ -616,22 +567,16 @@ export class Search {
     this.startedAt = performance.now();
     this.onChange();
 
-    // Two walks, and the difference is not only which pages. The unscoped one
-    // starts where the reader is and **wraps**, so the first hit shown is the
-    // next one after them rather than the first in the document. A scoped one
-    // does not wrap: the pages are the selection's, in reading order, and
-    // starting in the middle of a selection the reader just made would be
-    // answering a question nobody asked.
-    const plan: ScopeRange[] =
-      scope ??
-      Array.from({ length: this.pageCount }, (_unused, step) => ({
-        page:
-          (Math.max(0, Math.min(from, this.pageCount - 1)) + step) %
-          this.pageCount,
-        from: 0,
-        to: Infinity,
-      }));
-
+    // A phrase crossing into the current page can consume its first words.
+    // Resolve such matches in document order, then wrap their presentation.
+    // A simple word or pattern can still start scanning at the visible page.
+    const startPage = Math.max(0, Math.min(from, this.pageCount - 1));
+    const documentOrder = !options.regex && /\p{White_Space}/u.test(query);
+    const scanFrom = documentOrder ? 0 : startPage;
+    const plan: ScopeRange[] = scope ?? Array.from({ length: this.pageCount }, (_, step) => ({
+      page: (scanFrom + step) % this.pageCount, from: 0, to: Infinity,
+    }));
+    const beforeStart: Match[] = [];
     /**
      * The tail of the page scanned last, and which page that was.
      *
@@ -643,17 +588,17 @@ export class Search {
      */
     let carried: { page: number; carry: Carry } | null = null;
 
-    /** Where each page's scope ends, for clipping a hit that spans a break. */
+    /** Translate the UI's unbounded endpoint into the matcher's scalar index space. */
     const limitOn = new Map(plan.map((entry) => [entry.page, entry]));
 
-    /**
-     * Asks about one page and files what comes back. Returns "keep going".
-     *
-     * `joinsOnly` is for the second look at the page the walk began on: that
-     * page has already been scanned and counted, so only the hits that cross
-     * into it from the page before are new.
-     */
-    const visit = async (page: number, joinsOnly = false): Promise<boolean> => {
+    const optionsOn = (page: number): Commands["search_page"]["args"]["options"] => {
+      const range = limitOn.get(page);
+      return !range || (range.from === 0 && range.to === Infinity) ? options
+        : { ...options, bounds: [range.from, Math.min(range.to, 0xffffffff)] };
+    };
+
+    /** Asks about one page and files what comes back. */
+    const visit = async (page: number): Promise<boolean> => {
       const carry = carried?.page === page - 1 ? carried.carry : undefined;
       let result: PageMatches | null = null;
       // A slot with no page behind it, which a scan planned before an edit can
@@ -666,7 +611,7 @@ export class Search {
           doc: source.doc,
           page: source.page,
           query,
-          options,
+          options: optionsOn(page),
           carry,
         });
       } catch {
@@ -684,7 +629,7 @@ export class Search {
       // the search that is running now.
       if (generation !== this.generation) return false;
 
-      return file(page, result, joinsOnly);
+      return file(page, result);
     };
 
     /**
@@ -722,7 +667,7 @@ export class Search {
           page: sources[0] as FilePage,
           pages: sources,
           query,
-          options,
+          options: optionsOn(first),
           carry,
         });
       } catch {
@@ -732,7 +677,7 @@ export class Search {
 
       const answers = runAnswers(slots, reply);
       for (const { slot, answer } of answers) {
-        if (!file(slot, answer, false)) return -1;
+        if (!file(slot, answer)) return -1;
       }
       return answers.length;
     };
@@ -748,7 +693,6 @@ export class Search {
     const file = (
       page: number,
       result: PageMatches | null,
-      joinsOnly: boolean,
     ): boolean => {
       if (result?.problem) {
         // A property of the query, not of this page, so there is nothing to be
@@ -762,30 +706,13 @@ export class Search {
 
       carried = result?.tail ? { page, carry: result.tail } : null;
 
-      if (!joinsOnly) this.scanned++;
+      this.scanned++;
       if (result) {
-        if (!joinsOnly) this.charsSeen += result.chars;
-        // Entirely inside, not merely overlapping. A hit half of which the
-        // reader did not select is not a hit in their selection, and
-        // highlighting it would paint outside the range they drew.
-        //
-        // A hit that spans a break is measured against *two* entries: its start
-        // against the page it starts on and its end against the page it ends
-        // on. Reading both against this page would compare an index on one page
-        // with a limit belonging to another, which is the kind of arithmetic
-        // that produces a plausible answer and a wrong one.
-        const inScope = inSlots(result.matches, page).filter((m) => {
-          if (joinsOnly && m.endPage === undefined) return false;
-          const startsIn = limitOn.get(m.page);
-          const endsIn = limitOn.get(m.endPage ?? m.page);
-          return (
-            startsIn !== undefined &&
-            endsIn !== undefined &&
-            m.start >= startsIn.from &&
-            m.end <= endsIn.to
-          );
-        });
-        if (inScope.length > 0) this.matches.push(...inScope);
+        this.charsSeen += result.chars;
+        for (const hit of inSlots(result.matches, page)) {
+          if (!scope && documentOrder && hit.page < startPage) beforeStart.push(hit);
+          else this.matches.push(hit);
+        }
       }
       this.onChange();
       return true;
@@ -822,62 +749,12 @@ export class Search {
       at += 1;
     }
 
-    // The one break a wrapped walk never looked across. Starting at page 400
-    // means 399 is scanned last, so the join between 399 and 400 --- the one
-    // immediately behind the reader --- is the only one with no request after
-    // it. One more request closes it, and only cross-page hits are taken from
-    // the reply: page 400's own hits are already in the list from the first
-    // step, and adding them again would double them.
-    const first = plan[0];
-    const wrapped = scope === null && plan.length > 1 && first !== undefined && first.page > 0;
-    if (wrapped && carried !== null) {
-      if (!(await visit(first.page, true))) return;
-    }
-
+    for (const hit of beforeStart) this.matches.push(hit);
     this.running = false;
     this.elapsedMs = performance.now() - this.startedAt;
     this.onChange();
 
-    // The scan is over and found nothing, which is the one moment "No matches."
-    // can be a lie: a page whose fonts state no character mapping was never
-    // searchable, and it looks exactly like a page that simply does not contain
-    // the query.
-    //
-    // **This call is redundant today and is kept deliberately.** The frame loop
-    // calls `ensureMapping` for the accessibility layer, so by the time any scan
-    // finishes the answer is already here -- a mutation deleting the condition
-    // below survives every test, and that is the correct result rather than a
-    // gap. It stays because the alternative is for this module's correctness to
-    // depend silently on another module's frame-loop policy: if the
-    // accessibility layer ever becomes conditional, search would stop learning
-    // the fact and nothing here would fail. `AGENTS.md` records that exact
-    // shape -- an impossibility enforced in a different module is not a guard to
-    // delete.
-    if (this.matches.length === 0) await this.learnMapping(generation);
-  }
-
-  /**
-   * Asks the backend which pages store unreadable text, at most once.
-   *
-   * `generation` guards the repaint, not the fetch: a newer scan may have
-   * started while this was in flight, and repainting then would show the older
-   * scan's conclusion over the newer scan's results. The *answer* is still worth
-   * keeping, because it describes the document rather than the query.
-   */
-  private async learnMapping(generation: number): Promise<void> {
-    if (this.mappingAsked) return;
-    this.mappingAsked = true;
-    try {
-      this.mapping = await call("document_mapping", {
-        doc: this.doc,
-      });
-    } catch {
-      // Unknown, not clean. `unsearchablePages` reports 0 either way, and the
-      // reader is told nothing rather than told something false.
-      this.mapping = null;
-    }
-    this.mappingSettled = true;
-    if (generation === this.generation) this.onChange();
+    await Promise.all([...this.scopedMappings().documents].map(doc => this.ensureMapping(doc)));
   }
 }
 

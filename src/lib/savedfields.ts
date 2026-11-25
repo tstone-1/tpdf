@@ -73,7 +73,7 @@ export interface FieldEdited {
 export interface FieldTarget {
   object: [number, number];
   page: number;
-  patch: { rect?: [number, number, number, number]; name?: string; removed?: boolean; props?: FieldProps; value?: string };
+  patch: { field_pages?: number[]; rect?: [number, number, number, number]; name?: string; removed?: boolean; props?: FieldProps; value?: string };
 }
 
 type Rect = [number, number, number, number];
@@ -83,6 +83,18 @@ const same = (a: readonly [number, number], b: readonly [number, number]): boole
 
 function editOf(widget: FormWidget, state: Pick<EditState, "fields">): FieldEdited | undefined {
   return state.fields?.find((edit) => same(edit.object, widget.widget));
+}
+
+function sharedEdit(widget: FormWidget, state: Pick<EditState, "fields">): FieldEdited | undefined {
+  return state.fields?.find((edit) => same(edit.object, widget.object));
+}
+
+/** Field properties belong to the terminal field even when its widgets span pages. */
+function sharedTarget(form: Form, found: { widget: FormWidget; page: PageId }, patch: FieldTarget["patch"]): FieldTarget {
+  const { widget, page } = found;
+  if (same(widget.object, widget.widget)) return target(found, patch);
+  const pages = form.widgets.filter((other) => same(other.object, widget.object)).map((other) => other.page);
+  return { object: widget.object, page, patch: { ...patch, field_pages: [...new Set(pages)] } };
 }
 
 /** The last part of a field's full name, which is the part a rename changes. */
@@ -132,9 +144,10 @@ export function asMarks(form: Form, state: Pick<EditState, "fields" | "pages">):
       strokes: [],
       color: [0.1, 0.35, 0.75],
       width: INK_WIDTH,
-      note: edit?.name ?? leafName(widget.name),
+      note: sharedEdit(widget, state)?.name ?? leafName(widget.name),
       lines: [],
       field: { kind, border: false },
+      fieldUnit: widget.unit ?? 1,
     } satisfies MarkView];
   });
 }
@@ -225,12 +238,12 @@ export function renamed(
   const taken = top && (
     others.some((other) => {
       const edit = editOf(other, state);
-      return !edit?.removed && (edit?.name ?? other.name) === name;
+      return !edit?.removed && (sharedEdit(other, state)?.name ?? other.name) === name;
     })
     || state.marks.some((mark) => mark.kind === "field" && mark.note === name)
   );
   if (taken) return TEXT().nameTaken(name);
-  return target(found, { name });
+  return sharedTarget(form, found, { name });
 }
 
 /**
@@ -286,14 +299,11 @@ export function properties(
   const found = named(form, state, id);
   if (!found) return null;
   const { widget } = found;
-  // A field has one set, held under whichever of its widgets was changed.
-  const edits = (state.fields ?? []).filter((edit) =>
-    form.widgets.some((other) => same(other.widget, edit.object) && same(other.object, widget.object)));
-  const changed = <K extends keyof FieldProps>(part: K): FieldProps[K] | undefined =>
-    edits.map((edit) => edit.props?.[part]).find((value) => value !== undefined);
+  const shared = sharedEdit(widget, state);
+  const changed = <K extends keyof FieldProps>(part: K): FieldProps[K] | undefined => shared?.props?.[part];
   const kind = widget.control.kind;
   return {
-    name: editOf(widget, state)?.name ?? leafName(widget.name),
+    name: shared?.name ?? leafName(widget.name),
     tooltip: changed("tooltip") ?? widget.tooltip ?? "",
     required: changed("required") ?? widget.required ?? false,
     readOnly: changed("read_only") ?? widget.read_only ?? false,
@@ -371,14 +381,7 @@ export function propertied(
   // A button's value is its own and not the group's: `revalued` makes that change.
   if (now.single) delete props.options;
   if (Object.keys(props).length === 0) return null;
-  // A field shown in several places has one set of properties, and the save
-  // refuses two. So the change is always made under the same widget: the
-  // field's first that is still there.
-  const first = form.widgets
-    .filter((other) => same(other.object, found.widget.object) && !editOf(other, state)?.removed)
-    .map((other) => ({ widget: other, page: pageOf(other, state.pages) }))
-    .find((other): other is { widget: FormWidget; page: PageId } => other.page !== undefined);
-  return target(first ?? found, { props });
+  return sharedTarget(form, found, { props });
 }
 
 /**
@@ -467,15 +470,16 @@ export function controlRect(
  * of the file, which a deleted page still has.
  */
 export function redrawn(
-  widgets: readonly Pick<FormWidget, "widget" | "page">[],
+  widgets: readonly Pick<FormWidget, "widget" | "object" | "page">[],
   before: readonly FieldEdited[],
   after: readonly FieldEdited[],
 ): number[] {
-  const of = (edits: readonly FieldEdited[], widget: readonly [number, number]) =>
-    JSON.stringify(edits.find((edit) => same(edit.object, widget)) ?? null);
-  const pages = widgets
-    .filter(({ widget }) => of(before, widget) !== of(after, widget))
-    .map(({ page }) => page);
+  const changes = (edits: readonly FieldEdited[]) =>
+    new Map(edits.map((edit) => [edit.object.join(":"), JSON.stringify(edit)]));
+  const previous = changes(before), next = changes(after);
+  const changed = (key: string) => previous.get(key) !== next.get(key);
+  const pages = widgets.filter((widget) => changed(widget.widget.join(":")) || changed(widget.object.join(":")))
+    .map((widget) => widget.page);
   return [...new Set(pages)];
 }
 

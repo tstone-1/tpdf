@@ -109,8 +109,8 @@ ROWS += [
         # whose mock numbered hits by slot, had passed.
         "search: file hits under the backend's file page",
         "src/lib/search.ts",
-        "const inScope = inSlots(result.matches, page).filter",
-        "const inScope = result.matches.filter",
+        "for (const hit of inSlots(result.matches, page)) {",
+        "for (const hit of result.matches) {",
         "asks the file each page is drawn from, and finds a match on the imported one",
     ),
     Mutation(
@@ -385,14 +385,14 @@ ROWS += [
         # Same gap `encoding::` had in `mutate_rust.py`, on the other side.
         "mapping: report a page nobody could judge as unreadable",
         "src/lib/search.ts",
-        "    return this.mapping.filter((page, index) => page.guessing > 0 && !this.recovered(filePage(index))).length;",
-        "    return this.mapping.filter((page, index) => (page.guessing > 0 || page.truncated) && !this.recovered(filePage(index))).length;",
+        "    return entry !== undefined && entry.guessing > 0;",
+        "    return entry !== undefined && (entry.guessing > 0 || entry.truncated);",
         "does not count a page nobody could judge",
     ),
     Mutation(
         "mapping: never say the backend has answered",
         "src/lib/search.ts",
-        "    this.mappingSettled = true;",
+        "        this.mappings.set(doc, mapping);",
         "",
         "says whether the question has been answered",
     ),
@@ -402,8 +402,8 @@ ROWS += [
         # harness that waits on it.
         "mapping: say the backend has answered before it is asked",
         "src/lib/search.ts",
-        "  private mappingSettled = false;",
-        "  private mappingSettled = true;",
+        "    return [...this.scopedMappings().documents].every(doc => this.mappings.has(doc));",
+        "    return true;",
         "says whether the question has been answered",
     ),
     Mutation(
@@ -831,8 +831,8 @@ ROWS += [
         # screen reader to read nothing, which is worse than the indent alone.
         "comments: name a parent row that is not there",
         "src/lib/commentlist.ts",
-        "    if (comment.reply_to !== null && this.elements.has(comment.reply_to)) {",
-        "    if (comment.reply_to !== null) {",
+        "comment.reply_to === null ? undefined : this.elements.get(comment.reply_to);",
+        'comment.reply_to === null ? undefined : (this.elements.get(comment.reply_to) ?? { id: "absent" });',
         "names the row a reply answers, and only when that row is there",
     ),
     Mutation(
@@ -1148,33 +1148,27 @@ ROWS += [
         "does not ask for a page whose comments all have bodies",
     ),
     Mutation(
-        # Replace the words already known instead of merging. Each call carries
-        # one page, so the panel then shows only the page that answered last.
-        "commentlist: forget the pages that answered before this one",
-        "src/lib/commentlist.ts",
-        "    for (const [id, covered] of words) this.words.set(id, covered);",
-        "    this.words.clear();\n    for (const [id, covered] of words) this.words.set(id, covered);",
-        "keeps the words already known when a later page answers",
-    ),
-    Mutation(
-        # Rebuild the list rather than rewriting the row. Correct in what it
-        # shows and it drops the scroll position and the focused element under
-        # a reader, once per page that answers.
+        # Rebuilding on each answer drops the focus and earlier pages' text.
         "commentlist: repaint the whole list when a page's words arrive",
         "src/lib/commentlist.ts",
-        "      const body = bodyOf(this.elements.get(comment.id));",
-        "      this.paint();\n      const body = bodyOf(this.elements.get(comment.id));",
+        "    for (const [id, covered] of words) {",
+        "    this.paint();\n    for (const [id, covered] of words) {",
         "rewrites the row rather than rebuilding the list",
     ),
     Mutation(
-        # Keep one document's covered words across an open. Ids start again with
-        # each document, so they land on whatever holds that id next -- and read
-        # perfectly plausibly.
-        "commentlist: carry covered words into the next document",
+        # Rewriting other pages leaves the same text but costs a DOM write per row.
+        "commentlist: rewrite untouched rows each time another page answers",
         "src/lib/commentlist.ts",
-        "    this.words.clear();\n    this.focused = null;",
-        "    this.focused = null;",
-        "does not carry one document's words onto the next document's rows",
+        "      const row = this.wordRows.get(id);",
+        "      for (const other of this.wordRows.values()) other.body.textContent = other.body.textContent;\n      const row = this.wordRows.get(id);",
+        "leaves a previous page's row untouched when new words arrive",
+    ),
+    Mutation(
+        "commentlist: give split panes the same comment ids",
+        "src/lib/commentlist.ts",
+        '    element.id = `${this.prefix}-row-${comment.id}`;',
+        '    element.id = `row-${comment.id}`;',
+        "resolves replies to their own panel when comment ids repeat in two panes",
     ),
     Mutation(
         # Start the walk at the top of the document rather than at the viewport.

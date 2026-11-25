@@ -4671,9 +4671,8 @@ fn search_orders_matches_by_page_and_position_whichever_query_found_them() {
         Prepared::new(
             query,
             Options {
-                match_case: false,
-                whole_word: false,
                 regex,
+                ..Options::default()
             },
         )
         .expect("compiles")

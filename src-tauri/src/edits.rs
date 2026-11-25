@@ -446,6 +446,9 @@ pub struct FieldEditView {
 /// is absent is left as it is, including as an earlier change left it.
 #[derive(Clone, PartialEq, Debug, Default, Deserialize)]
 pub struct FieldPatch {
+    /// Baseline pages with widgets of a separately addressed terminal field.
+    #[serde(default)]
+    pub field_pages: Vec<u32>,
     /// A new rectangle, `[left, top, right, bottom]` in display space.
     #[serde(default)]
     pub rect: Option<[f32; 4]>,
@@ -889,7 +892,7 @@ impl Edits {
     pub fn render_fields(&self, handle: u32) -> Vec<crate::formedit::FieldEdit> {
         let docs = self.docs.lock().expect("edits lock");
         docs.get(&handle)
-            .map(|open| field_edits(&open.model, |_| true))
+            .map(|open| field_edits(open.model.field_changes()))
             .unwrap_or_default()
     }
 
@@ -2428,6 +2431,17 @@ impl Edits {
                 return Err(said!("that changes nothing about the field"));
             }
             let mut change = model.field_change_of(object).cloned().unwrap_or_default();
+            if !patch.field_pages.is_empty() {
+                if patch.field_pages.len() > 4096
+                    || patch.field_pages.iter().any(|n| *n >= model.baseline())
+                    || patch.rect.is_some()
+                    || patch.removed.is_some()
+                    || patch.value.is_some()
+                {
+                    return Err(said!("Invalid widget pages for a shared field change"));
+                }
+                change.field_pages.clone_from(&patch.field_pages);
+            }
             if let Some(rect) = patch.rect {
                 if !rect.iter().all(|v| v.is_finite()) || rect[2] <= rect[0] || rect[3] <= rect[1] {
                     return Err(said!("that rectangle covers nothing"));
@@ -2896,17 +2910,18 @@ fn planned_sources(model: &Doc, pages: &[PageView]) -> Vec<PlannedSource> {
 /// A change that has come back to nothing --- a field removed and put back,
 /// with no move and no name --- is left out: it asks the writer for nothing.
 fn planned_field_edits(model: &Doc, pages: &[PageView]) -> Vec<crate::formedit::FieldEdit> {
-    let kept: Vec<PageId> = pages.iter().map(|view| PageId::from_raw(view.id)).collect();
-    field_edits(model, |page| kept.contains(&page))
+    field_edits(
+        model.field_changes_on(
+            pages
+                .iter()
+                .map(|page| (PageId::from_raw(page.id), page.source)),
+        ),
+    )
 }
 
-/// The model's changes to the file's own fields on the pages `keep` admits,
-/// without the ones that have come back to nothing.
-fn field_edits(model: &Doc, keep: impl Fn(PageId) -> bool) -> Vec<crate::formedit::FieldEdit> {
-    model
-        .field_changes()
+fn field_edits(changes: Vec<(PageId, ObjectId, FieldChange)>) -> Vec<crate::formedit::FieldEdit> {
+    changes
         .into_iter()
-        .filter(|(page, ..)| keep(*page))
         .filter(|(_, _, change)| {
             change.removed
                 || change.rect.is_some()
@@ -6461,6 +6476,42 @@ mod tests {
         );
         let state = edits.undo(7).expect("undone");
         assert_eq!(state.marks[0].field, Some(Kind::Text.into()));
+    }
+
+    #[test]
+    fn a_shared_field_edit_follows_its_surviving_page_through_undo_and_extraction() {
+        let edits = opened();
+        let pages = edits.state(7).unwrap().pages;
+        let patch = |slot: usize, name: &str| FieldTarget {
+            object: (12, 0),
+            page: pages[slot].id,
+            patch: FieldPatch {
+                name: Some(name.into()),
+                field_pages: vec![0, 1],
+                props: crate::formedit::Props {
+                    tooltip: Some(name.into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        };
+        edits.refield(7, vec![patch(0, "First")], 0).unwrap();
+        let only_second = edits.plan_subset(7, &[1]).unwrap().field_edits;
+        assert_eq!(only_second.len(), 1);
+        assert_eq!(only_second[0].props.tooltip.as_deref(), Some("First"));
+        assert!(edits.plan_subset(7, &[2]).unwrap().field_edits.is_empty());
+        edits.delete(7, pages[0].id).unwrap();
+        assert_eq!(edits.plan(7).unwrap().field_edits, only_second);
+        edits.refield(7, vec![patch(1, "Last")], 0).unwrap();
+        let changed = edits.plan(7).unwrap().field_edits;
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].name.as_deref(), Some("Last"));
+        edits.undo(7).unwrap();
+        assert_eq!(edits.plan(7).unwrap().field_edits, only_second);
+        edits.undo(7).unwrap();
+        assert_eq!(edits.plan(7).unwrap().field_edits, only_second);
+        edits.undo(7).unwrap();
+        assert!(edits.plan(7).unwrap().field_edits.is_empty());
     }
 
     #[test]

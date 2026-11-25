@@ -143,6 +143,8 @@ describe("what a change to a saved field asks for", () => {
     // A field placed in this session and not saved yet holds its name too.
     const placedMark = { kind: "field", note: "Fresh" } as MarkView;
     expect(typeof renamed(FORM, state([], [placedMark]), SAVED_BASE, "Fresh")).toBe("string");
+    const nestedRenamed: FieldEdited[] = [{ object: [14, 0], page: 5, name: "Leaf", removed: false }];
+    expect(typeof renamed(FORM, state(nestedRenamed), SAVED_BASE, "Leaf")).toBe("object");
     // A field inside a group is not compared with the top of the form.
     expect(typeof renamed(FORM, state(), SAVED_BASE + 3, "Name")).toBe("object");
   });
@@ -318,7 +320,7 @@ describe("a saved field's properties", () => {
   });
 
   it("reads a field shown twice the same from either widget", () => {
-    const edits: FieldEdited[] = [{ object: [21, 0], page: 5, removed: false, props: { tooltip: "Both" } }];
+    const edits: FieldEdited[] = [{ object: [20, 0], page: 5, removed: false, props: { tooltip: "Both" } }];
     expect(properties(form, state(edits), id(3))?.tooltip).toBe("Both");
     expect(properties(form, state(edits), id(4))?.tooltip).toBe("Both");
     // And not a field that only shares a page with it.
@@ -351,18 +353,25 @@ describe("a saved field's properties", () => {
     expect(propertied(form, state(), id(9), now)).toBeNull();
   });
 
-  it("changes a field shown twice under its first widget that is still there, whichever was picked", () => {
-    const now = properties(form, state(), id(4))!;
-    const to = { ...now, tooltip: "Both" };
-    expect(propertied(form, state(), id(4), to)?.object).toEqual([21, 0]);
-    expect(propertied(form, state(), id(3), to)?.object).toEqual([21, 0]);
+  it("keeps one shared target after removing a widget or deleting its page", () => {
+    const shared: Form = { widgets: [form.widgets[3]!, { ...form.widgets[4]!, page: 1 }] };
+    const first = SAVED_BASE, second = first + 1;
+    const changed = { ...properties(shared, state(), second)!, tooltip: "Both" };
+    const expected = { props: { tooltip: "Both" }, field_pages: [0, 1] };
+    expect(propertied(shared, state(), first, changed)).toEqual({ object: [20, 0], page: 5, patch: expected });
+    expect(propertied(shared, state(), second, changed)).toEqual({ object: [20, 0], page: 8, patch: expected });
     const gone: FieldEdited[] = [{ object: [21, 0], page: 5, removed: true }];
-    expect(propertied(form, state(gone), id(4), to)).toEqual({
-      object: [22, 0], page: 5, patch: { props: { tooltip: "Both" } },
+    expect(propertied(shared, state(gone), second, changed)?.object).toEqual([20, 0]);
+    expect(propertied(shared, state([], [], [PAGES[0]!]), second, changed)?.object).toEqual([20, 0]);
+    expect(renamed(shared, state(), first, "First")).toEqual({
+      object: [20, 0], page: 5, patch: { name: "First", field_pages: [0, 1] },
     });
-    // On a page that has been deleted there is no widget to change it under.
-    const elsewhere: Form = { widgets: [{ ...form.widgets[3]!, page: 7 }, form.widgets[4]!] };
-    expect(propertied(elsewhere, state(), id(1), to)?.object).toEqual([22, 0]);
+    const edited = state([...gone, { object: [20, 0], page: 5, name: "First", removed: false }]);
+    expect(asMarks(shared, edited)[0]?.note).toBe("First");
+    expect(properties(shared, edited, second)?.name).toBe("First");
+    expect(renamed(shared, edited, second, "Last")).toEqual({
+      object: [20, 0], page: 8, patch: { name: "Last", field_pages: [0, 1] },
+    });
   });
 
   it("sends new choices when one differs, is added or is taken away", () => {

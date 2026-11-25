@@ -25079,6 +25079,13 @@ black fill found* --- stays true of it. The general form: a verification defined
 operation *did* cannot see what it was *asked* to do and did not; check the request as well as
 the result.
 
+A search can also miss visible words before it finds any box at all. Page 1 of
+`encodings.pdf` displays “Encoding probe ABC” while the extracted characters have
+a guessed mapping. The CLI checks each selected page with extracted text against
+the worker's mapping before accepting search results, including during read-back.
+A failed mapping check on the input refuses the operation before any write.
+Region-only requests use the supplied geometry.
+
 ### A probe's unsandboxed control rung ran first and filled the cache its sandboxed rung was meant to find empty
 
 2026-09-27. `ocr-sandbox-probe` ran three rungs as three fresh processes --- the right shape ---

@@ -1414,6 +1414,7 @@ mod tests {
                     match_case: true,
                     whole_word: true,
                     regex: false,
+                    bounds: None,
                 },
                 carry: None,
             },

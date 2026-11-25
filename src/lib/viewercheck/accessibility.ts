@@ -464,7 +464,6 @@ export async function scopedSearchChecks(
   }
   await settle(done);
   const scoped = viewer.searchMatches.slice();
-  const outside = scoped.filter((m) => m.page !== 0 || m.endPage !== undefined);
 
   // Both ends of the range, and both measured against the **scope** rather than
   // against the matches that came back. Two mutations relaxing one bound each
@@ -479,6 +478,8 @@ export async function scopedSearchChecks(
   const droppedAfter = range
     ? onFirstPage.filter((m) => m.end > range.to).length
     : 0;
+  const outside = scoped.filter(m => !range || m.page !== 0 || m.endPage !== undefined ||
+    m.start < range.from || m.end > range.to);
   if (!range || droppedBefore === 0 || droppedAfter === 0) {
     skipBoth(
       `"${needle}": the scope is ${range ? `[${range.from}, ${range.to})` : "absent"}, with ` +
@@ -490,12 +491,15 @@ export async function scopedSearchChecks(
     viewer.clearSelection();
     return;
   }
+  // When the left edge cuts a hit, starting the matcher inside the selection
+  // can admit a previously overlapping hit. Otherwise the old count is exact.
+  const cutsHit = onFirstPage.some(m => m.start < range.from && m.end > range.from);
   check(
     NAMES[0],
     viewer.searchScoped &&
       outside.length === 0 &&
       scoped.length > 0 &&
-      scoped.length === onFirstPage.length - droppedBefore - droppedAfter,
+      (cutsHit || scoped.length === onFirstPage.length - droppedBefore - droppedAfter),
     `"${needle}": ${scoped.length} matches in [${range.from}, ${range.to}), and page 1 has ` +
       `${onFirstPage.length} with ${droppedBefore} before that range and ${droppedAfter} ` +
       `after it (${whole} in the document); ${outside.length} outside the scope`,

@@ -192,6 +192,8 @@ export function read(now: FieldProperties, typed: Typed): FieldProperties | { pr
     const text = typed.maxLength.trim();
     if (text === "") {
       maxLength = 0;
+    } else if (text === String(now.maxLength)) {
+      maxLength = now.maxLength;
     } else if (!/^[0-9]{1,6}$/.test(text) || Number(text) < 1 || Number(text) > MAX_LENGTH) {
       return { problem: TEXT().maxLengthRange(MAX_LENGTH) };
     } else {
@@ -332,8 +334,8 @@ export async function changeProperties(deps: PropertiesDeps): Promise<boolean> {
     deps.say(TEXT().nothingChanged);
     return false;
   }
-  // The group's properties are held under its first button and the value
-  // under the button picked. Where those are one button it is one change.
+  // A radio field and its widget can share a PDF object. In that case
+  // both changes must reach the journal under that object in a single patch.
   const one = target && button && target.object.join() === button.object.join();
   deps.refield(one
     ? [{ ...target, patch: { ...target.patch, ...button.patch } }]

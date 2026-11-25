@@ -156,7 +156,7 @@ impl Props {
 /// One field's widget, and what becomes of it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FieldEdit {
-    /// The widget annotation, as [`Widget::widget`] names it.
+    /// The widget annotation, or its terminal field for a name or property edit.
     pub widget: ObjectId,
     /// Its new rectangle, `[left, top, right, bottom]` in the page's display
     /// space, the space [`Widget::display_rect`] is in. `None` leaves it.
@@ -348,7 +348,7 @@ fn placed(doc: &Document, widget: &Widget, rect: [f32; 4]) -> Result<[f64; 4], S
     }
     let [left, top, right, bottom] = rect.map(f64::from);
     let least = least_side(&widget.control);
-    if right - left < least || bottom - top < least {
+    if (right - left) * widget.unit < least || (bottom - top) * widget.unit < least {
         return Err(said!(
             "`{name}`: a field of this kind is at least {least} by {least_high} points",
             least_high = least
@@ -448,67 +448,6 @@ fn siblings(doc: &Document, field: ObjectId) -> Option<List> {
         Ok(parent) => list_at(doc, parent, b"Kids"),
         Err(_) => form_list(doc, b"Fields"),
     }
-}
-
-/// The fields beside `field` in its list, each with its own name; `field`
-/// itself left out.
-fn fields_beside(doc: &Document, field: ObjectId) -> Vec<(ObjectId, String)> {
-    let entries: Vec<Object> = match siblings(doc, field) {
-        Some(List::Array(id)) => doc.get_object(id).and_then(Object::as_array).ok().cloned(),
-        Some(List::Key(owner, key)) => doc
-            .get_dictionary(owner)
-            .ok()
-            .and_then(|dict| dict.get(key).and_then(Object::as_array).ok().cloned()),
-        Some(List::CatalogForm(root, key)) => doc
-            .get_dictionary(root)
-            .ok()
-            .and_then(|dict| dict.get(b"AcroForm").and_then(Object::as_dict).ok())
-            .and_then(|form| form.get(key).and_then(Object::as_array).ok().cloned()),
-        None => None,
-    }
-    .unwrap_or_default();
-    entries
-        .iter()
-        .filter_map(|entry| entry.as_reference().ok())
-        .filter(|id| *id != field)
-        .filter_map(|id| {
-            let raw = doc.get_dictionary(id).ok()?.get(b"T").ok()?.as_str().ok()?;
-            Some((id, crate::annots::decode_text_string(raw)))
-        })
-        .collect()
-}
-
-/// Whether an ancestor of `field` has a name, so that its full name has more
-/// than one part. Followed up `/Parent` as far as `fields::one_part_names`
-/// walks down; a chain longer than that, or one that loops, answers `false`,
-/// which holds the field to every name of one part in the form: the stricter
-/// of the two checks.
-fn named_above(doc: &Document, field: ObjectId) -> bool {
-    let mut at = field;
-    let mut seen = BTreeSet::from([field]);
-    for _ in 0..32 {
-        let Some(parent) = doc
-            .get_dictionary(at)
-            .ok()
-            .and_then(|dict| dict.get(b"Parent").and_then(Object::as_reference).ok())
-        else {
-            return false;
-        };
-        if !seen.insert(parent) {
-            return false;
-        }
-        let named = doc
-            .get_dictionary(parent)
-            .ok()
-            .and_then(|dict| dict.get(b"T").ok())
-            .and_then(|t| t.as_str().ok())
-            .is_some_and(|t| !crate::annots::decode_text_string(t).is_empty());
-        if named {
-            return true;
-        }
-        at = parent;
-    }
-    false
 }
 
 /// Removes one widget: off its page, and out of the field tree, taking the
@@ -874,6 +813,15 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             .widgets
             .iter()
             .find(|w| w.widget == edit.widget)
+            .or_else(|| {
+                // Shared edits name the terminal field. Geometry, removal and a
+                // radio button value must still identify an individual widget.
+                if edit.rect.is_none() && !edit.remove && edit.value.is_none() {
+                    form.widgets.iter().find(|w| w.object == edit.widget)
+                } else {
+                    None
+                }
+            })
             .ok_or_else(|| said!("The form field is no longer in this document"))?;
         // An empty one is a rectangle like any other field. A signed one is
         // covered by its signature, and a change to it is a change to a
@@ -914,6 +862,15 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             }
             properties.insert(widget.object, to);
         }
+        if let Some(name) = &edit.name {
+            if let Some(why) = crate::formfields::name_problem(name) {
+                return Err(why);
+            }
+            if names.get(&widget.object).is_some_and(|other| other != name) {
+                return Err(said!("`{name}` is given two names", name = widget.name));
+            }
+            names.insert(widget.object, name.clone());
+        }
         if edit.remove {
             if matches!(widget.control, Control::Radio { .. }) && widget.widget != widget.object {
                 if let Some(why) =
@@ -935,15 +892,6 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         }
         if let Some(value) = &edit.value {
             values.extend(revalued(doc, widget, value)?);
-        }
-        if let Some(name) = &edit.name {
-            if let Some(why) = crate::formfields::name_problem(name) {
-                return Err(why);
-            }
-            if names.get(&widget.object).is_some_and(|other| other != name) {
-                return Err(said!("`{name}` is given two names", name = widget.name));
-            }
-            names.insert(widget.object, name.clone());
         }
         if let Some(rect) = edit.rect {
             let to = placed(doc, widget, rect)?;
@@ -980,39 +928,9 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             going == all
         })
         .collect();
-    // A name is taken when another field will have the same full name once
-    // every change here is made: its own name if it keeps it, its new one if
-    // not, and none if it is removed. So two fields can swap names in one call.
-    //
-    // The fields that can share a full name with this one are its siblings,
-    // and --- when no ancestor of it has a name, so its full name is its `/T`
-    // alone --- every field of one part anywhere in the form: a group with no
-    // `/T` adds nothing to its kids' names, so a `Name` under one is called
-    // `Name` and nothing else. Two fields of one full name are one field to
-    // every reader.
-    let mut one_part: Option<Vec<(Option<ObjectId>, String)>> = None;
-    for (field, name) in &names {
-        let will_have = |other: ObjectId, has: &String| {
-            other != *field
-                && !removed_fields.contains(&other)
-                && names.get(&other).unwrap_or(has) == name
-        };
-        let mut taken = fields_beside(doc, *field)
-            .iter()
-            .any(|(other, has)| will_have(*other, has));
-        if !taken && !named_above(doc, *field) {
-            if one_part.is_none() {
-                one_part = Some(crate::fields::one_part_fields(doc)?);
-            }
-            taken = one_part.iter().flatten().any(|(other, has)| match other {
-                Some(other) => will_have(*other, has),
-                // Written out in place, so nothing here renames it.
-                None => has == name,
-            });
-        }
-        if taken {
-            return Err(said!("`{name}`: another field has this name"));
-        }
+    names.retain(|id, _| !removed_fields.contains(id));
+    if !names.is_empty() {
+        crate::fields::check_renames(doc, &names, &removed_fields)?;
     }
 
     validate_radio_values(&values, &removals)?;
