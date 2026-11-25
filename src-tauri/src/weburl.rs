@@ -88,7 +88,7 @@ pub struct Web {
     host: String,
     /// Path, query and fragment, cut to [`MAX_REST_CHARS`].
     ///
-    /// Display only, and secondary in the dialog. Empty for a bare host.
+    /// Display only, and secondary in the dialog. A single slash for a bare host.
     rest: String,
 }
 

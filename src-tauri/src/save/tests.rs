@@ -14721,3 +14721,17 @@ fn a_save_over_an_executable_file_writes_a_file_that_is_not() {
         "the group's read stays and every execute bit goes"
     );
 }
+
+#[test]
+fn exclusive_copy_preserves_an_entry_that_arrived_during_split() {
+    let dir = tempfile::tempdir().unwrap();
+    let (source, target) = (dir.path().join("part"), dir.path().join("output"));
+    std::fs::write(&source, b"first").unwrap();
+    super::copy_to_new(&source, &target).unwrap();
+    std::fs::write(&source, b"second").unwrap();
+    assert_eq!(
+        super::copy_to_new(&source, &target).unwrap_err().kind(),
+        std::io::ErrorKind::AlreadyExists
+    );
+    assert_eq!(std::fs::read(target).unwrap(), b"first");
+}

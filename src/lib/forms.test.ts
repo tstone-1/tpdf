@@ -457,6 +457,29 @@ describe("Tab in the form's controls", () => {
     expect(writes).toEqual([]);
   });
 
+  it("keeps a soft-hyphen draft until corrected with an ordinary hyphen", async () => {
+    const writes: unknown[] = [];
+    const layer = new FormLayer(dom.root as unknown as HTMLElement, { widgets: [text] }, () => null,
+      async (object, value) => {
+        writes.push(value);
+        layer.update({ forms: [{ object, value }], fields: [] });
+      }, () => {}, () => {});
+    const input = dom.root.children[0]!.children[0]!;
+    input.value = "co\u00adoperate";
+    input.dispatch("input", {});
+    expect(() => layer.commit()).toThrow(/soft hyphen/i);
+    await expect(layer.settle()).rejects.toThrow(/soft hyphen/i);
+    expect(layer.hasDraft).toBe(true);
+    expect(writes).toEqual([]);
+    input.value = "co-operate";
+    input.dispatch("input", {});
+    layer.commit();
+    await layer.settle();
+    expect(writes).toEqual(["co-operate"]);
+    expect(layer.hasDraft).toBe(false);
+    layer.destroy();
+  });
+
   it("settles an untouched empty required field and reports a refused draft", async () => {
     const widget = { ...text, value: "", required: true };
     let writes = 0;

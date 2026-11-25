@@ -395,29 +395,6 @@ fn carries_on(operations: &[Operation], at: usize) -> bool {
     false
 }
 
-/// Takes out every `TJ` that makes no text object between the show at `at`
-/// and the next show that makes one.
-///
-/// For a cut that reaches the end of a show whose pen carries on. The gap
-/// such a cut leaves takes the pen to where PDFium placed the next show, and
-/// that place is after whatever these moved it by; see the module note. They
-/// draw nothing, so nothing a reader sees goes with them, and no show's
-/// ordinal changes.
-fn drop_spacing_after(operations: &mut Vec<Operation>, at: usize) {
-    let next = operations[at + 1..]
-        .iter()
-        .position(makes_text_object)
-        .map_or(operations.len(), |offset| at + 1 + offset);
-    // Nothing between the two makes a text object, which is what `next`
-    // means, so every `TJ` there is one that draws nothing.
-    let mut index = 0;
-    operations.retain(|operation| {
-        let here = index;
-        index += 1;
-        !(here > at && here < next && operation.operator == "TJ")
-    });
-}
-
 /// What `lopdf` can say about each show PDFium made text of, by ordinal, or
 /// `None` when the page's shows are not `expected` many or cannot be read.
 #[must_use]
@@ -650,17 +627,11 @@ pub fn cut_shows(
     // one after it.
     let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;
 
-    // Backwards, so a show that becomes several operations does not move one
-    // still to be cut.
-    for (at, cut) in work.into_iter().rev() {
+    // Plan against the original stream. A whole show can become a numeric
+    // TJ, indistinguishable from original spacing once the rewrite starts.
+    let mut edits = Vec::new();
+    for (at, cut) in work {
         let continues = carries_on(&content.operations, at);
-        let to_the_end = cut
-            .take
-            .last()
-            .is_some_and(|last| last + 1 == cut.pens.len());
-        if continues && to_the_end {
-            drop_spacing_after(&mut content.operations, at);
-        }
         let replacement = if cut.takes_all() {
             take_all(&content.operations[at], cut, continues)?
         } else {
@@ -669,9 +640,31 @@ pub fn cut_shows(
             })?;
             cut_one(&content.operations[at], length, cut, continues)?
         };
-        content.operations.splice(at..=at, replacement);
+        edits.push((at, replacement));
+        let to_the_end = cut
+            .take
+            .last()
+            .is_some_and(|last| last + 1 == cut.pens.len());
+        if continues && to_the_end {
+            let next = shows[cut.ordinal + 1]; // carries_on found a following show
+            for (offset, op) in content.operations[at + 1..next].iter().enumerate() {
+                if op.operator == "TJ" {
+                    edits.push((at + 1 + offset, Vec::new()));
+                }
+            }
+        }
+    }
+    let mut edits = edits.into_iter().peekable();
+    let mut rewritten = Vec::with_capacity(content.operations.len());
+    for (at, original) in content.operations.drain(..).enumerate() {
+        if let Some((_, replacement)) = edits.next_if(|(index, _)| *index == at) {
+            rewritten.extend(replacement);
+        } else {
+            rewritten.push(original);
+        }
     }
 
+    content.operations = rewritten;
     let struct_carriers = clear_struct_shadow_text(doc, page, &carriers.mcids);
     let encoded = content
         .encode()

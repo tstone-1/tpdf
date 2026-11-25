@@ -692,6 +692,23 @@ fn two_cuts_on_one_page_each_land_on_their_own_show() {
     );
 }
 
+#[test]
+fn adjacent_cuts_keep_both_advances_before_surviving_text() {
+    for (take, first) in [
+        (vec![0, 1, 2, 3], "[-2000] TJ"),
+        (vec![2, 3], "[(ab) -1000] TJ"),
+    ] {
+        let (mut doc, page) = one_page("BT /F1 12 Tf (abcd) Tj (SECRET) Tj [-400] TJ (KEEP) Tj ET");
+        let mut one = cut(0, 4, &take);
+        one.tail = Some(2000.0);
+        cut_shows(&mut doc, page, &[one, all_of_secret(1, Some(3400.0))], 3).unwrap();
+        assert_eq!(
+            content_of(&doc, page),
+            format!("BT /F1 12 Tf {first} [-3400] TJ (KEEP) Tj ET")
+        );
+    }
+}
+
 /// A cut of every glyph of `SECRET`, whose pens are 500 apart from 0, with
 /// the next show placed at `tail`.
 fn all_of_secret(ordinal: usize, tail: Option<f32>) -> ShowCut {

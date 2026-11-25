@@ -4,6 +4,34 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Redaction boundaries, text reliability and split publication (2026-11-25)
+
+On macOS arm64, Poppler rendered a 10-point square-capped rule before and after
+a redaction that would leave two 7-point ends. Both ends survived and the CLI
+withheld verification. A middle cut of a round-capped rule also withheld
+verification. The corresponding middle cut of a square-capped rule verified.
+Neither middle cut changed any pixel outside the selection at 72 DPI.
+
+After two consecutive text removals, Poppler measured the following word at
+90.400 points in both files. Removing a suffix and the entire next show moved
+the following word by less than 0.00001 points. That second copy retained its
+OCR verification warning because the control word could not be read.
+
+The hidden-text CLI reported magenta on green and black on green as visible,
+and same-colour text as hidden. At three font sizes a visible digit between
+hidden AB and CD produced two passages and one unjudged character. Comparing
+a BMP-only ActualText replacement with itself returned 0. Adding U+20000 to
+the replacement made the mapping unknown and comparison returned 3.
+
+Two one-page files were published on a mounted exFAT volume. A second split
+refused the occupied names and both output digests stayed the same. On this
+filesystem an exclusive rename and hard links both report unsupported. The
+exclusive-copy fallback can leave an incomplete output if writing is interrupted.
+
+The mixed-page window fixture passed all three geometry measurements. Supplying
+malformed JSON failed each measurement and the run. An ordinary fixture without
+a geometry sidecar skipped those three measurements.
+
 ### Signature placement and keyboard focus (2026-11-25)
 
 The CLI signing fixture places the same text twice, first at 0.45 points and then

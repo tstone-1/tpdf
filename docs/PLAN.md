@@ -4217,8 +4217,9 @@ that is not at a cut is written back as the number it was.
 
 **A stroke's ink is modelled, outward.** Half the width either side; half a width past a
 corner, which holds a miter, a round and a bevel join at a right angle; half a width past an
-open end for a round or projecting cap and nothing for a butt cap. A new end is pulled back
-by its cap's reach. `Drawing::cut` checks its own result against that model and answers
+open end for a round or projecting cap and nothing for a butt cap. A new square end is pulled back
+by half a width. A partial cut is refused if that leaves too little ink for both caps, or if a round
+cap would curve the new cut face. `Drawing::cut` checks its own result against that model and answers
 *unsupported* when a join still reaches into a region.
 
 **PDFium's bounds are not the ink.** Its bounds for a stroke reach a whole line width past

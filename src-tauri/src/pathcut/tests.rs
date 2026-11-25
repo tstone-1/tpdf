@@ -142,15 +142,21 @@ fn a_region_that_takes_only_part_of_a_rule_s_thickness_is_not_cut() {
 
 #[test]
 fn a_cap_that_reaches_past_its_end_is_pulled_back_by_that_reach() {
-    // Round and projecting caps add half the width, here 2, past a new end.
-    for cap in ["1 J", "2 J", "/Round gs"] {
+    let region = [[100.0, 190.0, 150.0, 210.0]];
+    assert_eq!(
+        cut("4 w 2 J 72 200 m 539 200 l S", &region),
+        "72 200 m 98 200 l 152 200 m 539 200 l S"
+    );
+    for cap in ["1 J", "/Round gs"] {
         assert_eq!(
-            cut(
-                &format!("4 w {cap} 72 200 m 539 200 l S"),
-                &[[100.0, 190.0, 150.0, 210.0]]
-            ),
-            "72 200 m 98 200 l 152 200 m 539 200 l S",
-            "{cap}"
+            cut(&format!("4 w {cap} 72 200 m 539 200 l S"), &region),
+            "unsupported"
+        );
+    }
+    for path in ["50 100 m 150 100 l", "150 100 m 50 100 l"] {
+        assert_eq!(
+            cut(&format!("10 w 2 J {path} S"), &[[52.0, 92.0, 148.0, 108.0]]),
+            "unsupported"
         );
     }
     // A butt cap stops at its end, so the cut is at the edge.
@@ -170,13 +176,13 @@ fn a_rule_that_only_touches_the_region_is_outside_it() {
         cut("4 w 72 200 m 300 200 l S", &[[300.0, 190.0, 400.0, 210.0]]),
         "outside"
     );
-    // With a round cap its ink does reach in, and it is shortened.
+    // With a round cap its ink does reach in, and a flat cut face cannot be drawn with that cap.
     assert_eq!(
         cut(
             "4 w 1 J 72 200 m 300 200 l S",
             &[[300.0, 190.0, 400.0, 210.0]]
         ),
-        "72 200 m 298 200 l S"
+        "unsupported"
     );
     // Beside the region, not in it.
     assert_eq!(

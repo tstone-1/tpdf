@@ -843,7 +843,7 @@ operators, after `leave_unplaced`, and lists it in `Plan::cuts`; `aggregate` pai
 with its region in `PlannedRedaction::cuts`, and `redact::take_paths` makes the cuts and the
 removals in one pass. `remove_paths` is `take_paths` with no cuts. `pathcut`'s module
 documentation lists what is cut and what is not; `docs/PLAN.md` §6 *A rule cut at the
-region's edge* has the model of a stroke's ink and the measurement.
+region's edge* has the model of a stroke's ink and the measurement. A partial cut that needs a new round cap or would erase a short square-capped remainder keeps the original path and withholds verification. Adjacent text cuts measure cursor advances against the original sequence of shows, including numeric spacing between them.
 
 ## A signature image from a file (`sign --image`)
 
@@ -893,7 +893,7 @@ earlier request draw what they drew.
 ## Comparing two documents (`tpdf compare`, *Compare with*)
 
 Comparison stops and names the page when its fonts require guessing the character
-codes. A desktop page with recovered OCR text uses that text. Word limits join a
+codes or the engine can extract only part of a declared ActualText replacement. This applies even when the extracted page has no characters. A desktop page with recovered OCR text uses that text. Word limits join a
 discretionary hyphen and its continuation on the immediately following page.
 
 

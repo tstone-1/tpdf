@@ -140,7 +140,7 @@ pub struct PageMapping {
     pub composite: usize,
     /// Of those, how many leave PDFium guessing.
     pub guessing: usize,
-    /// Whether a bound was hit, so `guessing` is a floor rather than a count.
+    /// Whether the scan or an explicit text replacement could be read only in part.
     ///
     /// Reported rather than folded into the numbers: a page that was only partly
     /// examined and a page that was examined and found clean are different
@@ -310,6 +310,37 @@ struct FontScan<'a> {
     result: PageMapping,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum ActualText {
+    Absent,
+    Complete,
+    Incomplete,
+}
+
+impl ActualText {
+    fn from_bytes(raw: &[u8]) -> Self {
+        if raw.is_empty() || raw == [0xfe, 0xff] || raw == [0xef, 0xbb, 0xbf] {
+            return Self::Absent;
+        }
+        let utf16 = raw.starts_with(&[0xfe, 0xff]);
+        let utf8 = raw.starts_with(&[0xef, 0xbb, 0xbf]);
+        let text = crate::annots::decode_text_string(raw);
+        // PDFium drops supplementary characters and replaces ASCII controls.
+        // The annotation decoder can also skip malformed or undefined bytes.
+        if (!utf16 || raw.len() % 2 == 0)
+            && (utf16 || utf8 || text.chars().count() == raw.len())
+            && !text.is_empty()
+            && text
+                .chars()
+                .all(|ch| (' '..='~').contains(&ch) || ('\u{81}'..'\u{fffd}').contains(&ch))
+        {
+            Self::Complete
+        } else {
+            Self::Incomplete
+        }
+    }
+}
+
 impl<'a> FontScan<'a> {
     fn page(&mut self, page: ObjectId) -> Option<()> {
         let doc = self.doc;
@@ -320,11 +351,13 @@ impl<'a> FontScan<'a> {
         let resources = crate::pagetree::resources(doc, page)
             .ok()?
             .unwrap_or(&empty);
-        // When the only available fonts are simple, no text operator can
-        // select an unmapped composite. Avoid decoding every page of a book
-        // for this common case. Forms and graphics states can supply fonts
-        // outside this dictionary and therefore require the content walk.
-        if !resources.has(b"XObject")
+        let content = crate::textedit::page_content(doc, page).ok()?;
+        // Without a marked-content property list, a placed form or an
+        // external font selection, ordinary simple-font text needs no walk.
+        // BDC is an operator and always literal in the decoded stream. A
+        // match inside data merely sends the page through the full inspection.
+        if !content.windows(3).any(|word| word == b"BDC")
+            && !resources.has(b"XObject")
             && !resources.has(b"ExtGState")
             && resources
                 .get(b"Font")
@@ -344,7 +377,6 @@ impl<'a> FontScan<'a> {
         {
             return Some(());
         }
-        let content = crate::textedit::page_content(doc, page).ok()?;
         self.content(resources, content, None, 0)
     }
 
@@ -375,7 +407,7 @@ impl<'a> FontScan<'a> {
         };
         let mut stack = Vec::new();
         let mut marks = Vec::new();
-        let mut has_actual_text = false;
+        let mut actual_text = ActualText::Absent;
         bytes.push(b'\n'); // Delimit a final operator or comment at EOF.
         for op in lopdf::content::Content::decode_strict(&bytes)
             .ok()?
@@ -384,7 +416,7 @@ impl<'a> FontScan<'a> {
             match op.operator.as_str() {
                 "BMC" => {
                     op.operands.first()?.as_name().ok()?;
-                    marks.push(has_actual_text);
+                    marks.push(actual_text);
                 }
                 "BDC" => {
                     op.operands.first()?.as_name().ok()?;
@@ -393,20 +425,16 @@ impl<'a> FontScan<'a> {
                         Object::Name(_) => resource(b"Properties", property)?.as_dict().ok()?,
                         other => other.as_dict().ok()?,
                     };
-                    marks.push(has_actual_text);
+                    marks.push(actual_text);
                     // PDFium takes the last property dictionary on the current text
                     // object. A nested dictionary can shadow an outer replacement.
-                    has_actual_text = dict
-                        .get(b"ActualText")
-                        .ok()
-                        .and_then(|text| resolve(doc, text).as_str().ok())
-                        .is_some_and(|raw| {
-                            crate::annots::decode_text_string(raw).chars().any(|ch| {
-                                (' '..='~').contains(&ch) || ('\u{81}'..'\u{fffd}').contains(&ch)
-                            })
-                        });
+                    actual_text = match dict.get(b"ActualText") {
+                        Ok(text) => ActualText::from_bytes(resolve(doc, text).as_str().ok()?),
+                        Err(_) if actual_text != ActualText::Absent => ActualText::Incomplete,
+                        Err(_) => ActualText::Absent,
+                    };
                 }
-                "EMC" => has_actual_text = marks.pop()?,
+                "EMC" => actual_text = marks.pop()?,
                 "q" => stack.push(font),
                 "Q" => font = stack.pop()?,
                 "Tf" => font = Some(resource(b"Font", op.operands.first()?)?.as_dict().ok()?),
@@ -423,6 +451,9 @@ impl<'a> FontScan<'a> {
                     if !shows_glyphs(&op.operator, &op.operands)? {
                         continue;
                     }
+                    if actual_text == ActualText::Incomplete {
+                        self.result.truncated = true;
+                    }
                     let drawn = font?;
                     if font_kind(doc, drawn)? != b"Type0" {
                         continue;
@@ -434,7 +465,7 @@ impl<'a> FontScan<'a> {
                             self.result.composite += 1;
                             false
                         });
-                    if !has_actual_text && !*checked {
+                    if actual_text == ActualText::Absent && !*checked {
                         *checked = true;
                         match guesses(doc, drawn) {
                             Some(true) => self.result.guessing += 1,
@@ -720,6 +751,30 @@ mod tests {
             scan_one(composite("Identity-H", "Korea1", false)).guessing,
             0
         );
+    }
+
+    #[test]
+    fn an_incomplete_replacement_cannot_certify_even_a_mapped_font() {
+        for font in [
+            composite("Identity-H", "Identity", false),
+            dictionary! {"Subtype" => "Type1"},
+        ] {
+            let mut doc = Document::load_mem(&document_with_font(font)).unwrap();
+            let page = doc.get_pages()[&1];
+            for (actual, certain) in [
+                ("FEFF672C", true),
+                ("FEFF672CD840DC00", false),
+                ("FEFFD840DC00", false),
+            ] {
+                let content =
+                    format!("BT /F1 10 Tf /Span << /ActualText <{actual}> >> BDC (A) Tj EMC ET");
+                let stream = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+                doc.get_dictionary_mut(page)
+                    .unwrap()
+                    .set("Contents", stream);
+                assert_eq!(page_mapping(&doc, page).certain(), certain, "{actual}");
+            }
+        }
     }
 
     #[test]

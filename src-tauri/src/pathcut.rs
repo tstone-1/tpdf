@@ -30,8 +30,9 @@
 //! half its width either side. At a corner it is taken to reach half a width
 //! past the corner, which holds a miter, a round and a bevel join at a right
 //! angle; at an open end it reaches half a width past for a round or a
-//! projecting cap and stops at the end for a butt cap. A new end made by a cut
-//! is pulled back by that reach, so its cap stops at the region's edge.
+//! projecting cap and stops at the end for a butt cap. A new square end is pulled
+//! back by half a width. If a surviving end is too short for this, or a new
+//! round cap would leave a curved cut face, the cut is refused.
 //! [`Drawing::cut`] checks the result against the same model before answering
 //! and refuses when anything is still inside.
 
@@ -70,9 +71,8 @@ pub(crate) const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 struct State {
     ctm: Option<Matrix>,
     width: Option<f64>,
-    /// Whether a cap reaches past the end of its line: round and projecting
-    /// square do, by half the width; butt does not.
-    cap_reaches: Option<bool>,
+    /// The shape drawn at an open end, including an end created by a cut.
+    cap: Option<Cap>,
     dashed: Option<bool>,
 }
 
@@ -81,7 +81,7 @@ impl Default for State {
         Self {
             ctm: Some(IDENTITY),
             width: Some(1.0),
-            cap_reaches: Some(false),
+            cap: Some(Cap::Butt),
             dashed: Some(false),
         }
     }
@@ -181,14 +181,19 @@ fn dash_of(doc: &Document, array: &Object) -> Option<bool> {
     Some(!array.is_empty())
 }
 
-fn cap_of(value: f64) -> Option<bool> {
-    // 0 butt, 1 round, 2 projecting square.
-    if value == 0.0 {
-        Some(false)
-    } else if value == 1.0 || value == 2.0 {
-        Some(true)
-    } else {
-        None
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Cap {
+    Butt,
+    Round,
+    Square,
+}
+
+fn cap_of(value: f64) -> Option<Cap> {
+    match value {
+        0.0 => Some(Cap::Butt),
+        1.0 => Some(Cap::Round),
+        2.0 => Some(Cap::Square),
+        _ => None,
     }
 }
 
@@ -223,7 +228,7 @@ fn states_at(
                 };
             }
             "w" => state.width = numbers::<1>(operation).map(|[width]| width),
-            "J" => state.cap_reaches = numbers::<1>(operation).and_then(|[cap]| cap_of(cap)),
+            "J" => state.cap = numbers::<1>(operation).and_then(|[cap]| cap_of(cap)),
             "d" => {
                 state.dashed = operation
                     .operands
@@ -242,8 +247,7 @@ fn states_at(
                             state.width = resolved(doc, width).and_then(number);
                         }
                         if let Ok(cap) = named.get(b"LC") {
-                            state.cap_reaches =
-                                resolved(doc, cap).and_then(number).and_then(cap_of);
+                            state.cap = resolved(doc, cap).and_then(number).and_then(cap_of);
                         }
                         if let Ok(dash) = named.get(b"D") {
                             state.dashed = resolved(doc, dash)
@@ -254,7 +258,7 @@ fn states_at(
                     }
                     None => {
                         state.width = None;
-                        state.cap_reaches = None;
+                        state.cap = None;
                         state.dashed = None;
                     }
                 }
@@ -292,7 +296,7 @@ enum Ink {
     Stroke {
         polys: Vec<Poly>,
         half: f64,
-        cap_reaches: bool,
+        cap: Cap,
     },
 }
 
@@ -466,7 +470,7 @@ fn parse(path: &[&Operation], state: &State) -> Option<Drawing> {
                 }
             }
             let width = state.width.filter(|width| *width > 0.0)?;
-            let cap_reaches = state.cap_reaches?;
+            let cap = state.cap?;
             if state.dashed != Some(false) {
                 return None;
             }
@@ -487,7 +491,7 @@ fn parse(path: &[&Operation], state: &State) -> Option<Drawing> {
             Ink::Stroke {
                 polys,
                 half: width / 2.0,
-                cap_reaches,
+                cap,
             }
         }
         _ => return None,
@@ -673,12 +677,13 @@ fn inks_inside(polys: &[Poly], half: f64, cap_reaches: bool, region: [f64; 4], e
 fn cut_poly(
     poly: &Poly,
     half: f64,
-    cap_reaches: bool,
+    cap: Cap,
     region: [f64; 4],
     eps: f64,
 ) -> Result<Option<Vec<Poly>>, ()> {
     let count = poly.points.len();
     let lines = if poly.closed { count } else { count - 1 };
+    let cap_reaches = cap != Cap::Butt;
     let pull = if cap_reaches { half } else { 0.0 };
     // Each kept stretch: its line, its two ends, and whether it still starts
     // and ends at the corner its line started and ended at.
@@ -713,6 +718,21 @@ fn cut_poly(
         let (low, high) = (a_from.min(a_to), a_from.max(a_to));
         let before = (low, high.min(region_a.0 - pull));
         let after = (low.max(region_a.1 + pull), high);
+        let (low_reach, high_reach) = if a_from < a_to {
+            (reach_from, reach_to)
+        } else {
+            (reach_to, reach_from)
+        };
+        // A newly rounded end cannot reproduce a straight cut face. A square
+        // end needs enough surviving ink to fit both caps on its centreline.
+        if cap != Cap::Butt
+            && ((region_a.0 > low - low_reach + eps
+                && (cap == Cap::Round || before.1 - before.0 <= eps))
+                || (region_a.1 < high + high_reach - eps
+                    && (cap == Cap::Round || after.1 - after.0 <= eps)))
+        {
+            return Err(());
+        }
         let point = |a: f64| if level { (a, p) } else { (p, a) };
         let mut stretches: Vec<(Point, Point, bool, bool)> = Vec::new();
         if before.1 - before.0 > eps {
@@ -879,16 +899,12 @@ impl Drawing {
                 operations.push(Operation::new(&self.paint, Vec::new()));
                 Verdict::Cut(operations)
             }
-            Ink::Stroke {
-                polys,
-                half,
-                cap_reaches,
-            } => {
+            Ink::Stroke { polys, half, cap } => {
                 let mut polys = polys.clone();
                 for region in &regions {
                     let mut next = Vec::with_capacity(polys.len());
                     for poly in polys {
-                        match cut_poly(&poly, *half, *cap_reaches, *region, eps) {
+                        match cut_poly(&poly, *half, *cap, *region, eps) {
                             Ok(Some(pieces)) => {
                                 changed = true;
                                 next.extend(pieces);
@@ -906,7 +922,7 @@ impl Drawing {
                 // join still reaches into a region fails here.
                 if regions
                     .iter()
-                    .any(|region| inks_inside(&polys, *half, *cap_reaches, *region, eps))
+                    .any(|region| inks_inside(&polys, *half, *cap != Cap::Butt, *region, eps))
                 {
                     return Verdict::Unsupported;
                 }

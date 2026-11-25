@@ -140,7 +140,7 @@ export async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
     page: first.id,
     to: found,
   });
-  const back = cropped.state?.pages[0]?.crop;
+  const back = cropped.state?.pages.find((page) => page.id === first.id)?.crop;
   check(
     CROP_CHECKS[2] ?? "",
     !!back && back.every((value, index) => Math.abs(value - (found?.[index] ?? NaN)) < 0.01),
@@ -172,10 +172,11 @@ export async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
     page: first.id,
     to: null,
   });
+  const restored = cleared.state?.pages.find((page) => page.id === first.id);
   check(
     CROP_CHECKS[5] ?? "",
-    cleared.state?.pages[0]?.crop === undefined,
-    cleared.error || `crop ${JSON.stringify(cleared.state?.pages[0]?.crop)}`,
+    restored !== undefined && restored.crop === undefined,
+    cleared.error || (restored ? `crop ${JSON.stringify(restored.crop)}` : `page ${first.id} missing`),
   );
 
   // The new command, and then the differential worth having: `page_geometry`

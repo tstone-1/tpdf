@@ -536,7 +536,7 @@ ROWS += [
         # that move: left in, the `TJ` moves the next show a second time.
         "glyph cut: leave spacing alone after a cut whose gap already holds it",
         "src/redact/glyph_cut.rs",
-        "            drop_spacing_after(&mut content.operations, at);\n",
+        "                    edits.push((at + 1 + offset, Vec::new()));\n",
         "",
         "spacing_alone_after_a_cut_to_the_end_goes_into_the_gap",
     ),
@@ -557,8 +557,8 @@ ROWS += [
     Mutation(
         "glyph cut: take out the spacing after the next show too",
         "src/redact/glyph_cut.rs",
-        '        !(here > at && here < next && operation.operator == "TJ")',
-        '        !(here > at && operation.operator == "TJ")',
+        '            for (offset, op) in content.operations[at + 1..next].iter().enumerate() {',
+        '            for (offset, op) in content.operations[at + 1..].iter().enumerate() {',
         "spacing_alone_after_a_cut_to_the_end_goes_into_the_gap",
     ),
 ]

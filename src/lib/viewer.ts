@@ -6788,7 +6788,7 @@ export class Viewer {
     return async (slot) => {
       const text = await this.loadText(slot);
       const at = this.pages.addressOf(slot, this.opts.doc);
-      if (text?.codes.length && at && !this.recovery.has(at.doc, at.page)) {
+      if (text && at && !this.recovery.has(at.doc, at.page)) {
         let mapping = mappings.get(at.doc);
         if (!mapping) {
           mapping = await call("document_mapping", { doc: at.doc });
@@ -6796,7 +6796,7 @@ export class Viewer {
         }
         const verdict = mapping[at.page];
         if (!verdict || verdict.truncated) throw new Error(TEXT().comparisonUnknown(slot + 1));
-        if (verdict.guessing > 0) throw new Error(TEXT().comparisonGuessed(slot + 1));
+        if (text.codes.length && verdict.guessing > 0) throw new Error(TEXT().comparisonGuessed(slot + 1));
       }
       return text;
     };

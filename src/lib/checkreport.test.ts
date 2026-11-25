@@ -79,6 +79,45 @@ beforeEach(() => {
   core.invoke.mockReset();
 });
 
+describe("the checks that depend on backend replies", () => {
+  const doc = { id: 1, pages: [], page_count: 1, lazy_geometry: true, open_ms: 0, at_ms: 0 };
+
+  it.each(["rejected", "missing", "cleared"])("records a %s crop clear against the original page", async (reply) => {
+    const { cropCommandChecks } = await import("./viewercheck/editing");
+    const first = { id: 7, source: { baseline: 0 } };
+    const box = [1, 2, 30, 40];
+    core.invoke.mockImplementation(async (command, args) => {
+      if (command === "edit_state") return { pages: [first] };
+      if (command === "page_content_box" || command === "page_crop_box") return box;
+      if (command === "page_geometry") return { left: 0, top: 0, width_pt: 100, height_pt: 100 };
+      if (command === "page_crop") {
+        if (args.to) return { pages: [{ ...first, crop: args.to }] };
+        if (reply === "rejected") throw new Error("clear failed");
+        const other = { id: 8, crop: box };
+        return { pages: reply === "missing" ? [{ id: 8 }] : [other, first] };
+      }
+    });
+    await cropCommandChecks(doc);
+    await drain();
+    const clear = results().filter(line => line.includes("clearing the crop puts the page back"));
+    expect(clear.map(line => RESULT.exec(line)?.[1])).toEqual([reply === "cleared" ? "OK" : "FAIL"]);
+  });
+
+  it.each([["absent", "SKIP"], ["rejected", "FAIL"], ["malformed", "FAIL"]])(
+    "records a %s geometry manifest", async (reply, expected) => {
+      const { geometryChecks } = await import("./viewercheck/geometry");
+      core.invoke.mockImplementation(async command => {
+        if (command !== "geometry_manifest") return;
+        if (reply === "rejected") throw new Error("read failed");
+        return reply === "absent" ? null : "{";
+      });
+      await geometryChecks(Object.create(null), doc, { status: null });
+      await drain();
+      expect(results().map(line => RESULT.exec(line)?.[1])).toEqual([expected, expected, expected]);
+    },
+  );
+});
+
 describe("the exit a run asks for", () => {
   it("fails a run in which every check was not applicable", async () => {
     const report = new Report();

@@ -893,9 +893,8 @@ mod tests {
 
     #[test]
     fn publication_refuses_a_late_collision_and_cleans_only_owned_staging() {
-        let root =
-            std::env::temp_dir().join(format!("tpdf-page-publication-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
         let target = root.join("out.pdf");
         let temp = Temporary::beside(&target).unwrap();
         let staged = temp.0.join("checked.pdf");
@@ -904,16 +903,17 @@ mod tests {
         assert!(Temporary::publish(&[], &staged, &target, false).is_err());
         assert_eq!(std::fs::read(&target).unwrap(), b"late arrival");
         // An occupied name is already refused by the preflight. A fresh name
-        // must link the completed staging file atomically, even after that check.
+        // must receive the staged bytes. Exercise the collision at publication too.
         let fresh = root.join("fresh.pdf");
         Temporary::publish(&[], &staged, &fresh, false).unwrap();
-        assert!(save::same_file(&staged, &fresh));
+        assert!(!staged.exists());
+        std::fs::write(&staged, b"another part").unwrap();
+        assert!(save::publish_new(&staged, &target).is_err());
         let scratch = temp.0.clone();
         drop(temp);
         assert!(!scratch.exists());
         assert_eq!(std::fs::read(&fresh).unwrap(), b"new");
         assert_eq!(std::fs::read(&target).unwrap(), b"late arrival");
-        std::fs::remove_dir_all(root).unwrap();
     }
     /// A directory of this test's own, by name: two tests in one process
     /// share its id.

@@ -8,7 +8,7 @@
 //! outright. Most composite fonts carry a `/ToUnicode` map, and PDFium extracts
 //! the words a redaction removes through that very map, so the words can be
 //! read back the same way. This walks every page, the forms it draws and its
-//! annotations' appearances with their `/Resources`, follows `Tf` through `q`
+//! annotations' appearances with their `/Resources`, follows `Tf` and extended-state fonts through `q`
 //! and `Q`, and decodes each string through the font that shows it.
 //!
 //! **What it reads is the whole claim, so it says when it could not.**
@@ -277,6 +277,15 @@ impl Walk<'_> {
         text: &mut Vec<u8>,
         depth: usize,
     ) {
+        let doc = self.doc;
+        let named = |kind: &[u8]| {
+            let name = operands.iter().rev().find_map(|one| match one {
+                Token::Name(name) => Some(name),
+                _ => None,
+            })?;
+            let entries = resolve(doc, resources?.get(kind).ok())?.as_dict().ok()?;
+            entries.get(name).ok()
+        };
         match op {
             b"q" => state
                 .saved
@@ -288,12 +297,19 @@ impl Walk<'_> {
                     state.unknown = unknown;
                 }
             }
-            b"Tf" => {
-                let name = operands.iter().rev().find_map(|one| match one {
-                    Token::Name(name) => Some(name.clone()),
-                    _ => None,
-                });
-                self.select(name.as_deref(), resources, state);
+            b"Tf" => self.select(named(b"Font"), state),
+            b"gs" => {
+                let ext = resolve(doc, named(b"ExtGState")).and_then(|value| value.as_dict().ok());
+                if let Some(ext) = ext {
+                    if let Ok(value) = ext.get(b"Font") {
+                        let font = resolve(self.doc, Some(value))
+                            .and_then(|value| value.as_array().ok())
+                            .and_then(|pair| pair.first());
+                        self.select(font, state);
+                    }
+                } else {
+                    self.select(None, state);
+                }
             }
             b"Tj" | b"'" | b"\"" | b"TJ" => {
                 if let Some(Token::Str(bytes)) = operands.last() {
@@ -301,11 +317,7 @@ impl Walk<'_> {
                 }
             }
             b"Do" => {
-                let name = operands.iter().rev().find_map(|one| match one {
-                    Token::Name(name) => Some(name.clone()),
-                    _ => None,
-                });
-                if let Some(id) = name.and_then(|name| xobject(self.doc, resources, &name)) {
+                if let Some(id) = named(b"XObject").and_then(|value| value.as_reference().ok()) {
                     if matches!(self.doc.get_object(id), Ok(Object::Stream(stream))
                         if stream.dict.get(b"Subtype").and_then(Object::as_name).is_ok_and(|s| s == b"Form"))
                     {
@@ -317,21 +329,13 @@ impl Walk<'_> {
         }
     }
 
-    /// Makes the font `name` in `resources` current.
-    fn select(&mut self, name: Option<&[u8]>, resources: Option<&Dictionary>, state: &mut State) {
+    /// Select a font supplied by Tf or an extended graphics state.
+    fn select(&mut self, value: Option<&Object>, state: &mut State) {
         state.font = None;
         state.direct = None;
         state.unknown = true;
-        let Some(name) = name else {
-            return;
-        };
-        let Some(Object::Dictionary(fonts)) =
-            resources.and_then(|r| resolve(self.doc, r.get(b"Font").ok()))
-        else {
-            return;
-        };
-        match fonts.get(name) {
-            Ok(Object::Reference(id)) => {
+        match value {
+            Some(Object::Reference(id)) => {
                 let id = *id;
                 if !self.fonts.contains_key(&id) {
                     let Ok(Object::Dictionary(dict)) = self.doc.get_object(id) else {
@@ -343,7 +347,7 @@ impl Walk<'_> {
                 state.font = Some(id);
                 state.unknown = false;
             }
-            Ok(Object::Dictionary(dict)) => {
+            Some(Object::Dictionary(dict)) => {
                 state.direct = Some(std::rc::Rc::new(font_of(self.doc, dict)));
                 state.unknown = false;
             }
@@ -715,14 +719,6 @@ fn inherited_resources(doc: &Document, page: ObjectId) -> Option<Dictionary> {
     None
 }
 
-/// The XObject `name` in `resources`, as an object.
-fn xobject(doc: &Document, resources: Option<&Dictionary>, name: &[u8]) -> Option<ObjectId> {
-    let Some(Object::Dictionary(xobjects)) = resolve(doc, resources?.get(b"XObject").ok()) else {
-        return None;
-    };
-    xobjects.get(name).ok()?.as_reference().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -745,9 +741,7 @@ mod tests {
         doc.trailer.set("Root", catalog);
     }
 
-    #[test]
-    fn a_reused_form_has_a_separate_reading_for_each_inherited_font() {
-        let mut doc = Document::with_version("1.7");
+    fn two_fonts(doc: &mut Document) -> Dictionary {
         let mut fonts = Dictionary::new();
         for (name, letter) in [("One", "0041"), ("Two", "0042")] {
             let cmap = format!(
@@ -760,6 +754,38 @@ mod tests {
             });
             fonts.set(name, font);
         }
+        fonts
+    }
+
+    #[test]
+    fn a_graphics_state_selects_its_font_and_restore_brings_the_old_font_back() {
+        let mut doc = Document::with_version("1.7");
+        let fonts = two_fonts(&mut doc);
+        let second = fonts.get(b"Two").unwrap().clone();
+        let page = doc.add_object(Stream::new(
+            dictionary! {},
+            b"BT /One 12 Tf <0001> Tj q /Other gs /NoFont gs <0001> Tj Q <0001> Tj ET".to_vec(),
+        ));
+        page_with_resources(
+            &mut doc,
+            &[page],
+            dictionary! {
+                "Font" => fonts,
+                "ExtGState" => dictionary! {
+                    "Other" => dictionary! { "Font" => vec![second, 12.into()] },
+                    "NoFont" => dictionary! { "LW" => 4 },
+                },
+            },
+        );
+        let result = read(&doc, true);
+        assert!(result.composite_read);
+        assert_eq!(result.text[&page], BTreeSet::from([b"ABA".to_vec()]));
+    }
+
+    #[test]
+    fn a_reused_form_has_a_separate_reading_for_each_inherited_font() {
+        let mut doc = Document::with_version("1.7");
+        let fonts = two_fonts(&mut doc);
         let form = doc.add_object(Stream::new(
             dictionary! {"Subtype" => "Form"},
             b"BT <0001> Tj ET".to_vec(),

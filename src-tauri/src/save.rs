@@ -998,11 +998,7 @@ pub fn write_split(
         let landed = stage(target, |into| {
             staged_rewrite(rewriter, &mut opened, len, into, plan, Job::Save, password).map(|_| ())
         })
-        .and_then(|staged| {
-            let result = publish_new(&staged, target);
-            let _ = std::fs::remove_file(staged);
-            Ok(result?)
-        })
+        .and_then(|staged| Ok(publish_new(&staged, target)?))
         .map_err(|why| Refusal {
             message: said!(
                 "{reason} ({written} of {total} written)",
@@ -5490,9 +5486,34 @@ pub(crate) fn claim_beside(
 /// doubling from 50 ms, so at most about 1.5 s in all.
 const COMMIT_RETRIES: u32 = 5;
 
-/// Publish without replacing any existing directory entry. The caller owns the staging name.
+/// Publish without replacing any existing directory entry. Consumes the owned staging name, including on a collision.
 pub(crate) fn publish_new(staged: &Path, target: &Path) -> Result<(), String> {
-    std::fs::hard_link(staged, target).map_err(|e| format!("{}: {e}", target.display()))
+    let path = tempfile::TempPath::try_from_path(staged).map_err(|e| e.to_string())?;
+    match path.persist_noclobber(target) {
+        Ok(()) => Ok(()),
+        Err(e) if e.error.kind() == std::io::ErrorKind::Unsupported => {
+            copy_to_new(&e.path, target).map_err(|e| format!("{}: {e}", target.display()))
+        }
+        Err(e) => Err(format!("{}: {}", target.display(), e.error)),
+    }
+}
+
+/// exFAT on macOS supports neither exclusive rename nor hard links. Claim the
+/// destination before copying. A failed copy may leave an incomplete file:
+/// unlinking by name could remove a different file placed there in the meantime.
+fn copy_to_new(staged: &Path, target: &Path) -> std::io::Result<()> {
+    let mut source = std::fs::File::open(staged)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(source.metadata()?.permissions().mode());
+    }
+    let mut out = options.open(target)?;
+    std::io::copy(&mut source, &mut out)
+        .and_then(|_| out.sync_data())
+        .map_err(|e| std::io::Error::new(e.kind(), format!("incomplete output: {e}")))
 }
 
 /// Renames a staged file over `out`, removing it if that fails.

@@ -114,24 +114,29 @@ export async function geometryChecks(
   seen: { status: ViewerStatus | null },
 ): Promise<void> {
   const names = [LAID_OUT, OFFSETS, DRAWN];
-  const raw = await invoke<string | null>("geometry_manifest").catch(
-    () => null,
-  );
-  if (!raw) {
-    for (const name of names)
-      skip(name, "no geometry sidecar for this fixture");
-    return;
-  }
-
   let manifest: GeometryManifest;
   try {
+    const raw = await invoke<string | null>("geometry_manifest");
+    if (raw === null) {
+      for (const name of names) skip(name, "no geometry sidecar for this fixture");
+      return;
+    }
     manifest = JSON.parse(raw) as GeometryManifest;
+    if (!manifest?.first_page || !Number.isFinite(manifest.first_page.width_pt)
+      || !Array.isArray(manifest.pages) || manifest.pages.length !== doc.page_count
+      || !manifest.pages.length || !manifest.pages.every((page, index) =>
+        page?.page === index && Number.isFinite(page.width_pt) && page.width_pt > 0
+        && Number.isFinite(page.height_pt) && page.height_pt > 0 && Array.isArray(page.markers)
+        && page.markers.every(marker => Number.isFinite(marker?.x) && Number.isFinite(marker?.y)
+          && Number.isFinite(marker?.width_pt)))) {
+      throw new Error("invalid page geometry");
+    }
   } catch (e) {
-    for (const name of names) skip(name, `unreadable geometry sidecar: ${e}`);
+    for (const name of names) check(name, false, `unreadable geometry sidecar: ${e}`);
     return;
   }
 
-  const stated = manifest.pages.filter((entry) => entry.page < doc.page_count);
+  const stated = manifest.pages;
   const widths = new Set(stated.map((entry) => entry.width_pt));
   const heights = new Set(stated.map((entry) => entry.height_pt));
   if (widths.size < 2 && heights.size < 2) {

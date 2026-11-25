@@ -509,15 +509,15 @@ ROWS += [
     Mutation(
         "glyph cut: leave the alternate text around a cut show",
         "src/redact/glyph_cut.rs",
-        "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;\n\n    // Backwards",
-        "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &[])?;\n    let _ = &positions;\n\n    // Backwards",
+        "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;\n\n    // Plan against",
+        "    let carriers = clear_shadow_text(doc, page, &mut content.operations, &[])?;\n    let _ = &positions;\n\n    // Plan against",
         "the_alternate_text_around_a_cut_show_is_cleared",
     ),
     Mutation(
-        "glyph cut: cut the shows of a page front to back",
+        "glyph cut: apply the last planned edit first",
         "src/redact/glyph_cut.rs",
-        "    for (at, cut) in work.into_iter().rev() {",
-        "    for (at, cut) in work.into_iter() {",
+        "    let mut edits = edits.into_iter().peekable();",
+        "    let mut edits = edits.into_iter().rev().peekable();",
         "two_cuts_on_one_page_each_land_on_their_own_show",
     ),
     Mutation(

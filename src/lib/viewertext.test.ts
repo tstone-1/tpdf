@@ -248,12 +248,13 @@ describe("Reading a page's text, and asking for it again", () => {
     }
   });
 
-  it("stops comparison when the mapping inspection is incomplete", async () => {
+  it.each([true, false])("stops comparison with incomplete mappings, including empty extraction (%s)", async (empty) => {
     const viewer = build();
     try {
       const previous = core.invoke.getMockImplementation()!;
       core.invoke.mockImplementation((command, args) => command === "document_mapping"
-        ? Promise.resolve([{ guessing: 0, truncated: true }]) : previous(command, args));
+        ? Promise.resolve([{ guessing: 0, truncated: true }])
+        : empty && command === "page_text" ? Promise.resolve({ ...pageText(0), codes: [] }) : previous(command, args));
       await expect(viewer.comparisonText()(0)).rejects.toThrow("could not be verified");
     } finally {
       viewer.destroy();

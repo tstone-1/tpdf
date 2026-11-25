@@ -159,10 +159,9 @@ fn read(
             .map_err(declined)?
         {
             Reply::Text(text) => {
-                if !text.codes.is_empty()
-                    && !mappings
-                        .get(page as usize)
-                        .is_some_and(crate::encoding::PageMapping::certain)
+                if !mappings
+                    .get(page as usize)
+                    .is_some_and(crate::encoding::PageMapping::certain)
                 {
                     return Err(Failure::new(Exit::Refused, format!(
                         "{shown}: the character encoding on page {} could not be verified. The comparison stopped.", page + 1

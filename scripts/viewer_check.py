@@ -283,8 +283,11 @@ def main() -> int:
     # markers at its own corners rather than a sentence, so a manifest under that
     # name would put it in a check it was not built for and cannot pass.
     geometry = os.path.splitext(args.pdf)[0] + "-geometry.json"
-    if os.path.exists(geometry):
+    expects_geometry = os.path.exists(geometry) or os.path.basename(args.pdf) == "mixed.pdf"
+    if expects_geometry:
         env["TPDF_GEOMETRY_MANIFEST"] = geometry
+    else:
+        env.pop("TPDF_GEOMETRY_MANIFEST", None)
 
     # And a `-corpus.json` sidecar states what a generator put in the fixture ---
     # the words the one bare mark is drawn over, among other things. Keyed by
@@ -417,6 +420,15 @@ def main() -> int:
     if refusal is not None:
         print(refusal, file=sys.stderr)
         return 1
+    if expects_geometry:
+        for name in (
+            "every page is laid out at its own size",
+            "page offsets accumulate each page's own height",
+            "an oversized page is drawn past page 1's width",
+        ):
+            if outcome_of(completed.stdout, name) != "OK":
+                print(f"[FAIL] {geometry} requires a passing geometry check: {name}", file=sys.stderr)
+                return 1
     refusal = _validation(completed.stdout or "", stem, args.signed)
     if refusal is not None:
         print(refusal, file=sys.stderr)

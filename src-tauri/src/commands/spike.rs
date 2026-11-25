@@ -185,8 +185,11 @@ pub fn reading_manifest() -> Option<String> {
 /// cannot pass. Its generator writes `mixed-geometry.json`, and this is the
 /// variable that carries it.
 #[tauri::command]
-pub fn geometry_manifest() -> Option<String> {
-    std::fs::read_to_string(spike_env("TPDF_GEOMETRY_MANIFEST")?).ok()
+pub fn geometry_manifest() -> Result<Option<String>, String> {
+    spike_env("TPDF_GEOMETRY_MANIFEST")
+        .map(std::fs::read_to_string)
+        .transpose()
+        .map_err(|err| err.to_string())
 }
 
 /// What a corpus's generator says is in it, if the fixture has such a sidecar.

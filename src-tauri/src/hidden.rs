@@ -19,7 +19,7 @@
 //!
 //! ## The rule for one character
 //!
-//! Its box is **uniform** when the brightest and the darkest pixel in it differ
+//! Its box is **uniform** when the extremes of every colour channel differ
 //! by at most [`TOLERANCE`]. A glyph painted where a reader can see it puts ink
 //! and background into its box, so a box that is not uniform is a visible
 //! character.
@@ -73,7 +73,7 @@ pub mod survey;
 /// enough that 60%-grey text on white (a difference near 100) is ink.
 pub const TOLERANCE: u8 = 24;
 
-/// Fewest pixels a box may measure on its shorter side and still be judged.
+/// Fewest interior pixels per side for the normal glyph-box test.
 const MIN_SIDE: usize = 3;
 
 /// Pixels between a box and the strip beside it. Antialiasing blurs a glyph's
@@ -187,7 +187,11 @@ pub fn judge(text: &PageText, pixels: &[u8], width: usize, height: usize, scale:
             }
             Verdict::Unjudged => {
                 out.unjudged += 1;
-                run.push(ch, None, false);
+                if fills_its_box(ch) {
+                    run.push(ch, None, false);
+                } else {
+                    run.close(&mut out);
+                }
             }
             Verdict::Blank => run.push(ch, None, false),
         }
@@ -223,7 +227,7 @@ struct Image<'a> {
     height: usize,
 }
 
-/// The darkest and brightest luminance in an area.
+/// The lowest and highest value of one colour channel in an area.
 #[derive(Clone, Copy)]
 struct Range {
     low: u8,
@@ -234,6 +238,14 @@ impl Range {
     /// Whether everything in `other` is within the tolerance of everything here.
     fn matches(self, other: Range) -> bool {
         self.high.max(other.high) - self.low.min(other.low) <= TOLERANCE
+    }
+}
+
+struct ColourRange([Range; 3]);
+
+impl ColourRange {
+    fn matches(&self, other: Self) -> bool {
+        self.0.iter().zip(other.0).all(|(a, b)| a.matches(b))
     }
 }
 
@@ -258,6 +270,27 @@ impl Image<'_> {
         let x1 = (right.floor() as usize).min(self.width);
         let y1 = (bottom.floor() as usize).min(self.height);
         if x1 < x0 + MIN_SIDE || y1 < y0 + MIN_SIDE {
+            // A thin stem can have fewer than three whole pixels across.
+            // Include its antialiased edges and the surrounding paper on
+            // every side. Only a uniform patch provides evidence here.
+            let long_side = if turned {
+                x1.saturating_sub(x0)
+            } else {
+                y1.saturating_sub(y0)
+            };
+            let margin = STRIP_GAP + STRIP;
+            if long_side < 2 * MIN_SIDE || left < margin as f32 || top < margin as f32 {
+                return Verdict::Unjudged;
+            }
+            let patch = self.range(
+                left.floor() as usize - margin,
+                top.floor() as usize - margin,
+                (right.ceil() as usize).saturating_add(margin),
+                (bottom.ceil() as usize).saturating_add(margin),
+            );
+            if patch.is_some_and(|patch| patch.0.iter().all(|channel| channel.matches(*channel))) {
+                return Verdict::Hidden;
+            }
             return Verdict::Unjudged;
         }
         let Some(inside) = self.range(x0, y0, x1, y1) else {
@@ -289,29 +322,23 @@ impl Image<'_> {
         }
     }
 
-    /// The luminance range of an area, or `None` when it reaches off the image
+    /// The colour range of an area, or `None` when it reaches off the image
     /// or is empty.
-    fn range(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> Option<Range> {
+    fn range(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> Option<ColourRange> {
         if x1 <= x0 || y1 <= y0 || x1 > self.width || y1 > self.height {
             return None;
         }
-        let mut range = Range { low: 255, high: 0 };
+        let mut channels = [Range { low: 255, high: 0 }; 3];
         for y in y0..y1 {
             let row = &self.pixels[(y * self.width + x0) * 4..(y * self.width + x1) * 4];
             for pixel in row.chunks_exact(4) {
-                // Integer Rec. 601 luma. Only differences are read, so the
-                // channel order of the renderer's pixels does not matter much
-                // and the weights need not be exact.
-                let luma = (u32::from(pixel[0]) * 77
-                    + u32::from(pixel[1]) * 150
-                    + u32::from(pixel[2]) * 29)
-                    >> 8;
-                let luma = luma.min(255) as u8;
-                range.low = range.low.min(luma);
-                range.high = range.high.max(luma);
+                for (range, &sample) in channels.iter_mut().zip(pixel) {
+                    range.low = range.low.min(sample);
+                    range.high = range.high.max(sample);
+                }
             }
         }
-        Some(range)
+        Some(ColourRange(channels))
     }
 }
 
@@ -503,6 +530,29 @@ mod tests {
         let judged = judge(&text, &pixels, W, H, 1.0);
         assert_eq!(found(&judged), ["ab", "de"]);
         assert_eq!(judged.judged, 5);
+    }
+
+    #[test]
+    fn a_visible_colour_of_equal_luminance_is_distinct_from_the_background() {
+        let text = line("ab", 10.0, 20.0, 9.0, 12.0, 2.0);
+        let mut pixels = [0, 180, 0, 255].repeat(W * H);
+        for x in [12, 23] {
+            let at = (21 * W + x) * 4;
+            pixels[at..at + 3].copy_from_slice(&[255, 0, 255]);
+        }
+        let judged = judge(&text, &pixels, W, H, 1.0);
+        assert!(found(&judged).is_empty());
+        assert_eq!(judged.judged, 2);
+    }
+
+    #[test]
+    fn an_unjudged_digit_ends_a_hidden_passage() {
+        let mut text = line("AB1CD", 10.0, 20.0, 9.0, 12.0, 2.0);
+        text.boxes[10] = text.boxes[8] + 1.0;
+        text.boxes[11] = text.boxes[9] + 2.0;
+        let judged = judge(&text, &paper(W, H), W, H, 1.0);
+        assert_eq!(found(&judged), ["AB", "CD"]);
+        assert_eq!(judged.unjudged, 1);
     }
 
     /// A glyph that is a solid block is visible: its box is one colour and the

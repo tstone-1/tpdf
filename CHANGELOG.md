@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Redacting consecutive text runs preserves the position of surviving text. Redaction leaves a capped rule intact and reports it when the cut would erase ink outside the selection.
+- Hidden-text reports distinguish equal-brightness colours and split passages at uncertain letters or digits. Compare stops when extraction drops part of a declared text replacement.
+- Split can publish new files on exFAT and still refuses occupied filenames. The structural redaction check follows font changes selected through extended graphics states.
+
 - Redaction checks match canonically equivalent names in decoded codes. Text comparison recognizes explicit ActualText and flags unmapped Adobe-KR characters.
 - Save a Copy warns when its source changed before fingerprinting. Split preserves occupied numbered filenames, including files created during the split.
 - Text boxes and form appearances refuse unsupported soft hyphens. Wrapping a long pasted word now takes linear work.
