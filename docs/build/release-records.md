@@ -8,9 +8,11 @@ tests ignored and four CLI checks skipped. The Windows cross-build passed.
 All 39 macOS gates passed. The macOS disk image and Windows installer each passed all 70 packaged
 Python client checks. Windows printed the fixtures through the system spooler. The normal app opened the fixture and started its render worker. OCR
 read the expected text in the packaged renderer's output. With the bundled
-PDFium withheld, rendering failed. VoiceOver passed all 11 speech checks.
-The frontend tests caught all 461 selected mutations and the gate checks
-caught all 41. Both Rust lockfile audits passed with the documented exceptions,
+PDFium withheld, rendering failed. VoiceOver and NVDA each passed all 11 speech
+checks. The tests caught all 595 selected Rust mutations, 461 frontend mutations,
+41 gate mutations and 21 viewer mutations. The comment-deletion regression now
+checks the specific refusal for a page object, which caught a mutation that
+previously passed when the rewrite failed for a different reason. Both Rust lockfile audits passed with the documented exceptions,
 and the npm production audit found no advisories. The PDFium pin matched the stable branch.
 
 The portable review history reproduced the same file lists in a checkout without

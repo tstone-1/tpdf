@@ -4896,10 +4896,9 @@ fn a_deletion_naming_something_that_is_not_an_annotation_is_refused() {
     plan.discards = vec![crate::edits::PlannedDiscard {
         object: (page.0, page.1),
     }];
-    assert!(
-        rewrite_update(&original, &plan, Job::Save, None).is_err(),
-        "a page was accepted as a comment to delete"
-    );
+    let refusal = rewrite_update(&original, &plan, Job::Save, None)
+        .expect_err("a page was accepted as a comment to delete");
+    assert_eq!(refusal.message, "that comment is not an annotation");
 }
 
 /// A page tpdf made is written as a page, in the reader's order, and is
