@@ -2734,18 +2734,17 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
         return unread;
     };
 
-    // Written so that both parsers have to read it alike, or nothing below can
-    // speak for what PDFium draws.
-    let length = |id: lopdf::ObjectId| whole.get_object(id).ok()?.as_i64().ok();
-    if !append_syntax::reads_plainly(bytes, end, length) {
-        return unread;
-    }
-
-    // What the appended sections mark free, or no answer at all: a section
-    // this cannot follow may be the one that frees a page's content.
-    let Some(freed) = freed::after(bytes, end, whole.xref_start, MAX_DECODE) else {
+    // The chain supplies the revision of an indirect stream length as well as
+    // the objects marked free. Anything we cannot follow stays unread.
+    let Some(sections) = freed::after(bytes, end, whole.xref_start, MAX_DECODE) else {
         return unread;
     };
+    if !append_syntax::with_revision_lengths(bytes, end, &sections.offsets, &whole, |prefix| {
+        load(prefix).ok()
+    }) {
+        return unread;
+    }
+    let freed = sections.freed;
 
     let mut out = Appendix::default();
     let mut kinds: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();

@@ -419,6 +419,7 @@
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import {
     confirm as confirmDialog,
+    message as nativeMessage,
     open as openDialog,
     save as nativeSaveDialog,
     type SaveDialogOptions,
@@ -470,7 +471,7 @@
     type Passage,
     type Progress as HiddenProgress,
   } from "./lib/hiddentext";
-  import { PROGRESS_EVENT as PRINT_PROGRESS_EVENT, printingLine, stoppable, type Printing } from "./lib/printing";
+  import { FAILURE_EVENT as PRINT_FAILURE_EVENT, PROGRESS_EVENT as PRINT_PROGRESS_EVENT, printFailure, printingLine, stoppable, type Printing } from "./lib/printing";
   import { afterAdding, suggestedName as addedTextName, type Kind as AddTextKind } from "./lib/addtext";
   import { AddTextDialog } from "./lib/addtextdialog";
   import {
@@ -5991,6 +5992,10 @@
       // The same guard, kept in `hiddentext.ts`.
       await listen<HiddenProgress>(HIDDEN_PROGRESS_EVENT, (event) => {
         hiddenRuns.report(event.payload, (line) => { blockingTask = line; });
+      });
+      await listen<string>(PRINT_FAILURE_EVENT, ({ payload }) => {
+        const reason = printFailure(payload);
+        void nativeMessage(reason, { title: "tpdf", kind: "error" }).catch(() => say(reason));
       });
       // Windows only, and not blocking: the job is the backend's own copy, so
       // the reader can go on working while it prints.

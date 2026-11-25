@@ -194,6 +194,7 @@ export default {
   "a tile is too tall": "eine Kachel ist zu hoch",
   "the page has no size to draw": "die Seite hat keine Größe, in der sie gezeichnet werden könnte",
   "the page is too tall to preview": "die Seite ist zu hoch für die Vorschau",
+  "the printer did not accept the number of copies": "der Drucker hat die Anzahl der Exemplare nicht akzeptiert",
   "no printer has been chosen for this print": "für diesen Druck wurde kein Drucker gewählt",
   "the print could not start: {e}": "der Druck konnte nicht starten: {e}",
   "the print job could not be read back, so it will not be printed":

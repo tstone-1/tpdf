@@ -46,7 +46,7 @@
 //! ([`MAX_CHANGES`]). A bound that is reached is said in the answer, never
 //! passed over.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The most words one side may have.
 ///
@@ -361,11 +361,11 @@ pub(crate) fn compare_inputs(left: &ComparisonInput, right: &ComparisonInput) ->
             }
         };
         if fallback && removed.is_empty() && !added.is_empty() && ai < pa {
-            left_unread -= excess_runs(&b[bi..pb], &a[ai..pa], |r| {
+            left_unread -= compare_beside_scan(&b[bi..pb], &a[ai..pa], |r| {
                 record(ai..ai, bi + r.start..bi + r.end)
             });
         } else if fallback && added.is_empty() && !removed.is_empty() && bi < pb {
-            right_unread -= excess_runs(&a[ai..pa], &b[bi..pb], |r| {
+            right_unread -= compare_beside_scan(&a[ai..pa], &b[bi..pb], |r| {
                 record(ai + r.start..ai + r.end, bi..bi)
             });
         } else if !removed.is_empty() || !added.is_empty() {
@@ -397,24 +397,22 @@ pub(crate) fn compare_inputs(left: &ComparisonInput, right: &ComparisonInput) ->
     }
 }
 
-/// In a fallback passage the aligner has not established which words match.
-/// When a scan hides one side, only excess occurrences on the readable side
-/// are certain. Keep their positions without marking intervening shared words.
-fn excess_runs(
+/// Mark only words absent from the opposite passage: an extra occurrence of a
+/// repeated word cannot safely be located. Shared words count as compared only
+/// if removing the side-specific words leaves identical sequences in order.
+fn compare_beside_scan(
     words: &[u32],
     opposite: &[u32],
     mut record: impl FnMut(std::ops::Range<usize>),
 ) -> usize {
-    let mut matched = 0;
-    let mut available = HashMap::<u32, usize>::new();
-    for id in opposite {
-        *available.entry(*id).or_default() += 1;
-    }
+    let opposite_ids: HashSet<_> = opposite.iter().copied().collect();
     let mut start = None;
+    let mut shared_ids = HashSet::new();
+    let mut shared_count = 0;
     for (i, id) in words.iter().enumerate() {
-        if let Some(count) = available.get_mut(id).filter(|n| **n > 0) {
-            *count -= 1;
-            matched += 1;
+        if opposite_ids.contains(id) {
+            shared_ids.insert(*id);
+            shared_count += 1;
             if let Some(from) = start.take() {
                 record(from..i);
             }
@@ -425,7 +423,12 @@ fn excess_runs(
     if let Some(from) = start {
         record(from..words.len());
     }
-    matched
+    let shared = words.iter().filter(|id| opposite_ids.contains(id));
+    if shared.eq(opposite.iter().filter(|id| shared_ids.contains(id))) {
+        shared_count
+    } else {
+        0
+    }
 }
 
 /// One side's pages in the order given, and which of them have no words.
@@ -1018,6 +1021,17 @@ mod tests {
         assert_eq!(result.added_words, 2101);
         assert_eq!(result.removed_words, 0);
         assert!(result.changes.iter().all(|c| c.added == "new"));
+    }
+
+    #[test]
+    fn repeated_words_beside_a_scan_do_not_get_an_unproven_change_location() {
+        let old = "paid due ".repeat(1100);
+        let new = format!("due {old}pending");
+        let result = run(&[(0, &old)], &[(0, ""), (1, &new)]);
+        assert_eq!(result.total_changes, 1);
+        assert_eq!(result.changes[0].added, "pending");
+        assert_eq!(result.added_words, 1);
+        assert!(result.left_unread > 0);
     }
 
     #[test]

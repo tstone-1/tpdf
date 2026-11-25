@@ -8,16 +8,19 @@
  * print systems show their own progress.
  */
 
-import { catalog } from "./i18n";
+import { catalog, UI_LOCALE, type UiLocale } from "./i18n";
+import { spoken } from "./said";
 
 const TEXT = catalog({
   "en-US": {
+    failed: "The document was not printed.",
     stoppedNothingSent: "Printing stopped. Nothing was sent to the printer.",
     stoppedSomeSent: "Printing stopped. The printer may still print the sides it already had.",
     sent: (sides: number) => (sides === 1 ? "Sent 1 side to the printer." : `Sent ${sides} sides to the printer.`),
     printing: (side: number, of: number) => `Printing side ${side} of ${of}...`,
   },
   "de-DE": {
+    failed: "Das Dokument wurde nicht gedruckt.",
     stoppedNothingSent: "Drucken abgebrochen. Es wurde nichts an den Drucker gesendet.",
     stoppedSomeSent: "Drucken abgebrochen. Der Drucker druckt möglicherweise noch die Druckseiten, die er schon erhalten hat.",
     sent: (sides: number) =>
@@ -33,6 +36,13 @@ const TEXT = catalog({
  * spellings together.
  */
 export const PROGRESS_EVENT = "tpdf://print-progress";
+
+/** Windows and GTK both report a failure after the print dialog has closed. */
+export const FAILURE_EVENT = "tpdf://print-failure";
+
+export function printFailure(detail: string, locale: UiLocale = UI_LOCALE): string {
+  return `${TEXT(locale).failed}\n\n${spoken(detail, locale)}`;
+}
 
 /** What the event carries. `Printing` in `commands/print.rs`. */
 export interface Printing {

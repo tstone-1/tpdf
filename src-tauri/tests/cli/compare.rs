@@ -54,6 +54,50 @@ fn document(path: &Path, pages: &[&[&str]]) {
     doc.save(path).unwrap();
 }
 
+fn repeated_words_beside_a_blank_cover(dir: &Path, report: &mut Report) {
+    let old = dir.join("repeated.pdf");
+    let changed = dir.join("reordered.pdf");
+    let covered = dir.join("reordered-with-cover.pdf");
+    let unchanged = dir.join("same-with-cover.pdf");
+    let paid = ["paid"; 20].join(" ");
+    let due = ["due"; 20].join(" ");
+    let paid = [paid.as_str(); 55];
+    let due = [due.as_str(); 55];
+    document(&old, &[&paid, &due]);
+    document(&changed, &[&due, &paid]);
+    document(&covered, &[&[], &due, &paid]);
+    document(&unchanged, &[&[], &paid, &due]);
+    for (left, right, exit, changed_passages, unread_side) in [
+        (&old, &old, 0, 0, None),
+        (&old, &unchanged, 0, 0, None),
+        (&old, &changed, 1, 1, None),
+        (&old, &covered, 1, 0, Some("old")),
+        (&covered, &old, 1, 0, Some("new")),
+    ] {
+        let (code, out, err) = tool(
+            &[
+                "compare",
+                left.to_str().unwrap(),
+                right.to_str().unwrap(),
+                "--json",
+            ],
+            &[],
+        );
+        let result: serde_json::Value = serde_json::from_str(&out).unwrap();
+        report.check(
+            "compare preserves word order beside a blank cover",
+            code == exit
+                && result["total_changes"] == changed_passages
+                && ["old", "new"].iter().all(|&side| {
+                    result[side]["words"] == 2200
+                        && result[side]["words_not_compared"]
+                            == if unread_side == Some(side) { 2200 } else { 0 }
+                }),
+            &format!("{left:?} vs {right:?}: exit {code}: {out} {err}"),
+        );
+    }
+}
+
 fn nearby_changes_and_wordless_pages(dir: &Path, report: &mut Report) {
     let old = dir.join("nearby-old.pdf");
     let new = dir.join("nearby-new.pdf");
@@ -390,6 +434,7 @@ fn indirect_font_mapping(dir: &Path, fixture: &Path, report: &mut Report) {
 pub(super) fn finds_what_changed_in_the_words(report: &mut Report) {
     let dir = scratch("compare");
     nearby_changes_and_wordless_pages(&dir, report);
+    repeated_words_beside_a_blank_cover(&dir, report);
     physical_rectangles(&dir, report);
     hyphenated_words(&dir, report);
     let old = dir.join("old.pdf");

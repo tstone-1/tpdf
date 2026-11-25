@@ -278,29 +278,24 @@ impl Metrics {
         if text.chars().count() > crate::textedit::MAX_TEXT || text.chars().any(char::is_control) {
             return Err(said!("invalid replacement text"));
         }
-        let mut rest = text;
-        let mut result = Vec::new();
-        while !rest.is_empty() {
-            let (end, code) = rest
-                .char_indices()
-                .take(3)
-                .map(|(index, ch)| index + ch.len_utf8())
-                .filter_map(|end| self.reverse.get(&rest[..end]).map(|code| (end, *code)))
-                .last()
-                .ok_or_else(|| {
-                    let first = rest.chars().next().map(String::from).unwrap_or_default();
-                    if self.ambiguous.contains(&first) {
-                        said!(
-                            "the font has several glyphs for this character and cannot choose one"
-                        )
-                    } else {
-                        said!("the font has no validated glyph for this character")
-                    }
-                })?;
-            result.push(code);
-            rest = &rest[end..];
-        }
-        Ok(result)
+        let boundaries: Vec<_> = text
+            .char_indices()
+            .map(|(at, _)| at)
+            .chain(std::iter::once(text.len()))
+            .collect();
+        super::ligatures::encode(boundaries.len() - 1, |range| {
+            self.reverse
+                .get(&text[boundaries[range.start]..boundaries[range.end]])
+                .copied()
+        })
+        .map_err(|missing| {
+            let character = &text[boundaries[missing]..boundaries[missing + 1]];
+            if self.ambiguous.contains(character) {
+                said!("the font has several glyphs for this character and cannot choose one")
+            } else {
+                super::missing_glyph()
+            }
+        })
     }
 
     pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
@@ -443,6 +438,22 @@ mod tests {
         })
         .unwrap()
         .0
+    }
+
+    #[test]
+    fn textedit_overlapping_unicode_ligatures_choose_a_complete_spelling() {
+        let codes = [(1, "α"), (2, "αα"), (3, "αβ")]
+            .into_iter()
+            .map(|(code, text)| (code, text.to_owned()))
+            .collect();
+        let widths = (1..=3).map(|code| (code, (600., [0.; 2]))).collect();
+        let metrics = Metrics::single(codes, widths);
+        assert_eq!(metrics.encode("αααβ").unwrap(), [2, 3]);
+        assert_eq!(metrics.encode("ααβ").unwrap(), [1, 3]);
+        assert_eq!(
+            metrics.encode("ααβ!").unwrap_err(),
+            super::super::missing_glyph()
+        );
     }
 
     // The fallback fonts give each character occurrence a code of its own, so

@@ -1287,7 +1287,10 @@ all of this reads the file through `lopdf`, PDFium draws it, and the two can rea
 differently, so `--strict` is not proof that a signed page looks as it did. Since 2026-10-31 an append also has to read
 from start to end in a plain form (`docinfo/append_syntax.rs`), or it reads as unread: that refuses
 stray bytes, long numbers, name bytes past ASCII, a key given twice, a table entry of the wrong size,
-comments but a producer's marker before `startxref`, and a stream length that misses `endstream`. Over
+comments but a producer's marker before `startxref`, and a stream length that misses `endstream`.
+An indirect stream length is resolved in the revision that contains the stream. Older revisions
+are parsed on demand with a cumulative 256 MiB input budget per appendix. If the revision or
+length cannot be established within that budget, the appendix is reported as unread. Over
 the 153 appendices in the public DSS project's `dss-pades` validation PDFs it changes no reading,
 though 23 of them were already unread. An entry in use in a table has to name the object at its
 offset, since `lopdf` keys an object by its own header and PDFium by the table, and a new `/Pages` in

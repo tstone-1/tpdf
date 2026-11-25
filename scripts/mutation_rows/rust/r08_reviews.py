@@ -142,8 +142,8 @@ ROWS += [
     Mutation(
         "appendix: compare whatever the append's syntax",
         "src/docinfo.rs",
-        "    if !append_syntax::reads_plainly(bytes, end, length) {",
-        "    if false && !append_syntax::reads_plainly(bytes, end, length) {",
+        "    if !append_syntax::with_revision_lengths(bytes, end, &sections.offsets, &whole, |prefix| {",
+        "    if false && !append_syntax::with_revision_lengths(bytes, end, &sections.offsets, &whole, |prefix| {",
         "an_append_two_parsers_could_read_differently_is_unread",
     ),
     Mutation(
@@ -376,10 +376,11 @@ ROWS += [
         # page's content. "Nothing was freed" is the reassuring answer.
         "appendix: read sections that cannot be followed as freeing nothing",
         "src/docinfo.rs",
-        "    let Some(freed) = freed::after(bytes, end, whole.xref_start, MAX_DECODE) else {\n"
+        "    let Some(sections) = freed::after(bytes, end, whole.xref_start, MAX_DECODE) else {\n"
         "        return unread;\n"
         "    };",
-        "    let freed = freed::after(bytes, end, whole.xref_start, MAX_DECODE).unwrap_or_default();",
+        "    let sections = freed::after(bytes, end, whole.xref_start, MAX_DECODE)"
+        ".unwrap_or_else(|| freed::Sections { freed: Default::default(), offsets: Default::default() });",
         "a_section_that_cannot_be_followed_makes_the_appendix_unread",
     ),
     Mutation(

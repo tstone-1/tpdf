@@ -895,8 +895,10 @@ A page with no words may hold any of the other side's words, so a stretch with n
 a change when the other side has such a page where the stretch would stand: between the pages
 of the shared words just before and after it, both included. The counts are directional: only words facing the textless page enter the unread count.
 The same gap can still contain a definite addition or removal on the readable side.
-When a large mixed gap cannot be aligned, only occurrences in excess of the opposite
-passage are marked. Shared words inside it keep their original positions and stay unmarked. Before 2026-10-19 they were listed as
+When a large mixed gap cannot be aligned, only words absent from the opposite passage
+are marked. The remaining words count as compared only if both sides contain the same
+sequence after those side-specific words are removed. Otherwise the gap keeps its
+uncompared words, including when the frequencies agree but the reading order changed. Before 2026-10-19 they were listed as
 removed, and the user-test kit's inspection report, whose final page 2 is a scan, read as
 "1 change: the whole of page 2 removed" with the real change, *passed* to *failed*, invisible.
 Both callers refuse a document with no words on any page. The tokenizer identifies the pages

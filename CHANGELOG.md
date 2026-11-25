@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Comparing long, repetitive passages beside a blank or scanned page keeps the result incomplete when their reading order cannot be established. The CLI returns exit 1.
+- Find in Selection includes spaces inside the selection when it starts partway through a run of whitespace.
+- Text edits keep the original font when the replacement can be spelled with overlapping ligatures.
+- Windows print previews show grayscale for monochrome-only printers. Copy requests above the driver's limit use software copies. Print failures after submission follow the interface language on Windows and Linux.
+- Signature verification reads each incremental save's own stream lengths when checking metadata updates made after signing.
 - Text-based CLI redaction identifies pages whose character mapping could hide matches and refuses the operation before writing.
 - Shared form fields keep their new name and properties when a widget is removed or a single page is extracted. Renaming checks the full field name, including through unnamed groups.
 - Moving a form control respects the page's unit scale. Keyboard navigation follows moved fields, appearance changes refresh every widget of the field, and an existing maximum text length no longer blocks an unrelated property edit.

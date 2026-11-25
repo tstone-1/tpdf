@@ -1887,8 +1887,8 @@ ROWS += [
     Mutation(
         "fold: keep every whitespace character instead of collapsing runs",
         "src/search.rs",
-        "                if chars.last() == Some(&' ') {\n                    continue;\n                }",
-        "",
+        "                if chars.last() == Some(&' ') {",
+        "                if false {",
         "a_run_of_spaces_matches_one_space",
     ),
     Mutation(

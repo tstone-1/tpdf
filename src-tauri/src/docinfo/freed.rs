@@ -56,12 +56,20 @@ const MAX_DEPTH: u8 = 12;
 /// an object in use, `false` for a free one.
 type Entries = BTreeMap<u32, bool>;
 
+/// What the appended cross-reference chain records.
+pub(super) struct Sections {
+    /// Object numbers marked free in their newest entry.
+    pub freed: BTreeSet<u32>,
+    /// Cross-reference sections after the signature, in file order.
+    pub offsets: BTreeSet<usize>,
+}
+
 /// The numbers of the objects that are free according to the sections written
 /// at or after `end`, starting from the section at `last`.
 ///
 /// The newest section that lists an object decides. `None` when a section
 /// could not be read.
-pub(super) fn after(bytes: &[u8], end: usize, last: usize, limit: usize) -> Option<BTreeSet<u32>> {
+pub(super) fn after(bytes: &[u8], end: usize, last: usize, limit: usize) -> Option<Sections> {
     let mut decided: Entries = Entries::new();
     let mut seen = BTreeSet::new();
     let mut at = last;
@@ -81,12 +89,13 @@ pub(super) fn after(bytes: &[u8], end: usize, last: usize, limit: usize) -> Opti
             None => break,
         }
     }
-    Some(
-        decided
+    Some(Sections {
+        offsets: seen,
+        freed: decided
             .into_iter()
             .filter_map(|(id, in_use)| (!in_use).then_some(id))
             .collect(),
-    )
+    })
 }
 
 /// One revision's entries and where the section before it starts.
@@ -494,7 +503,7 @@ mod tests {
     }
 
     fn freed(bytes: &[u8], end: usize, last: usize) -> Option<Vec<u32>> {
-        after(bytes, end, last, 1 << 20).map(|ids| ids.into_iter().collect())
+        after(bytes, end, last, 1 << 20).map(|sections| sections.freed.into_iter().collect())
     }
 
     /// A free entry counts in a classic table and in a stream, and an entry

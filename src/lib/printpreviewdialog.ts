@@ -257,6 +257,8 @@ export class PrintPreviewDialog {
   private current = -1;
   /** Whether the pictures drawn are with the marks; a change redraws them. */
   private marks = true;
+  /** The accepted output mode, including devices with no color selector. */
+  private monochrome = false;
   /** The settings waiting for the backend while an earlier request is out. */
   private queued: { settings: PrintSettings; driver: boolean } | null = null;
   private asking = false;
@@ -464,6 +466,7 @@ export class PrintPreviewDialog {
     this.pages = pages;
     this.current = current >= 0 && current < pages.length ? current : -1;
     this.marks = true;
+    this.monochrome = false;
     this.draw = draw;
     this.chooser = chooser;
     this.drawn = new Map();
@@ -641,7 +644,7 @@ export class PrintPreviewDialog {
     const device = setup.device;
     // A software count can exceed the value the device reports. Keep it when
     // the driver dialog returns the same hardware count (including Cancel).
-    const copies = driver && (base.copies <= device.mostCopies || device.copies !== this.driverCopies)
+    const copies = driver && device.copies !== this.driverCopies
       ? device.copies : base.copies;
     this.driverCopies = device.copies;
     this.copies.value = String(copies);
@@ -667,6 +670,7 @@ export class PrintPreviewDialog {
     this.orientation.value = device.landscape ? "landscape" : "portrait";
     this.twoSidedRow.style.display = device.twoSided === null ? "none" : "flex";
     if (device.twoSided !== null) this.twoSided.value = device.twoSided;
+    this.monochrome = device.colour !== true;
     this.colourRow.style.display = device.colour === null ? "none" : "flex";
     if (device.colour !== null) this.colour.value = device.colour ? "colour" : "black";
     this.problem.textContent = "";
@@ -761,7 +765,7 @@ export class PrintPreviewDialog {
       area.style.cssText =
         `position:absolute;overflow:hidden;left:${printable.left}%;top:${printable.top}%;` +
         `width:${printable.width}%;height:${printable.height}%;`;
-      if (this.settings?.colour === false) area.style.filter = "grayscale(1)";
+      if (this.monochrome) area.style.filter = "grayscale(1)";
       const pictures = sheet.placements.map((placed) => {
         const at = placementBox(placed, sheet.paper);
         const holder = document.createElement("div");

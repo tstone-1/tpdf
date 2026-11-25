@@ -97,7 +97,12 @@ pub fn stage(bytes: &[u8]) -> Result<(PathBuf, std::fs::File), String> {
 ///
 /// The chosen printer cannot take a PDF, or GTK would not make the job. The
 /// file is removed in both cases.
-pub fn present(path: PathBuf, title: &str, parent: Option<&gtk::Window>) -> Result<(), String> {
+pub fn present(
+    path: PathBuf,
+    title: &str,
+    parent: Option<&gtk::Window>,
+    report: impl FnOnce(String) + 'static,
+) -> Result<(), String> {
     use gtk::glib::translate::ToGlibPtr;
     use gtk::prelude::*;
 
@@ -118,13 +123,7 @@ pub fn present(path: PathBuf, title: &str, parent: Option<&gtk::Window>) -> Resu
         // SAFETY: `raw` is the dialog.
         unsafe { gtk_print_unix_dialog_set_manual_capabilities(raw, 0) };
         let chosen = if dialog.run() == gtk::ResponseType::Ok {
-            let parent = parent.cloned();
-            send(
-                raw,
-                &path,
-                title,
-                report_failure(move |why| tell(parent.as_ref(), &why)),
-            )
+            send(raw, &path, title, report_failure(report))
         } else {
             Ok(false)
         };
@@ -143,24 +142,6 @@ pub fn present(path: PathBuf, title: &str, parent: Option<&gtk::Window>) -> Resu
             Err(why)
         }
     }
-}
-
-/// Tells the reader why a print they asked for did not happen, in a modal
-/// message over `parent`. On GTK's thread, after [`present`].
-pub fn tell(parent: Option<&gtk::Window>, why: &str) {
-    use gtk::prelude::*;
-
-    let message = gtk::MessageDialog::new(
-        parent,
-        gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
-        gtk::MessageType::Error,
-        gtk::ButtonsType::Close,
-        "The document was not printed.",
-    );
-    message.set_secondary_text(Some(why));
-    message.run();
-    // SAFETY: the dialog is ours and not used after this.
-    unsafe { message.destroy() };
 }
 
 type Completion = Box<dyn FnOnce(Result<(), String>)>;

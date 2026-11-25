@@ -225,20 +225,19 @@ impl Metrics {
         {
             return Ok(bytes);
         }
-        let mut result = Vec::with_capacity(bytes.len());
-        let mut rest = bytes.as_slice();
-        while !rest.is_empty() {
-            if let Some((_, sequence, slot)) = ligatures::GLYPHS.iter().find(|(_, text, slot)| {
-                self.widths[*slot as usize].is_some() && rest.starts_with(text.as_bytes())
-            }) {
-                result.push(*slot);
-                rest = &rest[sequence.len()..];
-            } else {
-                result.push(rest[0]);
-                rest = &rest[1..];
-            }
-        }
-        Ok(result)
+        ligatures::encode(bytes.len(), |range| {
+            let slot = match &bytes[range] {
+                [byte] => *byte,
+                sequence => {
+                    ligatures::GLYPHS
+                        .iter()
+                        .find(|(_, text, _)| text.as_bytes() == sequence)?
+                        .2
+                }
+            };
+            self.widths[usize::from(slot)].map(|_| slot)
+        })
+        .map_err(|_| missing_glyph())
     }
 
     pub(super) fn helvetica() -> Self {

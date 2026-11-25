@@ -183,6 +183,29 @@ pub struct Placement {
     pub turned: bool,
 }
 
+/// Configure one hardware copy for software repetition when the reader's count
+/// is beyond the driver's limit, or the driver normalizes it to another value.
+#[cfg(any(windows, test))]
+pub(crate) fn configure_copies(
+    requested: u16,
+    maximum: u16,
+    mut configure: impl FnMut(u16) -> Result<u16, String>,
+) -> Result<(), String> {
+    let hardware = if requested <= maximum {
+        requested.max(1)
+    } else {
+        1
+    };
+    let accepted = configure(hardware)?;
+    if accepted == hardware || accepted == 1 {
+        return Ok(());
+    }
+    if hardware != 1 && configure(1)? == 1 {
+        return Ok(());
+    }
+    Err(said!("the printer did not accept the number of copies"))
+}
+
 /// Copy boundaries for the sides rendered by the application. A driver making
 /// hardware copies receives one sequence and handles its own duplex boundaries.
 #[cfg(any(windows, test))]
@@ -198,6 +221,24 @@ impl SoftwareCopies {
         count: 1,
         duplex: false,
     };
+
+    /// Software repeats only jobs the configured driver will print once.
+    pub fn for_device(
+        requested: u16,
+        hardware: u16,
+        sides: Option<TwoSided>,
+    ) -> Result<Self, String> {
+        if hardware == requested {
+            return Ok(Self::ONE);
+        }
+        if hardware != 1 {
+            return Err(said!("the printer did not accept the number of copies"));
+        }
+        Ok(Self {
+            count: requested,
+            duplex: sides.is_some_and(|mode| mode != TwoSided::Off),
+        })
+    }
 
     /// An empty slice prints the blank reverse between odd-sided duplex copies.
     pub fn sides<T>(self, sheets: &[Vec<T>]) -> impl ExactSizeIterator<Item = &[T]> {
@@ -440,6 +481,44 @@ mod tests {
         grid, lay_out, Layout, Paper, Scale, CELL_GAP, MOST_POSTER_SHEETS, POSTER_OVERLAP,
     };
     use crate::render::PageSize;
+
+    #[test]
+    fn copy_request_previews_and_spools_on_strict_and_multi_copy_drivers() {
+        for (limit, expected_hardware, expected_sides) in [(1, 1, 4), (5, 2, 2)] {
+            let mut hardware = 0;
+            super::configure_copies(2, limit, |count| {
+                if count > limit {
+                    return Err("the driver refuses this count".into());
+                }
+                hardware = count;
+                Ok(count)
+            })
+            .expect("preview configuration succeeds");
+            assert_eq!(hardware, expected_hardware);
+            let software = super::SoftwareCopies::for_device(2, hardware, None).unwrap();
+            let pages: Vec<_> = software
+                .sides(&[vec![1], vec![2]])
+                .flatten()
+                .copied()
+                .collect();
+            assert_eq!(pages, [1, 2, 1, 2][..expected_sides]);
+        }
+    }
+
+    #[test]
+    fn a_normalized_hardware_count_uses_one_hardware_copy_before_repeating() {
+        let mut requests = Vec::new();
+        super::configure_copies(4, 10, |count| {
+            requests.push(count);
+            Ok(count.min(2))
+        })
+        .unwrap();
+        assert_eq!(requests, [4, 1]);
+        let software = super::SoftwareCopies::for_device(4, 1, None).unwrap();
+        assert_eq!(software.sides(&[vec![1]]).count(), 4);
+        assert!(super::configure_copies(4, 10, |_| Ok(2)).is_err());
+        assert!(super::SoftwareCopies::for_device(4, 2, None).is_err());
+    }
 
     #[test]
     fn duplex_software_copies_start_on_a_new_front() {

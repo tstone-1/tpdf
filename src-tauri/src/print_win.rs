@@ -1315,28 +1315,14 @@ impl Drop for OpenDocument {
     }
 }
 
-/// Tells the reader why a print they asked for did not happen, in a modal
-/// message over `owner`: after the dialog closed, nothing else would. The
-/// Windows half of `print_linux::tell`.
-pub fn tell(owner: Option<HWND>, why: &str) {
-    message(
-        owner,
-        &format!("The document was not printed.\n\n{why}"),
-        true,
-    );
-}
-
-/// A modal message box over `owner`, an error or a warning. It blocks the
+/// A modal stalled-queue warning over `owner`. It blocks the
 /// calling thread, which is never the window's: printing runs on its own.
-fn message(owner: Option<HWND>, text: &str, error: bool) {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, MB_ICONERROR, MB_ICONWARNING, MB_OK,
-    };
+fn message(owner: Option<HWND>, text: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONWARNING, MB_OK};
     let text = HSTRING::from(text);
     let caption = HSTRING::from("tpdf");
-    let icon = if error { MB_ICONERROR } else { MB_ICONWARNING };
     // SAFETY: two wide strings that outlive the call; a null owner is allowed.
-    let _ = unsafe { MessageBoxW(owner, &text, &caption, MB_OK | icon) };
+    let _ = unsafe { MessageBoxW(owner, &text, &caption, MB_OK | MB_ICONWARNING) };
 }
 
 /// A print hook that does nothing, installed so Windows shows the classic dialog.
@@ -1404,7 +1390,7 @@ pub(crate) fn print_on(
             },
             move |sent| {
                 let owner = shown.map(|h| HWND(h as *mut std::ffi::c_void));
-                message(owner, &crate::print::stalled_message(sent), false);
+                message(owner, &crate::print::stalled_message(sent));
             },
         )
     };
@@ -1569,7 +1555,7 @@ pub fn present(
             |beat| spool(dc, bytes, title, None, &sheets, Some(beat), library_dir),
             move |sent| {
                 let owner = shown.map(|h| HWND(h as *mut std::ffi::c_void));
-                message(owner, &crate::print::stalled_message(sent), false);
+                message(owner, &crate::print::stalled_message(sent));
             },
         )
     });

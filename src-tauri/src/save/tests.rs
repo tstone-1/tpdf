@@ -2265,7 +2265,7 @@ fn every_rewritten_fixture_is_structurally_sound() {
     assert!(
         examined >= 20,
         "only {examined} fixtures were rewritten, which is too few to have tested \
-         anything --- run scripts/make_fixtures.py"
+         anything --- run scripts/ci_fixtures.py --signed --hostile"
     );
 }
 

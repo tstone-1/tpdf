@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import backend from "../../src-tauri/src/commands/print.rs?raw";
-import { PROGRESS_EVENT, printingLine, stoppable, type Printing } from "./printing";
+import { FAILURE_EVENT, PROGRESS_EVENT, printFailure, printingLine, stoppable, type Printing } from "./printing";
 
 describe("the event is commands/print.rs's", () => {
   it("has the same name", () => {
@@ -18,6 +18,20 @@ describe("the event is commands/print.rs's", () => {
     const sample: Printing = { sent: 0, of: 1, state: "printing" };
     expect(fields).toEqual(Object.keys(sample));
     for (const state of ["printing", "sent", "failed", "stopped"]) expect(backend).toContain(`"${state}"`);
+  });
+});
+
+describe("post-submission print failures", () => {
+  it("uses the event shared by Windows and GTK", () => {
+    expect(backend).toContain(`pub const FAILURE_EVENT: &str = "${FAILURE_EVENT}";`);
+  });
+
+  it("localizes the heading and known reasons, preserving the driver's own detail", () => {
+    for (const locale of ["de-DE", "de-DE-formal"] as const) {
+      expect(printFailure("queue reports E42", locale)).toBe("Das Dokument wurde nicht gedruckt.\n\nqueue reports E42");
+      expect(printFailure("no printer is installed", locale)).toBe("Das Dokument wurde nicht gedruckt.\n\nes ist kein Drucker installiert");
+    }
+    expect(printFailure("queue reports E42", "en-US")).toBe("The document was not printed.\n\nqueue reports E42");
   });
 });
 

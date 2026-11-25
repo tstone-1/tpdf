@@ -547,12 +547,13 @@ The composite-font regression covers matching direct/indirect geometry, saved
 text and cyclic or non-array references.
 Identity-H TrueType fonts also admit the exact `ff`, `fi`, `fl` and `ffi`
 ToUnicode sequences already supported by CFF. Source measurements retain original
-CID boundaries; replacement encoding chooses the longest available ligature.
+CID boundaries. Replacement encoding prefers the longest available ligature that
+leaves a spelling for the rest of the text.
 That slot path (`mapping::parse_cid`) still refuses any other sequence. The
 Unicode path (`mapping::unicode_codes`, composite and Type3 fonts) admits any
-unique run of two or three letters (Calibri's `ft`, `st`, `Th`), since its
-encoder matches the longest mapped sequence; a digit, space or control in a
-sequence and sequence ranges remain refused. Several codes may share a text (a
+unique run of two or three letters (Calibri's `ft`, `st`, `Th`) and applies the
+same preference. Sequence ranges and sequences containing a digit, space or
+control remain refused. Several codes may share a text (a
 small capital and its capital, a delimiter's sizes): each reads as that text, and
 a replacement writes it only with the one glyph its own run already shows for it
 (`unicode::Metrics::prefer`, fed by `textedit::shown`); otherwise the edit is
@@ -742,12 +743,13 @@ glyph unoffered. Top, font and Private dicts are closed key lists; the top
 FontMatrix must be absent or 0.001 and a font dict's absent or identity. ForceBold
 is accepted here, a hint for the whole glyph set. xdvipdfmx maps CID 0 to U+FFFF
 and fontspec's manual shows it: `.notdef` is measured for read-only text only.
-In the whole Unicode path (TrueType Identity-H, Type3 and CID CFF), a glyph whose
-program width disagrees with its PDF width, or whose ink reaches past the editable
-box, is kept read-only at its PDF width with its ink reserved (up to
-`type1::OPAQUE_REACH`), where it used to refuse the font; LuaTeX writes TeX's
-italic correction into math widths. A PDF width of zero (Typst's combining macron
-under `DW 0`) is such a read-only mark too, the only glyph whose layout step may be zero.
+The Unicode reader for Identity-H TrueType and CID-keyed CFF keeps a glyph whose
+program width disagrees with its PDF width read-only at the PDF width, with its ink
+reserved up to `type1::OPAQUE_REACH`. LuaTeX writes TeX's italic correction into math widths.
+If the widths agree but the glyph's ink exceeds the editable bounds, the glyph
+is omitted. Showing it prevents the page from being edited. A glyph with a PDF
+width of zero (Typst's combining macron under `DW 0`) is also read-only. Only
+a read-only mark may have a zero layout step.
 A composite font's ToUnicode entry may name one control character (InDesign maps
 its Wingdings list bullet to U+009F): that glyph has no text, so it is read-only
 in the same way, reads as `fonts::OPAQUE`, and no replacement can write it. The

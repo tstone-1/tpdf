@@ -192,6 +192,47 @@ fn appended(built: &Built, edit: impl FnOnce(&Document, &mut Document)) -> Appen
     read(built, &revised(built, edit))
 }
 
+#[test]
+fn metadata_stream_length_is_resolved_in_its_own_revision() {
+    for classic_table in [false, true] {
+        let mut owner = built();
+        if classic_table {
+            let mut baseline = Document::load_mem(&owner.bytes).unwrap();
+            baseline.reference_table.cross_reference_type =
+                lopdf::xref::XrefType::CrossReferenceTable;
+            owner.bytes.clear();
+            baseline.save_to(&mut owner.bytes).unwrap();
+        }
+        let signed_end = owner.bytes.len();
+        let first = Document::load_mem(&owner.bytes).unwrap().max_id + 1;
+        let metadata = (first, 0);
+        let length = (first + 1, 0);
+        for packet in [
+            "<metadata>First</metadata>",
+            "<metadata>Second, longer title</metadata>",
+        ] {
+            owner.bytes = revised(&owner, |before, revision| {
+                let mut catalog = before.get_dictionary(owner.catalog).unwrap().clone();
+                catalog.set("Metadata", metadata);
+                revision.objects.insert(owner.catalog, catalog.into());
+                let mut stream = Stream::new(
+                    dictionary! {"Type" => "Metadata", "Subtype" => "XML"},
+                    packet.as_bytes().to_vec(),
+                );
+                stream.dict.set("Length", length);
+                revision.objects.insert(metadata, stream.into());
+                revision
+                    .objects
+                    .insert(length, i64::try_from(packet.len()).unwrap().into());
+                revision.max_id = revision.max_id.max(length.0);
+            });
+            let appendix = read_appendix(&owner.bytes, signed_end, None);
+            assert!(!appendix.unread, "classic table {classic_table}, {packet}");
+            assert_eq!(appendix.pages_touched, 0);
+        }
+    }
+}
+
 /// `bytes` with one more revision that is a cross-reference stream and
 /// nothing else, marking each of `freed` as a free object.
 ///

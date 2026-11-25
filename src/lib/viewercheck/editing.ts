@@ -454,13 +454,13 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
   const previous = localStorage.getItem("tpdf.print-settings");
   const requests: PrintSettings[] = [], draws: number[] = [];
   let installed = "Printer A", driverCopies = 3, brokenDefault = false;
-  let pageCount = 2, duplex = false;
+  let pageCount = 2, duplex = false, colourCapable = true;
   let holdSetup = false, finishSetup = () => {}, releaseDraw = () => {};
   const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
   const reply = (s: PrintSettings, copies: number): PrintSetup => ({
     printers: brokenDefault ? ["Printer B", "Printer C"] : [installed],
     device: { printer: installed, papers: [{ id: 1, name: "A4" }], paper: 1,
-      landscape: !!s.landscape, copies, mostCopies: 10, twoSided: duplex ? "long" : "off", colour: s.colour ?? true },
+      landscape: !!s.landscape, copies, mostCopies: 10, twoSided: duplex ? "long" : "off", colour: colourCapable ? (s.colour ?? true) : null },
     paper: { width: 595, height: 842, left: 10, top: 10, printableWidth: 575, printableHeight: 822 },
     sheets: (s.pages ?? Array.from({ length: pageCount }, (_, i) => i)).map(page => [{ page, x: 0, y: 0, width: 575, height: 822, turned: false }]),
   });
@@ -471,11 +471,12 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
       if (!s.printer && brokenDefault) throw new Error("default unavailable");
       if (s.printer && s.printer !== installed) throw new Error("printer removed");
       if (holdSetup) await new Promise<void>(resolve => { finishSetup = resolve; });
-      return reply(s, Math.min(s.copies, 10));
+      return reply(s, s.copies > 10 ? 1 : s.copies);
     },
     driver: async s => reply(s, driverCopies),
   };
-  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6L7H8AAAAASUVORK5CYII=";
+  // Red and blue pixels make the output color choice visible.
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR4nGP4zwAE/wEHAAH/4iOeWQAAAABJRU5ErkJggg==";
   const job = () => dialog.ask("Sample", Array.from({ length: pageCount }, () => ({ width_pt: 595, height_pt: 842 })),
     async page => {
       draws.push(page);
@@ -527,7 +528,7 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
     record("the driver copy count survives the next setup", displayed === "3" && requests.at(-1)?.copies === 3, displayed);
     change(copies, "12");
     await turn();
-    driverCopies = 10;
+    driverCopies = 1;
     driver.click();
     await turn();
     record("unchanged hardware copies preserve the requested software count", copies.value === "12", copies.value);
@@ -580,6 +581,19 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
     if (dialog.isOpen) dialog.close();
     const confirmed = await recovered;
     record("the replacement printer can print", confirmed.print && confirmed.settings?.printer === installed, installed);
+    colourCapable = false;
+    const mono = job();
+    await turn();
+    record("a monochrome-only printer previews in grayscale with no colour selector",
+      colour.parentElement?.style.display === "none" && !!host.querySelector("img")?.closest('[style*="grayscale(1)"]'), colour.value);
+    dialog.close();
+    await mono;
+    const generic = dialog.ask("Sample", [{ width_pt: 595, height_pt: 842 }], async () => png);
+    await turn();
+    record("the printer-independent preview returns to colour",
+      !!host.querySelector("img") && !host.querySelector("img")!.closest('[style*="grayscale(1)"]'), "");
+    dialog.close();
+    await generic;
     duplex = true;
     for (const count of [3, 4]) {
       pageCount = count;

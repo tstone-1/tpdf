@@ -26,7 +26,8 @@
 //! an earlier section, not the one before: a prototype requiring the whole chain to
 //! agree accepted only 106 of 156 appends, so those stay open (`docs/THREAT-MODEL.md`).
 
-use std::collections::BTreeMap;
+use std::cell::{Cell, OnceCell};
+use std::collections::{BTreeMap, BTreeSet};
 
 use lopdf::ObjectId;
 
@@ -46,6 +47,9 @@ const MAX_MARKER: usize = 64;
 /// forged one (2026-10-31). Well short of that, and far past anything honest.
 const MAX_AFTER_STARTXREF: usize = 1024;
 
+/// Maximum cumulative input to extra strict parses used for historical lengths.
+const MAX_HISTORICAL_PARSE_BYTES: usize = 256 * 1024 * 1024;
+
 /// The most a generation number can be.
 const MAX_GENERATION: u32 = 65535;
 
@@ -64,9 +68,17 @@ enum Value {
 /// `length` answers for a stream's `/Length` given as a reference: the object
 /// is an integer in the parse this is checking, and `None` otherwise.
 pub fn reads_plainly(bytes: &[u8], end: usize, length: impl Fn(ObjectId) -> Option<i64>) -> bool {
+    read_revisions(bytes, end, length).is_some()
+}
+
+fn read_revisions(
+    bytes: &[u8],
+    end: usize,
+    length: impl Fn(ObjectId) -> Option<i64>,
+) -> Option<usize> {
     let tail = &bytes[bytes.len().saturating_sub(MAX_AFTER_STARTXREF)..];
     if end < bytes.len() && !tail.windows(9).any(|word| word == b"startxref") {
-        return false;
+        return None;
     }
     Reader {
         bytes,
@@ -74,7 +86,100 @@ pub fn reads_plainly(bytes: &[u8], end: usize, length: impl Fn(ObjectId) -> Opti
         length,
     }
     .append()
-    .is_some()
+}
+
+/// End of the footer following this cross-reference section. Read its structure
+/// so that marker-shaped bytes inside a stream cannot split a revision.
+fn section_end(bytes: &[u8], offset: usize) -> Option<usize> {
+    let mut reader = Reader {
+        bytes,
+        at: offset,
+        length: |_| None,
+    };
+    reader.white();
+    let at = reader.at;
+    if reader.word(b"xref") {
+        reader.table(at)?;
+    } else {
+        // Cross-reference streams have a direct length (also checked by freed).
+        reader.object()?;
+    }
+    reader.white();
+    if reader.peek() == Some(b'%') {
+        reader.marker()?;
+    }
+    reader.word(b"startxref").then_some(())?;
+    reader.white();
+    let named = usize::try_from(reader.digits(20)?).ok()?;
+    reader.white();
+    let same = reader.candidates(named).into_iter().any(|candidate| {
+        let mut there = reader.at_offset(candidate);
+        there.white();
+        there.at == at
+    });
+    (same && reader.word(b"%%EOF")).then_some(reader.at)
+}
+
+/// An indirect length can speak only for a stream in its own revision.
+/// Keep the usual plain-syntax policy for spans containing only direct lengths.
+fn reads_revision(bytes: &[u8], end: usize, length: impl Fn(ObjectId) -> Option<i64>) -> bool {
+    let indirect = Cell::new(false);
+    let revisions = read_revisions(bytes, end, |id| {
+        indirect.set(true);
+        length(id)
+    });
+    revisions.is_some_and(|count| !indirect.get() || count == 1)
+}
+
+/// Resolve indirect lengths against the revision containing the stream. Only
+/// revisions that actually request a historical integer need another strict
+/// parse. Hold at most one such document, and cap the cumulative bytes parsed.
+pub(super) fn with_revision_lengths(
+    bytes: &[u8],
+    end: usize,
+    sections: &BTreeSet<usize>,
+    whole: &lopdf::Document,
+    load: impl Fn(&[u8]) -> Option<lopdf::Document>,
+) -> bool {
+    let integer = |doc: &lopdf::Document, id| doc.get_object(id).ok()?.as_i64().ok();
+    if sections.len() <= 1 {
+        return reads_revision(bytes, end, |id| integer(whole, id));
+    }
+
+    // Direct lengths are already revision-local and need no prefix parsing.
+    let indirect = Cell::new(false);
+    let plain = reads_plainly(bytes, end, |_| {
+        indirect.set(true);
+        None
+    });
+    if !indirect.get() {
+        return plain;
+    }
+    let remaining = Cell::new(MAX_HISTORICAL_PARSE_BYTES);
+    let mut start = end;
+    for &offset in sections.iter().take(sections.len() - 1) {
+        let Some(stop) = section_end(bytes, offset) else {
+            return false;
+        };
+        if stop <= start {
+            return false;
+        }
+        let prefix = &bytes[..stop];
+        let historical = OnceCell::new();
+        if !reads_revision(prefix, start, |id| {
+            let doc = historical
+                .get_or_init(|| {
+                    remaining.set(remaining.get().checked_sub(stop)?);
+                    load(prefix)
+                })
+                .as_ref()?;
+            integer(doc, id)
+        }) {
+            return false;
+        }
+        start = stop;
+    }
+    reads_revision(bytes, start, |id| integer(whole, id))
 }
 
 struct Reader<'a, L> {
@@ -122,12 +227,13 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
 
     /// Revisions to the end: anything else, or a revision left without its
     /// `%%EOF`, is `None`.
-    fn append(&mut self) -> Option<()> {
+    fn append(&mut self) -> Option<usize> {
         let mut open = false;
+        let mut revisions = 0;
         loop {
             self.white();
             if self.peek().is_none() {
-                return (!open).then_some(());
+                return (!open).then_some(revisions);
             }
             if self.peek() == Some(b'%') {
                 self.marker()?;
@@ -142,6 +248,7 @@ impl<L: Fn(ObjectId) -> Option<i64>> Reader<'_, L> {
                 if !self.word(b"%%EOF") || !self.names_section(section) {
                     return None;
                 }
+                revisions += 1;
                 open = false;
             } else {
                 self.object()?;

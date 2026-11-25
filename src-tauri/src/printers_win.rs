@@ -284,6 +284,22 @@ impl Printer {
         }
     }
 
+    /// The copy count in the DEVMODE returned by the driver.
+    #[must_use]
+    pub fn copies(&self) -> u16 {
+        // SAFETY: the printer arm of the union is active for a printer's record.
+        let copies = unsafe { self.mode().Anonymous1.Anonymous1.dmCopies };
+        u16::try_from(copies).unwrap_or(1).max(1)
+    }
+
+    /// The number of copies this driver accepts in one job.
+    #[must_use]
+    pub fn most_copies(&self) -> u16 {
+        u16::try_from(self.capability(DC_COPIES))
+            .unwrap_or(1)
+            .max(1)
+    }
+
     /// What the printer offers and what is chosen now.
     #[must_use]
     pub fn describe(&self) -> Device {
@@ -310,10 +326,8 @@ impl Printer {
             papers,
             paper: fields.dmPaperSize,
             landscape: fields.dmOrientation == LANDSCAPE,
-            copies: u16::try_from(fields.dmCopies).unwrap_or(1).max(1),
-            most_copies: u16::try_from(self.capability(DC_COPIES))
-                .unwrap_or(1)
-                .max(1),
+            copies: self.copies(),
+            most_copies: self.most_copies(),
             two_sided,
             colour,
         }

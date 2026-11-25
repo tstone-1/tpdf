@@ -528,13 +528,16 @@ fn apply(
     let chosen = if prompt {
         printer.prompt(owner).map(|_| ())
     } else {
-        printer.choose(
-            settings.paper,
-            settings.landscape,
-            settings.copies,
-            settings.two_sided,
-            settings.colour,
-        )
+        crate::print_layout::configure_copies(settings.copies, printer.most_copies(), |copies| {
+            printer.choose(
+                settings.paper,
+                settings.landscape,
+                copies,
+                settings.two_sided,
+                settings.colour,
+            )?;
+            Ok(printer.copies())
+        })
     };
     let setup = chosen.and_then(|()| {
         let paper = printer.paper()?;
@@ -770,7 +773,7 @@ pub async fn print_confirm(
 fn print_chosen(
     app: &tauri::AppHandle,
     built: Built,
-    mut printer: crate::printers_win::Printer,
+    printer: crate::printers_win::Printer,
     sizes: &[crate::render::PageSize],
     settings: &crate::print_layout::Settings,
 ) -> Result<(), String> {
@@ -785,16 +788,9 @@ fn print_chosen(
     let pages = chosen_pages(settings, reading.pages.len())?;
     let copies = settings.copies.max(1);
     let layout = settings.layout();
-    let software_copies = if copies > printer.describe().most_copies {
-        printer.choose(None, None, 1, None, None)?;
-        let sides = printer.describe().two_sided;
-        crate::print_layout::SoftwareCopies {
-            count: copies,
-            duplex: sides.is_some_and(|mode| mode != crate::print_layout::TwoSided::Off),
-        }
-    } else {
-        crate::print_layout::SoftwareCopies::ONE
-    };
+    let device = printer.describe();
+    let software_copies =
+        crate::print_layout::SoftwareCopies::for_device(copies, device.copies, device.two_sided)?;
     let sheets = crate::print_layout::lay_out(sizes, &pages, &printer.paper()?, layout)?;
     let job = print_win::PrintJob::begin()?;
     // Crosses to the print thread as an integer, as the owner window does: a
@@ -867,7 +863,7 @@ fn on_print_thread(
                 diag::note(&format!("[print] {e}"));
                 // Said in the window too, as on Linux: the dialog has closed, and
                 // until 26.10.24 a refused job on Windows was only this log line.
-                print_win::tell(owner, &e);
+                report_print_failure(&app, &e);
             }
         }
     });
@@ -1001,6 +997,21 @@ fn present_job(
 #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
 pub const PROGRESS_EVENT: &str = "tpdf://print-progress";
 
+#[cfg(any(windows, target_os = "linux"))]
+pub const FAILURE_EVENT: &str = "tpdf://print-failure";
+
+/// The dialog has closed. Let the window localize the message and show the
+/// driver's own detail in a native error dialog.
+#[cfg(any(windows, target_os = "linux"))]
+fn report_print_failure(app: &tauri::AppHandle, detail: &str) {
+    use tauri::Emitter;
+    if let Err(error) = app.emit(FAILURE_EVENT, detail) {
+        diag::note(&format!(
+            "[print] could not display the print failure: {error}"
+        ));
+    }
+}
+
 /// What [`PROGRESS_EVENT`] carries. `Printing` in `printing.ts`.
 #[cfg(windows)]
 #[derive(serde::Serialize, Clone)]
@@ -1053,11 +1064,14 @@ fn present_job(
         let parent = parent
             .as_ref()
             .map(gtk::prelude::Cast::upcast_ref::<gtk::Window>);
-        if let Err(e) = crate::print_linux::present(staged, &title, parent) {
+        let reporting = shown.clone();
+        if let Err(e) = crate::print_linux::present(staged, &title, parent, move |why| {
+            report_print_failure(&reporting, &why);
+        }) {
             diag::note(&format!("[print] {e}"));
             // Said in the window too: this is after the dialog closed, so the
             // reader pressed Print and nothing else would tell them it did not.
-            crate::print_linux::tell(parent, &e);
+            report_print_failure(&shown, &e);
         }
     })
     .map_err(|e| {

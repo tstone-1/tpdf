@@ -347,7 +347,7 @@ fn boundary(left: Option<char>, right: Option<char>) -> bool {
 
 impl Folded {
     /// Folds a sequence of `(index, char)` pairs. See the module docs.
-    fn build(input: impl Iterator<Item = (u32, char)>, match_case: bool) -> Self {
+    fn build(input: impl Iterator<Item = (u32, char)>, match_case: bool, from: u32) -> Self {
         let mut chars: Vec<char> = Vec::new();
         let mut source: Vec<u32> = Vec::new();
 
@@ -363,6 +363,14 @@ impl Folded {
                 // One space for a run, so a line break inside a phrase is not a
                 // reason for the phrase not to match.
                 if chars.last() == Some(&' ') {
+                    // Represent a run crossing the search start by its first
+                    // searchable space. Keep the folded page intact for anchors.
+                    if let Some(first) = source
+                        .last_mut()
+                        .filter(|first| **first < from && index >= from && index != BREAK)
+                    {
+                        *first = index;
+                    }
                     continue;
                 }
                 chars.push(' ');
@@ -392,19 +400,20 @@ impl Folded {
         Self { chars, source }
     }
 
-    fn of_page(codes: &[u32], match_case: bool) -> Self {
+    fn of_page(codes: &[u32], match_case: bool, from: u32) -> Self {
         Self::build(
             codes
                 .iter()
                 .enumerate()
                 .filter_map(|(index, code)| Some((index as u32, char::from_u32(*code)?))),
             match_case,
+            from,
         )
     }
 
     fn of_query(query: &str, match_case: bool) -> Self {
         // Source indices are meaningless for a query and are never read.
-        Self::build(query.chars().map(|ch| (0, ch)), match_case)
+        Self::build(query.chars().map(|ch| (0, ch)), match_case, 0)
     }
 
     /// The folded characters as a string, with a byte offset to char index map.
@@ -712,7 +721,9 @@ fn find_prepared(
         return Vec::new();
     }
 
-    let hay = Folded::of_page(codes, options.match_case);
+    let [from, to] = options.bounds.unwrap_or([0, u32::MAX]);
+    let from = from.max(consumed);
+    let hay = Folded::of_page(codes, options.match_case, from);
 
     // Whether a hit has a word boundary at both ends. A closure rather than a
     // filter over the collected spans, because *where* the test happens is
@@ -726,10 +737,7 @@ fn find_prepared(
     // Accepted hits, as half-open indices into the folded sequence.
     let mut spans: Vec<(usize, usize)> = Vec::new();
 
-    let [from, to] = options.bounds.unwrap_or([0, u32::MAX]);
-    let mut at = hay
-        .source
-        .partition_point(|source| *source < from.max(consumed));
+    let mut at = hay.source.partition_point(|source| *source < from);
     let stop = hay.source.partition_point(|source| *source < to);
     if at >= stop {
         return Vec::new();
@@ -860,7 +868,11 @@ fn find_across(prepared: &Prepared, codes: &[u32], page: u32, carry: &Carry) -> 
             items.push((index as u32, ch));
         }
     }
-    let hay = Folded::build(items.into_iter(), options.match_case);
+    let hay = Folded::build(
+        items.into_iter(),
+        options.match_case,
+        carry.available_from.saturating_sub(carry.from),
+    );
 
     let mut matches = Vec::new();
     let mut at = 0usize;
@@ -1174,6 +1186,50 @@ mod tests {
         for query in ["^aa", "aa$", r"\baa", r"aa\b"] {
             assert!(find_in(&page("aaaa"), 0, query, options).is_empty());
         }
+    }
+
+    #[test]
+    fn a_selection_starting_inside_whitespace_keeps_its_first_available_space() {
+        for kind in [PLAIN, PATTERN] {
+            let text = page("a   b");
+            for (bounds, expected) in [
+                (None, Some((1, 5, "   b"))),
+                (Some([2, 5]), Some((2, 5, "  b"))),
+                (Some([4, 5]), None),
+                (Some([2, 2]), None),
+            ] {
+                let found = find_in(&text, 0, " b", Options { bounds, ..kind });
+                assert_eq!(
+                    found
+                        .iter()
+                        .map(|m| (m.start, m.end, m.hit.as_str()))
+                        .collect::<Vec<_>>(),
+                    expected.into_iter().collect::<Vec<_>>()
+                );
+            }
+        }
+        // An ignored soft hyphen cannot stand in for a selected space.
+        let bounded = Options {
+            bounds: Some([2, 4]),
+            ..PLAIN
+        };
+        assert!(find_in(&page("a \u{ad}b"), 0, " b", bounded).is_empty());
+        let first = search_page(
+            &page("a   b"),
+            0,
+            " b c",
+            Options {
+                bounds: Some([2, 5]),
+                ..PLAIN
+            },
+            None,
+        );
+        let next = search_page(&page("c"), 1, " b c", PLAIN, first.tail.as_ref());
+        assert_eq!(next.matches.len(), 1);
+        assert_eq!(
+            (next.matches[0].start, next.matches[0].end_page),
+            (2, Some(1))
+        );
     }
 
     #[test]
