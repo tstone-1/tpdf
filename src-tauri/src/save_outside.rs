@@ -966,7 +966,7 @@ impl Rewriter for InWorker {
         let mapped = if matches!(job, Job::RasterRedact { .. } | Job::RedactionFill { .. }) {
             raster_snapshot(source, len, plan)?
         } else {
-            Shm::map_open_file(source, len)?
+            Shm::map_open_file(source, len).map_err(Refusal::failed)?
         };
         // **The files imported pages come from reach the worker the way a
         // merge's do**: one read-only mapping on `crate::worker::IN_FD`, which
@@ -980,9 +980,10 @@ impl Rewriter for InWorker {
                 handed.whole,
                 out,
                 &self.library_dir,
-            )?,
-            None => Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir)?,
-        };
+            ),
+            None => Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir),
+        }
+        .map_err(Refusal::failed)?;
         let incoming = inputs
             .map(|handed| handed.each.to_vec())
             .unwrap_or_default();
@@ -1004,7 +1005,7 @@ impl Rewriter for InWorker {
         } else {
             DEFAULT_DEADLINE
         };
-        awaited(&rx, deadline, pid)?
+        awaited(&rx, deadline, pid).map_err(Refusal::failed)?
     }
 
     fn merge(
@@ -1026,13 +1027,14 @@ impl Rewriter for InWorker {
         // copied into a fresh `Shm` here, which was a second full copy of every
         // incoming document in this process, on top of the `Vec` the reads went
         // into first.
-        let mapped = Shm::map_open_file(source, len)?;
+        let mapped = Shm::map_open_file(source, len).map_err(Refusal::failed)?;
         let worker = Worker::spawn_merging(
             std::sync::Arc::new(mapped),
             inputs.whole,
             out,
             &self.library_dir,
-        )?;
+        )
+        .map_err(Refusal::failed)?;
 
         let pid = worker.pid();
         let key = password.map(str::to_string);
@@ -1046,7 +1048,7 @@ impl Rewriter for InWorker {
         // `crate::save::write_merged` holds it across this call. Unmapping those
         // pages while the child is reading them would fault it on a document
         // that is perfectly good.
-        awaited(&rx, DEFAULT_DEADLINE, pid)?
+        awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Refusal::failed)?
     }
 
     fn images(
@@ -1192,23 +1194,23 @@ impl InWorker {
         password: Option<&str>,
     ) -> Result<usize, Refusal> {
         if let Some(password) = password {
-            let answered = worker.call(&Request::Unlock {
-                password: password.to_string(),
-            })?;
+            let answered = worker
+                .call(&Request::Unlock {
+                    password: password.to_string(),
+                })
+                .map_err(Refusal::failed)?;
             if !answered.ok {
-                return Err(said!(
-                    "the worker could not take the document's password: {error}",
-                    error = answered.error
-                )
-                .into());
+                return Err(answered.into());
             }
         }
 
-        let answered = worker.call(&Request::Rewrite {
-            plan: plan.clone(),
-            job,
-            incoming: incoming.to_vec(),
-        })?;
+        let answered = worker
+            .call(&Request::Rewrite {
+                plan: plan.clone(),
+                job,
+                incoming: incoming.to_vec(),
+            })
+            .map_err(Refusal::failed)?;
         if !answered.ok {
             return Err(answered.into());
         }
@@ -1217,14 +1219,13 @@ impl InWorker {
             // A well-formed message answering a different question --- see
             // [`InWorker::ask`], which says why the caller checks this rather
             // than the protocol.
-            other => Err(said!(
+            other => Err(Refusal::failed(said!(
                 "the worker answered the rewrite with {reply}",
                 reply = match other {
                     Some(reply) => reply.described(),
                     None => said!("no payload at all"),
                 }
-            )
-            .into()),
+            ))),
         }
     }
 
@@ -1243,35 +1244,34 @@ impl InWorker {
         password: Option<&str>,
     ) -> Result<(usize, u32), Refusal> {
         if let Some(password) = password {
-            let answered = worker.call(&Request::Unlock {
-                password: password.to_string(),
-            })?;
+            let answered = worker
+                .call(&Request::Unlock {
+                    password: password.to_string(),
+                })
+                .map_err(Refusal::failed)?;
             if !answered.ok {
-                return Err(said!(
-                    "the worker could not take the document's password: {error}",
-                    error = answered.error
-                )
-                .into());
+                return Err(answered.into());
             }
         }
 
-        let answered = worker.call(&Request::Merge {
-            plan: plan.clone(),
-            incoming: incoming.to_vec(),
-        })?;
+        let answered = worker
+            .call(&Request::Merge {
+                plan: plan.clone(),
+                incoming: incoming.to_vec(),
+            })
+            .map_err(Refusal::failed)?;
         if !answered.ok {
             return Err(answered.into());
         }
         match answered.reply {
             Some(Reply::Merged { bytes, pages }) => Ok((bytes, pages)),
-            other => Err(said!(
+            other => Err(Refusal::failed(said!(
                 "the worker answered the merge with {reply}",
                 reply = match other {
                     Some(reply) => reply.described(),
                     None => said!("no payload at all"),
                 }
-            )
-            .into()),
+            ))),
         }
     }
 
@@ -1359,6 +1359,7 @@ mod tests {
             field_edits: Vec::new(),
             tab_order: false,
             baseline: 0,
+            source_moved: false,
             opened_as: Some(fingerprint),
             pages: vec![],
             marks: vec![],

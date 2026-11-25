@@ -111,6 +111,7 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
     Ok(Plan {
         baseline: count,
         // The caller binds the pass to the bytes the verification read.
+        source_moved: false,
         opened_as: None,
         pages: (0..count)
             .map(|source| PageView {
@@ -329,6 +330,7 @@ mod tests {
                 field_edits: Vec::new(),
                 tab_order: false,
                 baseline: 2,
+                source_moved: false,
                 opened_as: None,
                 text_layers: Vec::new(),
                 added_text: Vec::new(),
@@ -463,6 +465,7 @@ mod tests {
             field_edits: Vec::new(),
             tab_order: false,
             baseline: 3,
+            source_moved: false,
             opened_as: None,
             pages: vec![
                 PageView {

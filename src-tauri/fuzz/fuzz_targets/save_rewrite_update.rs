@@ -305,6 +305,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
         // simplification: `Plan::opened_as` is `#[serde(skip)]` precisely so a
         // plan that crossed the worker boundary always carries `None`, and this
         // target stands in for that caller.
+        source_moved: false,
         opened_as: None,
         pages: raw
             .pages

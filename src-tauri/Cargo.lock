@@ -5877,6 +5877,7 @@ dependencies = [
  "tpdf-shell",
  "ttf-parser",
  "unicode-bidi",
+ "unicode-normalization",
  "url",
  "weezl",
  "windows",

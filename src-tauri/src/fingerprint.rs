@@ -310,7 +310,7 @@ impl Fingerprint {
         self.check_digest(path, now)
     }
 
-    pub(crate) fn agrees_with_open(&self, file: &File, path: &Path) -> Result<(), String> {
+    pub(crate) fn agrees_with_open(&self, file: &File, path: &Path) -> Result<Fingerprint, String> {
         let result = Fingerprint::of_open(file, path).and_then(|now| {
             if self.len != now.len {
                 return Err(changed(
@@ -324,7 +324,7 @@ impl Fingerprint {
             }
             self.check_digest(path, now)
         });
-        result.map(|_| ()).map_err(|fact| way_out(&fact))
+        result.map_err(|fact| way_out(&fact))
     }
 
     fn check_digest(&self, path: &Path, now: Fingerprint) -> Result<Fingerprint, String> {

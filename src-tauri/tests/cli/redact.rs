@@ -1912,7 +1912,7 @@ fn coded_pdf(payload: &str, how: Coded) -> (Vec<u8>, [f32; 4]) {
     // The OCR control must work with both the short payee region and the
     // tall QR region. Windows read a control from this label in both images.
     let payee = "BT /F1 12 Tf 72 700 Td (Pay to Jane Doe) Tj ET\n\
-                 BT /F1 10 Tf 72 650 Td (Account balance) Tj ET\n";
+                 BT /F1 10 Tf 72 650 Td (Account balance: Jos\\351) Tj ET\n";
     let mut body = String::new();
     for y in 0..matrix.getHeight() {
         for x in 0..matrix.getWidth() {
@@ -2048,6 +2048,31 @@ pub(super) fn codes_carrying_removed_text(report: &mut Report) {
         said.iter()
             .all(|r| !r.contains("COBADEFF") && !r.contains("DE89") && !r.contains("123.45")),
         &format!("{said:?}"),
+    );
+
+    let (bytes, _) = coded_pdf("Payee: Jose\u{301}", Coded::Beside);
+    let input = dir.join("accented-in.pdf");
+    let output = dir.join("accented-out.pdf");
+    std::fs::write(&input, bytes).expect("coded input");
+    let (code, json, stderr) = run(
+        &strings(&[
+            "redact",
+            &s(&input),
+            "-o",
+            &s(&output),
+            "--text",
+            "José",
+            "--json",
+        ]),
+        &[],
+    );
+    report.check(
+        "a decomposed name in a QR code prevents verification of a composed name",
+        code == 1
+            && json["written"] == true
+            && json["verified"] == false
+            && about_codes(&json).iter().any(|why| why.contains("José")),
+        &format!("exit {code}: {stderr}; {json}"),
     );
 
     let (code, json, stderr) = redact("other", OTHER, false);

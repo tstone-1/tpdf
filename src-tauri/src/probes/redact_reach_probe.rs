@@ -962,6 +962,7 @@ fn run_gate(
     let plan = Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: opened.page_count as u32,
         pages: (0..opened.page_count)

@@ -301,6 +301,7 @@ fn whole(pages: u32) -> Plan {
     Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: pages,
         pages: (0..pages)

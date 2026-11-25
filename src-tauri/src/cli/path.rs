@@ -1,7 +1,7 @@
 //! `tpdf path [--add | --remove]`: whether the folder this tool is in is on
 //! the user's `PATH`, and putting it there or taking it out. Windows only:
-//! the per-user installer runs `--add` after installing and `--remove` before
-//! uninstalling, and anybody can run either by hand.
+//! the installer records whether it added its folder. Manual add and remove
+//! operate on the current user's PATH independently of that record.
 
 use std::io::Write;
 
@@ -23,6 +23,8 @@ pub enum Path {
     Show,
     /// `--add`.
     Add,
+    /// Installer protocol: report whether this invocation added the entry.
+    InstallerAdd,
     /// `--remove`.
     Remove,
 }
@@ -41,6 +43,7 @@ pub fn parse(args: &[String]) -> Result<Path, String> {
     for arg in args {
         let asked = match arg.as_str() {
             "--add" => Path::Add,
+            "--installer-add" => Path::InstallerAdd,
             "--remove" => Path::Remove,
             other => return Err(unknown("path", other)),
         };
@@ -87,6 +90,10 @@ fn run(what: Path) -> Result<String, String> {
                 (false, false) => format!("{dir} is not on your PATH --- `path --add` adds it."),
             }
         }
+        Path::InstallerAdd => match userpath::apply(&dir, true)? {
+            Outcome::Changed => "added".into(),
+            Outcome::Unchanged => "present".into(),
+        },
         Path::Add => match userpath::apply(&dir, true)? {
             Outcome::Changed => {
                 format!("Added {dir} to your PATH. Open a new terminal to use it.")

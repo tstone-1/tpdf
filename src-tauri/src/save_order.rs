@@ -374,6 +374,7 @@ mod tests {
         Plan {
             field_edits: Vec::new(),
             tab_order: false,
+            source_moved: false,
             opened_as: None,
             baseline: 1,
             pages: vec![PageView {
@@ -787,6 +788,7 @@ mod tests {
         doc.trailer.set("Root", catalog);
         doc.save(&path).expect("write the document");
         let plan = Plan {
+            source_moved: false,
             opened_as: Some(
                 crate::fingerprint::Fingerprint::of(&path).expect("fingerprint the document"),
             ),

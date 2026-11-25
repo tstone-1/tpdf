@@ -740,13 +740,13 @@ fn copy_with(
     // file moved under them with nowhere at all to put their work. What comes
     // back is the fact, and `Copied` carries it to them.
     let on_change = check.map_or(OnChange::Proceed, |(policy, _)| policy);
-    let ready = rewrite_ready(source, plan, on_change)?;
     // Named differently from `stage_in_place`'s, deliberately, and the reason is
     // the mutation harness rather than taste: two character-for-character
     // identical calls make one anchor ambiguous, an ambiguous anchor is refused,
     // and the mutation then stops being able to fail. Distinct bindings are the
     // fix; a longer anchor is only the workaround.
     let (mut reading, len) = opened_to_rewrite(source)?;
+    let ready = rewrite_ready(&reading, source, plan, on_change)?;
     let staged = stage(out, |writing| {
         staged_rewrite(
             rewriter,
@@ -938,11 +938,8 @@ pub fn split_paths(out: &Path, count: usize) -> Vec<PathBuf> {
 /// which replaces. Without this, splitting `report.pdf` into three in a
 /// directory that already holds `report-2.pdf` destroys it silently.
 ///
-/// It is a check and not a guarantee: a file appearing between the check and
-/// the rename is still replaced. Closing that needs the shared write path to
-/// commit with `create_new`, which would change every save in this module, and
-/// the value here is turning "destroys files without saying so" into "refuses",
-/// not winning the race.
+/// Publication also refuses an occupied name atomically. A collision that arrives
+/// after preflight leaves the completed parts in place and reports their count.
 ///
 /// A failure part-way through leaves the files already written, and the message
 /// says which one failed and how many stand --- deleting them would be a second
@@ -965,7 +962,7 @@ pub fn write_split(
             )
             .into());
         }
-        if target.exists() {
+        if target.symlink_metadata().is_ok() {
             return Err(said!(
                 "{path} already exists, and a split would replace it --- choose another name",
                 path = target.display()
@@ -980,7 +977,6 @@ pub fn write_split(
     // source having been replaced mid-split, which is a race no number of
     // fingerprints closes. Once is also what stops a 337 MB source being hashed
     // as many times as the reader asked for files.
-    let ready = rewrite_ready(source, &plans[0], OnChange::Proceed)?;
     // **Opened once, and every part is rewritten from that one handle.** A part
     // is a rewrite of the same document under a different plan, so re-opening
     // per part would be re-opening a name --- and a source replaced between part
@@ -991,6 +987,7 @@ pub fn write_split(
     // character-for-character identical calls make one anchor ambiguous, an
     // ambiguous anchor is refused, and the mutation stops being able to fail.
     let (mut opened, len) = opened_to_rewrite(source)?;
+    let ready = rewrite_ready(&opened, source, &plans[0], OnChange::Proceed)?;
 
     let mut written: Vec<String> = Vec::new();
     for (plan, target) in plans.iter().zip(&targets) {
@@ -1001,7 +998,11 @@ pub fn write_split(
         let landed = stage(target, |into| {
             staged_rewrite(rewriter, &mut opened, len, into, plan, Job::Save, password).map(|_| ())
         })
-        .and_then(|staged| Ok(commit(&staged, target)?))
+        .and_then(|staged| {
+            let result = publish_new(&staged, target);
+            let _ = std::fs::remove_file(staged);
+            Ok(result?)
+        })
         .map_err(|why| Refusal {
             message: said!(
                 "{reason} ({written} of {total} written)",
@@ -1137,9 +1138,9 @@ pub fn write_merged(
     // this function's own comment above cites, arriving here the moment the
     // merge started staging the way the copy does. Distinct bindings are the
     // fix; a longer anchor is only the workaround.
-    let base = rewrite_ready(source, plan, OnChange::Proceed)?;
     // The handle, never the pathname handed on --- see `opened_to_rewrite`.
     let (mut reading, len) = opened_to_rewrite(source)?;
+    let base = rewrite_ready(&reading, source, plan, OnChange::Proceed)?;
     let mut pages = 0;
     let staged = stage(out, |writing| {
         staged_merge(
@@ -1443,18 +1444,6 @@ pub fn stage_in_place(
         )
         .into());
     }
-    let ready = rewrite_ready(source, plan, OnChange::Refuse)?;
-    // Refused rather than unwrapped. It cannot fire --- `rewrite_ready` derives
-    // this from the same `plan.opened_as` the guard above just proved present ---
-    // but the two are eight lines and one function call apart, and the failure a
-    // panic would replace is a *refused save*, which is the outcome every other
-    // branch here already produces. A guard that turns an internal inconsistency
-    // into the safe answer costs three lines and is not the unreachable guard the
-    // repository has a rule about deleting.
-    let verified = ready.verified.ok_or_else(|| {
-        said!("tpdf could not confirm what this file was when it read it --- use Save a copy")
-    })?;
-
     // The document, not the name it was reached by --- see `resolved`. Staging
     // beside the target is also what puts the temporary file on the same
     // filesystem as the thing it will replace, which is what makes the rename
@@ -1466,6 +1455,18 @@ pub fn stage_in_place(
     // Opened here and read through, never re-opened by name --- the reason is
     // on `opened_to_rewrite`, which is where the three paths that do it share it.
     let (mut file, len) = opened_to_rewrite(&target)?;
+
+    let ready = rewrite_ready(&file, source, plan, OnChange::Refuse)?;
+    // Refused rather than unwrapped. It cannot fire --- `rewrite_ready` derives
+    // this from the same `plan.opened_as` the guard above just proved present ---
+    // but the two are eight lines and one function call apart, and the failure a
+    // panic would replace is a *refused save*, which is the outcome every other
+    // branch here already produces. A guard that turns an internal inconsistency
+    // into the safe answer costs three lines and is not the unreachable guard the
+    // repository has a rule about deleting.
+    let verified = ready.verified.ok_or_else(|| {
+        said!("tpdf could not confirm what this file was when it read it --- use Save a copy")
+    })?;
 
     // **The document refusals now arrive after the temporary file exists**, and
     // that is a change worth naming rather than leaving to be noticed. They used
@@ -3457,7 +3458,12 @@ pub struct RewriteReady {
 /// # Errors
 ///
 /// The file changed since it was opened, under [`OnChange::Refuse`].
-fn rewrite_ready(source: &Path, plan: &Plan, on_change: OnChange) -> Result<RewriteReady, Refusal> {
+fn rewrite_ready(
+    file: &std::fs::File,
+    source: &Path,
+    plan: &Plan,
+    on_change: OnChange,
+) -> Result<RewriteReady, Refusal> {
     // Before the parse, and before anything is written anywhere. Every operation
     // below rewrites the object graph this plan was made against, so a `source`
     // that changed since the reader opened it is a different graph and the edits
@@ -3468,16 +3474,18 @@ fn rewrite_ready(source: &Path, plan: &Plan, on_change: OnChange) -> Result<Rewr
     // whose page count changed. Everything that keeps the count -- a re-export
     // over the top, a sync client landing a newer copy, a signing tool rewriting
     // in place -- was invisible to it. See `docs/PLAN.md` §5 and `fingerprint.rs`.
-    let mut changed = false;
+    let mut changed = plan.source_moved;
     let verified = match (&plan.opened_as, on_change) {
-        (Some(opened_as), OnChange::Refuse) => {
-            Some(opened_as.agrees_with(source).map_err(Refusal::changed)?)
-        }
+        (Some(opened_as), OnChange::Refuse) => Some(
+            opened_as
+                .agrees_with_open(file, source)
+                .map_err(Refusal::changed)?,
+        ),
         // Written anyway, and recorded. `verified` stays `None` because there is
         // nothing verified about it -- which is also what stops this result being
         // committed in place by a caller that changed its mind, since
         // `stage_in_place` refuses a `None`.
-        (Some(opened_as), OnChange::Proceed) => match opened_as.agrees_with(source) {
+        (Some(opened_as), OnChange::Proceed) => match opened_as.agrees_with_open(file, source) {
             Ok(now) => Some(now),
             Err(_) => {
                 changed = true;
@@ -5481,6 +5489,11 @@ pub(crate) fn claim_beside(
 /// How many times a refused rename is tried again on Windows, the waits
 /// doubling from 50 ms, so at most about 1.5 s in all.
 const COMMIT_RETRIES: u32 = 5;
+
+/// Publish without replacing any existing directory entry. The caller owns the staging name.
+pub(crate) fn publish_new(staged: &Path, target: &Path) -> Result<(), String> {
+    std::fs::hard_link(staged, target).map_err(|e| format!("{}: {e}", target.display()))
+}
 
 /// Renames a staged file over `out`, removing it if that fails.
 ///

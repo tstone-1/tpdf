@@ -230,6 +230,8 @@ in `Mark::field`, so that it is moved, renamed, removed and undone as every mark
 final order, and attaches the widget where it attaches every annotation. A plan holding
 one is a rewrite. `scripts/tabs_check.py --phase fields` drives it in the application.
 Text uses Helvetica with the same supported character set as `textbox.rs`.
+Text boxes and form appearances refuse a soft hyphen (U+00AD) because WinAnsi
+would paint a visible hyphen in the middle of a line.
 `FormLayer` commits and drains validation before a tab transition or save.
 `tabs_check.py --phase forms` drives the application on disposable synthetic forms;
 `form_pdfkit_check.swift` independently reads and renders the saved result.

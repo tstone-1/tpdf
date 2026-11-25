@@ -94,6 +94,20 @@ pub(super) fn operations(report: &mut Report) {
     fixture(&source, &["Alpha", "Bravo", "Charlie"]);
     let original = std::fs::read(&source).unwrap();
     let output = dir.join("edited.pdf");
+    let soft = dir.join("soft-hyphen.pdf");
+    let (code, _, stderr) = edit(
+        &source,
+        &soft,
+        json!([{
+            "op":"annotate", "kind":"textbox", "page":1, "rect":[35,40,140,24], "text":"co\u{ad}operate"
+        }]),
+        &[],
+    );
+    report.check(
+        "a text box refuses a soft hyphen before publishing",
+        code == 3 && !soft.exists(),
+        &stderr,
+    );
     // Identical physical sheets with different native coordinates.
     let scaled = dir.join("scaled.pdf");
     fixture(&scaled, &["One", "Two"]);

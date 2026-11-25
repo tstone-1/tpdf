@@ -32,6 +32,8 @@
 //! whose content is not text --- a ticket's compressed Aztec payload --- cannot be
 //! compared, and is a reason of its own rather than a pass.
 
+use unicode_normalization::UnicodeNormalization;
+
 use std::collections::HashSet;
 
 use crate::redact::ReasonKind;
@@ -191,9 +193,11 @@ fn read_at_most(
 /// are one IBAN, and a name keeps its letters across a line break in a payload.
 #[must_use]
 pub fn folded(text: &str) -> String {
-    text.chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(char::to_lowercase)
+    use caseless::Caseless;
+    text.nfd()
+        .default_case_fold()
+        .nfc()
+        .filter(|c| c.is_alphanumeric() || unicode_normalization::char::is_combining_mark(*c))
         .collect()
 }
 
@@ -222,7 +226,10 @@ pub fn terms_of(needle: &str) -> Vec<String> {
     if whole.chars().count() >= MIN_WHOLE {
         out.push(whole);
     }
-    for word in needle.split(|c: char| !c.is_alphanumeric()) {
+    let normalized: String = needle.nfc().collect();
+    for word in normalized
+        .split(|c: char| !c.is_alphanumeric() && !unicode_normalization::char::is_combining_mark(c))
+    {
         let word = folded(word);
         if word.chars().count() >= MIN_TERM && !out.contains(&word) {
             out.push(word);
@@ -523,6 +530,18 @@ mod tests {
         assert_eq!(said.len(), 1, "{said:?}");
         assert!(said[0].contains("page 1 has a QR code"), "{said:?}");
         assert!(said[0].contains("\"Jane Doe\""), "{said:?}");
+    }
+
+    #[test]
+    fn decoded_names_match_across_unicode_spellings() {
+        for (name, payload) in [
+            ("René", "Rene\u{301}"),
+            ("Rene\u{301}", "René"),
+            ("Straße", "STRASSE"),
+        ] {
+            assert_eq!(reasons(0, &page_with(payload), &[name.to_owned()]).len(), 1);
+        }
+        assert!(reasons(0, &page_with("René"), &["Rena".to_owned()]).is_empty());
     }
 
     #[test]

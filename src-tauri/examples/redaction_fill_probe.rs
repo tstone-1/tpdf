@@ -46,6 +46,7 @@ fn plan(turns: u8) -> Plan {
         field_edits: Vec::new(),
         tab_order: false,
         baseline: 2,
+        source_moved: false,
         opened_as: None,
         pages: vec![
             PageView {

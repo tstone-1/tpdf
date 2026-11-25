@@ -120,6 +120,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         field_edits: Vec::new(),
         tab_order: false,
         baseline: page_count as u32,
+        source_moved: false,
         opened_as: Some(fingerprint.clone()),
         pages: (0..page_count)
             .map(|index| PageView {

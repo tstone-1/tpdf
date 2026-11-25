@@ -130,10 +130,9 @@
 ; ---------------------------------------------------------------------------
 ;
 ; `tpdf-cli.exe` is installed beside `tpdf.exe`, and a script calls it by
-; name. The tool edits PATH itself (`tpdf-cli path --add`, `userpath.rs`),
+; name. The tool edits PATH itself (`tpdf-cli path --installer-add`, `userpath.rs`),
 ; because an NSIS string is cut at a fixed length: a PATH read here, cut, and
-; written back would lose the reader's own entries. Nothing is read or written
-; in this file.
+; written back would lose the reader's own entries. The hook stores only whether it added the entry.
 ;
 ; It is the user's PATH (HKCU), whatever mode the installer runs in: the tool
 ; runs as whoever runs the installer. Adding is idempotent, so every update
@@ -153,9 +152,17 @@
 !macro NSIS_HOOK_POSTINSTALL
   WriteRegStr SHCTX "${UNINSTKEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
   !insertmacro TPDF_RESTORE_PDF_BACKUP
-  nsExec::ExecToLog '"$INSTDIR\tpdf-cli.exe" path --add'
+  nsExec::ExecToStack '"$INSTDIR\tpdf-cli.exe" path --installer-add'
   Pop $0
-  DetailPrint "tpdf-cli path --add: exit $0"
+  Pop $1
+  DetailPrint "tpdf-cli path --installer-add: exit $0"
+  ; The helper returns one word and a newline. An update finding the entry
+  ; already present must retain the original ownership record.
+  StrCpy $1 $1 5
+  ${If} $0 == 0
+  ${AndIf} $1 == "added"
+    WriteRegDWORD HKCU "Software\tpdf\InstallerPath" "$INSTDIR" 1
+  ${EndIf}
 !macroend
 
 ; Uninstalling turns the Explorer integration off whatever it was, and puts
@@ -186,9 +193,17 @@
 
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode <> 1
-    nsExec::ExecToLog '"$INSTDIR\tpdf-cli.exe" path --remove'
-    Pop $0
-    DetailPrint "tpdf-cli path --remove: exit $0"
+    ReadRegDWORD $1 HKCU "Software\tpdf\InstallerPath" "$INSTDIR"
+    ${If} $1 == 1
+      nsExec::ExecToLog '"$INSTDIR\tpdf-cli.exe" path --remove'
+      Pop $0
+      DetailPrint "tpdf-cli path --remove: exit $0"
+      ${If} $0 == 0
+        DeleteRegValue HKCU "Software\tpdf\InstallerPath" "$INSTDIR"
+        DeleteRegKey /ifempty HKCU "Software\tpdf\InstallerPath"
+        DeleteRegKey /ifempty HKCU "Software\tpdf"
+      ${EndIf}
+    ${EndIf}
     nsExec::ExecToLog '"$INSTDIR\tpdf-cli.exe" explorer --remove'
     Pop $0
     DetailPrint "tpdf-cli explorer --remove: exit $0"

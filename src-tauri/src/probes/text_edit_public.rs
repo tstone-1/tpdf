@@ -35,6 +35,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
         compress: Default::default(),
         new_fields: Vec::new(),
         baseline: 1,
+        source_moved: false,
         opened_as: Some(fingerprint.clone()),
         pages: vec![PageView {
             id: 1,

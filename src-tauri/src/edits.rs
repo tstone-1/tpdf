@@ -1635,6 +1635,9 @@ impl Edits {
             }
         }
         too_long(&want.note)?;
+        if want.kind == MarkKind::TextBox {
+            textbox::check_body(&want.note)?;
+        }
         let strokes: Vec<Stroke> = want
             .strokes
             .iter()
@@ -1916,11 +1919,8 @@ impl Edits {
         // that does not exist falls through to `model.renote`, which is the one
         // place that answers "that mark has already been removed" -- deciding it
         // here as well would be a second copy of that message.
-        if model.mark(id).is_some_and(|m| m.kind == MarkKind::TextBox) && !textbox::encodable(&note)
-        {
-            return Err(said!(
-                "a text box is written in Helvetica, which cannot draw every character in that text"
-            ));
+        if model.mark(id).is_some_and(|m| m.kind == MarkKind::TextBox) {
+            textbox::check_body(&note)?;
         }
         // A field's note is its name, so a rename is held to what a name is.
         if let Some(placed) = model.field_of(id).cloned() {
@@ -2548,6 +2548,7 @@ impl Edits {
             field_edits: planned_field_edits(model, &pages),
             tab_order: model.tab_order(),
             baseline: model.baseline(),
+            source_moved: open.moved.load(std::sync::atomic::Ordering::SeqCst),
             opened_as: opened_as.clone(),
             // Before `pages`, which the line below moves. Field order in a
             // struct literal is evaluation order, so this reads the borrow while
@@ -2700,6 +2701,7 @@ impl Edits {
             field_edits: planned_field_edits(model, &pages),
             tab_order: model.tab_order(),
             baseline: model.baseline(),
+            source_moved: open.moved.load(std::sync::atomic::Ordering::SeqCst),
             opened_as: opened_as.clone(),
             pages,
             marks,
@@ -3044,6 +3046,9 @@ pub struct Plan {
     /// generally: a request names nothing the worker could act on.
     #[serde(skip)]
     pub opened_as: Option<Fingerprint>,
+    /// The open file changed before its first fingerprint completed. Coordinator only.
+    #[serde(skip)]
+    pub source_moved: bool,
     /// The kept pages, in reading order.
     pub pages: Vec<PageView>,
     /// The marks to write, on the pages that are kept.
@@ -3440,6 +3445,7 @@ impl Plan {
             tab_order,
             // Facts about the source, not changes to it.
             baseline: _,
+            source_moved: _,
             opened_as: _,
             // Read through `pages_are_the_file`, which an imported page fails.
             pages: _,
@@ -4236,6 +4242,7 @@ mod tests {
             "no fingerprint of the new bytes"
         );
         assert!(edits.moved_before_fingerprint(1));
+        assert!(edits.plan(1).unwrap().source_moved);
         assert_eq!(
             edits.file_differs(1, &file),
             Some(true),

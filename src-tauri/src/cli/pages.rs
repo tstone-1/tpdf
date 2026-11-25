@@ -790,7 +790,7 @@ impl Temporary {
             // changes after validation. Only document saves follow the final link.
             save::commit(staged, target)
         } else {
-            std::fs::hard_link(staged, target).map_err(|e| e.to_string())
+            save::publish_new(staged, target)
         };
         result.map_err(|e| {
             Failure::new(

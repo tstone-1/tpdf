@@ -2294,8 +2294,8 @@ ROWS += [
         # this content walk and can show a simple or a composite font.
         "encoding: consider simple fonts as well as composite ones",
         "src/encoding.rs",
-        'font_kind(doc, drawn)? == b"Type0"',
-        '!font_kind(doc, drawn)?.is_empty()',
+        'font_kind(doc, drawn)? != b"Type0"',
+        'font_kind(doc, drawn)?.is_empty()',
         "only_shown_fonts_count_in_a_placed_form",
     ),
     Mutation(
@@ -2317,9 +2317,9 @@ ROWS += [
         # goes red; the test named for the rule is the one aimed at here.
         "encoding: list Identity as an ordering PDFium can map",
         "src/encoding.rs",
-        'const MAPPABLE_ORDERINGS: [&str; 5] = ["Japan1", "GB1", "CNS1", "Korea1", "KR"];',
-        'const MAPPABLE_ORDERINGS: [&str; 6] =\n'
-        '    ["Japan1", "GB1", "CNS1", "Korea1", "KR", "Identity"];',
+        'const MAPPABLE_ORDERINGS: [&str; 4] = ["Japan1", "GB1", "CNS1", "Korea1"];',
+        'const MAPPABLE_ORDERINGS: [&str; 5] =\n'
+        '    ["Japan1", "GB1", "CNS1", "Korea1", "Identity"];',
         "identity_ordering_without_a_tounicode_is_a_guess",
     ),
     # ------------------------------------------------------------------

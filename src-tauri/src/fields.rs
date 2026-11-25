@@ -2,10 +2,8 @@
 //!
 //! `/Fields` is a **tree**: an entry is a field, or a node whose `/Kids` hold
 //! fields, and a fully qualified name is the `/T` values joined down the chain.
-//! Two readers walk it --- `docinfo.rs` to list the signature fields, `redact.rs`
-//! to decide which fields a removal has to take with it --- and until this module
-//! existed each carried its own traversal, its own node budget and its own name
-//! for that budget.
+//! Signature inspection and redaction use this walk, as do the checks for
+//! name collisions when creating or renaming form fields.
 //!
 //! ## What is shared, and what deliberately is not
 //!

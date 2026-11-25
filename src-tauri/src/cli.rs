@@ -730,13 +730,14 @@ pub(super) fn ascii_json_with_limit(
     impl Write for Ascii {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             let fragment = std::str::from_utf8(buf).map_err(std::io::Error::other)?;
-            let ascii = fragment.is_ascii();
+            let literal = |c: char| c.is_ascii() && c != '\x7f';
+            let ascii = fragment.is_ascii() && !buf.contains(&0x7f);
             let bytes = if ascii {
                 buf.len()
             } else {
                 fragment
                     .chars()
-                    .map(|c| if c.is_ascii() { 1 } else { 6 * c.len_utf16() })
+                    .map(|c| if literal(c) { 1 } else { 6 * c.len_utf16() })
                     .sum()
             };
             if bytes > self.limit - self.text.len() {
@@ -747,7 +748,7 @@ pub(super) fn ascii_json_with_limit(
             } else {
                 use std::fmt::Write as _;
                 for c in fragment.chars() {
-                    if c.is_ascii() {
+                    if literal(c) {
                         self.text.push(c);
                     } else {
                         for unit in c.encode_utf16(&mut [0; 2]) {
@@ -787,8 +788,8 @@ pub fn usage(program: &str) -> String {
     }
     text.push_str(
         "\nExit codes: 0 done; 1 verify --strict found a signature that is not intact\n\
-         and trusted, or a document with none, or redact wrote a copy it could not\n\
-         prove clean, or sign wrote a copy whose new signature was not checked again,\n\
+         and trusted, no signature, or pages rewritten after the last signature;\n\
+         or redact wrote a copy it could not prove clean, or sign wrote a copy whose new signature was not checked again,\n\
          or hidden found text a page does not show, or search found nothing, or\n\
          compare found the words differ or left some uncompared, or comments could\n\
          not read every annotation in full; 2 the command line is malformed;\n\
@@ -1028,7 +1029,17 @@ mod exit_tests {
     /// text each name every command of [`STRICT`] under exit code 1. Each is
     /// the first occurrence in this file, which is above this module.
     #[test]
+    fn del_survives_ascii_json_and_counts_as_an_escape() {
+        let word = "a\x7fb";
+        let encoded = super::ascii_json_with_limit(&word, 10).unwrap();
+        assert_eq!(encoded, r#""a\u007fb""#);
+        assert_eq!(serde_json::from_str::<String>(&encoded).unwrap(), word);
+        assert!(super::ascii_json_with_limit(&word, 9).is_err());
+    }
+
+    #[test]
     fn the_three_lists_of_exit_code_1_name_the_same_commands() {
+        assert!(super::usage("tpdf").contains("pages rewritten after the last signature"));
         let source = include_str!("cli.rs");
         let module = between(source, "//! ## Exit codes", "the command line is malformed");
         let note = between(

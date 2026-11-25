@@ -1649,8 +1649,8 @@ ROWS += [
         # check can see, because nothing about the picture changes.
         "save: leave /DA off a text box",
         "src/save/marks.rs",
-        "    if mark.kind == MarkKind::TextBox {",
-        "    if false {",
+        "    if mark.kind == MarkKind::TextBox {\n        // **`/DA` is required",
+        "    if false {\n        // **`/DA` is required",
         "a_text_box_carries_the_da_the_specification_requires_and_nothing_else_does",
     ),
     Mutation(
@@ -1679,8 +1679,8 @@ ROWS += [
         # box, the /BBox clips it, and the text disappears at the edge.
         "textbox: let a word wider than the box overflow rather than breaking it",
         "src/textbox.rs",
-        "            let mut rest = word;\n            while advance(rest, size) > width {",
-        "            let mut rest = word;\n            while false {",
+        "                if !line.is_empty() && line_width + glyph > width {",
+        "                if false {",
         "a_word_wider_than_the_box_is_broken_rather_than_overflowing",
     ),
     Mutation(
@@ -1688,12 +1688,8 @@ ROWS += [
         # font on the overlay, and the saved file has substituted glyphs.
         "textbox: accept text Helvetica cannot write",
         "src/textbox.rs",
-        # Re-aimed after `cargo fmt` collapsed the closure onto one line -- the
-        # anchor did not drift, the formatter moved it, which the `anchors` gate
-        # caught in 0.1 s. Run that gate after any `cargo fmt` that touches a
-        # file a mutation points into.
-        "        .all(|ch| ch == '\\n' || (' '..='~').contains(&ch) || ('\\u{a0}'..='\\u{ff}').contains(&ch))",
-        "        .all(|ch| {\n            let _ = ch;\n            true\n        })",
+        "        ch == '\\n'\n            || (' '..='~').contains(&ch)",
+        "        true || (' '..='~').contains(&ch)",
         "what_helvetica_cannot_write_is_refused_and_what_it_can_is_not",
     ),
     Mutation(

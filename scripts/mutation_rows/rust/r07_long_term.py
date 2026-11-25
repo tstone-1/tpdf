@@ -1005,8 +1005,8 @@ ROWS += [
     Mutation(
         "cli tool: removing says both links",
         "src/clitool.rs",
-        'said!("Removed {LINK} and {ALIAS}. The application is unchanged.")',
-        'said!("Removed {LINK}. The application is unchanged.")',
+        'said!("Neither {LINK} nor {ALIAS} is installed.")',
+        'said!("There is no link at {LINK}.")',
         "the_reader_is_told_what_is_there_afterwards_not_what_was_attempted",
     ),
 ]

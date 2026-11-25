@@ -286,6 +286,9 @@ pub(super) fn write_marks(
     _replies_were_checked: RepliesChecked,
 ) -> Result<MarksWritten, String> {
     for (mark, site) in marks.iter().zip(sites) {
+        if mark.kind == MarkKind::TextBox {
+            textbox::check_body(&mark.note)?;
+        }
         if mark.image.is_some() != mark.kind.holds_image()
             || mark.image.as_ref().is_some_and(|image| match mark.kind {
                 MarkKind::Picture => !image.valid_picture(),
@@ -1347,12 +1350,7 @@ fn edited_text_box(
     if annot.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"FreeText") {
         return Ok(None);
     }
-    if !textbox::encodable(&note.body) {
-        return Err(said!(
-            "a text box is written in Helvetica, which cannot draw every character in that text"
-        )
-        .into());
-    }
+    textbox::check_body(&note.body)?;
     replace_box_text(doc, annot, &note.body)
         .map(Some)
         .ok_or_else(|| {

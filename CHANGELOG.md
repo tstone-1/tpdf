@@ -19,6 +19,12 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Redaction checks match canonically equivalent names in decoded codes. Text comparison recognizes explicit ActualText and flags unmapped Adobe-KR characters.
+- Save a Copy warns when its source changed before fingerprinting. Split preserves occupied numbered filenames, including files created during the split.
+- Text boxes and form appearances refuse unsupported soft hyphens. Wrapping a long pasted word now takes linear work.
+- CLI JSON preserves DEL in filenames. Page commands distinguish failed workers from document refusals, and signature verification help describes changes after signing.
+- Windows uninstall preserves pre-existing PATH entries. macOS reports the actual state of command-line links after removal.
+
 - Edge watermarks rotate about the text center. Added text preserves narrow no-break spaces, reports unsupported combining accents before writing, and keeps CJK headers in position when other pages use a different font.
 - Pasted marks retain their displayed orientation across rotated pages. Imported pictures preserve their stated proportions, and valid long picture notes survive cut and paste.
 - On macOS, document dialogs block native editing shortcuts and text fields accept keyboard paste. Split-view menu labels describe both directions of each command.

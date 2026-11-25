@@ -144,6 +144,7 @@ tauri-plugin-dialog = "2.7.3"
 # the whole tree rather than read off a README, because one copyleft crate anywhere
 # removes the option of making this repository public (AGENTS.md).
 caseless = "0.2.2"
+unicode-normalization = "0.1"
 # The same revision-6 password preparation that lopdf uses when writing.
 stringprep = "0.1.5"
 # In-app updates. MIT OR Apache-2.0, and the **largest single addition the tree

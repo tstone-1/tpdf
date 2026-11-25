@@ -580,6 +580,7 @@ pub fn plan(pages: u32, answers: &[Resolved], opened_as: crate::fingerprint::Fin
             })
             .collect(),
         baseline: pages,
+        source_moved: false,
         opened_as: Some(opened_as),
         pages: (0..pages)
             .map(|at| PageView {

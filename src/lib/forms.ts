@@ -14,6 +14,7 @@ const TEXT = catalog({
     chooseAnOption: "Choose an option",
     answerTooBig: "A form answer is limited to 16 KB.",
     answerTooLong: "This answer exceeds the field's maximum length.",
+    softHyphen: "Remove the soft hyphen or use an ordinary hyphen.",
     westernOnly: "This field supports Western European characters only.",
     oneLine: "This field accepts one line only.",
     sign: "Sign",
@@ -33,6 +34,7 @@ const TEXT = catalog({
     chooseAnOption: "Option wählen",
     answerTooBig: "Eine Formularantwort ist auf 16 KB begrenzt.",
     answerTooLong: "Diese Antwort überschreitet die maximale Länge des Felds.",
+    softHyphen: "Entfernen Sie den bedingten Trennstrich oder verwenden Sie einen normalen Bindestrich.",
     westernOnly: "Dieses Feld unterstützt nur westeuropäische Zeichen.",
     oneLine: "Dieses Feld nimmt nur eine Zeile auf.",
     sign: "Signieren",
@@ -223,6 +225,7 @@ export function answerError(widget: FormWidget, value: FormValue): string | null
   }
   if (new TextEncoder().encode(value).length > 16384) return TEXT().answerTooBig;
   if (widget.max_length !== null && [...value].length > widget.max_length) return TEXT().answerTooLong;
+  if (value.includes("\u00ad")) return TEXT().softHyphen;
   if (!/^[\x20-\x7e\xa0-\xff\n]*$/.test(value)) return TEXT().westernOnly;
   if (!widget.multiline && /[\r\n]/.test(value)) return TEXT().oneLine;
   return null;

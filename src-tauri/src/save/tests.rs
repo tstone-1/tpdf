@@ -69,7 +69,13 @@ fn copy_here(
 /// production has no function of this shape any more, and reintroducing one
 /// would be a second way to write a document.
 fn rewritten_here(source: &Path, plan: &Plan, on_change: OnChange) -> Vec<u8> {
-    rewrite_ready(source, plan, on_change).expect("the file is the one the plan was made on");
+    rewrite_ready(
+        &std::fs::File::open(source).unwrap(),
+        source,
+        plan,
+        on_change,
+    )
+    .expect("the file is the one the plan was made on");
     let original = std::fs::read(source).expect("read the source");
     rewrite_update(&original, plan, Job::Save, None).expect("rewrite the document")
 }
@@ -211,6 +217,7 @@ fn plan_of(turns: &[u8]) -> Plan {
     Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: turns.len() as u32,
         pages: turns
@@ -246,6 +253,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
     Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline,
         pages: kept
@@ -1320,6 +1328,15 @@ fn a_split_refuses_an_existing_part_and_writes_nothing() {
     // that refuses everything, and this whole test would pass against a
     // function whose body is one `Err`.
     std::fs::remove_file(&taken).expect("unplant");
+    #[cfg(unix)]
+    {
+        let missing = scratch.join("missing");
+        std::os::unix::fs::symlink(&missing, &taken).unwrap();
+        assert!(split_here(&source, &plans, &out, None).is_err());
+        assert_eq!(std::fs::read_link(&taken).unwrap(), missing);
+        assert!(!scratch.join("part-1.pdf").exists());
+        std::fs::remove_file(&taken).unwrap();
+    }
     split_here(&source, &plans, &out, None).expect("the same call, with nothing in the way");
     assert!(scratch.join("part-1.pdf").exists() && scratch.join("part-2.pdf").exists());
 }
@@ -3485,6 +3502,10 @@ fn a_copy_is_written_when_the_source_changed_and_reports_it() {
     // Still a real document rather than a placeholder, which is the half a
     // boolean cannot say.
     assert_eq!(page_count(&out), 4);
+    let mut moved = plan;
+    moved.opened_as = None;
+    moved.source_moved = true;
+    assert!(copy_here(&open, &moved, &out, None).unwrap().changed);
 }
 
 /// And the same source, unchanged, reports `changed: false`.
@@ -3952,6 +3973,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
     Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -4053,6 +4075,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
     let plan = Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -6295,6 +6318,8 @@ pub(super) struct FakeWriter {
     answer: Result<Vec<u8>, Refusal>,
     /// Simulates a worker that writes a partial result before refusing.
     partial_before_refusal: Vec<u8>,
+    /// A competing writer can claim a split target after its preflight.
+    occupy_during_write: std::cell::Cell<Option<std::path::PathBuf>>,
     /// How many bytes to *claim* beyond what was written.
     ///
     /// Zero for an honest writer. It is here because the check it exercises
@@ -6341,6 +6366,7 @@ impl FakeWriter {
         Self {
             answer,
             partial_before_refusal: Vec::new(),
+            occupy_during_write: std::cell::Cell::new(None),
             overstate_by: 0,
             asked: std::cell::RefCell::new(Vec::new()),
             jobs: std::cell::RefCell::new(Vec::new()),
@@ -6363,6 +6389,9 @@ impl Rewriter for FakeWriter {
     ) -> Result<usize, Refusal> {
         use std::io::Write as _;
 
+        if let Some(path) = self.occupy_during_write.take() {
+            std::fs::write(path, b"another writer").unwrap();
+        }
         // Recorded where a merge's are: the files a rewrite was handed are the
         // question an import test asks of the coordinator, and they cross here.
         if let Some(inputs) = inputs {
@@ -6979,6 +7008,24 @@ fn a_copy_whose_writer_refuses_leaves_nothing_at_the_destination() {
         Vec::<String>::new(),
         "nor beside it under a name they did not choose"
     );
+}
+
+#[test]
+fn a_late_split_collision_preserves_the_other_file_and_reports_progress() {
+    let scratch = Scratch::new("split-collision");
+    let (source, plan) = staging_subject(&scratch, "source.pdf").unwrap();
+    let out = scratch.join("part.pdf");
+    let taken = scratch.join("part-2.pdf");
+    let writer = FakeWriter::writing(Ok(b"first part".to_vec()));
+    writer.occupy_during_write.set(Some(taken.clone()));
+    let why = write_split(&source, &[plan.clone(), plan], &out, None, &writer).unwrap_err();
+    assert!(why.message.contains("1 of 2 written"), "{why}");
+    assert_eq!(
+        std::fs::read(scratch.join("part-1.pdf")).unwrap(),
+        b"first part"
+    );
+    assert_eq!(std::fs::read(taken).unwrap(), b"another writer");
+    assert!(leftovers_beside(&out).is_empty());
 }
 
 #[test]
@@ -8307,6 +8354,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
     let plan = Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: 2,
         pages: vec![
@@ -8379,6 +8427,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
     let plan = Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: 3,
         pages: (0..3)
@@ -8452,6 +8501,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
     let plain = Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -8497,6 +8547,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
     let mut plan = Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {

@@ -112,6 +112,7 @@ fn dropping_last(pages: usize) -> Plan {
     Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: None,
         baseline: pages as u32,
         pages: (0..pages - 1)

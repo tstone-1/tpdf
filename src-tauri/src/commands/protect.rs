@@ -114,6 +114,7 @@ mod tests {
         edits::Plan {
             field_edits: Vec::new(),
             tab_order: false,
+            source_moved: false,
             opened_as: None,
             baseline: 1,
             pages: Vec::new(),

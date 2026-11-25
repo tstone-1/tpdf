@@ -163,6 +163,7 @@ fn main() {
         )],
         forms: Vec::new(),
         baseline,
+        source_moved: false,
         opened_as: None,
         pages,
         marks: Vec::new(),

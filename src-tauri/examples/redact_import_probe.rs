@@ -197,6 +197,7 @@ fn run(
         field_edits: Vec::new(),
         tab_order: false,
         baseline,
+        source_moved: false,
         opened_as: Some(Fingerprint::of(base)?),
         pages,
         marks: Vec::new(),

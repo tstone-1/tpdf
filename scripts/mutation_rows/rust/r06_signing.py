@@ -1146,7 +1146,7 @@ ROWS += [
     Mutation(
         "cli pages: overwrite a destination that appeared during processing",
         "src/cli/pages.rs",
-        "std::fs::hard_link(staged, target).map_err(|e| e.to_string())",
+        "save::publish_new(staged, target)",
         "std::fs::copy(staged, target).map(|_| ()).map_err(|e| e.to_string())",
         "publication_refuses_a_late_collision_and_cleans_only_owned_staging",
     ),
@@ -1800,7 +1800,7 @@ ROWS += [
         # the console's code page and gets `PrÃ¼fung` for `Prüfung`.
         "cli json: leave characters outside ASCII unescaped",
         "src/cli.rs",
-        "        if c.is_ascii() {",
+        "        if literal(c) {",
         "        if true {",
         "json_output_is_ascii_and_means_the_same_text",
     ),

@@ -133,6 +133,7 @@ fn plan_with(baseline: u32, pages: Vec<PageView>, other: &Path) -> Plan {
         new_fields: Vec::new(),
         forms: Vec::new(),
         baseline,
+        source_moved: false,
         opened_as: None,
         pages,
         marks: Vec::new(),

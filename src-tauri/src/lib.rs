@@ -1596,6 +1596,7 @@ mod tests {
             field_edits: Vec::new(),
             tab_order: false,
             baseline: 1,
+            source_moved: false,
             opened_as: Some(
                 crate::fingerprint::Fingerprint::of(source).expect("fingerprint the scratch file"),
             ),

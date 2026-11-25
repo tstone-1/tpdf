@@ -109,9 +109,8 @@ export default {
     "Das Kommandozeilenwerkzeug liegt nicht neben diesem tpdf ({path}).",
   "Installed. `tpdf` in a terminal now runs the command-line tool ({LINK} links to {path}). Try `tpdf help`.":
     "Installiert. `tpdf` startet im Terminal jetzt das Kommandozeilenwerkzeug ({LINK} verweist auf {path}). Probier `tpdf help`.",
-  "Removed {LINK}.": "{LINK} entfernt.",
-  "Removed {LINK} and {ALIAS}. The application is unchanged.":
-    "{LINK} und {ALIAS} wurden entfernt. Die App selbst ist unverändert.",
+  "There is no link at {LINK}.": "Unter {LINK} besteht keine Verknüpfung.",
+  "Neither {LINK} nor {ALIAS} is installed.": "Weder {LINK} noch {ALIAS} ist installiert.",
   "{why}, so it was left alone.": "{why}, daher wurde es nicht angerührt.",
   "{path} was not installed.": "{path} wurde nicht installiert.",
   "{path} is still there.": "{path} ist noch vorhanden.",

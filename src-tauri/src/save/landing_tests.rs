@@ -38,6 +38,7 @@ fn one_page(dir: &crate::testutil::TempDir) -> (PathBuf, Plan) {
     let plan = Plan {
         field_edits: Vec::new(),
         tab_order: false,
+        source_moved: false,
         opened_as: Some(Fingerprint::of(&path).expect("fingerprint")),
         baseline: 1,
         pages: vec![crate::edits::PageView {

@@ -377,6 +377,7 @@ fn run() -> Result<(), String> {
         compress: Default::default(),
         new_fields: Vec::new(),
         baseline: page_count,
+        source_moved: false,
         opened_as: Some(tpdf_lib::fingerprint::Fingerprint::of(&source)?),
         pages: (0..page_count)
             .map(|index| PageView {

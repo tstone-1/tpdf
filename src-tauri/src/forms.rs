@@ -1111,6 +1111,12 @@ pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
                     said!("This answer exceeds the field's maximum length"),
                 ));
             }
+            if text.contains('\u{ad}') {
+                return Err(rejected(
+                    Invalid::Characters,
+                    said!("the text contains a soft hyphen. Remove it or use an ordinary hyphen"),
+                ));
+            }
             if !crate::textbox::encodable(text) {
                 return Err(rejected(
                     Invalid::Characters,

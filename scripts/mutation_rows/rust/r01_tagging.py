@@ -1806,7 +1806,7 @@ ROWS += [
         # with a rename, which does exactly that.
         "split: write over a part that already exists",
         "src/save.rs",
-        "        if target.exists() {",
+        "        if target.symlink_metadata().is_ok() {",
         "        if false {",
         "a_split_refuses_an_existing_part_and_writes_nothing",
     ),
@@ -1894,8 +1894,8 @@ ROWS += [
         # this is that mutation.
         "save: stop asking whether the file changed under the document",
         "src/save.rs",
-        "            Some(opened_as.agrees_with(source).map_err(Refusal::changed)?)",
-        "            Fingerprint::of(source).ok()",
+        "opened_as\n                .agrees_with_open(file, source)\n                .map_err(Refusal::changed)?",
+        "Fingerprint::of_open(file, source).unwrap()",
         "a_save_in_place_is_refused_when_the_file_changed_under_it",
     ),
     Mutation(
@@ -1925,8 +1925,8 @@ ROWS += [
         # asymmetry is the whole design and a single word carries it.
         "save: let a save in place tolerate a changed file, as a copy does",
         "src/save.rs",
-        "    let ready = rewrite_ready(source, plan, OnChange::Refuse)?;",
-        "    let ready = rewrite_ready(source, plan, OnChange::Proceed)?;",
+        "    let ready = rewrite_ready(&file, source, plan, OnChange::Refuse)?;",
+        "    let ready = rewrite_ready(&file, source, plan, OnChange::Proceed)?;",
         "a_save_in_place_is_refused_when_the_file_changed_under_it",
     ),
     Mutation(
@@ -2445,8 +2445,8 @@ ROWS += [
         # invisible when the numbers happen to agree.
         "edits: give a subset plan the selection's length as its baseline",
         "src/edits.rs",
-        "            baseline: model.baseline(),\n            opened_as: opened_as.clone(),\n            pages,\n            marks,",
-        "            baseline: pages.len() as u32,\n            opened_as: opened_as.clone(),\n            pages,\n            marks,",
+        "            baseline: model.baseline(),\n            source_moved: open.moved.load(std::sync::atomic::Ordering::SeqCst),\n            opened_as: opened_as.clone(),\n            pages,\n            marks,",
+        "            baseline: pages.len() as u32,\n            source_moved: open.moved.load(std::sync::atomic::Ordering::SeqCst),\n            opened_as: opened_as.clone(),\n            pages,\n            marks,",
         "a_subset_plan_names_the_pages_asked_for_and_keeps_the_file_s_baseline",
     ),
     Mutation(

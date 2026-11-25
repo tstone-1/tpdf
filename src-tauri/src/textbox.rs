@@ -128,8 +128,26 @@ pub const MAX_NOTE_CHARS: usize = 64 * 1024;
 /// file afterwards.
 #[must_use]
 pub fn encodable(text: &str) -> bool {
-    text.chars()
-        .all(|ch| ch == '\n' || (' '..='~').contains(&ch) || ('\u{a0}'..='\u{ff}').contains(&ch))
+    text.chars().all(|ch| {
+        ch == '\n'
+            || (' '..='~').contains(&ch)
+            || matches!(ch, '\u{a0}'..='\u{ac}' | '\u{ae}'..='\u{ff}')
+    })
+}
+
+/// Validate the body before creating or rewriting a FreeText appearance.
+pub(crate) fn check_body(text: &str) -> Result<(), String> {
+    if text.contains('\u{ad}') {
+        return Err(said!(
+            "the text contains a soft hyphen. Remove it or use an ordinary hyphen"
+        ));
+    }
+    if !encodable(text) {
+        return Err(said!(
+            "a text box is written in Helvetica, which cannot draw every character in that text"
+        ));
+    }
+    Ok(())
 }
 
 /// Breaks `text` into lines that each fit within `width` points.
@@ -154,6 +172,7 @@ pub fn wrap(text: &str, size: f64, width: f64) -> Vec<String> {
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
         let mut line = String::new();
+        let mut line_width = 0.0;
         // Keep indentation attached to the first word, including a spaces-only line.
         let body = paragraph.trim_start_matches(' ');
         let indent = paragraph.len() - body.len();
@@ -163,55 +182,43 @@ pub fn wrap(text: &str, size: f64, width: f64) -> Vec<String> {
             } else {
                 word
             };
-            let candidate = if line.is_empty() {
-                word.to_string()
-            } else {
-                format!("{line} {word}")
-            };
-            if advance(&candidate, size) <= width || line.is_empty() && word.is_empty() {
-                line = candidate;
-                continue;
-            }
             if !line.is_empty() {
+                // Add glyphs in display order so an exact-fit line rounds the
+                // same way as measuring the complete string.
+                let joined = word
+                    .chars()
+                    .fold(line_width + advance(" ", size), |used, ch| {
+                        used + f64::from(advance_of(ch)) * size / 1000.0
+                    });
+                if joined <= width {
+                    line.push(' ');
+                    line.push_str(word);
+                    line_width = joined;
+                    continue;
+                }
                 lines.push(std::mem::take(&mut line));
             }
-            // The word alone, which may still not fit.
-            if advance(word, size) <= width {
-                line = word.to_string();
+            let word_width = advance(word, size);
+            if word_width <= width {
+                line.push_str(word);
+                line_width = word_width;
                 continue;
             }
-            let mut rest = word;
-            while advance(rest, size) > width {
-                // One pass over the head, accumulating. This used to re-measure
-                // every prefix and re-count `rest` on each step --- both O(n)
-                // inside a loop that runs n times, so breaking one long word
-                // cost O(n^2), and a note has no length bound above this. The
-                // result is unchanged because `advance` is a sum over
-                // characters, so the running total after `k` of them *is*
-                // `advance` of that prefix; the arithmetic is identical, in the
-                // same order, on the same values.
-                //
-                // At least one character, always: `take` of zero would push an
-                // empty line and leave `rest` unchanged, which is the loop that
-                // does not end.
-                let mut used = 0.0;
-                let mut cut = 0;
-                for ch in rest.chars() {
-                    let next = used + f64::from(advance_of(ch)) * size / 1000.0;
-                    // `cut > 0` is "at least one character has been taken",
-                    // which is the guard this loop needs and the only thing a
-                    // separate counter was carrying.
-                    if cut > 0 && next > width {
-                        break;
-                    }
-                    used = next;
-                    cut += ch.len_utf8();
+            line_width = 0.0;
+            for ch in word.chars() {
+                let glyph = f64::from(advance_of(ch)) * size / 1000.0;
+                if !line.is_empty() && line_width + glyph > width {
+                    lines.push(std::mem::take(&mut line));
+                    line_width = 0.0;
                 }
-                let head: String = rest[..cut].to_string();
-                lines.push(head);
-                rest = &rest[cut..];
+                line.push(ch);
+                line_width += glyph;
+                // Even when the box is narrower than one glyph, make progress.
+                if glyph > width {
+                    lines.push(std::mem::take(&mut line));
+                    line_width = 0.0;
+                }
             }
-            line = rest.to_string();
         }
         if !line.is_empty() {
             lines.push(line);
@@ -286,6 +293,8 @@ mod tests {
     #[test]
     fn a_line_that_fits_is_left_alone() {
         assert_eq!(wrap("hello", SIZE_PT, 200.0), vec!["hello".to_string()]);
+        let width = advance(" A quick", 5.0);
+        assert_eq!(wrap(" A quick brown", 5.0, width), [" A quick", "brown"]);
     }
 
     #[test]
@@ -414,7 +423,8 @@ mod tests {
     fn what_helvetica_cannot_write_is_refused_and_what_it_can_is_not() {
         // Both directions, because "refuses everything" satisfies the first half
         // exactly as well as a correct answer does.
-        assert!(encodable("plain ASCII"));
+        assert!(encodable("co-operate"));
+        assert!(!encodable("co\u{ad}operate"));
         assert!(encodable("Grüße aus München"), "Latin-1 is writable");
         assert!(encodable("line\nbreak"), "a newline is not a glyph");
         assert!(!encodable("Ελληνικά"), "Greek is not in WinAnsi");

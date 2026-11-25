@@ -165,9 +165,9 @@ pub fn outcome(install: bool, after: &Step, alias: &Step, tool: &Path) -> String
             path = tool.display()
         ),
         (false, Step::Absent) if matches!(alias, Step::Absent) => {
-            said!("Removed {LINK} and {ALIAS}. The application is unchanged.")
+            said!("Neither {LINK} nor {ALIAS} is installed.")
         }
-        (false, Step::Absent) => said!("Removed {LINK}."),
+        (false, Step::Absent) => said!("There is no link at {LINK}."),
         (_, Step::Foreign(why)) => said!("{why}, so it was left alone."),
         (true, _) => said!("{path} was not installed.", path = LINK),
         (false, _) => said!("{path} is still there.", path = LINK),
@@ -874,9 +874,10 @@ mod tests {
     fn the_reader_is_told_what_is_there_afterwards_not_what_was_attempted() {
         let tool = Path::new("/Applications/tpdf.app/Contents/MacOS/tpdf-cli");
         assert!(outcome(true, &Step::Present, &Step::Absent, tool).starts_with("Installed."));
-        assert!(outcome(false, &Step::Absent, &Step::Absent, tool).starts_with("Removed"));
-        // Both names are removed, so both are said.
-        assert!(outcome(false, &Step::Absent, &Step::Absent, tool).contains(ALIAS));
+        assert_eq!(
+            outcome(false, &Step::Absent, &Step::Absent, tool),
+            format!("Neither {LINK} nor {ALIAS} is installed.")
+        );
         let foreign = Step::Foreign("alias is a regular file".into());
         let mixed = format!(
             "{} {}",
@@ -885,7 +886,7 @@ mod tests {
         );
         assert_eq!(
             mixed,
-            format!("Removed {LINK}. alias is a regular file, so it was left alone.")
+            format!("There is no link at {LINK}. alias is a regular file, so it was left alone.")
         );
         // A change that did not take is not reported as one.
         assert!(outcome(true, &Step::Create, &Step::Absent, tool).contains("was not installed"));

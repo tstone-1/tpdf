@@ -54,6 +54,7 @@ fn turn_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         field_edits: Vec::new(),
         tab_order: false,
         baseline: pages,
+        source_moved: false,
         opened_as: None,
         pages: (0..pages)
             .map(|at| PageView {
@@ -105,6 +106,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         // `#[serde(skip)]`, so a fingerprint cannot cross this boundary in
         // either direction. The worker builds from bytes; the caller decides
         // about files.
+        source_moved: false,
         opened_as: None,
         pages: (0..pages)
             .map(|at| PageView {

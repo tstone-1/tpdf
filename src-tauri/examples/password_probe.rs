@@ -388,6 +388,7 @@ fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
         field_edits: Vec::new(),
         tab_order: false,
         baseline: pages as u32,
+        source_moved: false,
         opened_as: Some(Fingerprint::of(at)?),
         pages: (0..pages as u32)
             .map(|source| PageView {

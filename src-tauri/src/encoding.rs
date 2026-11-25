@@ -82,7 +82,7 @@
 
 pub(crate) mod complete;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 
@@ -131,7 +131,7 @@ const MAX_FONTS: usize = 4096;
 /// `Identity` above all --- leaves it reading glyph indices as character codes.
 /// Compared case-sensitively because these are Adobe's own spellings and a
 /// document using a different case is not naming one of these collections.
-const MAPPABLE_ORDERINGS: [&str; 5] = ["Japan1", "GB1", "CNS1", "Korea1", "KR"];
+const MAPPABLE_ORDERINGS: [&str; 4] = ["Japan1", "GB1", "CNS1", "Korea1"];
 
 /// What a page's fonts say about whether its text means anything.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -291,7 +291,7 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Vec<PageMappi
 fn page_mapping(doc: &Document, page: ObjectId) -> PageMapping {
     let mut scan = FontScan {
         doc,
-        seen: HashSet::new(),
+        seen: HashMap::new(),
         bytes_left: 8 * 1024 * 1024,
         forms_left: MAX_FONTS,
         result: PageMapping::default(),
@@ -304,7 +304,7 @@ fn page_mapping(doc: &Document, page: ObjectId) -> PageMapping {
 
 struct FontScan<'a> {
     doc: &'a Document,
-    seen: HashSet<*const Dictionary>,
+    seen: HashMap<*const Dictionary, bool>,
     bytes_left: usize,
     forms_left: usize,
     result: PageMapping,
@@ -374,12 +374,39 @@ impl<'a> FontScan<'a> {
             Some(resolve(doc, dict.get(name.as_name().ok()?).ok()?))
         };
         let mut stack = Vec::new();
+        let mut marks = Vec::new();
+        let mut has_actual_text = false;
         bytes.push(b'\n'); // Delimit a final operator or comment at EOF.
         for op in lopdf::content::Content::decode_strict(&bytes)
             .ok()?
             .operations
         {
             match op.operator.as_str() {
+                "BMC" => {
+                    op.operands.first()?.as_name().ok()?;
+                    marks.push(has_actual_text);
+                }
+                "BDC" => {
+                    op.operands.first()?.as_name().ok()?;
+                    let property = op.operands.get(1)?;
+                    let dict = match property {
+                        Object::Name(_) => resource(b"Properties", property)?.as_dict().ok()?,
+                        other => other.as_dict().ok()?,
+                    };
+                    marks.push(has_actual_text);
+                    // PDFium takes the last property dictionary on the current text
+                    // object. A nested dictionary can shadow an outer replacement.
+                    has_actual_text = dict
+                        .get(b"ActualText")
+                        .ok()
+                        .and_then(|text| resolve(doc, text).as_str().ok())
+                        .is_some_and(|raw| {
+                            crate::annots::decode_text_string(raw).chars().any(|ch| {
+                                (' '..='~').contains(&ch) || ('\u{81}'..'\u{fffd}').contains(&ch)
+                            })
+                        });
+                }
+                "EMC" => has_actual_text = marks.pop()?,
                 "q" => stack.push(font),
                 "Q" => font = stack.pop()?,
                 "Tf" => font = Some(resource(b"Font", op.operands.first()?)?.as_dict().ok()?),
@@ -397,10 +424,18 @@ impl<'a> FontScan<'a> {
                         continue;
                     }
                     let drawn = font?;
-                    if self.seen.insert(std::ptr::from_ref(drawn))
-                        && font_kind(doc, drawn)? == b"Type0"
-                    {
-                        self.result.composite += 1;
+                    if font_kind(doc, drawn)? != b"Type0" {
+                        continue;
+                    }
+                    let checked = self
+                        .seen
+                        .entry(std::ptr::from_ref(drawn))
+                        .or_insert_with(|| {
+                            self.result.composite += 1;
+                            false
+                        });
+                    if !has_actual_text && !*checked {
+                        *checked = true;
                         match guesses(doc, drawn) {
                             Some(true) => self.result.guessing += 1,
                             Some(false) => {}
@@ -439,7 +474,7 @@ impl<'a> FontScan<'a> {
                 _ => {}
             }
         }
-        Some(())
+        marks.is_empty().then_some(())
     }
 }
 
@@ -650,6 +685,41 @@ mod tests {
         let pages = scan(&bytes, 1, None).expect("the fixture must parse");
         assert_eq!(pages.len(), 1, "the fixture is one page");
         pages[0]
+    }
+
+    #[test]
+    fn actual_text_covers_only_the_shows_inside_its_scope() {
+        let bytes = document_with_font(composite("Identity-H", "KR", false));
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        let page = doc.get_pages()[&1];
+        for (content, guessing) in [
+            (
+                "BT /F1 10 Tf /Span << /ActualText (Invoice) >> BDC (A) Tj EMC ET",
+                0,
+            ),
+            (
+                "BT /F1 10 Tf /Span << /ActualText (Invoice) >> BDC (A) Tj EMC (B) Tj ET",
+                1,
+            ),
+            (
+                "BT /F1 10 Tf /Span << /ActualText () >> BDC (A) Tj EMC ET",
+                1,
+            ),
+        ] {
+            let stream = doc.add_object(Stream::new(dictionary! {}, content.as_bytes().to_vec()));
+            doc.get_dictionary_mut(page)
+                .unwrap()
+                .set("Contents", stream);
+            let mapping = page_mapping(&doc, page);
+            assert_eq!(
+                (mapping.composite, mapping.guessing, mapping.truncated),
+                (1, guessing, false)
+            );
+        }
+        assert_eq!(
+            scan_one(composite("Identity-H", "Korea1", false)).guessing,
+            0
+        );
     }
 
     #[test]
