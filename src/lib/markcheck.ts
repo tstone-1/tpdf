@@ -865,16 +865,23 @@ async function run(host: MarkCheckHost, icon: string): Promise<void> {
       const cropped = await settle(() => host.pages()[slot]?.crop !== undefined);
       const crop = host.pages()[slot]?.crop;
       await settle(() => viewer.idle);
+      // A second synthetic copy can lose clipboard permission in WebView2.
+      // Save this tile to its own file so the crop check measures the renderer.
       const prior = host.lastRegion();
-      const armed = host.run("edit.copyRegionAsPicture") && viewer.regionArmed;
-      // Cropping relays out the page. Both ends of this drag must land on its new surface.
+      const file = scratch?.replace(/(\.[^.\\/]*)?$/, "-cropped-region.png");
+      if (file) host.answerSave(file);
+      const armed = !!file && host.run("file.saveRegionAsPicture") && viewer.regionArmed;
       if (armed) drag(root, onPage(slot), onPage(slot, 0.6));
-      const requested = await settle(() => host.lastRegion() !== prior);
-      const carried = host.lastRegion()?.crop;
+      const saved = armed && await settle(() => host.told()?.includes("-cropped-region.png") === true);
+      const request = host.lastRegion();
+      const image = saved && file
+        ? await call("picture_open", { path: file }).then(readPicture).catch(() => null) : null;
       check(
         "a page cropped by a drag is rendered under its crop",
-        cropped && requested && crop !== undefined && JSON.stringify(carried) === JSON.stringify(crop),
-        `page ${slot + 1}, region armed ${armed}, fresh request ${requested}, model crop ${JSON.stringify(crop)}, tile crop ${JSON.stringify(carried)}`,
+        cropped && crop !== undefined && request !== null && request !== prior
+          && JSON.stringify(request.crop) === JSON.stringify(crop)
+          && image !== null && image.width === request.width && image.height === request.height,
+        `page ${slot + 1}, model crop ${JSON.stringify(crop)}, tile crop ${JSON.stringify(request?.crop)}, told: ${host.told()}, said: ${host.said()}`,
       );
       if (cropped) host.run("edit.undo");
     }

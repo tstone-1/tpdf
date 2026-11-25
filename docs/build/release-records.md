@@ -2,18 +2,32 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
-**26.11.15 verification, 2026-11-25.** The macOS window suite passed all 19
-checks. Windows passed 3,774 library tests and 788 CLI checks, with 12 library
+**26.11.15 verification, 2026-11-25.** The macOS and Windows window suites each
+passed all 19 checks. Windows passed 3,774 library tests and 788 CLI checks, with 12 library
 tests ignored and four CLI checks skipped. The Windows cross-build passed.
-All 39 macOS gates passed. The macOS disk image and Windows installer each passed all 70 packaged
-Python client checks. Windows printed the fixtures through the system spooler. The normal app opened the fixture and started its render worker. OCR
-read the expected text in the packaged renderer's output. With the bundled
-PDFium withheld, rendering failed. VoiceOver and NVDA each passed all 11 speech
-checks. The tests caught all 595 selected Rust mutations, 461 frontend mutations,
-41 gate mutations and 21 viewer mutations. The comment-deletion regression now
-checks the specific refusal for a page object, which caught a mutation that
-previously passed when the rewrite failed for a different reason. Both Rust lockfile audits passed with the documented exceptions,
-and the npm production audit found no advisories. The PDFium pin matched the stable branch.
+All 39 macOS gates passed. The macOS disk image and Windows installer each
+passed all 70 packaged Python client checks. The Windows installer also passed
+all 26 install, launch and uninstall checks. Windows printed the fixtures
+through the system spooler. The normal macOS app opened the fixture and started
+its render worker. OCR read the expected text in the packaged renderer's output.
+With the bundled PDFium withheld, rendering failed. VoiceOver and NVDA each
+passed all 11 speech checks.
+
+The tests caught all 595 selected Rust mutations, 461 frontend mutations, 41
+gate mutations and 21 viewer mutations. The comment-deletion regression checks
+the specific refusal for a page object. This caught a mutation that previously
+passed when the rewrite failed for a different reason. Both Rust lockfile audits
+passed with the documented exceptions. The npm production audit found no
+advisories, and the PDFium pin matched the stable branch.
+
+WebView2 denied a second synthetic clipboard write after the first copy passed.
+The crop check now saves a separate PNG, opens it and compares its dimensions
+with the tile requested under the page's exact crop. All three fixtures passed
+on macOS and Windows, including the last page of the 775-page fixture.
+
+The Windows page-copy fixture exported an enhanced metafile. The pre-tag check
+still requires pasting it into Windows PowerPoint, ungrouping it and verifying
+the seven shapes and three text strings after saving and reopening.
 
 The portable review history reproduced the same file lists in a checkout without
 local reports. Of 753 application and client files, 550 had a full read and 272
