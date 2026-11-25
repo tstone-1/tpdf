@@ -256,6 +256,14 @@ describe("linkRunsIn", () => {
       run.ranges.reduce((sum, range) => sum + (range.to - range.from), 0),
     ]);
 
+  it("gives the nested phrase its own link in either annotation order", () => {
+    const outer = over([5, 90, 60, 120], 1);
+    const inner = over([8, 98, 32, 114], 2);
+    for (const links of [[outer, inner], [inner, outer]]) {
+      expect(shape(linkRunsIn(whole, boxes, links))).toEqual([[2, 2], [1, 3]]);
+    }
+  });
+
   it("splits a line into the link's characters and the rest", () => {
     const runs = linkRunsIn(whole, boxes, [over([8, 98, 32, 114])]);
     expect(shape(runs)).toEqual([

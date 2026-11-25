@@ -182,6 +182,8 @@ def main() -> int:
             shutil.copyfile(args.other, second)
         else:
             shutil.copyfile(args.pdf, second)
+        if args.phase == "import":
+            copies.append(Path(__file__).resolve().parents[1] / "testdata" / "tagged.pdf")
         if args.phase == "tabs":
             subdir = room / "sub"
             subdir.mkdir()

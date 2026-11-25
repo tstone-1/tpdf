@@ -59,6 +59,14 @@ describe("describeDegraded", () => {
     expect(describeDegraded({ ...clean, pending: 3 })?.text).toBe("loading ahead");
   });
 
+  it.each(["de-DE", "de-DE-formal"] as const)("reports each render state in %s", (locale) => {
+    const text = (change: Partial<Coverage>) => describeDegraded({ ...clean, ...change }, locale)?.text;
+    expect([text({ failed: 1 }), text({ any: 0 }), text({ sharp: 0 }), text({ pending: 1 })]).toEqual([
+      "Einige Seiten konnten nicht angezeigt werden", "Seite wird vorbereitet",
+      "Darstellung wird geschärft", "Weitere Seiten werden geladen",
+    ]);
+  });
+
   it("has nothing to say before a document is open", () => {
     expect(describeDegraded(null)).toBeNull();
   });

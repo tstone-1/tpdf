@@ -51,7 +51,7 @@ describe("adding long-term validation data", () => {
       "dirty",
       "properties",
       "authority",
-      "save:contract-long-term.pdf",
+      "save:/docs/contract-long-term.pdf",
       `waiting:${WAITING}`,
       "add:/docs/contract-long-term.pdf:https://timestamp.sectigo.com",
       "waiting:over",
@@ -111,7 +111,7 @@ describe("adding long-term validation data", () => {
   it("is cancelled by the dialog and by the save panel, and adds nothing", async () => {
     const dialog = shell({ chooseAuthority: async () => null });
     expect(await addValidationData(dialog.s)).toBeNull();
-    expect(dialog.asked).not.toContain("save:contract-long-term.pdf");
+    expect(dialog.asked).not.toContain("save:/docs/contract-long-term.pdf");
 
     const panel = shell({ saveAs: async () => null });
     expect(await addValidationData(panel.s)).toBeNull();
@@ -128,8 +128,8 @@ describe("adding long-term validation data", () => {
   });
 
   it("suggests a name beside the original", () => {
-    expect(keptName("/docs/contract.pdf")).toBe("contract-long-term.pdf");
-    expect(keptName("C:\\docs\\Vertrag.PDF")).toBe("Vertrag-long-term.pdf");
+    expect(keptName("/docs/contract.pdf")).toBe("/docs/contract-long-term.pdf");
+    expect(keptName("C:\\docs\\Vertrag.PDF")).toBe("C:\\docs\\Vertrag-long-term.pdf");
   });
 
   it("counts a signed field and not an empty one", () => {

@@ -92,6 +92,7 @@ export class SignatureDialog {
   private readonly place: HTMLButtonElement;
   private readonly heading = document.createElement("h2");
   private source: HTMLCanvasElement | null = null;
+  private savedChanged: ((image: SignatureImage | null) => void) | undefined;
   private pending: ((image: SignatureImage | null) => void) | null = null;
   private previousFocus: HTMLElement | null = null;
   private point: { x: number; y: number } | null = null;
@@ -161,8 +162,9 @@ export class SignatureDialog {
 
   get isOpen(): boolean { return this.dialog.open; }
   /** Opens the dialog; `words` name it for one use (the signing panel's, say). */
-  ask(words: SignatureDialogWords = PLACE_WORDS): Promise<SignatureImage | null> {
+  ask(words: SignatureDialogWords = PLACE_WORDS, savedChanged?: (image: SignatureImage | null) => void): Promise<SignatureImage | null> {
     if (this.pending) this.finish(null);
+    this.savedChanged = savedChanged;
     this.heading.textContent = words.title;
     this.dialog.setAttribute("aria-label", words.title);
     this.place.textContent = words.action;
@@ -242,7 +244,12 @@ export class SignatureDialog {
     const image: SignatureImage = { width: canvas.width, height: canvas.height, rgba: [...pixels] };
     const remembering = this.remember.checked;
     if (remembering) {
-      try { this.place.disabled = true; await rememberSignature(image); }
+      const savedChanged = this.savedChanged;
+      try {
+        this.place.disabled = true;
+        await rememberSignature(image);
+        savedChanged?.(image);
+      }
       catch {
         if (generation !== this.generation || !this.isOpen) return;
         this.place.disabled = false;
@@ -274,11 +281,18 @@ export class SignatureDialog {
     } catch (error) { if (generation === this.generation) this.message.textContent = spokenError(error); }
   }
   private async forgetSaved(): Promise<void> {
-    try { await forgetSignature(); this.remember.checked = false; this.message.textContent = TEXT().removed; }
+    const savedChanged = this.savedChanged;
+    try {
+      await forgetSignature();
+      savedChanged?.(null);
+      this.remember.checked = false;
+      this.message.textContent = TEXT().removed;
+    }
     catch { this.message.textContent = TEXT().notRemoved; }
   }
   private finish(image: SignatureImage | null): void {
     this.generation++; this.point = null;
+    this.savedChanged = undefined;
     const resolve = this.pending; this.pending = null;
     if (this.dialog.open) this.dialog.close(); this.previousFocus?.focus(); resolve?.(image);
   }

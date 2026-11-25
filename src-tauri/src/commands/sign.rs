@@ -451,6 +451,7 @@ pub async fn sign_document(
     field: Option<String>,
     lock: Option<bool>,
 ) -> Result<Signing, String> {
+    let field = signing_field(field)?;
     let authority = authority_of(timestamp.as_deref())?;
     let long_term = long_term_of(long_term.unwrap_or(false), authority.as_ref())?;
     {
@@ -491,7 +492,7 @@ pub async fn sign_document(
     // the worker finds it by this name and signs it, and a placement beside
     // it is drawn in the field's rectangle whatever rectangle it names.
     let notes = crate::sign_prepare::Notes {
-        field: field.unwrap_or_default(),
+        field,
         lock: lock.unwrap_or(false),
         ..Default::default()
     };
@@ -648,6 +649,14 @@ fn import_feedback(certificate: &[u8], at: u64) -> String {
     }
 }
 
+/// A missing selection asks the worker to create a field. A selected field must be named.
+fn signing_field(selected: Option<String>) -> Result<String, String> {
+    match selected {
+        Some(name) if name.is_empty() => Err(said!("The selected signature field has no name.")),
+        name => Ok(name.unwrap_or_default()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,6 +664,13 @@ mod tests {
         asking, finished, scratch, sealed, test_archive, test_vouch, Rewording,
     };
     use crate::sign_finish::ReadBack;
+
+    #[test]
+    fn a_selected_field_cannot_be_confused_with_creating_a_field() {
+        assert!(signing_field(Some(String::new())).is_err());
+        assert_eq!(signing_field(None).unwrap(), "");
+        assert_eq!(signing_field(Some("Approval".into())).unwrap(), "Approval");
+    }
 
     #[test]
     fn certificate_import_reports_the_same_eligibility_as_the_chooser() {

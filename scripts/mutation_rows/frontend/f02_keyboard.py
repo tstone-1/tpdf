@@ -2026,7 +2026,7 @@ ROWS += [
         # 775-page document "next mark" would mean "the first one, again".
         "viewer: start the mark walk at the document rather than at the reader",
         "src/lib/viewer.ts",
-        "    const next = stepAlong(walk, from, this.position, direction);",
+        "    const next = stepAlong(walk, from, this.walkPosition, direction);",
         "    const next = stepAlong(walk, from, { page: 0, top: 0 }, direction);",
         "starts from where the reader is looking, not from the first mark",
     ),

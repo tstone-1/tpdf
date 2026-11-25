@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Repeated imported pages keep their internal links when saved. Insert Pages flags tagged sources before asking which pages to insert.
+- Editing, deleting, undoing and redoing a file comment refresh the page popup and the sidebar. Links and comments stay clickable after cropping, and keyboard and screen-reader navigation use the corrected positions.
+- Certificate signing offers named fields, keeps the preview and saved signature choice current, and suggests saving beside the original. Archiving a signature also suggests the source folder.
+- Render warnings clear after a successful retry. Rendering status messages follow the interface language.
+
 - The viewer honors inherited crops on pages that declare their own paper size. Fit Content skips inserted blank sheets, and imported pages remain available if the original file is truncated.
 - Editing a saved tpdf text box updates its visible words. Marks stay on the selected page when pages share an annotation list, stamps carry their font, and deleting a note also removes its popup.
 - Long-term archiving checks that there is room for the archive timestamp before contacting responders or replacing the output. Revocation lookup errors identify the affected signature fields.

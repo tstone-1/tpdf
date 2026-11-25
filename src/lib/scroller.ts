@@ -529,6 +529,7 @@ export class Scroller {
   private readonly backoff = new Backoff();
   /** Source handles that returned 410. Previously painted tiles remain usable. */
   private readonly goneSources = new Set<number>();
+  private hasGonePages = false;
   /**
    * Whether this scroller is still alive, for the tile arrivals to consult.
    *
@@ -839,6 +840,7 @@ export class Scroller {
     const at = new Map(before.map((page, slot) => [page.id, slot]));
 
     this.order = [...next];
+    this.updateGonePages();
     this.opts.pageCount = next.length;
     // Read out of the *old* arrays by the slot the page used to be in. Written
     // in one pass into fresh arrays rather than spliced in place, because a
@@ -1101,10 +1103,9 @@ export class Scroller {
       canvas.remove();
       this.placeholderCanvases.delete(page);
     }
-    // The tier-1 wait, because the placeholder is about to be asked for again at
-    // a size nothing has tried yet. The tier-2 waits are left: their ids are
-    // per tile and a failing tile is still failing at a different rectangle.
+    // Old tile coordinates can disappear entirely when the page is cropped.
     this.backoff.clear(`p${page}`);
+    this.backoff.clearPrefix(`${page}:`);
     this.withdraw((outstanding) => outstanding.page === page);
   }
 
@@ -1879,18 +1880,30 @@ export class Scroller {
    * Printed on the first failure only, because the reason does not change
    * between retries and the retries go on for as long as the document is open.
    */
-  private noteFailure(id: string, doc: number, reason: unknown): void {
+  private noteFailure(id: string, doc: number, reason: unknown, current: boolean): void {
     this.stats.failed++;
     if (reason instanceof DocumentGone) {
       if (!this.goneSources.has(doc)) {
         this.goneSources.add(doc);
+        this.updateGonePages();
         this.opts.onGone?.(reason.message);
       }
       return;
     }
-    if (this.backoff.note(id, performance.now()) === 1) {
+    if (current && this.backoff.note(id, performance.now()) === 1) {
       console.warn(`tile ${id} could not be rendered: ${String(reason)}`);
     }
+  }
+
+  get unresolvedFailures(): number {
+    return this.backoff.size + Number(this.hasGonePages);
+  }
+
+  private updateGonePages(): void {
+    this.hasGonePages = this.goneSources.size > 0 && this.order.some((view) => {
+      const source = addressOf(view, this.opts.doc);
+      return source !== undefined && this.goneSources.has(source.doc);
+    });
   }
 
   /**
@@ -2030,7 +2043,7 @@ export class Scroller {
       )
       .catch((reason: unknown) => {
         this.inFlight.delete(id);
-        this.noteFailure(id, source.doc, reason);
+        this.noteFailure(id, source.doc, reason, this.generation === generation && this.epochs[key.page] === epoch);
       });
   }
 
@@ -2187,7 +2200,7 @@ export class Scroller {
       )
       .catch((reason: unknown) => {
         this.inFlight.delete(id);
-        this.noteFailure(id, source.doc, reason);
+        this.noteFailure(id, source.doc, reason, this.placeholderGeneration === generation && this.epochs[page] === epoch);
       });
   }
 

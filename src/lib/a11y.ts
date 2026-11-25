@@ -169,6 +169,7 @@ export class AccessibleText {
     printedOf: (slot: number) => string | null | undefined = () => null,
     /** Holds the page announcement until the window will be heard (`livetext.ts`); none writes at once. */
     clock?: FocusClock,
+    private readonly cropLinks = (_page: number, links: Link[]) => links,
   ) {
     this.pageCount = pageCount;
     this.printedOf = printedOf;
@@ -362,7 +363,7 @@ export class AccessibleText {
     // in the order it is read, which on a two-column page is not the order the
     // producer emitted it in. `linesOf` groups by index adjacency, so on such a
     // page it reads one line from each column in turn --- which is what it did.
-    const here = linksOnPage(this.links, page);
+    const here = this.cropLinks(page, linksOnPage(this.links, page));
     for (const block of readingBlocks(content)) {
       for (const element of this.elementsFor(content, block, here)) {
         article.appendChild(element);
@@ -555,7 +556,7 @@ function fill(
     // that goes somewhere, so its absence is what says one does not.
     if (run.link.target.kind === "page") {
       span.dataset.page = String(run.link.target.page);
-    } else {
+    } else if (run.link.target.kind !== "web") {
       // Announced as unavailable rather than silently inert. A link tpdf
       // declines to follow is still a link the document drew, and a reader told
       // it is a link and then given nothing has been misled by us rather than by

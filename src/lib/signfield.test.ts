@@ -37,6 +37,12 @@ describe("the signature fields somebody can sign", () => {
     expect(form.widgets.map(isEmptySignature)).toEqual([false, false, true, true, true, true, false]);
   });
 
+  it("excludes a nameless widget from both signing entry points", () => {
+    const unnamed = widget(18, "");
+    expect(emptySignatureFields({ widgets: [unnamed] })).toEqual([]);
+    expect(signTarget(unnamed, PAGES)).toBeNull();
+  });
+
   it("are signed where they are: by name, on the page's id, in the rectangle as displayed", () => {
     expect(signTarget(form.widgets[2]!, PAGES)).toEqual({ name: "Approved", page: 5, rect: [20, 30, 180, 70] });
     expect(signTarget(form.widgets[5]!, PAGES)).toEqual({ name: "Witness", page: 8, rect: [20, 30, 180, 70] });

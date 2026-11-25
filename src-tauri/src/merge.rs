@@ -166,6 +166,22 @@ pub fn import(
     from: &Document,
     want: &[usize],
 ) -> Result<Vec<ObjectId>, String> {
+    import_placements(into, from, want, &mut None)
+}
+
+/// Source objects copied in one pass, and the shift applied to their object numbers.
+pub(crate) struct ImportedObjects {
+    copied: HashSet<ObjectId>,
+    by: u32,
+}
+
+/// A repeated placement still links to the first placement of each selected source page.
+pub(crate) fn import_placements(
+    into: &mut Document,
+    from: &Document,
+    want: &[usize],
+    first: &mut Option<ImportedObjects>,
+) -> Result<Vec<ObjectId>, String> {
     let root = into
         .catalog()
         .map_err(|e| said!("no document catalog: {e}"))?
@@ -264,21 +280,27 @@ pub fn import(
     let mut needed: Vec<ObjectId> = copied.iter().copied().collect();
     needed.sort_unstable();
 
+    let objects = ImportedObjects { copied, by };
     let mut imported = Vec::with_capacity(needed.len());
     for id in needed {
         let object = match detached.get(&id) {
             Some(dictionary) => {
-                let mut dictionary = shifted_dictionary(from, dictionary, by, &copied, 0)?;
+                let mut dictionary =
+                    shifted_dictionary(from, dictionary, &objects, first.as_ref(), 0)?;
                 // The destination's root, not the shifted source's: the tree
                 // above this page is not coming with it.
                 dictionary.set("Parent", Object::Reference(root));
                 Object::Dictionary(dictionary)
             }
             None => match widgets.get(&id) {
-                Some(dictionary) => {
-                    Object::Dictionary(shifted_dictionary(from, dictionary, by, &copied, 0)?)
-                }
-                None => shifted(from, &from.objects[&id], by, &copied, 0)?,
+                Some(dictionary) => Object::Dictionary(shifted_dictionary(
+                    from,
+                    dictionary,
+                    &objects,
+                    first.as_ref(),
+                    0,
+                )?),
+                None => shifted(from, &from.objects[&id], &objects, first.as_ref(), 0)?,
             },
         };
         imported.push((shifted_id(id, by)?, object));
@@ -286,6 +308,7 @@ pub fn import(
 
     into.objects.extend(imported);
     into.max_id = highest(into);
+    first.get_or_insert(objects);
 
     taking
         .iter()
@@ -585,8 +608,8 @@ fn shifted_id(id: ObjectId, by: u32) -> Result<ObjectId, String> {
 fn shifted(
     from: &Document,
     object: &Object,
-    by: u32,
-    copied: &HashSet<ObjectId>,
+    objects: &ImportedObjects,
+    first: Option<&ImportedObjects>,
     depth: usize,
 ) -> Result<Object, String> {
     if depth > sweep::MAX_NESTING {
@@ -596,25 +619,31 @@ fn shifted(
         ));
     }
     Ok(match object {
-        Object::Reference(id) if copied.contains(id) => Object::Reference(shifted_id(*id, by)?),
+        Object::Reference(id) if objects.copied.contains(id) => {
+            Object::Reference(shifted_id(*id, objects.by)?)
+        }
         // An undefined indirect reference is PDF null. Its number may be allocated later.
         Object::Reference(_) => Object::Null,
         Object::Array(items) => Object::Array(
             items
                 .iter()
-                .map(|item| shifted(from, item, by, copied, depth + 1))
+                .map(|item| shifted(from, item, objects, first, depth + 1))
                 .collect::<Result<_, _>>()?,
         ),
-        Object::Dictionary(dictionary) => {
-            Object::Dictionary(shifted_dictionary(from, dictionary, by, copied, depth + 1)?)
-        }
+        Object::Dictionary(dictionary) => Object::Dictionary(shifted_dictionary(
+            from,
+            dictionary,
+            objects,
+            first,
+            depth + 1,
+        )?),
         Object::Stream(stream) => {
             // Cloned whole and then rewritten, so that everything a stream
             // carries beside its dictionary comes with it --- the bytes, and
             // `allows_compression`, which decides whether a font stream survives
             // a later `compress()`.
             let mut stream = stream.clone();
-            stream.dict = shifted_dictionary(from, &stream.dict, by, copied, depth + 1)?;
+            stream.dict = shifted_dictionary(from, &stream.dict, objects, first, depth + 1)?;
             // The position it was parsed from, which is a fact about the file it
             // came out of and is about to be false. `lopdf` reads it back when
             // it decodes a stream whose `/Length` is an indirect reference.
@@ -629,8 +658,8 @@ fn shifted(
 fn shifted_dictionary(
     from: &Document,
     dictionary: &Dictionary,
-    by: u32,
-    copied: &HashSet<ObjectId>,
+    objects: &ImportedObjects,
+    first: Option<&ImportedObjects>,
     depth: usize,
 ) -> Result<Dictionary, String> {
     // Some producers leave structure indices even without a catalog tree.
@@ -661,7 +690,18 @@ fn shifted_dictionary(
         {
             continue;
         }
-        out.set(key.to_vec(), shifted(from, value, by, copied, depth + 1)?);
+        // The first pass includes every selected source page. Resolve a local
+        // destination in that pass, including an indirect destination array.
+        // Other references, especially an annotation's /P, belong to this copy.
+        let mapping = if local_destination {
+            first.unwrap_or(objects)
+        } else {
+            objects
+        };
+        out.set(
+            key.to_vec(),
+            shifted(from, value, mapping, first, depth + 1)?,
+        );
     }
     Ok(out)
 }
@@ -698,7 +738,7 @@ fn graft(into: &mut Document, root: ObjectId, kids: &[ObjectId]) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::{append, highest, import, needed, shifted, shifted_id};
+    use super::{append, highest, import, needed, shifted, shifted_id, ImportedObjects};
     use lopdf::{dictionary, Document, Object, Stream};
     use std::collections::{BTreeMap, HashSet};
 
@@ -1222,8 +1262,11 @@ mod tests {
         let moved = shifted(
             &Document::new(),
             &object,
-            40,
-            &HashSet::from([(1, 0), (2, 5)]),
+            &ImportedObjects {
+                by: 40,
+                copied: HashSet::from([(1, 0), (2, 5)]),
+            },
+            None,
             0,
         )
         .expect("shift");
@@ -1251,7 +1294,17 @@ mod tests {
     #[test]
     fn the_shift_clears_a_streams_recorded_position() {
         let stream = Object::Stream(Stream::new(dictionary! { "Length" => 4 }, b"data".to_vec()));
-        let moved = shifted(&Document::new(), &stream, 10, &HashSet::new(), 0).expect("shift");
+        let moved = shifted(
+            &Document::new(),
+            &stream,
+            &ImportedObjects {
+                by: 10,
+                copied: HashSet::new(),
+            },
+            None,
+            0,
+        )
+        .expect("shift");
         assert!(
             moved.as_stream().expect("stream").start_position.is_none(),
             "a position in the file it came from is about to be false"

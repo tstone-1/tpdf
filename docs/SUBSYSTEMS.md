@@ -80,7 +80,7 @@ measured on the pair. The worker's reply says whether the revision locks (`Unsig
 data that did not come, and `sign_finish::read_back` answers `ReadBack::Lock` for a copy
 whose new signature does not read back at level 1. Long-term signing also requires the
 reopened file to have the expected length and an intact archive timestamp over its final byte.
-Field order alone cannot identify a new timestamp when signing an existing empty field. The window asks whether anyone else still
+Signing an existing field requires its full name. A widget without a name cannot be selected, since an absent target asks the writer to create a new field. Field order alone cannot identify a new timestamp when signing an existing empty field. The window asks whether anyone else still
 needs to sign, with no answer selected, and locks for *No* (`signlock.ts`, since 2026-10-15;
 a checkbox ticked by default before); `tpdf sign` locks only with `--lock`, since a script's output must
 not change under it. Nothing here stops a program from writing to the file: an ordinary save
@@ -418,11 +418,11 @@ the installed application may be running alongside the test build.
 
 ## What the worker writes and reads, and the password
 
-Page import refuses a source with a structure tree. Its parent-tree indices belong to that document, and copying the page dictionaries alone can bind their marked content to the destination’s tags. A tagged first document can still receive ordinary untagged pages.
+Insert Pages checks for a structure tree before asking for a page range. The writer repeats the check. Its parent-tree indices belong to that document, and copying the page dictionaries alone can bind their marked content to the destination’s tags. A tagged first document can still receive ordinary untagged pages.
 
 Page import refuses an incoming catalog with optional-content settings. Imported local
 links with named destinations are disabled and the base document's last label range ends
-at an append. Partial insertion prunes unused XObjects on imported pages after placement
+at an append. On a repeated placement, explicit local links target the first placement of the selected destination page. Each annotation still belongs to its own page copy. Partial insertion prunes unused XObjects on imported pages after placement
 and the reachability sweep. If the selected pages' image usage is uncertain, saving is refused.
 
 

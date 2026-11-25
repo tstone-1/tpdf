@@ -5246,9 +5246,10 @@ fn import_pages(
         let partial = rounds
             .first()
             .is_some_and(|round| round.len() < ordered_pages(other).len());
+        let mut first_placement = None;
         for round in rounds {
             let want: Vec<usize> = round.iter().map(|&(_, page)| page as usize).collect();
-            let ids = merge::import(doc, other, &want)
+            let ids = merge::import_placements(doc, other, &want, &mut first_placement)
                 .map_err(|why| said!("could not insert the pages from another document: {why}"))?;
             for (&(at, _), id) in round.iter().zip(ids) {
                 if partial {

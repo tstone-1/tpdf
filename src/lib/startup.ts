@@ -70,8 +70,7 @@ function firstContentfulPaint(): number | null {
  * the interval after the first script is our module graph or the page still
  * loading. Reading late gets both, with historical timestamps either way.
  *
- * The module entry is looked up by suffix rather than by name because Vite
- * hashes it.
+ * The document's module script identifies the hashed entry even when later chunks load.
  */
 export function navigationMarks(): [string, number][] {
   const marks: [string, number][] = [];
@@ -87,10 +86,9 @@ export function navigationMarks(): [string, number][] {
     if (navigation.loadEventEnd > 0) marks.push(["window load", navigation.loadEventEnd]);
   }
 
+  const entryUrl = document.querySelector<HTMLScriptElement>('script[type="module"][src]')?.src;
   const script = (performance.getEntriesByType("resource") as PerformanceResourceTiming[])
-    .filter((entry) => entry.name.endsWith(".js"))
-    .sort((a, b) => a.responseEnd - b.responseEnd)
-    .pop();
+    .find((entry) => entry.name === entryUrl);
   if (script) {
     marks.push(["module requested", script.startTime]);
     marks.push(["module received", script.responseEnd]);

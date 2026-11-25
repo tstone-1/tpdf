@@ -48,7 +48,6 @@
  * run again.
  */
 
-import { basename } from "./paths";
 import type { Properties } from "./properties";
 import {
   SERVERS,
@@ -139,16 +138,14 @@ export const WAITING = TEXT().waiting;
 export const NOTHING_SIGNED = TEXT().nothingSigned;
 
 /**
- * Where the authority chosen for this lives. **Its own key**, not a
- * signing's: a signing's remembered choice is *none* until the reader chooses
- * one there, and choosing an authority here must not turn into a signing that
- * asks a server by default.
+ * Archiving starts without a timestamp authority. Signing starts with Sectigo.
+ * Each dialog remembers its own choice.
  */
 export const AUTHORITY_KEY = "tpdf.validationAuthority";
 
 /** The name the save panel suggests: `contract.pdf` becomes `contract-long-term.pdf`. */
 export function keptName(openPath: string): string {
-  const stem = basename(openPath).replace(/\.pdf$/i, "");
+  const stem = openPath.replace(/\.pdf$/i, "");
   return `${stem}-long-term.pdf`;
 }
 

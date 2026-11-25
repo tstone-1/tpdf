@@ -3,17 +3,14 @@
  *
  * ## What this is for
  *
- * `close_document` has exactly one caller in the application: `App.svelte`, when
- * a *successful* subsequent open replaces the current document. So the backend's
- * document table is owned entirely by webview state, and a webview reload sets
- * that state back to nothing while the backend keeps everything. Every document
- * opened before the reload is then unreachable, with its worker pool alive, for
- * the life of the process.
+ * Closing the last view of a document or replacing it releases its backend
+ * handle. Reloading the webview loses all tab handles while the backend and
+ * its worker pools continue running.
  *
  * A freshly loaded page holds no document id by construction --- ids come back
  * from `open_document` and it has not called it yet --- so every id the backend
  * holds at that moment is one nobody can name. That is the whole argument, and it
- * depends on there being one window; `release_documents` in `lib.rs` carries what
+ * depends on there being one window; `release_documents` in `commands/document.rs` carries what
  * happens to it if tpdf ever grows a second.
  *
  * ## Why this is a module rather than two lines in the component

@@ -121,7 +121,7 @@ import { MarkDrafts } from "./markdraft";
 import { ArrangeBar, type BarCommand } from "./arrangebar";
 import { colorFor, sameColor, type MarkColor } from "./markcolors";
 import type { Anchor } from "./popup";
-import { hitTest, onPage, turnedFor, viewRect, type Comment } from "./comments";
+import { hitTest, viewRect, type Comment } from "./comments";
 import {
   History,
   linkAt,
@@ -337,13 +337,7 @@ export interface ViewerStatus {
   any: number;
   /** Requests outstanding, so "still working" can be distinguished from "done". */
   pending: number;
-  /**
-   * Requests that came back an error since the document opened.
-   *
-   * Reported because "slow" and "erroring on everything" look identical from
-   * every other field here, and they are the two things a reader most needs told
-   * apart: one resolves by waiting and the other never does.
-   */
+  /** Render failures awaiting a successful retry or a reopened source. */
   failed: number;
   /** Characters currently selected, so a status line can say so. */
   selected: number;
@@ -1885,7 +1879,8 @@ export class Viewer {
     // page behind that round trip, so the viewer needs an order before it.
     this.pages = unedited(opts.pageCount);
     this.text = new TextCache(opts.doc, this.recovery.text);
-    this.a11y = new AccessibleText(root, opts.pageCount, opts.printedOf, opts.focusClock);
+    this.a11y = new AccessibleText(root, opts.pageCount, opts.printedOf, opts.focusClock,
+      (page, links) => this.croppedLinks(page, links));
     this.searcher = new Search(
       opts.doc,
       opts.pageCount,
@@ -2861,7 +2856,7 @@ export class Viewer {
       sharp: stats.sharp,
       any: stats.any,
       pending: this.scroller.pendingWork,
-      failed: this.scroller.stats.failed,
+      failed: this.scroller.unresolvedFailures,
       selected: this.selectedCount(),
       drawing: this.drawnStrokes,
       corners: this.placedCorners,
@@ -3760,6 +3755,12 @@ export class Viewer {
     return { page, top: Math.max(0, top) };
   }
 
+  /** Link and mark walks keep their rectangles in the original file coordinates. */
+  private get walkPosition(): { page: number; top: number } {
+    const { page, top } = this.position;
+    return { page, top: this.scroller.effectiveTurns(page) === 0 ? top + this.cropAt(page).top : top };
+  }
+
   /** Project a destination from the file's displayed page into the live crop and turn. */
   fileDestinationTop(page: number, top: number | null, edges?: DestinationEdges): number | null {
     const id = this.pages.idOf(page);
@@ -4232,7 +4233,10 @@ export class Viewer {
    */
   setComments(items: readonly Comment[]): void {
     this.commentItems = items;
-    if (this.popup.openId !== null && !items.some((item) => item.id === this.popup.openId)) {
+    const id = this.popup.openId;
+    if (id === null) return;
+    const open = items.find((item) => item.id === id);
+    if (!open) {
       // The open note is not in the new list --- a different document, or a
       // reload. Closing it is the only honest option: leaving it up would
       // attribute somebody's words to a page that does not have them.
@@ -4244,6 +4248,8 @@ export class Viewer {
       // harm --- the alternative writes it somewhere they did not mean.
       this.popup.hide(false);
       this.opts.onComment?.(null);
+    } else if (!this.popup.editing) {
+      this.popup.show(open, this.repliesTo(id), this.anchorFor(open), false);
     }
   }
 
@@ -4381,7 +4387,7 @@ export class Viewer {
       this.opts.onError?.(TEXT().noLinks);
       return false;
     }
-    const next = stepAlong(this.linkWalk, this.focusedLink, this.position, direction);
+    const next = stepAlong(this.linkWalk, this.focusedLink, this.walkPosition, direction);
     if (!next) {
       this.opts.onError?.(direction === 1 ? TEXT().noFurtherLinks : TEXT().noEarlierLinks);
       return false;
@@ -4866,9 +4872,8 @@ export class Viewer {
     if (this.commentItems.length === 0) return null;
     const { page, x, y } = this.pageAndPoint(event);
 
-    const { turns, width_pt, height_pt } = this.turnsOn(page);
-    const here = turnedFor(onPage(this.commentItems, page), turns, width_pt, height_pt);
-    return hitTest(here, page, x, y);
+    const [fileX, fileY] = this.fileRectOn(page, { left: x, right: x, top: y, bottom: y });
+    return hitTest(this.commentItems, page, fileX, fileY);
   }
 
   /**
@@ -5185,6 +5190,11 @@ export class Viewer {
     return { dx: next.right - base.right, dy: next.bottom - base.bottom };
   }
 
+  private croppedLinks(page: number, links: Link[]): Link[] {
+    const crop = this.cropAt(page);
+    return crop.left || crop.top ? links.map((link) => ({ ...link, rect: intoCrop(link.rect, crop) })) : links;
+  }
+
   /** One page's links in the view's space, memoised across pointer moves. */
   private linksOn(page: number): Link[] {
     const { turns, width_pt, height_pt } = this.turnsOn(page);
@@ -5196,7 +5206,7 @@ export class Viewer {
       return cached.items;
     }
     const items = linksTurnedFor(
-      linksOnPage(this.linkItems, page),
+      this.croppedLinks(page, linksOnPage(this.linkItems, page)),
       turns,
       width_pt,
       height_pt,
@@ -6541,7 +6551,7 @@ export class Viewer {
       return false;
     }
     const from = walk.find((item) => item.id === this.markNote.openId) ?? null;
-    const next = stepAlong(walk, from, this.position, direction);
+    const next = stepAlong(walk, from, this.walkPosition, direction);
     if (!next) {
       this.opts.onError?.(direction === 1 ? TEXT().noFurtherMarks : TEXT().noEarlierMarks);
       return false;
@@ -7654,6 +7664,8 @@ export class Viewer {
           ),
         );
       }
+      this.turnedLinks = null;
+      this.a11y.invalidatePage(slot);
       this.scroller.invalidatePage(slot);
       this.opts.onPageGeometryChanged?.(slot);
     }
@@ -9125,7 +9137,10 @@ export class Viewer {
     }
     this.a11y.sync(
       visible,
-      (slot) => this.textOn(slot),
+      (slot) => {
+        const source = this.textAt(slot);
+        return source?.cache.peekUnturned(source.placement) ?? null;
+      },
       (slot) => {
         const source = this.pages.addressOf(slot, this.opts.doc);
         return source !== undefined && this.searcher.unreadablePage(source);

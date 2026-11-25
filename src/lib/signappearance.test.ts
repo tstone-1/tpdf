@@ -7,6 +7,7 @@ import {
   MAX_NOTE_CHARS,
   PREFERENCE_KEY,
   askAppearance,
+  paintPreview,
   readPreference,
   writePreference,
   type AppearanceOptions,
@@ -384,6 +385,44 @@ describe("the panel", () => {
     cancelled.button("Place on page…").dispatch("click", {});
     expect(await cancelled.answer).toMatchObject({ image: saved });
     cancelled.done();
+  });
+
+  it.each([fresh, null])("refreshes the saved choice after a device store change", async (image) => {
+    const ui = open({ draw: async (changed) => { changed(image); return image; } });
+    try {
+      ui.button("Draw or import…").dispatch("click", {});
+      await settle();
+      const choice = ui.input("sign-appearance-image", "saved");
+      expect(choice.disabled).toBe(!image);
+      if (image) {
+        choice.checked = true;
+        choice.dispatch("change", {});
+      } else {
+        expect(ui.input("sign-appearance-image", "none").checked).toBe(true);
+      }
+      expect(ui.previews.at(-1)?.image).toEqual(image);
+      ui.button("Place on page…").dispatch("click", {});
+      expect(await ui.answer).toMatchObject({ image });
+    } finally { ui.done(); }
+  });
+
+  it("discards and closes an older bitmap decoded after its replacement", async () => {
+    const old = deferred<{ close: () => void }>();
+    const first = { close: vi.fn() }, second = { close: vi.fn() };
+    vi.stubGlobal("createImageBitmap", vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce(second));
+    const drawImage = vi.fn();
+    const canvas = { width: 0, getContext: () => ({ clearRect() {}, drawImage }) };
+    const { panel } = panelWith({ show: (preview, current) => paintPreview(canvas as unknown as HTMLCanvasElement, preview, current) });
+    try {
+      const pending = panel.refresh();
+      await settle();
+      await panel.refresh();
+      old.resolve(first);
+      await pending;
+      expect(drawImage.mock.calls).toEqual([[second, 0, 0]]);
+      expect(first.close).toHaveBeenCalledOnce();
+      expect(second.close).toHaveBeenCalledOnce();
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it("answers nothing for Cancel or Escape, and paints nothing still on its way", async () => {

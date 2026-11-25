@@ -143,7 +143,7 @@ describe("the order the questions are asked in", () => {
     expect(asked).toEqual([
       "list",
       "choose:abc",
-      "saveAs:report-signed.pdf",
+      "saveAs:/docs/report-signed.pdf",
       "sign:abc:/docs/report-signed.pdf",
     ]);
     expect(said).toBe(
@@ -173,7 +173,7 @@ describe("the order the questions are asked in", () => {
       "savedImage",
       "appearance:abc:saved",
       "place",
-      "saveAs:report-signed.pdf",
+      "saveAs:/docs/report-signed.pdf",
       "sign:abc:/docs/report-signed.pdf",
     ]);
     // The panel's image and options, not the saved image the panel was offered.
@@ -244,7 +244,7 @@ describe("the order the questions are asked in", () => {
       "savedImage",
       "appearance:abc:saved",
       "place",
-      "saveAs:report-signed.pdf",
+      "saveAs:/docs/report-signed.pdf",
     ]);
     expect(placements).toEqual([]);
   });
@@ -357,7 +357,7 @@ describe("signing a signature field the document has", () => {
   it("draws a visible one in the field, where the field is, and drags nothing", async () => {
     const { asked, placements, into, shell: s } = inField(true);
     await signDocument(s, field);
-    expect(asked).toEqual(["list", "savedImage", "appearance:abc:saved", "saveAs:report-signed.pdf"]);
+    expect(asked).toEqual(["list", "savedImage", "appearance:abc:saved", "saveAs:/docs/report-signed.pdf"]);
     expect(placements).toEqual([{ page: 9, rect: [40, 50, 240, 110], image: saved, options: chosenLook.options }]);
     // The chooser is told which field, and so is the signing.
     expect(into).toEqual(["Approved", "Approved"]);
@@ -366,7 +366,7 @@ describe("signing a signature field the document has", () => {
   it("writes an invisible one into the field all the same", async () => {
     const { asked, placements, into, shell: s } = inField(false);
     await signDocument(s, field);
-    expect(asked).toEqual(["list", "saveAs:report-signed.pdf"]);
+    expect(asked).toEqual(["list", "saveAs:/docs/report-signed.pdf"]);
     expect(placements).toEqual([null]);
     expect(into).toEqual(["Approved", "Approved"]);
   });
@@ -381,9 +381,9 @@ describe("signing a signature field the document has", () => {
 
 describe("the words", () => {
   it("suggests a -signed name beside the original, whatever its case", () => {
-    expect(signedName("/docs/report.pdf")).toBe("report-signed.pdf");
-    expect(signedName("C:\\docs\\Report.PDF")).toBe("Report-signed.pdf");
-    expect(signedName("/docs/notes")).toBe("notes-signed.pdf");
+    expect(signedName("/docs/report.pdf")).toBe("/docs/report-signed.pdf");
+    expect(signedName("C:\\docs\\Report.PDF")).toBe("C:\\docs\\Report-signed.pdf");
+    expect(signedName("/docs/notes")).toBe("/docs/notes-signed.pdf");
   });
 
   it("says under a certificate from whom, until when and how, and self-signed for its own issuer", () => {

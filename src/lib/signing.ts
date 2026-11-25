@@ -473,7 +473,7 @@ export const UNSAVED = TEXT().unsaved;
 
 /** The name the save panel suggests: `report.pdf` becomes `report-signed.pdf`. */
 export function signedName(openPath: string): string {
-  const stem = basename(openPath).replace(/\.pdf$/i, "");
+  const stem = openPath.replace(/\.pdf$/i, "");
   return `${stem}-signed.pdf`;
 }
 

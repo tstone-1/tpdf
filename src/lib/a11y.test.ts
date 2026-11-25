@@ -313,6 +313,17 @@ describe("AccessibleText and links", () => {
     }
   });
 
+  it("exposes supported web links as available", () => {
+    const { dom, spans } = build([link({ target: { kind: "web", url: "https://example.org" } })]);
+    try {
+      expect(spans).toHaveLength(1);
+      expect(spans[0]?.attributes.has("aria-disabled")).toBe(false);
+      expect(spans[0]?.dataset.page).toBeUndefined();
+    } finally {
+      dom.restore();
+    }
+  });
+
   it("says a refused link is unavailable rather than leaving it inert", () => {
     const { dom, spans } = build([link({ target: { kind: "refused", action: "uri" } })]);
     try {

@@ -21,9 +21,9 @@ export interface SignTarget {
   rect: [number, number, number, number];
 }
 
-/** Whether a widget is a signature field that holds no signature. */
+/** Only a named empty signature field can be addressed by the signing worker. */
 export function isEmptySignature(widget: FormWidget): boolean {
-  return widget.control.kind === "signature" && !widget.control.signed;
+  return widget.name !== "" && widget.control.kind === "signature" && !widget.control.signed;
 }
 
 // Scans are replaced on reopen. Pending edits live outside the scanned form.

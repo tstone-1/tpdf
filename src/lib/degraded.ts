@@ -30,6 +30,13 @@
  * message, it could suppress it for as long as the document stays open.
  */
 
+import { catalog, type UiLocale } from "./i18n";
+
+const TEXT = catalog({
+  "en-US": { failed: "some pages could not be drawn", preparing: "preparing page", sharp: "sharpening", ahead: "loading ahead" },
+  "de-DE": { failed: "Einige Seiten konnten nicht angezeigt werden", preparing: "Seite wird vorbereitet", sharp: "Darstellung wird geschärft", ahead: "Weitere Seiten werden geladen" },
+});
+
 /**
  * How long a transient degraded state must hold before it is shown.
  *
@@ -41,7 +48,7 @@ export const SHOW_AFTER_MS = 300;
 
 /** The coverage numbers this decision reads, as {@link ViewerStatus} reports them. */
 export interface Coverage {
-  /** Requests that came back an error since the document opened. */
+  /** Outstanding render failures. */
   failed: number;
   /** Fraction backed by anything at all, tier-1 placeholder included. */
   any: number;
@@ -71,15 +78,15 @@ export interface Degraded {
  * that was reasoned about once and is easy to get subtly wrong again --- can be
  * tested without a clock at all.
  */
-export function describeDegraded(status: Coverage | null): Degraded | null {
+export function describeDegraded(status: Coverage | null, locale?: UiLocale): Degraded | null {
   if (!status) return null;
   // First, because it is the one state waiting does not fix. "preparing page"
   // in front of a renderer that is erroring on every request is a lie by
   // omission.
-  if (status.failed > 0) return { text: "some pages could not be drawn", urgent: true };
-  if (status.any < 0.999) return { text: "preparing page", urgent: false };
-  if (status.sharp < 0.999) return { text: "sharpening", urgent: false };
-  return status.pending > 0 ? { text: "loading ahead", urgent: false } : null;
+  if (status.failed > 0) return { text: TEXT(locale).failed, urgent: true };
+  if (status.any < 0.999) return { text: TEXT(locale).preparing, urgent: false };
+  if (status.sharp < 0.999) return { text: TEXT(locale).sharp, urgent: false };
+  return status.pending > 0 ? { text: TEXT(locale).ahead, urgent: false } : null;
 }
 
 /**

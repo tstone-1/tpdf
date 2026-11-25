@@ -490,6 +490,11 @@ pub async fn page_import_prepare(
         return Err(imports::locked(&name));
     }
 
+    if properties.tagged == Some(true) {
+        return Err(said!(
+            "pages from a tagged PDF cannot be imported with their accessibility structure"
+        ));
+    }
     let pages = imports::page_count(info.page_count)?;
     let source = crate::docmodel::SourceFile {
         path: wanted,

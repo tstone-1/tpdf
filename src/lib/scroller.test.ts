@@ -109,6 +109,22 @@ describe("Scroller retries", () => {
     expect(tiles.fetchTile).toHaveBeenCalledTimes(4);
   });
 
+  it("clears the reader's warning when both failed requests recover", async () => {
+    const start = performance.now();
+    scroller.frame(0, start);
+    await settle();
+    expect(scroller.unresolvedFailures).toBe(2);
+    tiles.fetchTile.mockImplementation(async (req) => ({
+      bitmap: { width: req.width, height: req.height, close() {} },
+      bytes: 32, renderUs: 1, decodeMs: 1,
+    }));
+    scroller.frame(0, start + 10_000);
+    await settle();
+    expect(scroller.frame(0, start + 10_001)).toMatchObject({ any: 1, sharp: 1 });
+    expect(scroller.unresolvedFailures).toBe(0);
+    expect(scroller.stats.failed).toBe(2);
+  });
+
   it("counts a failure rather than swallowing it", async () => {
     const t0 = performance.now();
     scroller.frame(0, t0);

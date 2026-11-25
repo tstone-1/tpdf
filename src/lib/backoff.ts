@@ -60,6 +60,8 @@ export class Backoff {
    */
   private readonly entries = new Map<string, Entry>();
 
+  get size(): number { return this.entries.size; }
+
   /** Whether a request that failed is still inside its wait. */
   blocked(id: string, now: number): boolean {
     const entry = this.entries.get(id);
@@ -84,6 +86,13 @@ export class Backoff {
   /** Forgets a key, which is what a success means. */
   clear(id: string): void {
     this.entries.delete(id);
+  }
+
+  /** Forgets tile keys from a layout that has been discarded. */
+  clearPrefix(prefix: string): void {
+    for (const key of this.entries.keys()) {
+      if (key.startsWith(prefix)) this.entries.delete(key);
+    }
   }
 
   /** Forgets everything. */

@@ -157,8 +157,8 @@ words. Recognition is local and temporary: the PDF stays unchanged. Try it on
 
 **Sign and check signatures.** Sign with a certificate from the macOS keychain or the
 Windows certificate store: your signature image is drawn on the page, a timestamp
-authority confirms the time, and the signature locks the document, so that a program
-which checks signatures reports any later change. Add long-term validation data if you
+authority confirms the time, and you choose whether anyone else still needs to sign.
+If yours is the final signature, you can lock the document. Add long-term validation data if you
 want it, or add that data later to a document somebody has already signed. For a signed document, tpdf says whether each signature is intact, whether your
 computer trusts the signer, and what was added after signing.
 
@@ -516,12 +516,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
   <!-- built: edit.addSignature -->
 
 - **Sign a document with a certificate you already have** — **Sign** in the toolbar, or
-  **Sign document…** in the File menu or the command palette. The dialog opens on what
-  most signings want, and each can be changed there: the signature is **visible**, drawn
-  where you drag a rectangle; a **timestamp** is asked of Sectigo; and the signature
-  **locks the document**. tpdf lists the certificates in your macOS keychain or
-  Windows certificate store that can sign, you pick one and name a new file, and the
-  signed copy is written beside the original, which is not changed. The private key never
+  **Sign document…** in the File menu or the command palette. By default the signature is **visible**, drawn
+  where you drag a rectangle, and tpdf asks Sectigo for a **timestamp**. Choose whether
+  anyone else still needs to sign. If yours is the final signature, you can **lock the document**.
+  Pick a signing certificate from your macOS keychain or Windows certificate store and
+  choose where to save the signed copy. The dialog suggests the folder containing the original. The private key never
   leaves the operating system: macOS or Windows makes the signature, and any PIN or access
   prompt you see is theirs. The signature is PAdES baseline B-B (a CAdES detached
   signature over SHA-256, RSA or ECDSA P-256/P-384), added as an incremental revision so

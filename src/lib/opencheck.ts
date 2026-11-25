@@ -534,8 +534,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       //
       // Three passes over the same file: the question dismissed, a range, and
       // a blank answer --- every page --- which the rest of the phase reads.
-      const [first, other] = expected.split("|");
-      if (!first || !other) throw new Error("the opened fixture and another file are required");
+      const [first, other, tagged] = expected.split("|");
+      if (!first || !other || !tagged) throw new Error("the opened fixture and another file are required");
       await host.open(first); await host.idle();
       const quiet = async () => {
         if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("the viewer did not settle");
@@ -560,6 +560,11 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       };
       host.viewer()!.goToPage(0); await quiet();
 
+      await host.importPages(tagged);
+      report.check("tagged pages are refused before the range prompt or any document edit",
+        host.pendingImport() === null && !model.dirty && model.state.pages.length === before
+        && document.body.textContent?.includes("pages from a tagged PDF cannot be imported") === true,
+        JSON.stringify({ pending: host.pendingImport(), pages: model.state.pages.length }));
       await host.importPages(other);
       const asked = host.pendingImport();
       const prompt = field()?.placeholder ?? "";
@@ -2348,6 +2353,33 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       report.check("and the viewer holds its links",
         linked && followed > 0 && host.viewer()?.linkCount === followed,
         JSON.stringify({ held: host.viewer()?.linkCount ?? -1, answered: followed }));
+
+      const comment = comments.items.find(item => item.object && !item.hidden && !item.body_clipped
+        && item.body && item.reply_to === null && !comments.items.some(reply => reply.reply_to === item.id));
+      if (!comment?.object) throw new Error("the comment fixture needs a standalone editable note");
+      const object = comment.object;
+      const page = model.map.idOf(comment.page)!;
+      const viewer = host.viewer()!;
+      const row = () => document.querySelector<HTMLElement>(
+        `[data-sidebar-panel="comments"] [data-id="${comment.id}"] [data-part="body"]`);
+      const checkBody = (label: string, expectedBody: string) => {
+        viewer.showComment(comment.id, false);
+        report.check(label, viewer.commentText.includes(expectedBody) && row()?.textContent === expectedBody.replace(/\s+/g, " ").trim(),
+          JSON.stringify({ popup: viewer.commentText, row: row()?.textContent }));
+      };
+      const replacement = "Revised saved comment";
+      await host.apply(edit => edit.rewrite(object, page, replacement));
+      checkBody("an edited file note reaches the popup and the sidebar", replacement);
+      await host.apply(edit => edit.discard(object, page));
+      viewer.showComment(comment.id, false);
+      report.check("deleting the file note removes both targets", !row() && viewer.commentOpen === -1,
+        JSON.stringify({ row: row()?.textContent, open: viewer.commentOpen }));
+      await host.apply(edit => edit.undo());
+      checkBody("undoing deletion restores the edited note on both surfaces", replacement);
+      await host.apply(edit => edit.undo());
+      checkBody("undoing the edit restores the original note on both surfaces", comment.body);
+      await host.apply(edit => edit.redo());
+      checkBody("redoing the edit refreshes both surfaces", replacement);
 
       report.emit("[answers] returning to the first tab");
       // The answers are not kept with the tab. They are asked again by the

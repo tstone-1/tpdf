@@ -878,3 +878,66 @@ fn the_image_only_route_refuses_a_plan_that_places_another_file_s_pages() {
         refused.message
     );
 }
+
+#[test]
+fn repeated_placement_keeps_links_to_selected_pages_only() {
+    let scratch = Scratch::new("repeated-links");
+    let source = scratch.put("own.pdf", &labelled(&["own"]));
+    let mut donor = Document::load_mem(&labelled(&["A", "B"])).unwrap();
+    let pages = ordered_pages(&donor);
+    let target = donor.add_object(vec![
+        Object::Reference(pages[1]),
+        Object::Name(b"Fit".to_vec()),
+    ]);
+    let link = donor.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "Link", "Dest" => target,
+        "Rect" => vec![0.into(), 0.into(), 80.into(), 20.into()],
+    });
+    donor
+        .get_dictionary_mut(pages[0])
+        .unwrap()
+        .set("Annots", vec![Object::Reference(link)]);
+    let mut bytes = Vec::new();
+    donor.save_to(&mut bytes).unwrap();
+    let other = scratch.put("donor.pdf", &bytes);
+    for include_b in [true, false] {
+        let mut slots = vec![own(0), theirs(2, 0)];
+        if include_b {
+            slots.push(theirs(3, 1));
+        }
+        slots.push(theirs(4, 0));
+        let out = scratch.join(if include_b {
+            "with-b.pdf"
+        } else {
+            "without-b.pdf"
+        });
+        write_copy(&source, &plan_with(1, slots, &other), &out, None, &Here).unwrap();
+        let saved = Document::load(&out).unwrap();
+        let order = ordered_pages(&saved);
+        for at in [1, order.len() - 1] {
+            let page = saved.get_dictionary(order[at]).unwrap();
+            let annot = page
+                .get_deref(b"Annots", &saved)
+                .unwrap()
+                .as_array()
+                .unwrap()[0]
+                .as_reference()
+                .unwrap();
+            let dest = saved
+                .get_dictionary(annot)
+                .unwrap()
+                .get_deref(b"Dest", &saved)
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert_eq!(
+                dest[0],
+                if include_b {
+                    Object::Reference(order[2])
+                } else {
+                    Object::Null
+                }
+            );
+        }
+    }
+}

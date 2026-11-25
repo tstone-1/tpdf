@@ -197,6 +197,33 @@ function placed(viewer: Viewer, rect: [number, number, number, number]) {
 }
 
 describe("a cropped page", () => {
+  it("walks from the viewport in file coordinates after a top crop", async () => {
+    const viewer = build();
+    try {
+      viewer.setPages(pages(true));
+      await settle();
+      viewer.setZoom(2);
+      const boxes: [number, number, number, number][] = [[200, 200, 250, 220], [200, 400, 250, 420]];
+      viewer.setMarks(boxes.map((rect, id) => ({ ...mark(rect), id })));
+      viewer.setLinks(boxes.map((rect, id) => ({ rect, id, page: 0, target: { kind: "page", page: 1, top_pt: null } })));
+      const view = viewer as unknown as { scrollTo(px: number): void; scroller: { pageTopOf(slot: number): number } };
+      const position = () => {
+        view.scrollTo(view.scroller.pageTopOf(0) + 2 * 150);
+        expect(viewer.position.top).toBeCloseTo(150);
+      };
+      for (const direction of [1, -1] as const) {
+        position();
+        expect(viewer.stepLink(direction)).toBe(true);
+        expect(viewer.linkFocus).toBe(direction === 1 ? 1 : 0);
+        viewer.clearLinkFocus();
+        position();
+        expect(viewer.stepMark(direction)).toBe(true);
+        expect(viewer.markOpen).toBe(direction === 1 ? 1 : 0);
+        viewer.closeMark();
+      }
+    } finally { viewer.destroy(); }
+  });
+
   it("places a comment and a mark at the same point, and not where they were", async () => {
     const rect: [number, number, number, number] = [200, 300, 260, 320];
     const viewer = build();

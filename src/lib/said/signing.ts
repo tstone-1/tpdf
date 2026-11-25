@@ -249,6 +249,7 @@ export default {
   "the {what} has a control character in it, which a signature does not carry": (a) =>
     `der ${note(a.what!)} enthält ein Steuerzeichen, das eine Signatur nicht trägt`,
   "this document's form could not be read: {why}": "das Formular dieses Dokuments konnte nicht gelesen werden: {why}",
+  "The selected signature field has no name.": "Das ausgewählte Signaturfeld hat keinen Namen.",
   "this document has no field called `{name}`": "dieses Dokument hat kein Feld namens „{name}“",
   "`{name}` is shown in {count} places, and a signature goes in one":
     "„{name}“ wird an {count} Stellen angezeigt, und eine Signatur kommt an eine",

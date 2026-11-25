@@ -34,4 +34,8 @@ ROWS = [
         "  return right ? text.padStart(width) : text.padEnd(width);",
         "  return right ? text.padEnd(width) : text.padStart(width);",
         "puts a label on the left and a figure on the right of its column"),
+    Mutation("startup: report the last JavaScript response as the entry", "src/lib/startup.ts",
+        ".find((entry) => entry.name === entryUrl);",
+        '.filter((entry) => entry.name === entryUrl || entry.name.endsWith(".js")).sort((a, b) => b.responseEnd - a.responseEnd)[0];',
+        "times the document's entry script even when a later chunk finishes last"),
 ]

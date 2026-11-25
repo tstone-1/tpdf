@@ -3376,14 +3376,17 @@
     // A replacement model can issue the same page or mark IDs.
     if (!model || model !== owner) return null;
     try {
+      const before = model.state;
       const after = await run(model);
+      const commentsChanged = JSON.stringify(before.notes) !== JSON.stringify(after.notes)
+        || JSON.stringify(before.discards) !== JSON.stringify(after.discards);
       // Everything below reads and writes the variables of the document the
       // edit was made in, so it runs as that document.
-      const adopted = asDocument(id, () => adoptEdit(model, after)) === true;
+      const adopted = asDocument(id, () => adoptEdit(model, after, commentsChanged)) === true;
       // A second view of the document draws the same state. An edit is the
       // document's, whichever view it was made in.
       for (const twin of tabs.all) {
-        if (twin.edits === model && twin.view !== id) asDocument(twin.view, () => adoptEdit(model, after));
+        if (twin.edits === model && twin.view !== id) asDocument(twin.view, () => adoptEdit(model, after, commentsChanged));
       }
       // A comparison names characters an edit can have moved, in any view of
       // the document. See `ComparisonState`.
@@ -3403,7 +3406,7 @@
    * Moves the mounted document's viewer and panels to the state an edit
    * produced. False, and nothing moved, when the variables hold another model.
    */
-  function adoptEdit(model: Edits, after: EditState): boolean {
+  function adoptEdit(model: Edits, after: EditState, commentsChanged: boolean): boolean {
     if (edits !== model) return false;
     viewer?.clearRecognition();
     // A graphic is named by its index among the page's objects, which an
@@ -3422,6 +3425,8 @@
       // when a late outline or a late set of comments arrives and has no
       // business throwing away a strip somebody is looking at.
       sidebar?.thumbnails?.setPages(after.pages.length);
+    } else if (commentsChanged) {
+      refreshFileComments();
     }
     // Any other file whose first pages just arrived has links nobody has read.
     void fetchImportedLinks(model);
@@ -3501,15 +3506,22 @@
   function applyPageOrder(): void {
     const pages = edits?.map ?? NO_PAGES;
     viewer?.setLinks(allLinksIn(rawLinks, importedLinks.all, pages));
+    refreshFileComments();
+    if (rawOutline) {
+      sidebar?.setOutline({
+        ...rawOutline,
+        items: outlineIn(rawOutline.items, pages),
+      }, rawOutline);
+    }
+  }
+
+  function refreshFileComments(): void {
+    const pages = edits?.map ?? NO_PAGES;
     // An answer that has not arrived is left alone rather than pushed as
     // `null`: to these panels `null` means "this document's comments could not
     // be read", which is a different thing to tell a reader than "not yet". The
     // failing path still says it, from the `catch` that knows.
     if (rawComments) {
-      // The scan, with the reader's own rewrites over it. `refreshTargets` runs
-      // after every state reply, which is what makes an edited comment reach
-      // the panel and the popup at all --- the scan is a reading of the file on
-      // disk and knows nothing of what has been typed since.
       const items = commentsIn(
         rawComments.items,
         pages,
@@ -3523,12 +3535,6 @@
       // survive a page being deleted or moved --- and re-asking for them is not
       // an option, since the pages they came from are recorded as asked.
       if (commentWords.words.size > 0) sidebar?.setCommentWords(commentWords.words);
-    }
-    if (rawOutline) {
-      sidebar?.setOutline({
-        ...rawOutline,
-        items: outlineIn(rawOutline.items, pages),
-      }, rawOutline);
     }
   }
 
@@ -4631,7 +4637,7 @@
               saved,
               preview: (image, options) =>
                 call("sign_preview", { doc, identity, size: PREVIEW_SIZE, image, options }),
-              draw: () => signatureDialog?.ask(APPEARANCE_WORDS) ?? Promise.resolve(null),
+              draw: (savedChanged) => signatureDialog?.ask(APPEARANCE_WORDS, savedChanged) ?? Promise.resolve(null),
             }),
           // The viewer that is showing the document now: a tab switch while
           // this waits destroys it, which answers `null` and ends the signing.
@@ -5758,7 +5764,7 @@
 
       // Anything a previous webview left the backend holding. This page holds no
       // document id yet, so every id the backend has is one nobody can name ---
-      // see `orphans.ts` and `release_documents` in `lib.rs` for the whole
+      // see `orphans.ts` and `release_documents` in `commands/document.rs` for the whole
       // argument, including what it assumes about there being one window.
       //
       // After the spike entry points and before anything opens a document. Both
@@ -6988,7 +6994,8 @@
           asDocument(view, () => say(TEXT().waitForOther));
           return;
         }
-        void signDocument(edits ? signTarget(widget, edits.state.pages) : null);
+        const target = edits && signTarget(widget, edits.state.pages);
+        if (target) void signDocument(target);
       });
   }
 

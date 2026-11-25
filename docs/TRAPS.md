@@ -18042,10 +18042,10 @@ change to a drawing; either way it goes, and this entry is the recipe.
 
 ### A resource whose only owner is on the other side of a boundary is leaked whenever that side forgets
 
-`close_document` has exactly one caller in the application: `App.svelte`, when a
-*successful* subsequent open replaces the current document. That is a correct
-place to close one, and it is carefully written — released only once the
-replacement exists, not awaited, with a comment naming the stake: *"without it a
+At the time of this measurement, `App.svelte` closed a document only after a
+successful replacement. Closing its last tab now also releases it. The original
+replacement code waited until the new document existed, then released the old
+one without awaiting it. Its comment explained why: *"without it a
 session that opens a dozen files holds a dozen sandboxed children."*
 
 **It is also the only owner.** The backend's document table has no timer, no

@@ -28,7 +28,7 @@
 import { onPage as placedOnPage, turnedFor as placedTurnedFor } from "./comments";
 import { catalog } from "./i18n";
 import { isNavigable, reasonFor, type Target } from "./outline";
-import { centreOfCharacter, coversPoint, type IndexRange } from "./text";
+import { centreOfCharacter, type IndexRange } from "./text";
 
 /** One clickable rectangle, mirroring `links.rs`'s `Link`. */
 export interface Link {
@@ -73,6 +73,7 @@ export function linkAt(
   page: number,
   x: number,
   y: number,
+  slack = LINK_SLACK_PT,
 ): Link | null {
   // The smallest hit wins, which matters where a producer wraps a whole
   // paragraph in one link and a phrase inside it in another.
@@ -86,10 +87,10 @@ export function linkAt(
     const height = bottom - top;
     if (width <= 0 || height <= 0) continue;
     if (
-      x < left - LINK_SLACK_PT ||
-      x > right + LINK_SLACK_PT ||
-      y < top - LINK_SLACK_PT ||
-      y > bottom + LINK_SLACK_PT
+      x < left - slack ||
+      x > right + slack ||
+      y < top - slack ||
+      y > bottom + slack
     ) {
       continue;
     }
@@ -330,21 +331,12 @@ function linkOfCharacter(
   boxes: readonly number[],
   at: number,
 ): Link | null {
-  // The centre, and the containment below, both come from `text.ts` --- one
-  // definition of "this character is inside that rectangle", shared with the
-  // covered-words reader that answers the same question for a highlight. Two
-  // copies of it would be free to disagree about a glyph on the boundary, and
-  // the symptom would be a screen reader and a comments panel naming different
-  // words for the same span.
   const centre = centreOfCharacter(boxes, at);
   if (!centre) return null;
 
   const candidates = index.get(Math.floor(centre.y / BAND_PT));
-  if (!candidates) return null;
-  for (const link of candidates) {
-    if (coversPoint(link.rect, 0, centre.x, centre.y)) return link;
-  }
-  return null;
+  const first = candidates?.[0];
+  return candidates && first ? linkAt(candidates, first.page, centre.x, centre.y, 0) : null;
 }
 
 /**

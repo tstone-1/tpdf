@@ -250,6 +250,54 @@ describe("a rectangle on a page an edit turned", () => {
     });
   }
 
+  it.each([false, true])("keeps the accessible phrase linked under a quarter turn (crop %s)", async (crop) => {
+    const dom = installFakeDom();
+    const viewer = build(dom, 1);
+    core.invoke.mockImplementation(async (command) => {
+      if (command === "page_geometry") return { width_pt: 500, height_pt: 700, left: 100, top: 100 };
+      if (command === "document_mapping") return [];
+      if (command === "page_text") return { ...pageText(), boxes: crop
+        ? [10, 10, 20, 22, 20, 10, 30, 22] : [110, 110, 120, 122, 120, 110, 130, 122] };
+      return null;
+    });
+    try {
+      viewer.setPages([{ id: pageId(1), source: { baseline: 0 }, turns: 1,
+        ...(crop ? { crop: [100, 0, 600, 700] as [number, number, number, number] } : {}) }]);
+      await settle();
+      viewer.setLinks([{ ...link(), rect: [109, 109, 119, 123] }]);
+      await viewer.loadText(0);
+      (viewer as unknown as { syncAccessibleText(visible: number[]): void }).syncAccessibleText([0]);
+      const span = viewer.accessibleText.elementFor(0)?.querySelector("span");
+      expect(span?.getAttribute("role")).toBe("link");
+      expect(span?.textContent).toBe("a");
+    } finally { viewer.destroy(); dom.restore(); }
+  });
+
+  it("moves comment and link hit boxes with a top crop and with its undo", async () => {
+    const dom = installFakeDom();
+    const viewer = build(dom, 1);
+    const base = { id: pageId(1), source: { baseline: 0 } as const, turns: 0 };
+    const cropped = { ...base, crop: [0, 0, 600, 775] as [number, number, number, number] };
+    core.invoke.mockImplementation(async (command, args) => command === "page_geometry"
+      ? { width_pt: 600, height_pt: args.crop ? 775 : 800, left: 0, top: args.crop ? 25 : 0 }
+      : command === "page_text" ? pageText() : null);
+    viewer.setComments([comment()]);
+    viewer.setLinks([{ ...link(), rect: [200, 50, 240, 90] }]);
+    try {
+      for (const state of [base, cropped, base]) {
+        viewer.setPages([state]);
+        await settle();
+        for (const y of [32, 85]) {
+          const hit = state === cropped ? y === 32 : y === 85;
+          expect(pressAt(dom, viewer, 120, y, () => viewer.commentOpen)).toBe(hit ? 7 : -1);
+          viewer.closeComment();
+          expect(pressAt(dom, viewer, 220, y, () => viewer.linkFocus)).toBe(hit ? 9 : -1);
+          viewer.clearLinkFocus();
+        }
+      }
+    } finally { viewer.destroy(); dom.restore(); }
+  });
+
   it("puts the rectangle somewhere else once the page is turned", async () => {
     // The control for the eight above: a placement that ignored every turn
     // would satisfy them all, because all three subsystems would ignore it

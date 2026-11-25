@@ -227,7 +227,7 @@ export interface PanelShell {
   /** `sign_preview` for these choices. A refusal is thrown, with the signing's words. */
   preview(image: SignatureImage | null, options: AppearanceOptions): Promise<SignaturePreview>;
   /** Puts a finished preview on screen. */
-  show(preview: SignaturePreview): void | Promise<void>;
+  show(preview: SignaturePreview, current: () => boolean): void | Promise<void>;
   /** Where the preference is kept. */
   storage?: () => Store;
 }
@@ -281,6 +281,13 @@ export class AppearancePanel {
     return true;
   }
 
+  get hasSaved(): boolean { return this.shell.saved !== null; }
+
+  savedChanged(image: SignatureImage | null): void {
+    this.shell.saved = image;
+    if (!image && this.source === "saved") this.source = "none";
+  }
+
   /** An image drawn or imported in this panel, which becomes the one shown. */
   useDrawn(image: SignatureImage): void {
     this.drawn = image;
@@ -292,10 +299,12 @@ export class AppearancePanel {
   }
 
   setReason(text: string): void {
+    this.#generation++;
     this.options.reason = text;
   }
 
   setLocation(text: string): void {
+    this.#generation++;
     this.options.location = text;
   }
 
@@ -313,7 +322,7 @@ export class AppearancePanel {
     try {
       const preview = await this.shell.preview(this.image(), options);
       if (this.#closed || generation !== this.#generation) return;
-      await this.shell.show(preview);
+      await this.shell.show(preview, () => !this.#closed && generation === this.#generation);
       if (this.#closed || generation !== this.#generation) return;
       this.state = { kind: "shown" };
     } catch (error) {
@@ -341,9 +350,10 @@ export class AppearancePanel {
 }
 
 /** Paints a preview's PNG onto a canvas, decoded by the webview. */
-export async function paintPreview(canvas: HTMLCanvasElement, preview: SignaturePreview): Promise<void> {
+export async function paintPreview(canvas: HTMLCanvasElement, preview: SignaturePreview, current: () => boolean): Promise<void> {
   const bitmap = await createImageBitmap(new Blob([new Uint8Array(preview.png)], { type: "image/png" }));
   try {
+    if (!current()) return;
     canvas.width = preview.width;
     canvas.height = preview.height;
     const context = canvas.getContext("2d");
@@ -359,10 +369,10 @@ export interface AskShell {
   saved: SignatureImage | null;
   preview: PanelShell["preview"];
   /** The Phase 4 drawing dialog: an image, or `null` when it was cancelled. */
-  draw(): Promise<SignatureImage | null>;
+  draw(savedChanged: (image: SignatureImage | null) => void): Promise<SignatureImage | null>;
   storage?: () => Store;
   /** Replaces {@link paintPreview}, for a test with no decoder. */
-  paint?: (canvas: HTMLCanvasElement, preview: SignaturePreview) => void | Promise<void>;
+  paint?: (canvas: HTMLCanvasElement, preview: SignaturePreview, current: () => boolean) => void | Promise<void>;
   /** How long typing waits before the preview is redrawn, in milliseconds. */
   typingDelay?: number;
 }
@@ -382,7 +392,7 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
   const panel = new AppearancePanel({
     saved: shell.saved,
     preview: shell.preview,
-    show: (preview) => paint(canvas, preview),
+    show: (preview, current) => paint(canvas, preview, current),
     ...(shell.storage ? { storage: shell.storage } : {}),
   });
 
@@ -482,7 +492,7 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
 
   /** Puts the state back on the controls. */
   const render = () => {
-    saved.disabled = !shell.saved;
+    saved.disabled = !panel.hasSaved;
     drawn.disabled = !panel.drawn;
     saved.checked = panel.source === "saved";
     drawn.checked = panel.source === "drawn";
@@ -531,7 +541,10 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
     panel.remember = remember.checked;
   });
   draw.addEventListener("click", () => {
-    void shell.draw().then((image) => {
+    void shell.draw((image) => {
+      panel.savedChanged(image);
+      redraw();
+    }).then((image) => {
       if (image) panel.useDrawn(image);
       redraw();
     });
