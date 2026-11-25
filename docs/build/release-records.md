@@ -31,6 +31,8 @@ applied rotations, and every other check passed.
 The Homebrew cask at `ac4c654` passed its online audit and livecheck reported
 26.11.14. The WinGet manifests passed validation and were submitted at `113c182e`
 in [pull request 445804](https://github.com/microsoft/winget-pkgs/pull/445804).
+A moderator merged it on 2026-11-24, and `winget show --id tstone-1.tpdf --exact` on
+Windows reads 26.11.14 from the `winget` source with the release's installer hash.
 
 All 39 local gates passed, including
 3,678 Rust library tests and 756 CLI checks on macOS. Windows passed 3,692 library

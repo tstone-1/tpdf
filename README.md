@@ -27,7 +27,7 @@ Take the file for your computer from the
 | Computer | File | Notes |
 |---|---|---|
 | Mac with Apple silicon | `tpdf_<version>_aarch64.dmg` | Signed and notarized. Or `brew install --cask tstone-1/tpdf/tpdf` |
-| Windows, 64-bit | `tpdf_<version>_x64-setup.exe` | Installs for your user account, no administrator rights. Code-signed, see below |
+| Windows, 64-bit | `tpdf_<version>_x64-setup.exe` | Installs for your user account, no administrator rights. Code-signed, see below. Or `winget install tstone-1.tpdf` |
 | Linux, x86-64: Ubuntu 24.04 or newer, Debian 13 or newer, and their relatives | `tpdf_<version>_amd64.deb` | `sudo apt install ./tpdf_<version>_amd64.deb`; brings Tesseract for text recognition |
 | Linux, x86-64: any other distribution with glibc 2.39 or newer (Fedora 40 or newer, for example) | `tpdf_<version>_amd64.AppImage` | `chmod +x` it and run it; nothing is installed |
 

@@ -2556,8 +2556,8 @@ starts at 0 and increments within the month.
     untrusted tap*); `brew trust tstone-1/tpdf` once per machine.
 
     **And winget** (first submitted for 26.10.2, as `tstone-1.tpdf`, pull request 445804 to
-    `microsoft/winget-pkgs`; not merged when this was written, so the README does not name
-    winget yet). A new version is three files under
+    `microsoft/winget-pkgs`, merged on 2026-11-24 at 26.11.14; the README names
+    `winget install tstone-1.tpdf` since then). A new version is three files under
     `manifests/t/tstone-1/tpdf/<version>/`, copied from the previous version with
     `PackageVersion`, `InstallerUrl`, `InstallerSha256` (of the `-setup.exe`) and
     `ReleaseNotesUrl` changed, on a branch of the fork `tstone-1/winget-pkgs`, titled
