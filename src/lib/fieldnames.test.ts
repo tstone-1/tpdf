@@ -157,6 +157,18 @@ describe("the field a drag places", () => {
     });
   });
 
+  it("allocates around pending renames, removals and hierarchical field names", () => {
+    const renamed = saved("Reference", []);
+    const nested = { ...saved("Text 2.City", []), object: [20, 0], widget: [21, 0] } satisfies FormWidget;
+    const removed = { ...saved("Text 3", []), object: [30, 0], widget: [31, 0] } satisfies FormWidget;
+    const form = { widgets: [renamed, nested, removed] };
+    const placed = placing(armed("text"), true, form.widgets.map(w => w.name), [], form, [
+      { object: renamed.object, page: 5, name: "Text 1", removed: false },
+      { object: removed.widget, page: 5, removed: true },
+    ]);
+    expect(placed.name).toBe("Text 3");
+  });
+
   it("is a signature field under the next name of its kind, which is at least 24 points a side", () => {
     expect(placing(armed("signature"), true, ["Signature 1"], [], null)).toEqual({
       field: { kind: "signature", border: true }, name: "Signature 2",

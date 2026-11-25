@@ -1246,13 +1246,12 @@ ROWS += [
         "handles a range that runs past the boxes it has",
     ),
     Mutation(
-        # Index a link with no height, which then covers a band and claims every
-        # character whose centre falls on that exact line.
-        "links: index a link whose rectangle has no height",
+        # Pointer slack would include the space centred one point past the link.
+        "links: apply pointer slack to the accessible link text",
         "src/lib/links.ts",
-        "    if (!(bottom > top)) continue;",
-        "    if (false) continue;",
-        "ignores a link whose rectangle has no height",
+        "linkAt(candidates, first.page, centre.x, centre.y, 0)",
+        "linkAt(candidates, first.page, centre.x, centre.y)",
+        "splits a line into the link's characters and the rest",
     ),
     Mutation(
         # Announce a refused link as an ordinary one. The reader is told it is a

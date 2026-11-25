@@ -667,6 +667,18 @@ describe("Scroller geometry on a mixed-size document", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("requests a complete worker-sized placeholder for a long narrow sheet", () => {
+    const size = { width_pt: 50, height_pt: 10000 };
+    const scroller = new Scroller(dom.root as unknown as HTMLElement, mixed([size]));
+    scroller.frame(0, performance.now());
+    const preview = tiles.fetchTile.mock.calls.map(call => call[0]).find(request => request.scale < 1);
+    expect(preview).toBeDefined();
+    expect(preview.width).toBe(Math.round(size.width_pt * preview.scale));
+    expect(preview.height).toBe(Math.round(size.height_pt * preview.scale));
+    expect(preview.width * preview.height * 4).toBeLessThanOrEqual(16 * 1024 * 1024);
+    scroller.destroy();
+  });
+
   it("still asks for placeholders during the settle", async () => {
     // What makes the wait invisible rather than blank. A tier-1 bitmap is
     // rendered at a fixed width and stretched by CSS, so it survives every

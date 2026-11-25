@@ -16,7 +16,7 @@
 
 import { areasFrom, incompleteMatch, type TextRedactionGroup } from "./selection";
 import { coversPoint } from "./text";
-import { call, physicalPageUnit, physicalPageUnits } from "./ipc";
+import { call, type NewMark, physicalPageUnit, physicalPageUnits } from "./ipc";
 import {
   PageMap,
   unedited,
@@ -550,7 +550,7 @@ export class Edits {
     replyTo: readonly [number, number] | null = null,
     width: number = INK_WIDTH,
     image?: import("./signature").SignatureImage,
-    field?: import("./pages").PlacedField,
+    field?: NewMark["field"],
     /** The gesture this mark is part of: marks made under one are one undo. Nought for one of its own. */
     sweep = 0,
   ): Promise<EditState> {

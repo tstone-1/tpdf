@@ -17,7 +17,11 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.15] - Unreleased
+## [26.11.15] - 2026-11-25
+
+- Crop to content preserves the physical margin on scaled pages and asks you to save pending page artwork before measuring. Tall pages receive size-bounded previews.
+- Form placement and radio properties account for pending renames, removals and choices before saving.
+- Signing accepts timestamps with fractional seconds. Linux certificate files accept compressed EC public keys, reject multiple private keys and attach only the selected signer's issuers.
 
 - Image-only redaction preserves physical page dimensions on PDFs with a custom page unit. Verification accounts for cropped text and reports findings against the saved page order.
 - Bulk redaction checks that the requested search is complete and still current. Find reports when a page could not be searched.

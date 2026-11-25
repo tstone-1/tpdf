@@ -27,7 +27,28 @@
  */
 
 import { call } from "./ipc";
-import type { FilePage } from "./pages";
+import type { FilePage, PageView } from "./pages";
+import type { EditState } from "./edits";
+import type { Form } from "./forms";
+import { sameTextPage } from "./textedit";
+
+/** The worker measures the saved page, before the viewer paints pending edits. */
+export function hasPendingCropContent(page: PageView, state: EditState, form: Form | null): boolean {
+  if ([state.marks, state.redactions, state.notes, state.discards].some(items => items.some(item => item.page === page.id))) return true;
+  const source = page.source;
+  if ("blank" in source) return false;
+  const address = "imported" in source ? source.imported : { page: source.baseline };
+  if (state.text_edits?.some(edit => sameTextPage(edit, address))) return true;
+  if (!("baseline" in source)) return false;
+  if (state.fields?.some(edit => edit.page === page.id)) return true;
+  // Shared properties and answers can affect several widgets on different pages.
+  const changed = [...state.fields ?? [], ...state.forms ?? []];
+  if (!changed.length) return false;
+  if (!form) return true;
+  const objects = new Set(changed.map(edit => edit.object.join(":")));
+  return form.widgets.some(widget => widget.page === source.baseline
+    && (objects.has(widget.widget.join(":")) || objects.has(widget.object.join(":"))));
+}
 
 /** A crop box's size and where it sits inside the page the file describes. */
 export interface CropGeometry {

@@ -2264,14 +2264,24 @@ pub struct CropGeometry {
 }
 
 /// Measures one page's content box on the render thread.
-pub(crate) fn run_content(
+///
+/// # Errors
+///
+/// The page, its physical unit, or the complete rendered bitmap could not be read.
+pub fn run_content(
     bindings: Bindings,
     document: &OpenDocument,
     page: u32,
     crop: Option<[f32; 4]>,
     cancel: &CancelToken,
 ) -> Result<Option<[f64; 4]>, String> {
-    content::content_box(bindings, &document.page_cropped(page, crop)?, cancel)
+    let units = document.page_units(&[page])?;
+    content::content_box(
+        bindings,
+        &document.page_cropped(page, crop)?,
+        units[0],
+        cancel,
+    )
 }
 
 /// The share of one page that pictures cover, from 0 to 1

@@ -794,12 +794,12 @@ ROWS += [
         "a_page_that_links_to_a_rewritten_page_is_not_touched_by_that",
     ),
     Mutation(
-        # One branch written again would touch every page of the document.
+        # Walking every reference from a tree node also reaches resources overridden by a page.
         "appendix: reach the pages beside a branch through a node's kids",
         "src/docinfo.rs",
         "        match (tree.contains(id), object.as_dict()) {",
         "        match (false, object.as_dict()) {",
-        "a_branch_of_the_tree_rewritten_touches_only_the_pages_under_it",
+        "changed_inherited_resources_touch_only_the_page_that_uses_them",
     ),
     Mutation(
         "appendix: ignore the resources a page inherits",

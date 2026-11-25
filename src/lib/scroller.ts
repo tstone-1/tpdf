@@ -255,6 +255,22 @@ export interface RunStats {
  */
 export const TIER1_WIDTH = 150;
 
+/** Maximum height of a low-resolution preview, including a long drawing. */
+export const THUMB_MAX_HEIGHT = 4096;
+
+/** Fit the whole page at a scale representable by the tile protocol. */
+export function thumbnailSize(size: PageSize, heightLimit = THUMB_MAX_HEIGHT) {
+  const scale = Math.max(1, Math.min(
+    Math.round(1000 * TIER1_WIDTH / size.width_pt),
+    Math.floor(1000 * Math.min(heightLimit, THUMB_MAX_HEIGHT) / size.height_pt), 256_000,
+  )) / 1000;
+  const width = Math.max(1, Math.round(size.width_pt * scale));
+  const height = Math.max(1, Math.round(size.height_pt * scale));
+  // At the minimum wire scale a page can still exceed a 16-bit side or the 16 MiB mapping.
+  return width <= 65_535 && height <= 65_535 && width * height <= 4_194_304
+    ? { width, height, scale } : null;
+}
+
 /** CSS pixels between pages, down the document and across a row. */
 export const PAGE_GAP = 16;
 
@@ -2149,8 +2165,9 @@ export class Scroller {
     if (this.backoff.blocked(id, now)) return;
 
     const displayed = this.displayedPageSize(page);
-    const scale = TIER1_WIDTH / displayed.width_pt;
-    const height = Math.round(displayed.height_pt * scale);
+    const preview = thumbnailSize(displayed);
+    if (!preview) return;
+    const { width, height, scale } = preview;
     const rid = nextRequestId();
     const generation = this.placeholderGeneration;
     const epoch = this.epochs[page] ?? 0;
@@ -2178,7 +2195,7 @@ export class Scroller {
       invert: this.opts.invert,
       x: 0,
       y: 0,
-      width: TIER1_WIDTH,
+      width,
       height,
       format: "raw",
     })
@@ -2224,7 +2241,7 @@ export class Scroller {
   /**
    * Mounts a tier-1 bitmap as a page-sized but low-resolution canvas.
    *
-   * The backing store stays 150 px wide and CSS stretches it, so the blurry
+   * The backing store targets 150 px wide and CSS stretches it, so the blurry
    * page underneath the sharp tiles costs 90 KB rather than the 32 MB a
    * page-resolution canvas would take at 400%.
    */

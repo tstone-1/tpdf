@@ -421,7 +421,7 @@ mod platform {
 /// **The one platform where tpdf asks for the PIN or password**, because no
 /// system service signs on its behalf; the module header says what that
 /// changes. A token's chain is empty: there is no system chain API to ask. A
-/// file's chain is the file's other certificates.
+/// file supplies the issuers of the chosen certificate.
 #[cfg(target_os = "linux")]
 mod platform {
     use super::{Identity, KeyKind};

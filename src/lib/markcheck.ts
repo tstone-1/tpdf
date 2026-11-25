@@ -273,14 +273,15 @@ async function run(host: MarkCheckHost, icon: string): Promise<void> {
   // dragged across it, which is exactly why these tools have no `hasSelection`
   // guard.
   const bounds = root.getBoundingClientRect();
-  const onPage = (slot: number) => {
+  const onPage = (slot: number, fraction = 0.4) => {
+    const bounds = root.getBoundingClientRect();
     const origin = viewer.screenPoint(slot, 0, 0);
     const size = viewer.pageBoxCssOf(slot);
     const left = Math.max(0, origin.x), top = Math.max(0, origin.y);
     const right = Math.min(bounds.width, origin.x + size.width);
     const bottom = Math.min(bounds.height, origin.y + size.height);
     if (right <= left || bottom <= top) throw new Error(`page ${slot + 1} is outside the viewport`);
-    return { x: bounds.left + left + (right - left) * 0.4, y: bounds.top + top + (bottom - top) * 0.4 };
+    return { x: bounds.left + left + (right - left) * fraction, y: bounds.top + top + (bottom - top) * fraction };
   };
   let mid = onPage(0);
 
@@ -866,14 +867,14 @@ async function run(host: MarkCheckHost, icon: string): Promise<void> {
       await settle(() => viewer.idle);
       const prior = host.lastRegion();
       const armed = host.run("edit.copyRegionAsPicture") && viewer.regionArmed;
-      const middle = { x: from.x + 150, y: from.y + 200 };
-      if (armed) drag(root, middle, { x: middle.x + 60, y: middle.y + 40 });
-      await settle(() => host.lastRegion() !== prior);
+      // Cropping relays out the page. Both ends of this drag must land on its new surface.
+      if (armed) drag(root, onPage(slot), onPage(slot, 0.6));
+      const requested = await settle(() => host.lastRegion() !== prior);
       const carried = host.lastRegion()?.crop;
       check(
         "a page cropped by a drag is rendered under its crop",
-        cropped && crop !== undefined && JSON.stringify(carried) === JSON.stringify(crop),
-        `the model's crop ${JSON.stringify(crop)}; the tile's ${JSON.stringify(carried)}`,
+        cropped && requested && crop !== undefined && JSON.stringify(carried) === JSON.stringify(crop),
+        `page ${slot + 1}, region armed ${armed}, fresh request ${requested}, model crop ${JSON.stringify(crop)}, tile crop ${JSON.stringify(carried)}`,
       );
       if (cropped) host.run("edit.undo");
     }

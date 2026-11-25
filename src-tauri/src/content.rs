@@ -31,7 +31,7 @@
 //! The scan is a lower bound on where ink is: at the target width a pixel is
 //! roughly 1.5 points on a letter page, and antialiasing puts the faintest edge
 //! of a glyph below any threshold. Cropping to exactly the measured box shaves
-//! descenders. [`MARGIN_PT`] puts back more than a pixel's worth, so the result
+//! descenders. [`MARGIN_PT`] adds a small physical margin, so the result
 //! errs towards keeping a hair of white rather than towards clipping type.
 
 use crate::progressive::{self, Bindings, CancelToken, RawPage, TileSpec};
@@ -48,9 +48,7 @@ const TARGET_PX: f32 = 400.0;
 
 /// How much white to leave outside the measured ink, in points.
 ///
-/// Two points, which is more than one pixel of the scan on any page size this
-/// bounds. See the module note: the scan under-reports, so the correction is
-/// one-directional and this is not a number to tune by eye.
+/// Two physical points, converted to the page's native units before cropping.
 pub const MARGIN_PT: f64 = 2.0;
 
 /// How far a channel may sit below full before a pixel counts as ink.
@@ -107,12 +105,11 @@ pub fn ink_bounds(pixels: &[u8], width: u16, height: u16) -> Option<[u16; 4]> {
 ///
 /// # Errors
 ///
-/// A render that fails. A render the caller cancelled comes back as `Ok(None)`,
-/// which reads as "no ink found" and is the safe answer: the caller crops
-/// nothing rather than cropping to a partial page.
+/// A failed or cancelled render cannot establish where all the ink lies.
 pub fn content_box(
     bindings: Bindings,
     page: &RawPage<'_>,
+    unit: f32,
     cancel: &CancelToken,
 ) -> Result<Option<[f64; 4]>, String> {
     let width_pt = page.width_pt();
@@ -120,8 +117,9 @@ pub fn content_box(
     if !(width_pt > 0.0 && height_pt > 0.0) {
         return Ok(None);
     }
-    let scale = TARGET_PX / width_pt;
-    let width = TARGET_PX.round().max(1.0) as u16;
+    // Bound very tall sheets too, keeping the whole page inside the bitmap.
+    let scale = (TARGET_PX / width_pt).min(4096.0 / height_pt);
+    let width = (width_pt * scale).round().max(1.0) as u16;
     let height = (height_pt * scale).round().max(1.0) as u16;
 
     // `turns: 0`, which is the page as its own `/Rotate` displays it and is the
@@ -137,8 +135,10 @@ pub fn content_box(
         width,
         height,
     };
-    let (pixels, _) = progressive::render_tile(bindings, page, spec, None, cancel)?;
-    let Some([left, top, right, bottom]) = ink_bounds(&pixels, width, height) else {
+    let (pixels, progress) = progressive::render_tile(bindings, page, spec, None, cancel)?;
+    let Some([left, top, right, bottom]) =
+        completed_bounds(progress.outcome, &pixels, width, height)?
+    else {
         return Ok(None);
     };
 
@@ -146,13 +146,14 @@ pub fn content_box(
     // one implementation that knows the turn --- `text::from_device`. A second
     // rotation table here is the trap `docs/TRAPS.md` records as two tables
     // disagreeing at every turn but zero.
-    let to_pt = scale.recip();
-    let margin = MARGIN_PT as f32;
+    let x_unit = width_pt / f32::from(width);
+    let y_unit = height_pt / f32::from(height);
+    let margin = MARGIN_PT as f32 / unit;
     let display = [
-        f32::from(left) * to_pt - margin,
-        f32::from(top) * to_pt - margin,
-        f32::from(right) * to_pt + margin,
-        f32::from(bottom) * to_pt + margin,
+        f32::from(left) * x_unit - margin,
+        f32::from(top) * y_unit - margin,
+        f32::from(right) * x_unit + margin,
+        f32::from(bottom) * y_unit + margin,
     ];
     let page_box = from_device(page.quarter_turns(), width_pt, height_pt, display);
 
@@ -177,6 +178,18 @@ pub fn content_box(
     Ok(Some(found))
 }
 
+fn completed_bounds(
+    outcome: progressive::Outcome,
+    pixels: &[u8],
+    width: u16,
+    height: u16,
+) -> Result<Option<[u16; 4]>, String> {
+    if !outcome.is_done() {
+        return Err(said!("the page did not finish rendering for the crop"));
+    }
+    Ok(ink_bounds(pixels, width, height))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ink_bounds, MARGIN_PT};
@@ -187,6 +200,19 @@ mod tests {
         let at = (y as usize * width as usize + x as usize) * 4;
         pixels[at..at + 3].copy_from_slice(&[0, 0, 0]);
         pixels
+    }
+
+    #[test]
+    fn partial_render_never_yields_a_crop() {
+        use crate::progressive::Outcome;
+        let ink = one_pixel(10, 10, 3, 4);
+        for outcome in [Outcome::Cancelled, Outcome::Failed(-1)] {
+            assert!(super::completed_bounds(outcome, &ink, 10, 10).is_err());
+        }
+        assert_eq!(
+            super::completed_bounds(Outcome::Done, &ink, 10, 10).unwrap(),
+            Some([3, 4, 4, 5])
+        );
     }
 
     #[test]

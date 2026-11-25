@@ -118,8 +118,8 @@ maps a platform PDF parser into the app process; why `src/bin/` must contain onl
 sources; and why normal builds exclude the JavaScript test harness (`npm run build:checks` for
 a check build).
 
-Non-negotiable: parsing and rendering happen in **worker processes** with no filesystem or
-network authority, under resource and time limits, restartable on crash. Document
+Parsing and rendering run in restartable **worker processes** with the platform limits in
+`SECURITY.md`. Windows workers can read files and open sockets. Document
 JavaScript and launch actions are **disabled by default**. All `lopdf` stream decoding is
 bounded. This is a Phase 0 concern, not a hardening pass to be done later — retrofitting
 a process boundary is an architectural rewrite.
@@ -304,8 +304,8 @@ no rule about how often to release: the maintainer decides
 one. `BUILD.md` names that one command and deliberately does not repeat the commands
 underneath it.
 
-After deep reviews, report `python3 scripts/review_coverage.py` full-read and current
-percentages. Its `--list remaining` and `--list revisit` identify the next files.
+Run `python3 scripts/review_coverage.py --record` after deep reviews. Commit its ledger,
+report full/current percentages and resume with `--list remaining` or `--list revisit`.
 
 `types` temporarily mutates the working tree. Run other compilers/tests, including
 `check_windows.py`, only after it finishes.

@@ -4917,7 +4917,9 @@ with no key refused, and RSA over a SHA-256 `DigestInfo`; five mutations each tu
 `tpdf identities --add`); tpdf keeps its path, certificate and chain in
 `~/.config/com.timostein.tpdf/certificate-files.json` and never the password or the key. Each
 signature asks the password again, decrypts the key, checks the file still holds the
-certificate that was added, signs one digest and drops the key; every decrypted buffer is
+certificate that was added, signs one digest and drops the key. A file with multiple private
+keys is refused. Both new and remembered entries supply only issuers whose signatures
+verify along the selected certificate chain; unrelated certificates are omitted. Every decrypted buffer is
 `Zeroizing` and the `SigningKey` zeroes itself. **ECDSA only (P-256, P-384)**: an RSA key is
 refused, because `rsa`'s RUSTSEC-2023-0071 is accepted in `.cargo/audit.toml` only while tpdf
 performs no RSA private-key operation, and `sign_cms::tests::no_private_key_type_is_named_outside_the_tests`

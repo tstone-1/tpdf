@@ -66,6 +66,8 @@
       partlyCopied: (kept: string, count: number, first: string) => `${kept}; ${count} not copied: ${first}`,
       // Pages and text.
       chooseInsertSource: "Choose a document to insert pages from",
+      resolveBeforeCrop: "Apply or remove the pending redactions on this page before cropping to its content.",
+      saveBeforeCrop: "Save the changes on this page before cropping to its content.",
       blankNothingToCrop: "A blank page has nothing to crop to.",
       nothingToCrop: "There is nothing on this page to crop to.",
       blankCannotCrop: "A blank page cannot be cropped.",
@@ -246,6 +248,8 @@
       marksCopied: (count: number) => `${count} ${count === 1 ? "Markierung" : "Markierungen"} kopiert`,
       partlyCopied: (kept: string, count: number, first: string) => `${kept}; ${count} nicht kopiert: ${first}`,
       chooseInsertSource: "Dokument auswählen, aus dem Seiten eingefügt werden",
+      resolveBeforeCrop: "Vor dem Zuschneiden auf den Inhalt müssen die vorgemerkten Schwärzungen auf dieser Seite angewendet oder entfernt werden.",
+      saveBeforeCrop: "Vor dem Zuschneiden auf den Inhalt müssen die Änderungen auf dieser Seite gespeichert werden.",
       blankNothingToCrop: "Auf einer leeren Seite gibt es nichts, worauf zugeschnitten werden kann.",
       nothingToCrop: "Auf dieser Seite gibt es nichts, worauf zugeschnitten werden kann.",
       blankCannotCrop: "Eine leere Seite kann nicht zugeschnitten werden.",
@@ -438,7 +442,7 @@
     menuForSurface,
     PAGE_MENU, thumbnailActions,
   } from "./lib/contextmenu";
-  import { contentBox, cropBox } from "./lib/crop";
+  import { contentBox, cropBox, hasPendingCropContent } from "./lib/crop";
   import { Edits, markMade, queuedPage, type EditState } from "./lib/edits";
   import {
     DEFAULT_SWATCH,
@@ -810,7 +814,7 @@
   const propertiesDeps: PropertiesDeps = {
     model: () => edits,
     picked: () => viewer?.pickedMarks() ?? [],
-    form: () => (formEditing ? scannedForm : null),
+    form: () => scannedForm,
     state: () => edits?.state ?? null,
     ask: (now) => fieldPropertiesDialog?.ask(now) ?? Promise.resolve(null),
     refield: (targets) => void applyEdit((e) => e.refield(targets, targets.length > 1 ? e.nextGesture() : 0)),
@@ -2738,24 +2742,21 @@
   ): Promise<void> {
     // Called by the viewer the shape was drawn in, as its document.
     const view = openView;
-    // A field has to have a name the moment it exists. See `fieldnames.ts`.
-    const placed = kind === "field"
-      ? placing(
-        { kind: armedField, options: armedOptions, group: armedGroup },
-        fieldBorder, formNames, edits?.state.marks ?? [], scannedForm, edits?.state.fields,
-      )
-      : undefined;
-    const field = placed?.field;
-    const name = placed?.name ?? "";
+    const armed = kind === "field" ? { kind: armedField, options: armedOptions, group: armedGroup } : null;
+    const border = fieldBorder, color = markColor.rgb;
     const picture = shape.picture;
-    const made = await markMade((run) => applyEdit(run, view), (e) =>
-      kind === "picture" && picture ? e.placePicture(page, shape.quads, picture) : e.mark(
+    const made = await markMade((run) => applyEdit(run, view), (e) => {
+      // Allocate after prior placements in this document have reached the model.
+      const placed = armed ? asDocument(view, () =>
+        placing(armed, border, formNames, e.state.marks, scannedForm, e.state.fields),
+      ) : undefined;
+      return kind === "picture" && picture ? e.placePicture(page, shape.quads, picture) : e.mark(
         kind,
         page,
         shape.quads,
         shape.strokes,
-        name,
-        markColor.rgb,
+        placed?.name ?? "",
+        color,
         stamp,
         // Never a reply: this is a mark a reader dragged out, and a reply is
         // made from the panel beside the comment it answers.
@@ -2767,13 +2768,13 @@
         // would be a second copy of it.
         shape.width,
         shape.image,
-        field,
-      ),
-    );
+        placed?.field,
+      );
+    });
     // A group is several buttons, so the tool stays armed for the next one
     // and no name box opens over the place it would go; Escape puts it down.
     asDocument(view, () => {
-      if (field?.kind === "radio") viewer?.armDraw("field");
+      if (armed?.kind === "radio") viewer?.armDraw("field");
       else if (made) viewer?.showMark(made.id);
     });
   }
@@ -3140,38 +3141,25 @@
       }, view);
       return;
     }
-    const shown = model.state.pages[at];
-    // Where the page is drawn from, which for a page inserted from another file
-    // is that file: its ink is measured by the worker that renders it.
-    const source = shown === undefined ? undefined : addressOf(shown, model.doc);
-    if (shown === undefined || source === undefined) {
-      // Two ways to get here and only one of them is worth a message: a slot
-      // that is not in the document is a stale press, and a page tpdf made is a
-      // reader asking a reasonable question about a page with nothing on it.
-      if (shown !== undefined) say(TEXT().blankNothingToCrop);
-      return;
-    }
-    // The page's identity, taken before the measurement goes out. `at` is a
-    // slot and it is about to stop naming this page: the round trip below can
-    // land after a deletion above it, and a crop sent against the old slot
-    // crops whichever page has moved into it. `cropTo` next door does the same
-    // for the same reason; a `source` is safe to read early and a slot is not.
-    const page = shown.id;
-    let box;
-    try {
-      box = await contentBox(source.doc, source.page, shown.crop ?? null);
-    } catch (error) {
-      asDocument(view, () => say(spokenError(error)));
-      return;
-    }
-    if (!box) {
-      asDocument(view, () => say(TEXT().nothingToCrop));
-      return;
-    }
-    await applyEdit((e) => {
-      const slot = slotOfIdIn(e.state.pages, page);
-      return slot === undefined ? Promise.resolve(e.state) : e.crop(slot, box);
-    }, view);
+    const page = model.state.pages[at]?.id;
+    if (page === undefined) return;
+    // Measure and apply in the same edit queue, after any pending gesture.
+    await applyEdit(async (e) => {
+      const state = e.state;
+      const slot = slotOfIdIn(state.pages, page);
+      const shown = slot === undefined ? undefined : state.pages[slot];
+      if (!shown || slot === undefined) return state;
+      const form = asDocument(view, () => scannedForm) ?? null;
+      if (hasPendingCropContent(shown, state, form)) {
+        throw new Error(state.redactions.some(mark => mark.page === page) ? TEXT().resolveBeforeCrop : TEXT().saveBeforeCrop);
+      }
+      const source = addressOf(shown, e.doc);
+      if (!source) throw new Error(TEXT().blankNothingToCrop);
+      const box = await contentBox(source.doc, source.page, shown.crop ?? null);
+      if (e.state !== state || asDocument(view, () => edits) !== e) return e.state;
+      if (!box) throw new Error(TEXT().nothingToCrop);
+      return e.crop(slot, box);
+    }, view, model);
   }
 
   /**

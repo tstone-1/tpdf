@@ -100,6 +100,7 @@ export default {
     "Die Seiten {first} und {second} sind in dieser Datei eine Seite, die zweimal aufgeführt ist, daher kann nicht auf jede eine Zeile geschrieben werden",
   "added text on page {page}: {why}": "Zusätzlicher Text auf Seite {page}: {why}",
   "the line lies entirely outside the visible page": "Die Zeile liegt vollständig außerhalb der sichtbaren Seite",
+  "the page did not finish rendering for the crop": "Die Seite konnte für den Zuschnitt nicht vollständig gerendert werden",
   "the page has an invalid user unit": "Die Seite hat eine ungültige Maßeinheit",
   "no font was made for a line of text": "Für eine Textzeile wurde keine Schrift angelegt",
 

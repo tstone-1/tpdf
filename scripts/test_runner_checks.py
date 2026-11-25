@@ -97,6 +97,23 @@ class ReviewCoverage(unittest.TestCase):
             self.assertIn("Only skimmed or searched: 1/5 (20.0%)", application)
             self.assertTrue(result.endswith("Application paths (revisit): 1\nsrc/edited.ts\n"))
 
+    def test_record_survives_a_checkout_without_local_reports(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(review_coverage, "ROOT", Path(temp)):
+            folder = Path(temp) / "docs" / "reviews"
+            folder.mkdir(parents=True)
+            report = folder / "2026-11-25_2103_codebase_deep.md"
+            report.write_text(
+                "**Scope** Clean main at `abcd1234`.\n"
+                "<details><summary>Read in full (1)</summary>\n- `src/a.ts`\n</details>\n"
+                "<details><summary>Skimmed (0)</summary>\n</details>\n"
+            )
+            original = review_coverage.review_history(record=True)
+            self.assertEqual(original[report.name]["full"], ["src/a.ts"])
+            self.assertEqual(original[report.name]["revision"], "abcd1234")
+            self.assertEqual(review_coverage.review_history(record=True), original)
+            report.unlink()
+            self.assertEqual(review_coverage.review_history(record=False), original)
+
     def test_a_prior_clean_revision_does_not_certify_a_dirty_review(self):
         scope = "**Scope** main at `1234abcd` with unstaged edits. The previous review was clean."
         self.assertIsNone(review_coverage.clean_revision(scope))

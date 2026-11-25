@@ -1094,7 +1094,7 @@ ROWS += [
         # or not at all, and is never named as a wrong password.
         "certificate file: skip the MAC check",
         "src/pkcs12.rs",
-        "        check_mac(mac, &auth, password)?;",
+        "        check_mac(mac, auth.as_bytes(), password)?;",
         "        let _ = (mac, password);",
         "ecdsa_files_open_and_sign_and_the_rest_are_refused_by_name",
         only_on="linux",
@@ -1113,9 +1113,9 @@ ROWS += [
         # passes by accident; the test puts the root first.
         "certificate file: take the first certificate as the signer",
         "src/pkcs12.rs",
-        "        .position(|der| public_key_of(der).as_deref() == Some(public.as_slice()))",
-        "        .position(|_| true)",
-        "the_signer_is_the_certificate_that_matches_the_key_and_the_rest_is_the_chain",
+        "        .find(|cert| matches_key(cert, &key))",
+        "        .find(|_| true)",
+        "the_matching_leaf_is_selected_even_when_its_issuer_comes_first",
         only_on="linux",
     ),
     Mutation(

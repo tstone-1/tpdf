@@ -17,7 +17,7 @@ import type { EditState } from "./edits";
 import type { Form, FormAlign } from "./forms";
 import {
   type FieldProperties, type FieldProps, type FieldTarget,
-  differing, isSaved, placedProperties, propertied, properties, revalued,
+  differing, isSaved, placedProperties, propertied, properties, radioValues, radioValueTaken, revalued,
 } from "./savedfields";
 import { catalog } from "./i18n";
 
@@ -316,6 +316,13 @@ export async function changeProperties(deps: PropertiesDeps): Promise<boolean> {
   const form = deps.form();
   if (!after || !state) return false;
   if (!isSaved(after.id)) {
+    const mark = state.marks.find(one => one.id === after.id);
+    const value = to.options?.[0];
+    if (mark?.field?.kind === "radio" && value !== undefined && value !== after.now.options?.[0]
+      && radioValues(mark.note, state.marks, form, state.fields ?? []).has(value)) {
+      deps.say(radioValueTaken(value));
+      return false;
+    }
     const props = differing(after.now, to);
     if (Object.keys(props).length === 0) {
       deps.say(TEXT().nothingChanged);

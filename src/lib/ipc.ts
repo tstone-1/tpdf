@@ -63,6 +63,7 @@ import type { WebLinkSource } from "./weblinkdialog";
 import type {
   FilePage,
   MarkKind,
+  PlacedField,
   PageId,
   RegionPlan,
   StampName,
@@ -240,6 +241,7 @@ export interface NewMark {
   /** Set for `stamp` and null for every other kind; the model refuses the rest. */
   stamp: StampName | null;
   image?: import("./signature").SignatureImage;
+  field?: PlacedField;
   /** The comment this one answers, as `[number, generation]`. */
   reply_to: readonly [number, number] | null;
   color: MarkColor;
@@ -707,7 +709,7 @@ export interface Commands {
   };
   /**
    * Builds the job `print_document` would print and holds it for the preview
-   * (`commands::print::Previews`). The reply is camelCase: `Preview` carries
+   * (`commands::print::Previews`). The reply is camelCase: `PrintPreview` carries
    * `rename_all`.
    */
   print_prepare: {

@@ -568,13 +568,28 @@ jobs:
           workers run under Landlock and seccomp. The Linux packages (deb
           and AppImage) do not update themselves: install the new one.
 
+          **Redactions made with 26.11.14 or earlier.** A QR code could
+          retain an accented name after verification reported success. Marking
+          all search results could miss unsearchable pages or mark a different
+          search. If either case could apply, redo the redaction from the
+          original with 26.11.15 or later. If the earlier copy was shared,
+          treat the information as potentially disclosed.
+          Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-261114-or-earlier
+
           **Redacted with 26.11.11 or earlier? Redact the originals again.**
           A redacted file from those versions can still hold a copy of what
           was removed, even where tpdf said verified. Updating tpdf does not
           change files it has already written: redo the redaction from the
-          original with 26.11.13 or later and use the new file. If the older
+          original with 26.11.15 or later and use the new file. If the older
           file was already sent, assume it can still hold what was redacted.
           Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-261111
+
+          **New in 26.11.15.** Crop to content accounts for page scale and
+          prompts you to save pending artwork. Form creation tracks pending
+          field names and radio choices. Saving and reloading preserve comment
+          edits and form answers more reliably. Redaction verification follows
+          the saved page order and reports incomplete searches. This release
+          also improves text editing, printing and certificate signing.
 
           **New in 26.11.14.** Tagged words stay editable after saving, and
           correcting a centred heading keeps it in place. Copying an annotation

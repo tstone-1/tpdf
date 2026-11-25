@@ -145,6 +145,8 @@ pub struct Faults {
     /// The `TSTInfo` states an imprint one bit off the one asked for, and is
     /// signed that way: a sound token of different data.
     pub wrong_imprint: bool,
+    /// Include a valid fractional second in the signed time.
+    pub milliseconds: bool,
     /// The token's own signature is ECDSA over SHA-1, its digest algorithm
     /// SHA-1 --- as against an SHA-1 *imprint*, which [`mint`]'s argument sets.
     pub sha1_signature: bool,
@@ -372,7 +374,7 @@ pub fn mint_with(
             *first ^= 0x01;
         }
     }
-    let statement = tst_info(imprint_hash, &stated, nonce, gen_time);
+    let statement = tst_info(imprint_hash, &stated, nonce, gen_time, faults.milliseconds);
     let (digest_oid, signature_oid) = if faults.sha1_signature {
         (Imprint::Sha1.oid(), "1.2.840.10045.4.1")
     } else {
@@ -444,7 +446,13 @@ pub fn mint_with(
     }
 
     let content = if faults.altered_content {
-        tst_info(imprint_hash, &stated, nonce, gen_time + 1)
+        tst_info(
+            imprint_hash,
+            &stated,
+            nonce,
+            gen_time + 1,
+            faults.milliseconds,
+        )
     } else {
         statement
     };
@@ -509,7 +517,13 @@ pub fn granted(token: &[u8]) -> Vec<u8> {
 
 /// The `TSTInfo`, DER. Separate from the minting so the altered-content fault
 /// can make a second one that differs in `genTime` alone.
-fn tst_info(hash: Imprint, imprint: &[u8], nonce: Option<&[u8]>, gen_time: u64) -> Vec<u8> {
+fn tst_info(
+    hash: Imprint,
+    imprint: &[u8],
+    nonce: Option<&[u8]>,
+    gen_time: u64,
+    milliseconds: bool,
+) -> Vec<u8> {
     let algorithm = AlgorithmIdentifierOwned {
         oid: oid(hash.oid()),
         parameters: None,
@@ -521,6 +535,16 @@ fn tst_info(hash: Imprint, imprint: &[u8], nonce: Option<&[u8]>, gen_time: u64) 
         .expect("a time")
         .to_der()
         .expect("time");
+    let time = if milliseconds {
+        let mut digits = der::AnyRef::from_der(&time).unwrap().value().to_vec();
+        digits.splice(digits.len() - 1.., b".453Z".iter().copied());
+        der::Any::new(der::Tag::GeneralizedTime, digits)
+            .unwrap()
+            .to_der()
+            .unwrap()
+    } else {
+        time
+    };
     let mut fields: Vec<Vec<u8>> = vec![
         1u8.to_der().expect("version"),
         oid(POLICY).to_der().expect("policy"),

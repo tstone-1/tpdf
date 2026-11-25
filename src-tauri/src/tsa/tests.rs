@@ -207,6 +207,18 @@ fn a_sound_answer_to_this_request_is_accepted() {
 }
 
 #[test]
+fn a_signed_fractional_timestamp_echoes_the_request_nonce() {
+    let fake = granting(
+        Imprint::Sha256,
+        Faults {
+            milliseconds: true,
+            ..Faults::default()
+        },
+    );
+    assert!(ask_quick(&fake).is_ok());
+}
+
+#[test]
 fn every_request_carries_a_nonce_of_its_own() {
     let first = granting(Imprint::Sha256, Faults::default());
     let second = granting(Imprint::Sha256, Faults::default());

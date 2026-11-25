@@ -56,7 +56,7 @@
 import { catalog } from "./i18n";
 import { Lifetime } from "./lifetime";
 import { filePage, quarterTurns, type PageAddress } from "./pages";
-import { displayedSize, TIER1_WIDTH, type PageSize } from "./scroller";
+import { displayedSize, thumbnailSize, THUMB_MAX_HEIGHT, TIER1_WIDTH, type PageSize } from "./scroller";
 import { cancelTile, fetchTile, nextRequestId, type TileSource } from "./tiles";
 
 const TEXT = catalog({
@@ -286,7 +286,7 @@ export function nextWanted(
 export function rowHeightFor(page: PageSize, turns = 0): number {
   const shown = displayedSize(page, turns);
   const scale = THUMB_WIDTH / Math.max(1, shown.width_pt);
-  return Math.round(shown.height_pt * scale) + LABEL_HEIGHT + ROW_PADDING * 2;
+  return Math.max(1, Math.min(Math.round(shown.height_pt * scale), THUMB_MAX_HEIGHT)) + LABEL_HEIGHT + ROW_PADDING * 2;
 }
 
 interface Outstanding {
@@ -739,7 +739,7 @@ export class Thumbnails {
   /** Device-pixel height of a thumbnail bitmap at {@link TIER1_WIDTH}. */
   private thumbPixels(): number {
     const shown = this.displayed();
-    return Math.round((shown.height_pt * TIER1_WIDTH) / shown.width_pt);
+    return Math.max(1, Math.min(THUMB_MAX_HEIGHT, Math.round((shown.height_pt * TIER1_WIDTH) / shown.width_pt)));
   }
 
   /** A single page was cropped or turned. Its row and the other pages stay put. */
@@ -872,6 +872,13 @@ export class Thumbnails {
       return;
     }
 
+    const geometry = this.opts.geometryOf?.(page);
+    const preview = thumbnailSize(geometry?.size ?? this.displayed(), this.thumbPixels());
+    if (!preview) {
+      this.failed.add(page);
+      this.pump();
+      return;
+    }
     const rid = nextRequestId();
     const outstanding: Outstanding = { page, rid, withdrawn: false };
     this.request = outstanding;
@@ -881,21 +888,16 @@ export class Thumbnails {
     // wants.
     const generation = this.generation;
 
-    const geometry = this.opts.geometryOf?.(page);
-    const size = geometry?.size ?? this.displayed();
-    const scale = Math.min(TIER1_WIDTH / size.width_pt, this.thumbPixels() / size.height_pt);
     void fetchTile({
       rid,
       doc: source.doc,
       page: source.page,
-      scale,
+      ...preview,
       turns: geometry?.turns ?? this.turns,
       crop: geometry?.crop,
       invert: this.invert,
       x: 0,
       y: 0,
-      width: Math.max(1, Math.round(size.width_pt * scale)),
-      height: Math.max(1, Math.round(size.height_pt * scale)),
       format: "raw",
     })
       .then(

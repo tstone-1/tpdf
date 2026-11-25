@@ -15,7 +15,7 @@
  */
 
 import type { Form } from "./forms";
-import { savedRadioValues, type FieldEdited } from "./savedfields";
+import { effectiveFieldNames, radioValues, type FieldEdited } from "./savedfields";
 import type { FieldKind, MarkView, PlacedField } from "./pages";
 import { catalog } from "./i18n";
 
@@ -177,20 +177,6 @@ export function parseGroup(raw: string): { group: string } | { problem: string }
   return { group };
 }
 
-/**
- * The values a group's buttons already have: the ones placed in this session
- * and the ones the file's form has under that name.
- */
-function radioValues(group: string, marks: readonly MarkView[], form: Form | null, fields: readonly FieldEdited[]): Set<string> {
-  const values = savedRadioValues(group, form, fields);
-  for (const mark of marks) {
-    if (mark.kind === "field" && mark.note === group && mark.field?.kind === "radio") {
-      for (const value of mark.field.options ?? []) values.add(value);
-    }
-  }
-  return values;
-}
-
 /** What the field tool is armed with: a kind, a dropdown's choices, a radio button's group. */
 export interface ArmedField {
   kind: FieldKind;
@@ -220,7 +206,7 @@ export function placing(
   }
   return {
     field: { kind: armed.kind, border, ...(armed.options.length > 0 ? { options: armed.options } : {}) },
-    name: nextFieldName(armed.kind, takenNames(formNames, marks)),
+    name: nextFieldName(armed.kind, takenNames(form ? effectiveFieldNames(form, fields) : formNames, marks)),
   };
 }
 

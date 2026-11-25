@@ -2,6 +2,7 @@
 """Summarize dated local reviews against the files in this checkout.
 
     python3 scripts/review_coverage.py
+    python3 scripts/review_coverage.py --record
     python3 scripts/review_coverage.py --since 2026-11-24
     python3 scripts/review_coverage.py --list remaining
     python3 scripts/review_coverage.py --list revisit
@@ -12,6 +13,7 @@ contents at the same path. Old narrative reports contribute no inferred paths.
 """
 
 import argparse
+import json
 import re
 import subprocess
 from datetime import date
@@ -69,38 +71,64 @@ def clean_revision(report):
     return None
 
 
+def review_history(record):
+    """Merge local inventories into the portable history by report name."""
+    ledger = ROOT / "docs" / "review-coverage.json"
+    history = json.loads(ledger.read_text(encoding="utf-8")) if ledger.exists() else {}
+    for path in sorted((ROOT / "docs/reviews").glob("????-??-??_????*codebase_deep*.md")):
+        report = path.read_text(encoding="utf-8")
+        try:
+            groups = inventory(report)
+        except ValueError as error:
+            raise ValueError(f"{path.name}: {error}") from error
+        entry = None
+        if groups:
+            entry = {"revision": clean_revision(report),
+                     "full": sorted(groups["full"]), "sampled": sorted(groups["sampled"])}
+        if path.name in history and history[path.name] != entry:
+            raise ValueError(f"{path.name}: saved inventory differs from local report")
+        history[path.name] = entry
+    if record:
+        from tempfile import NamedTemporaryFile
+        with NamedTemporaryFile("w", encoding="utf-8", dir=ledger.parent, delete=False) as out:
+            json.dump(history, out, indent=1, sort_keys=True, ensure_ascii=False)
+            out.write("\n")
+        Path(out.name).replace(ledger)
+    return history
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--since", type=date.fromisoformat, help="include reviews from this date")
     parser.add_argument("--list", choices=["remaining", "revisit"],
                         help="list application files without a full read, or needing a fresh one")
+    parser.add_argument("--record", action="store_true", help="save local inventories in the tracked coverage history")
     args = parser.parse_args()
     tracked = {p for p in paths_from_git("ls-files") if (ROOT / p).is_file()}
     app = {p for p in tracked if p.startswith(APP_DIRS) and Path(p).suffix in APP_TYPES}
     code = {p for p in tracked if Path(p).suffix in CODE_TYPES or p.startswith(".githooks/")}
     full, sampled, current = set(), set(), set()
     inventories = skipped = unknown_revision = 0
-    for path in sorted((ROOT / "docs/reviews").glob("????-??-??_????*codebase_deep*.md")):
-        if args.since and path.name[:10] < args.since.isoformat():
+    try:
+        history = review_history(args.record)
+    except ValueError as error:
+        parser.exit(1, f"{error}\n")
+    for name, entry in history.items():
+        if args.since and name[:10] < args.since.isoformat():
             continue
-        report = path.read_text(encoding="utf-8")
-        try:
-            groups = inventory(report)
-        except ValueError as error:
-            parser.exit(1, f"{path.name}: {error}\n")
-        if not groups:
+        if entry is None:
             skipped += 1
             continue
         inventories += 1
-        full.update(groups["full"])
-        sampled.update(groups["sampled"])
-        revision = clean_revision(report)
+        full.update(entry["full"])
+        sampled.update(entry["sampled"])
+        revision = entry["revision"]
         if revision:
             try:
                 changed = paths_from_git("diff", "--no-renames", "--name-only", revision)
             except subprocess.CalledProcessError as error:
-                parser.exit(1, f"{path.name}: cannot compare reviewed revision {revision}: {error}\n")
-            current.update(groups["full"] - changed)
+                parser.exit(1, f"{name}: cannot compare reviewed revision {revision}: {error}\n")
+            current.update(set(entry["full"]) - changed)
         else:
             unknown_revision += 1
 

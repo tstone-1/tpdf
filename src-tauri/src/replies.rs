@@ -1110,6 +1110,16 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put(
+        "PrintPreview",
+        &crate::commands::print::PrintPreview {
+            job: 7,
+            pages: vec![render::PageSize {
+                width_pt: 612.0,
+                height_pt: 792.0,
+            }],
+        },
+    );
+    put(
         "Preview",
         &crate::sign_prepare::Preview {
             // A PNG signature and the start of a header: the sample pins the

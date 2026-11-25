@@ -3254,7 +3254,7 @@ SOFTWARE.
 | gtk-sys | 0.18.2 | MIT |
 | gtk3-macros | 0.18.2 | MIT |
 | hashbrown | 0.12.3 | MIT OR Apache-2.0 |
-| hashbrown | 0.17.1 | MIT OR Apache-2.0 |
+| hashbrown | 0.17.2 | MIT OR Apache-2.0 |
 | heck | 0.4.1 | MIT OR Apache-2.0 |
 | heck | 0.5.0 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
@@ -3293,7 +3293,7 @@ SOFTWARE.
 | javascriptcore-rs | 1.1.2 | MIT |
 | javascriptcore-rs-sys | 1.1.1 | MIT |
 | jiff | 0.2.46 | Unlicense OR MIT |
-| jiff | 1.0.1 | Unlicense OR MIT |
+| jiff | 1.0.2 | Unlicense OR MIT |
 | jiff-core | 0.1.8 | Unlicense OR MIT |
 | jiff-core | 1.0.1 | Unlicense OR MIT |
 | jiff-tzdb | 0.1.10 | Unlicense OR MIT |
@@ -3374,7 +3374,7 @@ SOFTWARE.
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
 | pbkdf2 | 0.12.2 | MIT OR Apache-2.0 |
-| pdfium-render | 0.9.5 | MIT OR Apache-2.0 |
+| pdfium-render | 0.9.6 | MIT OR Apache-2.0 |
 | pem-rfc7468 | 0.7.0 | Apache-2.0 OR MIT |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
 | phf | 0.13.1 | MIT |
@@ -13466,11 +13466,11 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 | @tauri-apps/plugin-dialog | 2.8.4 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-updater | 2.14.1 | MIT OR Apache-2.0 |
-| svelte | 5.59.1 | MIT |
+| svelte | 5.59.2 | MIT |
 
 ### Copyright notices
 
-- Copyright (c) 2016-2025 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)
+- Copyright (c) 2016-2026 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)
 - Copyright (c) 2017 - Present Tauri Apps Contributors
 - copyright license to reproduce, prepare Derivative Works of,
 - copyright notice that is included in or attached to the work

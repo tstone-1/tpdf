@@ -290,8 +290,36 @@ export function buttonValue(widget: FormWidget, state: Pick<EditState, "fields">
   return control.kind === "radio" ? radioExport(control, control.index) : "";
 }
 
+/** Qualified names after saved-widget removals and pending terminal-field renames. */
+export function effectiveFieldNames(form: Form, fields: readonly FieldEdited[]): string[] {
+  const edits = new Map(fields.map(field => [field.object.join(":"), field]));
+  return form.widgets.flatMap(widget => {
+    if (edits.get(widget.widget.join(":"))?.removed) return [];
+    const leaf = edits.get(widget.object.join(":"))?.name;
+    return [leaf === undefined ? widget.name : widget.name.slice(0, widget.name.lastIndexOf(".") + 1) + leaf];
+  });
+}
+
+/**
+ * The values a group's buttons already have: the ones placed in this session
+ * and the ones the file's form has under that name.
+ */
+export function radioValues(group: string, marks: readonly MarkView[], form: Form | null, fields: readonly FieldEdited[]): Set<string> {
+  const values = savedRadioValues(group, form, fields);
+  for (const mark of marks) {
+    if (mark.kind === "field" && mark.note === group && mark.field?.kind === "radio") {
+      for (const value of mark.field.options ?? []) values.add(value);
+    }
+  }
+  return values;
+}
+
+export function radioValueTaken(value: string): string {
+  return TEXT().valueTaken(value);
+}
+
 /** Export values still occupied after pending group and widget edits. */
-export function savedRadioValues(group: string, form: Form | null, fields: readonly FieldEdited[]): Set<string> {
+function savedRadioValues(group: string, form: Form | null, fields: readonly FieldEdited[]): Set<string> {
   const edits = new Map(fields.map(field => [field.object.join(":"), field]));
   const byField = new Map<string, (string | undefined)[]>();
   for (const widget of form?.widgets ?? []) {
@@ -418,7 +446,7 @@ export function propertied(
  */
 export function revalued(
   form: Form,
-  state: Pick<EditState, "fields" | "pages">,
+  state: Pick<EditState, "fields" | "pages" | "marks">,
   id: number,
   to: FieldProperties,
 ): FieldTarget | string | null {
@@ -426,10 +454,12 @@ export function revalued(
   const value = to.options?.[0];
   if (!found || found.widget.control.kind !== "radio" || value === undefined) return null;
   if (value === buttonValue(found.widget, state)) return null;
-  const taken = form.widgets.some((other) =>
-    same(other.object, found.widget.object)
-    && !editOf(other, state)?.removed && buttonValue(other, state) === value);
-  if (taken) return TEXT().valueTaken(value);
+  const group = sharedEdit(found.widget, state)?.name ?? found.widget.name;
+  const taken = !found.widget.name.includes(".")
+    ? radioValues(group, state.marks, form, state.fields ?? []).has(value)
+    : form.widgets.some((other) => same(other.object, found.widget.object)
+      && !editOf(other, state)?.removed && buttonValue(other, state) === value);
+  if (taken) return radioValueTaken(value);
   return target(found, { value });
 }
 

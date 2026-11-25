@@ -4,6 +4,27 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Content crop, form names and signing files (2026-11-25)
+
+The native crop worker retained all four edges of solid 3600 by 2406,
+3600 by 2403 and 612 by 792 point sheets. The first sheet previously lost
+one point. Two physically identical squares on pages with UserUnit 1 and 2
+returned the same physical bounds, [188, 188, 212, 212]. A saved square in
+the margin extended the bounds to [38, 188, 212, 342]. Before saving, the
+window checks the page's pending edits inside the edit queue.
+
+Form placement after a rename uses the effective qualified name. Radio
+properties check export values on saved and placed widgets. Removing the
+saved-widget guard caused the property test to fail. The native writer
+accepted the distinct field name and radio export and refused both duplicates.
+
+The Linux file importer, exercised on macOS with OpenSSL-generated files,
+signed with a compressed P-256 certificate. Reading the resulting CMS found
+only the signer. A stored entry containing an unrelated certificate also
+returned no issuers. A two-key file was refused, and a leaf with its actual
+issuer still carried that issuer. The timestamp client accepted a signed
+response with fractional seconds and the request nonce.
+
 ### Physical redaction size, radio groups and font spacing (2026-11-25)
 
 On macOS arm64, `raster-redact-probe` reordered a two-page document and cropped

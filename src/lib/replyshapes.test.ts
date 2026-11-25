@@ -67,7 +67,7 @@ import Form_ from "../../src-tauri/testdata/replies/Form.json";
 import type { Comments } from "./comments";
 import type { CropGeometry } from "./crop";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
-import type { DocumentInfo, PrintSetup } from "./ipc";
+import type { Commands, DocumentInfo, PrintSetup } from "./ipc";
 import type { Links } from "./links";
 import type { RegionPlan } from "./pages";
 import type { Properties } from "./properties";
@@ -123,6 +123,7 @@ import Loaded_ from "../../src-tauri/testdata/replies/Loaded.json";
 import Split_ from "../../src-tauri/testdata/replies/Split.json";
 import Choices_ from "../../src-tauri/testdata/replies/Choices.json";
 import Signing_ from "../../src-tauri/testdata/replies/Signing.json";
+import PrintPreview_ from "../../src-tauri/testdata/replies/PrintPreview.json";
 import Preview_ from "../../src-tauri/testdata/replies/Preview.json";
 import SignRecord_ from "../../src-tauri/testdata/replies/SignRecord.json";
 
@@ -413,6 +414,7 @@ const SCHEMA = {
     signed: ["object"],
     unstamped: ["object"],
   } satisfies Shape<SignOutcome>,
+  PrintPreview: { job: ["number"], pages: ["array"] } satisfies Shape<Commands["print_prepare"]["reply"]>,
   Preview: {
     png: ["array"],
     width: ["number"],
@@ -470,6 +472,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Split: Split_ satisfies Widen<Split>,
   Choices: Choices_ satisfies Widen<Choices>,
   Signing: Signing_ satisfies Widen<SignOutcome>,
+  PrintPreview: PrintPreview_ satisfies Widen<Commands["print_prepare"]["reply"]>,
   Preview: Preview_ satisfies Widen<SignaturePreview>,
   SignRecord: SignRecord_ satisfies Widen<SignRecord>,
 };

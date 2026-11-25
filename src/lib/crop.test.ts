@@ -13,10 +13,23 @@
 
 import { describe, expect, it } from "vitest";
 
-import { intoCrop, outOfCrop, uncropped, type CropGeometry } from "./crop";
+import { NOTHING_OPEN } from "./edits";
+import { pageId, type PageView } from "./pages";
+import { hasPendingCropContent, intoCrop, outOfCrop, uncropped, type CropGeometry } from "./crop";
 
 /** A crop 30 points in from the left of the file's page and 40 from its top. */
 const at: CropGeometry = { width_pt: 400, height_pt: 500, left: 30, top: 40 };
+
+it("requires saved ink only on the page being measured, including a new blank page", () => {
+  const page = { id: pageId(7), source: { blank: { width: 200, height: 300 } }, turns: 0 } satisfies PageView;
+  const state = { ...NOTHING_OPEN, pages: [page], dirty: true, marks: [{
+    id: 1, page: page.id, kind: "square" as const, stamp: null, quads: [10, 10, 30, 30], strokes: [],
+    lines: [], width: 1, color: [0, 0, 0] as [number, number, number], note: "",
+  }] };
+  expect(hasPendingCropContent(page, state, null)).toBe(true);
+  expect(hasPendingCropContent({ ...page, id: pageId(9) }, state, null)).toBe(false);
+  expect(hasPendingCropContent(page, NOTHING_OPEN, null)).toBe(false);
+});
 
 describe("intoCrop", () => {
   it("moves a rectangle by the crop's corner, both edges of each axis", () => {

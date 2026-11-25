@@ -2,6 +2,22 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.15 verification, 2026-11-25.** The macOS window suite passed all 19
+checks. Windows passed 3,774 library tests and 788 CLI checks, with 12 library
+tests ignored and four CLI checks skipped. The Windows cross-build passed.
+All 39 macOS gates passed. The macOS disk image and Windows installer each passed all 70 packaged
+Python client checks. Windows printed the fixtures through the system spooler. The normal app opened the fixture and started its render worker. OCR
+read the expected text in the packaged renderer's output. With the bundled
+PDFium withheld, rendering failed. VoiceOver passed all 11 speech checks.
+The frontend tests caught all 461 selected mutations and the gate checks
+caught all 41. Both Rust lockfile audits passed with the documented exceptions,
+and the npm production audit found no advisories. The PDFium pin matched the stable branch.
+
+The portable review history reproduced the same file lists in a checkout without
+local reports. Of 753 application and client files, 550 had a full read and 272
+still matched reviewed contents. The next review has 203 files awaiting a first
+full read and 278 previously read files to revisit.
+
 **26.11.14 verification and publication, 2026-11-24.** The release tag points to
 `2ad7be2b`. Three-platform CI (45425401677) and Audit (45425401521) passed.
 The release rehearsal (45440725156) and stable build (45448051374) each passed

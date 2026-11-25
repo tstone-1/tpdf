@@ -122,6 +122,7 @@ export default {
   "outer contents of type {kind}": "äußere Inhalte vom Typ {kind}",
   "a password with characters outside the Basic Multilingual Plane":
     "ein Passwort mit Zeichen außerhalb der Basic Multilingual Plane",
+  "This certificate file holds several private keys. Export the signing identity in its own file.": "Diese Zertifikatsdatei enthält mehrere private Schlüssel. Die gewünschte Signaturidentität muss separat exportiert werden.",
   "a MAC key of no length": "ein MAC-Schlüssel ohne Länge",
   "a PBMAC1 integrity check": "eine PBMAC1-Integritätsprüfung",
   "an integrity check with the hash {other}": "eine Integritätsprüfung mit dem Hash {other}",

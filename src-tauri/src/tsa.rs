@@ -419,7 +419,7 @@ fn nonce_of(tst_info: &[u8]) -> Option<Vec<u8>> {
     let _policy = ObjectIdentifier::decode(&mut inner).ok()?;
     let _imprint = MessageImprint::decode(&mut inner).ok()?;
     let _serial = der::asn1::Int::decode(&mut inner).ok()?;
-    let _time = der::asn1::GeneralizedTime::decode(&mut inner).ok()?;
+    let _time = crate::docinfo::decode_gen_time(&mut inner)?;
     while !inner.is_finished() {
         let field = der::asn1::AnyRef::decode(&mut inner).ok()?;
         if field.tag() == der::Tag::Integer {

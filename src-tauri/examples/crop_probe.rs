@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tpdf_lib::document::OpenDocument;
 
 use pdfium_render::prelude::Pdfium;
-use tpdf_lib::content::{self, MARGIN_PT};
+use tpdf_lib::content::MARGIN_PT;
 use tpdf_lib::pagetree;
 use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 use tpdf_lib::text;
@@ -284,7 +284,8 @@ fn follows(bindings: progressive::Bindings, doc: &OpenDocument, file: &Path, ind
 fn content(bindings: progressive::Bindings, doc: &OpenDocument, index: u32) -> bool {
     let page = doc.page_cropped(index, None).expect("page");
     let crop = page.crop_pt();
-    let found = content::content_box(bindings, &page, &CancelToken::default()).expect("content");
+    let found = tpdf_lib::render::run_content(bindings, doc, index, None, &CancelToken::default())
+        .expect("content");
     let Some(found) = found else {
         return check("the page has a content box", false, "none found");
     };
@@ -328,7 +329,9 @@ fn ink(bindings: progressive::Bindings, doc: &OpenDocument, index: u32) -> bool 
         let pixels = tile(bindings, &page);
         let px = pixels.len() as f64 / 4.0;
         let sheet = f64::from(page.width_pt()) * f64::from(page.height_pt());
-        let found = content::content_box(bindings, &page, &CancelToken::default()).expect("box");
+        let found =
+            tpdf_lib::render::run_content(bindings, doc, index, None, &CancelToken::default())
+                .expect("box");
         (inked(&pixels) as f64, px, sheet, found)
     };
     let Some(found) = found else {
@@ -390,12 +393,8 @@ fn geometry(bindings: progressive::Bindings, doc: &OpenDocument, index: u32) -> 
         &format!("{none:?} against {whole:?}, /Rotate turns {turns}"),
     );
 
-    let found = content::content_box(
-        bindings,
-        &doc.page(index).expect("page"),
-        &CancelToken::default(),
-    )
-    .expect("content");
+    let found = tpdf_lib::render::run_content(bindings, doc, index, None, &CancelToken::default())
+        .expect("content");
     let Some(found) = found else {
         println!(
             "[SKIP] the rectangle and the cropped page agree about the size  the page has no ink"

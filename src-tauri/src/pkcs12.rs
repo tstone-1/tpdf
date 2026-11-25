@@ -12,7 +12,7 @@
 //!
 //! The key lives only as long as one signature: [`open`] decrypts it, the
 //! caller signs one digest, and the `SigningKey` zeroes itself when dropped.
-//! Every decrypted buffer on the way is `Zeroizing`.
+//! Private-key fields borrow their plaintext from a zeroizing buffer.
 //!
 //! ## What is read
 //!
@@ -26,12 +26,11 @@
 //!   RC2, which they use for certificates. RC4 is refused.
 //! * Certificate bags with X.509 certificates, and key bags, shrouded or not.
 //!
-//! The key is paired with the certificate whose public key it has. The other
-//! certificates in the file are the chain.
+//! The key is paired with the certificate whose public key it has. Only its issuing chain
+//! accompanies the signature. Files with several private keys need an explicit selection.
 
-use cms::content_info::ContentInfo;
 use cms::encrypted_data::EncryptedData;
-use der::asn1::{BitString, ObjectIdentifier, OctetString};
+use der::asn1::{AnyRef, BitStringRef, ObjectIdentifier, OctetStringRef, SetOfVec};
 use der::{Decode, Encode, Sequence};
 use x509_cert::spki::AlgorithmIdentifierOwned;
 use zeroize::Zeroizing;
@@ -56,6 +55,8 @@ pub enum Refusal {
     Rsa,
     /// No key in the file, or none belonging to its certificates.
     NoKey,
+    /// Identity selection is unavailable for this file.
+    MultipleKeys,
     /// A scheme, curve or structure this does not read, named.
     Unsupported(String),
     /// Not a PKCS#12 file, or a damaged one.
@@ -71,6 +72,7 @@ impl Refusal {
             // linux-difference: signing
             Self::Rsa => said!("This certificate file holds an RSA key, and tpdf signs from a file only with an ECDSA key. \
                           A smart card or token with this certificate can sign."),
+            Self::MultipleKeys => said!("This certificate file holds several private keys. Export the signing identity in its own file."),
             Self::NoKey => said!("This certificate file has no private key for its certificate, so it cannot sign."),
             Self::Unsupported(what) => said!("This certificate file uses {what}, which tpdf does not read."),
             Self::Malformed(why) => said!("This is not a certificate file tpdf can read: {why}."),
@@ -83,7 +85,7 @@ impl Refusal {
 pub struct Opened {
     /// The signer's certificate, DER.
     pub certificate: Vec<u8>,
-    /// The file's other certificates, DER.
+    /// Issuers of the signer, DER, nearest first.
     pub chain: Vec<Vec<u8>>,
     key: EcKey,
 }
@@ -126,23 +128,56 @@ impl Opened {
     }
 }
 
+// Borrow the container and bag contents: an unshrouded key can occur inside
+// any id-data safe, including one decrypted into memory just above the bags.
+#[derive(Sequence)]
+struct Pfx<'a> {
+    version: pkcs12::pfx::Version,
+    auth_safe: Content<'a>,
+    mac_data: Option<pkcs12::mac_data::MacData>,
+}
+
+#[derive(Sequence)]
+struct Content<'a> {
+    kind: ObjectIdentifier,
+    #[asn1(context_specific = "0", tag_mode = "EXPLICIT")]
+    content: AnyRef<'a>,
+}
+
+#[derive(Sequence)]
+struct Bag<'a> {
+    kind: ObjectIdentifier,
+    #[asn1(context_specific = "0", tag_mode = "EXPLICIT")]
+    value: AnyRef<'a>,
+    attributes: Option<SetOfVec<AnyRef<'a>>>,
+}
+
+#[derive(Sequence)]
+struct PrivateKey<'a> {
+    version: pkcs12::safe_bag::Pkcs8Version,
+    algorithm: x509_cert::spki::AlgorithmIdentifierRef<'a>,
+    scalar_info: OctetStringRef<'a>,
+    #[asn1(context_specific = "0", tag_mode = "IMPLICIT", optional = "true")]
+    attributes: Option<SetOfVec<AnyRef<'a>>>,
+}
+
 /// `EncryptedPrivateKeyInfo`, read here rather than through `pkcs8`, whose
 /// type accepts only PBES1 and PBES2 and not the PKCS#12 schemes.
 #[derive(Sequence)]
-struct EncryptedKey {
+struct EncryptedKey<'a> {
     algorithm: AlgorithmIdentifierOwned,
-    data: OctetString,
+    data: OctetStringRef<'a>,
 }
 
 /// SEC 1's `ECPrivateKey`.
 #[derive(Sequence)]
-struct EcPrivateKey {
+struct EcPrivateKey<'a> {
     version: u8,
-    private_key: OctetString,
+    private_key: OctetStringRef<'a>,
     #[asn1(context_specific = "0", optional = "true", tag_mode = "EXPLICIT")]
     parameters: Option<ObjectIdentifier>,
     #[asn1(context_specific = "1", optional = "true", tag_mode = "EXPLICIT")]
-    public_key: Option<BitString>,
+    public_key: Option<BitStringRef<'a>>,
 }
 
 fn malformed(what: &str) -> impl Fn(der::Error) -> Refusal + '_ {
@@ -155,16 +190,33 @@ fn malformed(what: &str) -> impl Fn(der::Error) -> Refusal + '_ {
 ///
 /// See [`Refusal`].
 pub fn open(file: &[u8], password: &str) -> Result<Opened, Refusal> {
-    let pfx = pkcs12::pfx::Pfx::from_der(file).map_err(malformed("the outer structure"))?;
-    let auth = data_of(&pfx.auth_safe)?;
-    if let Some(mac) = &pfx.mac_data {
-        check_mac(mac, &auth, password)?;
+    let pfx = Pfx::from_der(file).map_err(malformed("the outer structure"))?;
+    if pfx.auth_safe.kind.to_string() != ID_DATA {
+        return Err(Refusal::Unsupported(said!(
+            "outer contents of type {kind}",
+            kind = pfx.auth_safe.kind
+        )));
     }
-    let safes = Vec::<ContentInfo>::from_der(&auth).map_err(malformed("the list of contents"))?;
-    let (mut certificates, mut keys) = (Vec::new(), Vec::new());
+    let auth = pfx
+        .auth_safe
+        .content
+        .decode_as::<OctetStringRef>()
+        .map_err(malformed("data contents"))?;
+    if let Some(mac) = &pfx.mac_data {
+        check_mac(mac, auth.as_bytes(), password)?;
+    }
+    let safes =
+        Vec::<Content>::from_der(auth.as_bytes()).map_err(malformed("the list of contents"))?;
+    let mut certificates = Vec::new();
+    let mut key = None;
     for safe in &safes {
-        let contents: Zeroizing<Vec<u8>> = match safe.content_type.to_string().as_str() {
-            ID_DATA => Zeroizing::new(data_of(safe)?),
+        let decrypted;
+        let contents = match safe.kind.to_string().as_str() {
+            ID_DATA => safe
+                .content
+                .decode_as::<OctetStringRef>()
+                .map_err(malformed("data contents"))?
+                .as_bytes(),
             ID_ENCRYPTED_DATA => {
                 let encrypted = safe
                     .content
@@ -174,94 +226,108 @@ pub fn open(file: &[u8], password: &str) -> Result<Opened, Refusal> {
                 let bytes = info.encrypted_content.ok_or_else(|| {
                     Refusal::Malformed(said!("encrypted contents with no content"))
                 })?;
-                decrypt(&info.content_enc_alg, bytes.as_bytes(), password)?
+                decrypted = decrypt(&info.content_enc_alg, bytes.as_bytes(), password)?;
+                &decrypted
             }
             other => return Err(Refusal::Unsupported(said!("contents of type {other}"))),
         };
-        let bags = pkcs12::safe_bag::SafeContents::from_der(&contents)
-            .map_err(malformed("a list of bags"))?;
+        let bags = Vec::<Bag>::from_der(contents).map_err(malformed("a list of bags"))?;
         for bag in bags {
-            let value = bag_value(&bag)?;
-            match bag.bag_id {
+            match bag.kind {
                 pkcs12::PKCS_12_CERT_BAG_OID => {
-                    let cert = pkcs12::cert_type::CertBag::from_der(value)
+                    let cert = bag
+                        .value
+                        .decode_as::<pkcs12::cert_type::CertBag>()
                         .map_err(malformed("a certificate bag"))?;
                     if cert.cert_id == pkcs12::PKCS_12_X509_CERT_OID {
                         certificates.push(cert.cert_value.as_bytes().to_vec());
                     }
                 }
-                pkcs12::PKCS_12_PKCS8_KEY_BAG_OID => {
-                    let shrouded = EncryptedKey::from_der(value).map_err(malformed("a key bag"))?;
-                    keys.push(decrypt(
-                        &shrouded.algorithm,
-                        shrouded.data.as_bytes(),
-                        password,
-                    )?);
+                pkcs12::PKCS_12_PKCS8_KEY_BAG_OID | pkcs12::PKCS_12_KEY_BAG_OID => {
+                    if key.is_some() {
+                        return Err(Refusal::MultipleKeys);
+                    }
+                    key = Some(if bag.kind == pkcs12::PKCS_12_KEY_BAG_OID {
+                        ec_key(
+                            bag.value
+                                .decode_as::<PrivateKey>()
+                                .map_err(malformed("a private key"))?,
+                        )?
+                    } else {
+                        let shrouded = bag
+                            .value
+                            .decode_as::<EncryptedKey>()
+                            .map_err(malformed("a key bag"))?;
+                        let plain =
+                            decrypt(&shrouded.algorithm, shrouded.data.as_bytes(), password)?;
+                        ec_key(PrivateKey::from_der(&plain).map_err(malformed("a private key"))?)?
+                    });
                 }
-                pkcs12::PKCS_12_KEY_BAG_OID => keys.push(Zeroizing::new(value.to_vec())),
                 _ => {}
             }
         }
     }
-    let key = match keys.first() {
-        Some(key) => ec_key(key)?,
-        None => return Err(Refusal::NoKey),
-    };
-    let public = match &key {
-        EcKey::P256(k) => k.verifying_key().to_sec1_point(false).as_bytes().to_vec(),
-        EcKey::P384(k) => k.verifying_key().to_sec1_point(false).as_bytes().to_vec(),
-    };
-    let signer = certificates
+    let key = key.ok_or(Refusal::NoKey)?;
+    let parsed: Vec<_> = certificates
         .iter()
-        .position(|der| public_key_of(der).as_deref() == Some(public.as_slice()))
+        .filter_map(|der| x509_cert::Certificate::from_der(der).ok())
+        .collect();
+    let signer = parsed
+        .iter()
+        .find(|cert| matches_key(cert, &key))
         .ok_or(Refusal::NoKey)?;
-    let certificate = certificates.remove(signer);
     Ok(Opened {
-        certificate,
-        chain: certificates,
+        certificate: signer
+            .to_der()
+            .map_err(malformed("the signing certificate"))?,
+        chain: issuing_chain(signer, &parsed)?,
         key,
     })
 }
 
-/// A bag's value without its `[0] EXPLICIT` wrapper.
-///
-/// `pkcs12` 0.1 decodes `bagValue` as the whole tagged field and encodes it as
-/// the bare content, so what it hands back still has the tag on: measured on
-/// 2026-10-14, every certificate bag OpenSSL wrote failed to parse as a
-/// `CertBag` until this unwrapped it.
-fn bag_value(bag: &pkcs12::safe_bag::SafeBag) -> Result<&[u8], Refusal> {
-    Ok(der::AnyRef::from_der(&bag.bag_value)
-        .map_err(malformed("a bag"))?
-        .value())
+/// Also filters certificates cached by versions that stored every bag.
+pub(crate) fn issuing_chain(
+    signer: &x509_cert::Certificate,
+    parsed: &[x509_cert::Certificate],
+) -> Result<Vec<Vec<u8>>, Refusal> {
+    let pool: Vec<_> = parsed.iter().collect();
+    let path = crate::revocation::chain::walk(signer, &pool);
+    path.links
+        .iter()
+        .skip(1)
+        .map(|link| &link.certificate)
+        .chain(path.anchor.as_ref())
+        .filter(|cert| *cert != signer)
+        .map(Encode::to_der)
+        .collect::<Result<_, _>>()
+        .map_err(malformed("an issuing certificate"))
 }
 
-/// The bytes of an `id-data` content: the OCTET STRING inside.
-fn data_of(info: &ContentInfo) -> Result<Vec<u8>, Refusal> {
-    if info.content_type.to_string() != ID_DATA {
-        return Err(Refusal::Unsupported(said!(
-            "outer contents of type {kind}",
-            kind = info.content_type
-        )));
+fn matches_key(cert: &x509_cert::Certificate, key: &EcKey) -> bool {
+    let spki = &cert.tbs_certificate.subject_public_key_info;
+    if spki.algorithm.oid.to_string() != EC_PUBLIC_KEY {
+        return false;
     }
-    Ok(info
-        .content
-        .decode_as::<OctetString>()
-        .map_err(malformed("data contents"))?
-        .as_bytes()
-        .to_vec())
-}
-
-/// A certificate's public key bits, or `None` for one that does not parse.
-fn public_key_of(certificate: &[u8]) -> Option<Vec<u8>> {
-    let parsed = x509_cert::Certificate::from_der(certificate).ok()?;
-    Some(
-        parsed
-            .tbs_certificate
-            .subject_public_key_info
-            .subject_public_key
-            .raw_bytes()
-            .to_vec(),
-    )
+    let curve = spki
+        .algorithm
+        .parameters
+        .as_ref()
+        .and_then(|v| v.decode_as::<ObjectIdentifier>().ok());
+    let Some(bytes) = spki.subject_public_key.as_bytes() else {
+        return false;
+    };
+    match key {
+        EcKey::P256(k) => {
+            curve == Some(ObjectIdentifier::new_unwrap(P256))
+                && p256::ecdsa::VerifyingKey::from_sec1_bytes(bytes)
+                    .is_ok_and(|point| &point == k.verifying_key())
+        }
+        EcKey::P384(k) => {
+            curve == Some(ObjectIdentifier::new_unwrap(P384))
+                && p384::ecdsa::VerifyingKey::from_sec1_bytes(bytes)
+                    .is_ok_and(|point| &point == k.verifying_key())
+        }
+    }
 }
 
 /// The file's MAC, against the password.
@@ -312,6 +378,7 @@ fn decrypt(
     use pkcs12::kdf::{derive_key_utf8, Pkcs12KeyType};
 
     let oid = algorithm.oid.to_string();
+    let mut plain = Zeroizing::new(data.to_vec());
     if oid == PBES2 {
         // `pkcs5` reads the scheme from the borrowed form of the identifier.
         let encoded = algorithm
@@ -321,10 +388,12 @@ fn decrypt(
             .map_err(malformed("an encryption scheme"))?;
         let scheme = pkcs5::EncryptionScheme::try_from(borrowed)
             .map_err(|e| Refusal::Unsupported(said!("the encryption scheme it names ({e})")))?;
-        return scheme
-            .decrypt(password.as_bytes(), data)
-            .map(Zeroizing::new)
-            .map_err(|_| Refusal::WrongPassword);
+        let len = scheme
+            .decrypt_in_place(password.as_bytes(), &mut plain)
+            .map_err(|_| Refusal::WrongPassword)?
+            .len();
+        plain.truncate(len);
+        return Ok(plain);
     }
     let params = algorithm
         .parameters
@@ -345,21 +414,23 @@ fn decrypt(
     };
     let iv = derive(Pkcs12KeyType::Iv, 8)?;
     let padding = |_| Refusal::WrongPassword;
-    let plain = match oid.as_str() {
+    let len = match oid.as_str() {
         // pbeWithSHAAnd3-KeyTripleDES-CBC, pbeWithSHAAnd2-KeyTripleDES-CBC
         "1.2.840.113549.1.12.1.3" => {
             let key = derive(Pkcs12KeyType::EncryptionKey, 24)?;
             cbc::Decryptor::<des::TdesEde3>::new_from_slices(&key, &iv)
                 .map_err(|_| Refusal::Malformed(said!("a triple-DES key of the wrong length")))?
-                .decrypt_padded_vec_mut::<Pkcs7>(data)
+                .decrypt_padded_mut::<Pkcs7>(&mut plain)
                 .map_err(padding)?
+                .len()
         }
         "1.2.840.113549.1.12.1.4" => {
             let key = derive(Pkcs12KeyType::EncryptionKey, 16)?;
             cbc::Decryptor::<des::TdesEde2>::new_from_slices(&key, &iv)
                 .map_err(|_| Refusal::Malformed(said!("a triple-DES key of the wrong length")))?
-                .decrypt_padded_vec_mut::<Pkcs7>(data)
+                .decrypt_padded_mut::<Pkcs7>(&mut plain)
                 .map_err(padding)?
+                .len()
         }
         // pbeWithSHAAnd128BitRC2-CBC, pbewithSHAAnd40BitRC2-CBC
         "1.2.840.113549.1.12.1.5" | "1.2.840.113549.1.12.1.6" => {
@@ -368,21 +439,21 @@ fn decrypt(
             let cipher = rc2::Rc2::new_with_eff_key_len(&key, bits);
             cbc::Decryptor::<rc2::Rc2>::inner_iv_slice_init(cipher, &iv)
                 .map_err(|_| Refusal::Malformed(said!("an RC2 IV of the wrong length")))?
-                .decrypt_padded_vec_mut::<Pkcs7>(data)
+                .decrypt_padded_mut::<Pkcs7>(&mut plain)
                 .map_err(padding)?
+                .len()
         }
         "1.2.840.113549.1.12.1.1" | "1.2.840.113549.1.12.1.2" => {
             return Err(Refusal::Unsupported(said!("RC4 encryption")))
         }
         other => return Err(Refusal::Unsupported(said!("the encryption scheme {other}"))),
     };
-    Ok(Zeroizing::new(plain))
+    plain.truncate(len);
+    Ok(plain)
 }
 
 /// The ECDSA key in a PKCS#8 `PrivateKeyInfo`.
-fn ec_key(info: &[u8]) -> Result<EcKey, Refusal> {
-    let info =
-        pkcs12::safe_bag::PrivateKeyInfo::from_der(info).map_err(malformed("a private key"))?;
+fn ec_key(info: PrivateKey<'_>) -> Result<EcKey, Refusal> {
     match info.algorithm.oid.to_string().as_str() {
         RSA => return Err(Refusal::Rsa),
         EC_PUBLIC_KEY => {}
@@ -394,17 +465,17 @@ fn ec_key(info: &[u8]) -> Result<EcKey, Refusal> {
         .as_ref()
         .and_then(|any| any.decode_as::<ObjectIdentifier>().ok())
         .map(|oid| oid.to_string());
-    let inner = Zeroizing::new(info.private_key.as_bytes().to_vec());
-    let sec1 = EcPrivateKey::from_der(&inner).map_err(malformed("an EC private key"))?;
-    let scalar = Zeroizing::new(sec1.private_key.as_bytes().to_vec());
+    let sec1 = EcPrivateKey::from_der(info.scalar_info.as_bytes())
+        .map_err(malformed("an EC private key"))?;
+    let scalar = sec1.private_key.as_bytes();
     let curve = curve.or_else(|| sec1.parameters.map(|oid| oid.to_string()));
     let bad = |_| Refusal::Malformed(said!("an EC private key that is not a valid scalar"));
     match curve.as_deref() {
         Some(P256) => Ok(EcKey::P256(
-            p256::ecdsa::SigningKey::from_slice(&scalar).map_err(bad)?,
+            p256::ecdsa::SigningKey::from_slice(scalar).map_err(bad)?,
         )),
         Some(P384) => Ok(EcKey::P384(
-            p384::ecdsa::SigningKey::from_slice(&scalar).map_err(bad)?,
+            p384::ecdsa::SigningKey::from_slice(scalar).map_err(bad)?,
         )),
         Some(other) => Err(Refusal::Unsupported(said!("the curve {other}"))),
         None => Err(Refusal::Malformed(said!(

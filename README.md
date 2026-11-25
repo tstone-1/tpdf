@@ -11,8 +11,13 @@ Free, MIT-licensed, no account, no telemetry; your documents are not uploaded an
 
 ## Download
 
+**If you used 26.11.14 or earlier to redact a name in a document with QR codes,
+or to mark all search results, check whether you need to redo that redaction.**
+An earlier copy can still contain information you meant to remove.
+[See the affected cases and recovery steps.](SECURITY.md#redactions-made-with-261114-or-earlier)
+
 **If you used tpdf 26.11.11 or earlier to redact a document, redo the redaction
-from the original with 26.11.13 or later.** An older copy can still contain the
+from the original with 26.11.15 or later.** An older copy can still contain the
 redacted information even if the check reported *verified*. Updating the app
 only changes future checks. If you already shared an older copy, treat its
 redacted information as potentially disclosed. See the notices for
@@ -575,8 +580,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   On Linux the certificates are those on a smart card or token, read through p11-kit, and
   those in certificate files you added with *Add a certificate file for signing…*, which
   asks the file's password once and remembers the file but not the password or the key.
-  A certificate file signs only with an ECDSA key (P-256 or P-384); one with an RSA key is
-  refused. tpdf asks a smart card's PIN or a file's password in a dialog of its own, which
+  A certificate file must contain one ECDSA private key (P-256 or P-384). The signature
+  includes the signer and its available issuers. tpdf asks a smart card's PIN or a file's password in a dialog of its own, which
   the document view cannot reach. `tpdf identities --add` adds a file from a terminal.
   <!-- built: file.signDocument file.signField file.addCertificateFile -->
 
@@ -817,7 +822,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Crop a page**, either to what is on it or to a rectangle you drag out. Cropping to
   content measures where the ink actually is rather than reading the page's objects, so it
   works on a scan — where every object union is the whole sheet — as well as on a page of
-  type. Dragging is for the cases a measurement cannot answer: a figure out of a plate, one
+  type. Save pending page edits before measuring. Apply or remove pending redactions first.
+  Dragging is for the cases a measurement cannot answer: a figure out of a plate, one
   column of two, a scan with a hand in the corner. While you drag, what falls outside the
   rectangle is darkened, so what stays bright is what the page becomes. The crop is part of the document: undoable, carried when the page moves,
   and written into a saved copy as a real `/CropBox`, so another reader opens the file

@@ -22,6 +22,21 @@ boundaries, the sandbox profile in full, and the residual risks in one list. Eve
 there is either measured with the spike named, or marked untested. Read it before
 reporting, and please say which claim you believe is wrong.
 
+## Redactions made with 26.11.14 or earlier
+
+An older copy can still contain information you intended to remove in two cases.
+
+- A QR code could retain an accented name even when verification reported success.
+  The comparison could miss the same name written with a different Unicode encoding.
+- When marking all search results, a page with unsearchable text could be left
+  out. Changing the search while the command was waiting could also mark results
+  from the wrong search.
+
+If either case could affect your document, repeat the redaction from the original
+using 26.11.15 or later. Check the marked pages before applying the redactions.
+If you already shared the earlier copy, treat the information as potentially
+disclosed and replace it with the newly verified file.
+
 ## Redactions made with 26.11.11
 
 In 26.11.11, a redaction could read *verified* even when a repeated page

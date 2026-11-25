@@ -63,15 +63,21 @@ fn signs(opened: &Opened) -> bool {
     use ecdsa::signature::hazmat::PrehashVerifier as _;
     let digest = [0x42; 32];
     let signature = opened.sign(&digest).unwrap();
-    let public = public_key_of(&opened.certificate).unwrap();
+    let certificate = x509_cert::Certificate::from_der(&opened.certificate).unwrap();
+    let public = certificate
+        .tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .as_bytes()
+        .unwrap();
     match opened.kind() {
         KeyKind::P256 => {
-            let key = p256::ecdsa::VerifyingKey::from_sec1_bytes(&public).unwrap();
+            let key = p256::ecdsa::VerifyingKey::from_sec1_bytes(public).unwrap();
             let sig = p256::ecdsa::Signature::from_der(&signature).unwrap();
             key.verify_prehash(&digest, &sig).is_ok()
         }
         KeyKind::P384 => {
-            let key = p384::ecdsa::VerifyingKey::from_sec1_bytes(&public).unwrap();
+            let key = p384::ecdsa::VerifyingKey::from_sec1_bytes(public).unwrap();
             let sig = p384::ecdsa::Signature::from_der(&signature).unwrap();
             key.verify_prehash(&digest, &sig).is_ok()
         }
@@ -195,7 +201,7 @@ fn an_rsa_key_is_refused_and_says_what_can_sign_instead() {
 }
 
 #[test]
-fn the_signer_is_the_certificate_that_matches_the_key_and_the_rest_is_the_chain() {
+fn the_matching_leaf_is_selected_even_when_its_issuer_comes_first() {
     let dir = scratch("chain");
     let made = openssl(
         &dir,
@@ -264,6 +270,141 @@ fn the_signer_is_the_certificate_that_matches_the_key_and_the_rest_is_the_chain(
         leaf.tbs_certificate.subject
     );
     assert!(signs(&opened));
+}
+
+#[test]
+fn compressed_points_sign_and_unrelated_certificates_stay_out_of_cms() {
+    use cms::{content_info::ContentInfo, signed_data::SignedData};
+    let dir = scratch("compressed");
+    let options = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256"];
+    if !self_signed(&dir, &options) {
+        println!("[SKIP] openssl cannot write a P-256 certificate here");
+        return;
+    }
+    std::fs::rename(dir.join("cert.pem"), dir.join("unrelated.pem")).unwrap();
+    assert!(self_signed(&dir, &options));
+    let original = open(&export(&dir, "plain.p12", &[]).unwrap(), "geheim").unwrap();
+    assert!(openssl(
+        &dir,
+        &[
+            "ec",
+            "-in",
+            "key.pem",
+            "-conv_form",
+            "compressed",
+            "-out",
+            "compressed.key"
+        ]
+    ));
+    assert!(openssl(
+        &dir,
+        &[
+            "req",
+            "-x509",
+            "-new",
+            "-key",
+            "compressed.key",
+            "-days",
+            "2",
+            "-subj",
+            "/CN=Compressed",
+            "-out",
+            "cert.pem"
+        ]
+    ));
+    let file = export(&dir, "compressed.p12", &["-certfile", "unrelated.pem"]).unwrap();
+    let opened = open(&file, "geheim").unwrap();
+    let signer = x509_cert::Certificate::from_der(&opened.certificate).unwrap();
+    assert_eq!(
+        signer
+            .tbs_certificate
+            .subject_public_key_info
+            .subject_public_key
+            .raw_bytes()
+            .len(),
+        33
+    );
+    assert!(matches_key(&signer, &original.key));
+    assert!(signs(&opened));
+    assert!(opened.chain.is_empty());
+
+    struct TestKey<'a>(&'a Opened);
+    impl crate::sign_cms::Key for TestKey<'_> {
+        fn sign_digest(&self, _: KeyKind, digest: &[u8; 32]) -> Result<Vec<u8>, String> {
+            self.0.sign(digest)
+        }
+    }
+    let signed = crate::sign_cms::build(
+        &[7; 32],
+        &opened.certificate,
+        &opened.chain,
+        &TestKey(&opened),
+    )
+    .unwrap();
+    let content = ContentInfo::from_der(&signed).unwrap();
+    let data = content.content.decode_as::<SignedData>().unwrap();
+    let certs = data.certificates.unwrap();
+    assert_eq!(
+        certs
+            .0
+            .iter()
+            .map(|cert| cert.to_der().unwrap())
+            .collect::<Vec<_>>(),
+        std::slice::from_ref(&opened.certificate)
+    );
+
+    // Rows written before issuer selection cached every extra certificate.
+    assert!(openssl(
+        &dir,
+        &[
+            "x509",
+            "-in",
+            "unrelated.pem",
+            "-outform",
+            "DER",
+            "-out",
+            "unrelated.der"
+        ]
+    ));
+    let unrelated = std::fs::read(dir.join("unrelated.der")).unwrap();
+    assert!(!matches_key(
+        &x509_cert::Certificate::from_der(&unrelated).unwrap(),
+        &opened.key
+    ));
+    let hex = |bytes: &[u8]| crate::encoding::hex_lower(bytes);
+    let entry: crate::certfiles::Remembered = serde_json::from_value(serde_json::json!({
+        "path": "test.p12", "certificate": hex(&opened.certificate), "chain": [hex(&unrelated)],
+    }))
+    .unwrap();
+    assert!(entry.chain().is_empty());
+}
+
+#[test]
+fn two_private_key_bags_require_a_separate_export() {
+    use cms::content_info::ContentInfo;
+    use der::asn1::OctetString;
+    let dir = scratch("several");
+    let options = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256"];
+    if !self_signed(&dir, &options) {
+        println!("[SKIP] openssl cannot write a P-256 certificate here");
+        return;
+    }
+    let first = export(&dir, "one.p12", &["-nomac"]).unwrap();
+    let mut pfx = pkcs12::pfx::Pfx::from_der(&first).unwrap();
+    let contents = |pfx: &pkcs12::pfx::Pfx| {
+        let raw = pfx.auth_safe.content.decode_as::<OctetString>().unwrap();
+        Vec::<ContentInfo>::from_der(raw.as_bytes()).unwrap()
+    };
+    let mut safes = contents(&pfx);
+    assert!(self_signed(&dir, &options));
+    let second = export(&dir, "two.p12", &["-nomac"]).unwrap();
+    safes.extend(contents(&pkcs12::pfx::Pfx::from_der(&second).unwrap()));
+    let inner = OctetString::new(safes.to_der().unwrap()).unwrap();
+    pfx.auth_safe.content = der::Any::encode_from(&inner).unwrap();
+    assert_eq!(
+        open(&pfx.to_der().unwrap(), "geheim").err(),
+        Some(Refusal::MultipleKeys)
+    );
 }
 
 #[test]
@@ -339,16 +480,21 @@ fn an_added_file_is_listed_reopened_and_refused_once_replaced() {
 
 /// `file` with the certificate bags of its unencrypted contents reversed.
 fn root_first(file: &[u8]) -> Vec<u8> {
+    use cms::content_info::ContentInfo;
     use der::asn1::OctetString;
     use der::Any;
+    let data_of = |info: &ContentInfo| info.content.decode_as::<OctetString>();
+
     let mut pfx = pkcs12::pfx::Pfx::from_der(file).unwrap();
-    let mut safes = Vec::<ContentInfo>::from_der(&data_of(&pfx.auth_safe).unwrap()).unwrap();
+    let mut safes =
+        Vec::<ContentInfo>::from_der(data_of(&pfx.auth_safe).unwrap().as_bytes()).unwrap();
     let mut reversed = 0;
     for safe in &mut safes {
         if safe.content_type.to_string() != ID_DATA {
             continue;
         }
-        let mut bags = pkcs12::safe_bag::SafeContents::from_der(&data_of(safe).unwrap()).unwrap();
+        let mut bags =
+            pkcs12::safe_bag::SafeContents::from_der(data_of(safe).unwrap().as_bytes()).unwrap();
         if bags
             .iter()
             .filter(|b| b.bag_id == pkcs12::PKCS_12_CERT_BAG_OID)
@@ -360,7 +506,7 @@ fn root_first(file: &[u8]) -> Vec<u8> {
         // `pkcs12` decodes a bag value with its [0] tag on and encodes it as
         // if it had none (`bag_value` in `pkcs12.rs`), so take the tag off.
         for bag in &mut bags {
-            bag.bag_value = bag_value(bag).unwrap().to_vec();
+            bag.bag_value = AnyRef::from_der(&bag.bag_value).unwrap().value().to_vec();
         }
         bags.reverse();
         let inner = OctetString::new(bags.to_der().unwrap()).unwrap();

@@ -154,10 +154,8 @@ impl Registry {
     /// close a document had left it out.** An imported file is a document of the
     /// render service with a scan and a list of its own, and since 26.9.16 a
     /// reader follows a web link on one of its pages through *its* handle, so
-    /// its list is reachable rather than merely held. A list that outlived the
-    /// document that imported from it would sit under a handle the service is
-    /// free to hand to another file, which is the hazard
-    /// [`forget_all`](Self::forget_all) states. The signature is what makes
+    /// its list is reachable rather than merely held. A retained list would keep the imported document's old link
+    /// tokens valid after its handle was closed. The signature is what makes
     /// forgetting it impossible to write; `imports::Held` is the same shape for
     /// the handle itself.
     ///
@@ -413,8 +411,7 @@ mod tests {
     ///
     /// The case this exists for is a reader who inserts another file's pages,
     /// follows a link on one of them, and then saves: the imported file's
-    /// handle goes back to the render service, and a list left under it would
-    /// answer the next file's clicks with this one's addresses. Two of the
+    /// handle is closed, and a list left under it would still resolve stale tokens. Two of the
     /// three closing paths forgot exactly this until the second parameter made
     /// it unwritable.
     #[test]

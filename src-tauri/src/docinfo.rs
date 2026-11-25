@@ -2607,7 +2607,13 @@ fn gen_time_of(tst_info: &[u8]) -> Option<der::DateTime> {
     for _ in 0..4 {
         der::asn1::AnyRef::decode(&mut inner).ok()?;
     }
-    let time = der::asn1::AnyRef::decode(&mut inner).ok()?;
+    decode_gen_time(&mut inner)
+}
+
+/// Reads the same DER time in both an incoming signing response and a saved token.
+pub(crate) fn decode_gen_time(inner: &mut der::SliceReader<'_>) -> Option<der::DateTime> {
+    use der::{Decode, Tagged as _};
+    let time = der::asn1::AnyRef::decode(inner).ok()?;
     if time.tag() != der::Tag::GeneralizedTime {
         return None;
     }

@@ -407,6 +407,16 @@ describe("a radio button of the file", () => {
     expect(tip.made).toEqual([{ object: [30, 0], page: 5, patch: { props: { tooltip: "Which" }, field_pages: [0] } }]);
   });
 
+  it("keeps saved and newly placed radio export values distinct in either edit order", async () => {
+    const marks = [mark(50, "Pay", { kind: "radio", border: false, options: ["Choice 2"] })];
+    for (const [id, value] of [[SAVED_BASE + 1, "Choice 2"], [50, "Cash"]] as const) {
+      const run = deps({ form, marks, picked: [id], answer: now => ({ ...now, options: [value] }) });
+      await expect(changeProperties(run.deps)).resolves.toBe(false);
+      expect(run.said).toEqual([`The group already has a button with the value \`${value}\``]);
+      expect([...run.made, ...run.fitted]).toEqual([]);
+    }
+  });
+
   it("combines a radio value and tooltip when the widget is the terminal field", async () => {
     const radio = button(30, 0);
     const merged: Form = { widgets: [{ ...radio, value: [0], control: {

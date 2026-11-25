@@ -316,7 +316,7 @@ const CLOSED: &str = "this print preview has been closed";
 /// What the preview needs to lay out its pages before any is drawn.
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct Preview {
+pub struct PrintPreview {
     pub job: u32,
     /// Each sheet's size in points, after its rotation.
     pub pages: Vec<crate::render::PageSize>,
@@ -359,7 +359,7 @@ pub async fn print_prepare(
     doc: Option<u32>,
     pages: Option<Vec<u32>>,
     turns: u8,
-) -> Result<Preview, save::Refusal> {
+) -> Result<PrintPreview, save::Refusal> {
     let built = build_job(&app, &edits, &service, path, doc, pages, turns).await?;
     let library = crate::pdfium_library_dir(&app);
     let (built, session, geometry) =
@@ -370,7 +370,7 @@ pub async fn print_prepare(
     let mut shown = previews.lock().map_err(save::Refusal::from)?;
     shown.last = shown.last.wrapping_add(1).max(1);
     let job = shown.last;
-    let preview = Preview {
+    let preview = PrintPreview {
         job,
         pages: geometry.physical.clone(),
     };

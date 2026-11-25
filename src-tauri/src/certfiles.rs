@@ -21,7 +21,7 @@ pub struct Remembered {
     pub path: PathBuf,
     /// The signer's certificate, DER, as hex.
     certificate: String,
-    /// The file's other certificates, DER, as hex.
+    /// Cached issuer candidates, DER as hex. Older entries can include unrelated certificates.
     chain: Vec<String>,
 }
 
@@ -32,10 +32,19 @@ impl Remembered {
         unhex(&self.certificate)
     }
 
-    /// The file's other certificates, DER.
+    /// The issuing chain selected from the cached certificates, DER.
     #[must_use]
     pub fn chain(&self) -> Vec<Vec<u8>> {
-        self.chain.iter().map(|c| unhex(c)).collect()
+        use der::Decode as _;
+        let Ok(signer) = x509_cert::Certificate::from_der(&self.certificate()) else {
+            return Vec::new();
+        };
+        let parsed: Vec<_> = self
+            .chain
+            .iter()
+            .filter_map(|c| x509_cert::Certificate::from_der(&unhex(c)).ok())
+            .collect();
+        pkcs12::issuing_chain(&signer, &parsed).unwrap_or_default()
     }
 }
 
@@ -129,8 +138,9 @@ pub fn add(store: &Path, path: &Path, password: &str) -> Result<Remembered, Stri
     }
     let mut list = load(store)
         .map_err(|why| said!("{why} Nothing was added; move it aside to start a new list."))?;
-    let bytes =
-        std::fs::read(path).map_err(|e| said!("The certificate file could not be read: {e}."))?;
+    let bytes = std::fs::read(path)
+        .map(zeroize::Zeroizing::new)
+        .map_err(|e| said!("The certificate file could not be read: {e}."))?;
     let opened = pkcs12::open(&bytes, password).map_err(|why| why.sentence())?;
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let entry = Remembered {
@@ -157,12 +167,14 @@ pub fn add(store: &Path, path: &Path, password: &str) -> Result<Remembered, Stri
 ///
 /// The file gone, its [`Refusal`], or a different certificate.
 pub fn reopen(entry: &Remembered, password: &str) -> Result<pkcs12::Opened, String> {
-    let bytes = std::fs::read(&entry.path).map_err(|e| {
-        said!(
-            "The certificate file {path} could not be read: {e}.",
-            path = entry.path.display()
-        )
-    })?;
+    let bytes = std::fs::read(&entry.path)
+        .map(zeroize::Zeroizing::new)
+        .map_err(|e| {
+            said!(
+                "The certificate file {path} could not be read: {e}.",
+                path = entry.path.display()
+            )
+        })?;
     let opened = pkcs12::open(&bytes, password).map_err(|why: Refusal| why.sentence())?;
     if opened.certificate != entry.certificate() {
         return Err(said!(
