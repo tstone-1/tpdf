@@ -291,7 +291,8 @@ export function pickPartner(
   raw: string,
   names: readonly string[],
 ): { index: number } | { problem: string } {
-  const typed = raw.trim().toLowerCase();
+  const spelling = raw.trim();
+  const typed = spelling.toLowerCase();
   const lower = names.map((name) => name.toLowerCase());
   const text = TEXT();
   if (names.length === 0) return { problem: text.noOther };
@@ -300,6 +301,12 @@ export function pickPartner(
   }
   const exact = lower.indexOf(typed);
   if (exact >= 0 && lower.lastIndexOf(typed) === exact) return { index: exact };
+  // Two distinct labels can fold to the same name even on a case-insensitive
+  // filesystem, when the files are in different directories.
+  if (exact >= 0) {
+    const sameCase = names.indexOf(spelling);
+    if (sameCase >= 0 && names.lastIndexOf(spelling) === sameCase) return { index: sameCase };
+  }
   const matching = lower.flatMap((name, index) => (name.includes(typed) ? [index] : []));
   const only = matching[0];
   if (only === undefined) return { problem: text.noneMatch };

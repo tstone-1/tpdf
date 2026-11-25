@@ -121,6 +121,7 @@ export default {
   "could not load the page's text": "Der Text der Seite konnte nicht geladen werden",
 
   // textedit/actual.rs
+  "Deleting this text would lose its position when the document is reopened.": "Beim Löschen dieses Textes würde seine Position beim erneuten Öffnen des Dokuments verloren gehen.",
   "unsupported ActualText marked-content sequence": "Nicht unterstützte Folge von markiertem ActualText-Inhalt",
   "read-only ActualText requires validated glyph outlines":
     "Schreibgeschützter ActualText braucht geprüfte Glyphenumrisse",

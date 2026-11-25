@@ -20,8 +20,8 @@ const SETTLE_MS = 20_000;
 const WINDOW_MS = 8000;
 
 export async function screenCheck(host: OpenCheckHost, expected: string, report: Report): Promise<void> {
-  const [source] = expected.split("|");
-  if (!source) throw new Error("a document is required");
+  const [source, partner] = expected.split("|");
+  if (!source || !partner) throw new Error("two documents are required");
   await host.open(source);
   await host.idle();
   if (!(await settle(() => host.viewer()?.idle === true, SETTLE_MS))) throw new Error("the viewer did not settle");
@@ -108,13 +108,25 @@ export async function screenCheck(host: OpenCheckHost, expected: string, report:
   report.check("and the pages are no longer on black", !still, `presenting class on the root: ${still}`);
 
   report.emit("[screen] the window leaving full screen by itself");
+  await host.open(partner);
+  viewer().setZoomFixed(0.75);
+  await host.open(source);
+  viewer().setZoomFixed(1.5);
   host.run("view.presentation");
   if (!(await windowFull(true))) {
     report.check("tpdf follows the window out of full screen", false, "the presentation did not start");
     return;
   }
+  await host.open(partner);
+  report.check("a tab brought forward is presented", host.path() === partner && viewer().fitMode === "page"
+    && !viewer().spread.continuous, host.path());
   await win.setFullscreen(false);
   const followed = await settle(() => headerShown() && viewer().spread.continuous === before.spread.continuous, SETTLE_MS);
   report.check("tpdf follows the window out of full screen", followed,
     `header ${headerShown()}, continuous ${viewer().spread.continuous}`);
+  report.check("the tab in front regains its own zoom", viewer().fitMode === "none" && viewer().currentZoom === 0.75,
+    `fit ${viewer().fitMode}, zoom ${viewer().currentZoom}`);
+  await host.open(source);
+  report.check("the tab that began the presentation kept its own zoom", viewer().fitMode === "none"
+    && viewer().currentZoom === 1.5, `fit ${viewer().fitMode}, zoom ${viewer().currentZoom}`);
 }

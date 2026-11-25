@@ -2,9 +2,9 @@
  * The bytes a picture travels as, its turns, and the overlay's copy of each.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { PICTURE_PIXELS, PICTURE_SIDE, PictureCache, pastedPicture, pictureBody, readPicture, rotatePixels, visible, type PicturePixels } from "./picture";
+import { PICTURE_PIXELS, PICTURE_SIDE, PictureCache, pastedBytes, pastedPicture, pictureBody, readPicture, rotatePixels, visible, type PicturePixels } from "./picture";
 
 /** A reply as `picture_reply` in `commands/edit.rs` lays it out. */
 function reply(width: number, height: number, rgba: number[]): ArrayBuffer {
@@ -96,6 +96,15 @@ describe("pastedPicture", () => {
     expect(pastedPicture({ files: [file("text/plain"), file("image/jpeg", "a"), file("image/png", "b")] })?.name).toBe("a");
     expect(pastedPicture({ files: [file("image/png", "b")] })?.name).toBe("b");
   });
+});
+
+it("refuses an oversized clipboard file before reading it", async () => {
+  const limit = 50 * 1024 * 1024;
+  const arrayBuffer = vi.fn(async () => new Uint8Array([1, 2]).buffer);
+  await expect(pastedBytes({ size: limit + 1, arrayBuffer })).rejects.toThrow("50 MiB");
+  expect(arrayBuffer).not.toHaveBeenCalled();
+  await expect(pastedBytes({ size: limit, arrayBuffer })).resolves.toEqual(new Uint8Array([1, 2]));
+  expect(arrayBuffer).toHaveBeenCalledOnce();
 });
 
 describe("visible", () => {

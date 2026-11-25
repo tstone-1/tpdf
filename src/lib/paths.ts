@@ -31,8 +31,11 @@ export function basename(path: string): string {
   return path.split(pathSeparators(path)).at(-1) || path;
 }
 
-/** Windows drive and UNC paths may differ in case and separator spelling. */
+export function isWindowsPath(value: string): boolean {
+  return /^[a-z]:[\\/]|^\\\\/i.test(value);
+}
+
+/** Normalize Windows separators only. File identity decides aliases, including case differences. */
 export function pathKey(value: string): string {
-  return /^[a-z]:[\\/]|^\\\\/i.test(value)
-    ? value.replaceAll("\\", "/").toLowerCase() : value;
+  return isWindowsPath(value) ? value.replaceAll("\\", "/") : value;
 }

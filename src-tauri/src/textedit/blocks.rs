@@ -120,7 +120,7 @@ pub(super) fn geometric(
             operator: run.operator,
             baseline: run.matrix[5],
             left: run.matrix[4],
-            right: run.matrix[4] + run.advance * run.matrix[0],
+            right: run.matrix[4] + layout::drawn_advance(page, run) * run.matrix[0],
             size: run.size * run.matrix[3],
             font: (!run.text.trim().is_empty()).then_some(run.font.as_str()),
             text: &run.text,

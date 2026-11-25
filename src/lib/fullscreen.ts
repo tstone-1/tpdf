@@ -62,50 +62,58 @@ export class ScreenMode {
     return true;
   }
 
-  /** The viewer as it was before a presentation, to put back. */
-  private saved: Saved | null = null;
+  private readonly saved = new Map<ScreenViewer, Saved>();
+
+  /** The ordinary layout to keep with this tab, even when it is shown as a presentation. */
+  layoutOf(viewer: ScreenViewer): Saved {
+    return this.saved.get(viewer) ?? { spread: viewer.spread, fit: viewer.fitMode, zoom: viewer.currentZoom };
+  }
+
+  /** Apply presentation once to each mounted viewer, including tabs opened partway through. */
+  show(viewer: ScreenViewer): void {
+    if (this.mode !== "presenting" || this.saved.has(viewer)) return;
+    this.saved.set(viewer, this.layoutOf(viewer));
+    viewer.setSpread({ ...viewer.spread, continuous: false });
+    viewer.setFit("page");
+  }
+
+  /** The tab keeps its ordinary layout through layoutOf when the viewer is torn down. */
+  unmounted(viewer: ScreenViewer): void {
+    this.saved.delete(viewer);
+  }
 
   /** Fills the screen with the document, the layout as it is. */
   async full(window: ScreenWindow): Promise<void> {
     if (this.mode !== "window") return;
-    this.mode = "full";
     await window.setFullscreen(true);
+    this.mode = "full";
   }
 
   /**
    * Presents: full screen, one page (or pair) at a time, fitted to the page.
    * From full screen as well as from the window.
    */
-  async present(viewer: ScreenViewer, window: ScreenWindow): Promise<void> {
+  async present(window: ScreenWindow): Promise<void> {
     if (this.mode === "presenting") return;
-    const wasWindow = this.mode === "window";
-    this.saved = { spread: viewer.spread, fit: viewer.fitMode, zoom: viewer.currentZoom };
+    if (this.mode === "window") await window.setFullscreen(true);
     this.mode = "presenting";
-    viewer.setSpread({ ...viewer.spread, continuous: false });
-    viewer.setFit("page");
-    if (wasWindow) await window.setFullscreen(true);
   }
 
-  /** Back to the window, with the viewer as it was before a presentation. */
-  async leave(viewer: ScreenViewer | null, window: ScreenWindow): Promise<void> {
+  async leave(window: ScreenWindow): Promise<void> {
     if (this.mode === "window") return;
-    this.left(viewer);
     await window.setFullscreen(false);
+    this.left();
   }
 
-  /**
-   * The window has left full screen by a way of its own --- the green button on
-   * macOS, or the platform's key --- so this follows it.
-   */
-  left(viewer: ScreenViewer | null): void {
-    if (this.mode === "window") return;
-    const saved = this.saved;
-    this.saved = null;
+  /** Called on successful exit, including when the platform's own control was used. */
+  left(): void {
     this.mode = "window";
     this.blank = null;
-    if (!saved || !viewer) return;
-    viewer.setSpread(saved.spread);
-    if (saved.fit === "none") viewer.setZoomFixed(saved.zoom);
-    else viewer.setFit(saved.fit);
+    for (const [viewer, saved] of this.saved) {
+      viewer.setSpread(saved.spread);
+      if (saved.fit === "none") viewer.setZoomFixed(saved.zoom);
+      else viewer.setFit(saved.fit);
+    }
+    this.saved.clear();
   }
 }

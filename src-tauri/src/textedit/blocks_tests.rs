@@ -370,3 +370,46 @@ fn a_grouped_table_column_gap_keeps_rows_apart() {
     assert_eq!(grouped(&rows(-1200)).len(), 2);
     assert_eq!(grouped(&rows(-500)).len(), 1);
 }
+
+#[test]
+fn two_columns_keep_their_lines_when_the_gutter_is_a_trailing_cursor_move() {
+    use super::wrap_tests::{wrapped, FIRST, LAST, LONGER, NEXT, WIDEST};
+    let side = "BRANCH SECOND"; // 93.6 pt in the 12 pt synthetic font.
+    let columns = |trailing: bool| {
+        let mut body = String::new();
+        for (y, right) in [(200, FIRST), (186, WIDEST), (172, LAST)] {
+            let across = if trailing {
+                format!("[({side}) -1700] TJ")
+            } else {
+                format!("({side}) Tj 1 0 0 1 120 {y} Tm")
+            };
+            body.push_str(&format!("BT /F1 12 Tf 6 {y} Td {across} ({right}) Tj ET "));
+        }
+        for y in [158, 144] {
+            body.push_str(&format!("BT /F1 12 Tf 6 {y} Td ({side}) Tj ET "));
+        }
+        body.push_str(&format!("BT /F1 12 Tf 120 102 Td ({NEXT}) Tj ET"));
+        super::layout_tests::synthetic(&body)
+    };
+    let expected = strings(&[&[side; 5], &[FIRST, WIDEST, LAST], &[NEXT]]);
+    for trailing in [false, true] {
+        let doc = columns(trailing);
+        assert_eq!(grouped(&doc), expected);
+        let mut saved = wrapped(&doc, WIDEST, LONGER);
+        let mut bytes = Vec::new();
+        saved.save_to(&mut bytes).unwrap();
+        let runs = scan(&Document::load_mem(&bytes).unwrap(), 0).unwrap().runs;
+        let positions: Vec<_> = runs
+            .iter()
+            .filter(|r| r.text == side)
+            .map(|r| (r.matrix[4], r.matrix[5]))
+            .collect();
+        assert_eq!(
+            positions,
+            [(6., 200.), (6., 186.), (6., 172.), (6., 158.), (6., 144.)]
+        );
+        let last = runs.iter().find(|r| r.text == LAST).unwrap();
+        assert!((last.matrix[4] - 120.).abs() < 0.001);
+        assert!((last.matrix[5] - 158.).abs() < 0.001);
+    }
+}

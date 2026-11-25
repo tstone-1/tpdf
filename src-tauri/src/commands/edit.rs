@@ -449,6 +449,7 @@ pub async fn picture_decode(
     let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
         return Err(said!("a picture is sent as bytes"));
     };
+    check_picture_length(body.len())?;
     let bytes = body.clone();
     let outside = super::outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || decoded(&*outside, &bytes))
@@ -795,15 +796,19 @@ async fn region_png(service: &crate::render::RenderService, tile: &str) -> Resul
     }
 }
 
-/// A picture file's bytes decoded in a worker, refused unread past a picture
-/// file's 50 MiB: a file is read one byte past it to tell, a paste arrives whole.
-fn decoded(outside: &dyn save::Outside, bytes: &[u8]) -> Result<tauri::ipc::Response, String> {
-    if bytes.len() as u64 > crate::signature_import::PICTURE.bytes {
+fn check_picture_length(length: usize) -> Result<(), String> {
+    if length as u64 > crate::signature_import::PICTURE.bytes {
         return Err(said!(
             "the picture was not used: {why}",
             why = crate::signature_import::PICTURE.invalid
         ));
     }
+    Ok(())
+}
+
+/// A file read one byte past the limit, or a paste preflighted before cloning.
+fn decoded(outside: &dyn save::Outside, bytes: &[u8]) -> Result<tauri::ipc::Response, String> {
+    check_picture_length(bytes.len())?;
     let image = outside
         .picture(bytes)
         .map_err(|why| said!("the picture was not used: {why}", why = why.message))?;

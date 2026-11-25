@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { HiddenList } from "./hiddenlist";
-import { MAX_ROWS, NOT_CHECKED, UNSAVED, type HiddenText, type Passage } from "./hiddentext";
+import { MAX_ROWS, NOT_CHECKED, UNSAVED, showPassage, type HiddenText, type Passage } from "./hiddentext";
 import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 
 const LIMITS = "Not looked at: comments.";
@@ -102,6 +102,26 @@ describe("the tab for text the pages do not show", () => {
     // One row at a time is the current one.
     expect(row(1).getAttribute("aria-current")).toBeNull();
     expect(row(2).getAttribute("aria-current")).toBe("true");
+  });
+
+  it("clears the previous ring when the selected passage's page has been deleted", () => {
+    const found = [passage(1, "one"), passage(2, "two")];
+    let ring: number | null = null;
+    const list = new HiddenList(dom.root as unknown as HTMLElement, {
+      onPick: (item) => showPassage(item, (page) => page === 0 ? 0 : undefined, {
+        ring: (slot) => { ring = slot; },
+        clearRing: () => { ring = null; },
+        page: () => { throw new Error("unexpected off-page passage"); },
+        gone: () => picked.push(item),
+      }),
+    });
+    list.setChecked(checked(found, "2 passages."));
+    (list.rowAt(0) as unknown as FakeElement).dispatch("click", {});
+    expect(ring).toBe(0);
+    (list.rowAt(1) as unknown as FakeElement).dispatch("click", {});
+    expect(list.picked).toBe(1);
+    expect(picked).toEqual([found[1]]);
+    expect(ring).toBeNull();
   });
 
   it("draws no more rows than its cap", () => {

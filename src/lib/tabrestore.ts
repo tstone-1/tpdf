@@ -18,7 +18,7 @@
  */
 
 import type { Opening } from "./launchplace";
-import { pathKey } from "./paths";
+import { isWindowsPath, pathKey } from "./paths";
 import { catalog } from "./i18n";
 import { call } from "./ipc";
 import type { Session, Sides } from "./session";
@@ -306,6 +306,27 @@ export class TabRecorder {
       if (this.last === key) this.last = null;
       console.warn(`could not record the open tabs: ${String(why)}`);
     });
+  }
+
+  /** Forget a retained alias only once the filesystem identifies the newly opened file. */
+  async opened(path: string, resolve: (path: string, candidates: string[]) => Promise<string | null>): Promise<void> {
+    if (!this.unopened.length || !isWindowsPath(path)) return;
+    const key = pathKey(path);
+    const folded = key.toLowerCase();
+    // A retained file can be on an offline volume. Only probe a spelling that might
+    // be this path under ordinary Windows case folding.
+    const candidates = this.unopened.filter(other => {
+      const candidate = pathKey(other);
+      return candidate !== key && candidate.toLowerCase() === folded;
+    });
+    while (candidates.length) {
+      const alias = await resolve(path, candidates).catch(() => null);
+      const index = alias === null ? -1 : candidates.indexOf(alias);
+      if (index < 0) return;
+      candidates.splice(index, 1);
+      this.unopened = this.unopened.filter(other => other !== alias);
+      this.order = this.order.map(other => other === alias ? path : other);
+    }
   }
 
   /**

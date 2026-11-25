@@ -18,8 +18,8 @@
 import { catalog } from "./i18n";
 
 const TEXT = catalog({
-  "en-US": { damaged: "The picture came back damaged." },
-  "de-DE": { damaged: "Das Bild kam beschädigt zurück." },
+  "en-US": { damaged: "The picture came back damaged.", tooLarge: "A pasted picture can be at most 50 MiB." },
+  "de-DE": { damaged: "Das Bild kam beschädigt zurück.", tooLarge: "Ein eingefügtes Bild darf höchstens 50 MiB groß sein." },
 });
 
 /** Straight-alpha RGBA, four bytes a pixel, top row first. */
@@ -104,6 +104,13 @@ export function pastedPicture(data: { files: ArrayLike<File> } | null): File | n
     if (PASTED_TYPES.has(file.type)) return file;
   }
   return null;
+}
+
+/** Check the encoded file's size before allocating or sending its contents.
+ * The worker's file limit is signature_import::PICTURE.bytes. */
+export async function pastedBytes(file: Pick<Blob, "size" | "arrayBuffer">): Promise<Uint8Array<ArrayBuffer>> {
+  if (file.size > 50 * 1024 * 1024) throw new Error(TEXT().tooLarge);
+  return new Uint8Array(await file.arrayBuffer());
 }
 
 /** Whether any pixel can be seen: a picture with none would place nothing. */

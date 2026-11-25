@@ -39,6 +39,9 @@ export class SyncFollow<Id extends number, V extends Follower> {
    * that changes only when a document is mounted or torn down.
    */
   hold(first: { id: Id; viewer: V }, second: { id: Id; viewer: V }): void {
+    // The same fronts can be reconciled after a background tab closes. A
+    // shorter document parked at its end still owes the original offset.
+    if (this.#viewers.get(first.id) === first.viewer && this.#viewers.get(second.id) === second.viewer) return;
     const reading = (side: { id: Id; viewer: V }) =>
       ({ id: side.id, at: side.viewer.reading, zoom: side.viewer.currentZoom });
     this.lock.lock(reading(first), reading(second));

@@ -60,21 +60,34 @@ describe("document tabs", () => {
     expect(await tabs.matchingPath("/fixture/2.pdf", async () => null)).toBeUndefined();
   });
 
-  it("reuses Windows path spellings but distinguishes POSIX case", () => {
-    const tabs = new DocumentTabs<ReturnType<typeof tab>>();
-    tabs.keep(tab(1, "C:\\fixture\\Example.pdf"));
-    tabs.keep(tab(2, "/fixture/Example.pdf"));
-    expect(tabs.forPath("c:/fixture/example.pdf")?.doc.id).toBe(1);
-    expect(tabs.forPath("/fixture/example.pdf")).toBeUndefined();
-    expect(tabs.forPath("/fixture/Example.pdf")?.doc.id).toBe(2);
+  it("uses filesystem identity for alternate drive and share spellings", async () => {
+    for (const [original, spelling] of [
+      ["C:\\fixture\\Example.pdf", "c:/fixture/example.pdf"],
+      ["\\\\server\\share\\Example.pdf", "\\\\SERVER\\Share\\example.pdf"],
+    ] as const) {
+      const tabs = new DocumentTabs<ReturnType<typeof tab>>();
+      tabs.keep(tab(1, original));
+      expect(tabs.forPath(original.replaceAll("\\", "/"))?.view).toBe(1);
+      expect(tabs.forPath(spelling)).toBeUndefined();
+      expect((await tabs.matchingPath(spelling, async (path, candidates) => {
+        expect(path).toBe(spelling);
+        expect(candidates).toEqual([original]);
+        return original;
+      }))?.view).toBe(1);
+    }
   });
 
-  it("finds a document on a network share however the share is spelt", () => {
-    const tabs = new DocumentTabs<ReturnType<typeof tab>>();
-    tabs.keep(tab(1, "\\\\server\\share\\Example.pdf"));
-    expect(tabs.forPath("\\\\SERVER\\Share\\example.pdf")?.doc.id).toBe(1);
-    expect(tabs.forPath("\\\\server\\share/Example.pdf")?.doc.id).toBe(1);
-    expect(tabs.forPath("\\\\server\\other\\Example.pdf")).toBeUndefined();
+  it("opens distinct case-sensitive names and selects each file's own edit model", async () => {
+    for (const folder of ["C:/fixture/", "/fixture/"]) {
+      const tabs = new DocumentTabs<ReturnType<typeof tab>>();
+      const upper = tab(1, folder + "Report.pdf"), lower = tab(2, folder + "report.pdf");
+      tabs.keep(upper);
+      expect(await tabs.matchingPath(lower.path, async () => null)).toBeUndefined();
+      tabs.keep(lower);
+      expect(tabs.forPath(upper.path, lower.view)).toBe(upper);
+      expect(tabs.forPath(lower.path, upper.view)).toBe(lower);
+      expect(await tabs.matchingPath(folder + "linked.pdf", async () => lower.path)).toBe(lower);
+    }
   });
 
   it("names a document shown twice by the view asked for, else by the first", () => {

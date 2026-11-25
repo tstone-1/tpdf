@@ -340,6 +340,15 @@ describe("naming the other document", () => {
     });
   });
 
+  it("selects either case-distinct name when its exact label is typed", () => {
+    const choices = ["Report.pdf", "report.pdf"];
+    expect(pickPartner(" Report.pdf ", choices)).toEqual({ index: 0 });
+    expect(pickPartner("report.pdf", choices)).toEqual({ index: 1 });
+    expect(pickPartner("REPORT.pdf", choices)).toEqual({
+      problem: "2 open documents match. Type more of the name",
+    });
+  });
+
   it("does not choose between two documents with one name", () => {
     expect(pickPartner("a.pdf", ["a.pdf", "a.pdf"])).toEqual({
       problem: "2 open documents match. Type more of the name",

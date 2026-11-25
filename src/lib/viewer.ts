@@ -3835,8 +3835,9 @@ export class Viewer {
   }
 
   /**
-   * Where the top of the view is: a page, and the share of the distance to the
-   * next page's top that is already above it.
+   * Logical page progress at the top of the view. A paired row spans two pages
+   * of progress, with the second starting halfway down the row. A cover or an
+   * unpaired last page spans one.
    *
    * {@link position} answers in points down the page, which is what a place in
    * a file is remembered by. This is what a second viewer beside this one is
@@ -3848,7 +3849,11 @@ export class Viewer {
     const pitch = this.scroller.pagePitchOf(page);
     if (pitch <= 0) return { page, fraction: 0 };
     const down = (this.scrollTop - this.scroller.pageTopOf(page)) / pitch;
-    return { page, fraction: Math.min(1, Math.max(0, down)) };
+    const rowFraction = Math.min(1, Math.max(0, down));
+    if (this.scroller.spread.columns === 1) return { page, fraction: rowFraction };
+    const progress = rowFraction * this.scroller.rowOf(page).length;
+    const whole = Math.floor(progress);
+    return { page: page + whole, fraction: progress - whole };
   }
 
   /**
@@ -3867,8 +3872,13 @@ export class Viewer {
     if (this.life.ended) return;
     const at = Math.max(0, Math.floor(page));
     const pitch = this.scroller.pagePitchOf(at);
+    let through = Math.min(1, Math.max(0, fraction));
+    if (this.scroller.spread.columns === 2 && this.scroller.knowsPage(at)) {
+      const row = this.scroller.rowOf(at);
+      through = ((at === row[1] ? 1 : 0) + through) / row.length;
+    }
     const top = this.scroller.knowsPage(at)
-      ? this.scroller.pageTopOf(at) + Math.min(1, Math.max(0, fraction)) * pitch
+      ? this.scroller.pageTopOf(at) + through * pitch
       : this.scroller.maxScroll;
     const before = this.scrollTop;
     this.scrollTo(top);
@@ -3915,6 +3925,7 @@ export class Viewer {
     // Identify the row while both the viewport and its row slots still have
     // their old geometry. A larger midpoint can already lie on the next row.
     const row = this.scroller.spread.continuous ? null : this.currentPage();
+    const down = row === null ? 0 : (this.scrollTop - this.scroller.pageTopOf(row)) / this.zoom;
     // The one place the element is measured on purpose: this is the event that
     // says the answer has changed, and everything else reads what is left here.
     this.viewport = this.measureViewport();
@@ -3925,8 +3936,11 @@ export class Viewer {
     this.sizeOverlay();
     // A window drag delivers one of these per frame, so the fit it recomputes is
     // the same stream of zooms a pinch is --- see {@link setZoom}.
-    this.applyFit(true);
-    if (row !== null) this.goToPage(row);
+    this.applyFit(true, row ?? undefined);
+    if (row !== null) {
+      const top = this.scroller.pageTopOf(row);
+      this.scrollTo(Math.min(top + down * this.zoom, this.scroller.rowSpan(top).bottom));
+    }
     this.scrollTo(Math.min(this.scrollTop, this.scroller.maxScroll));
     this.wake();
   }
@@ -5613,15 +5627,28 @@ export class Viewer {
     this.signaturePreview = signatureCanvas(image);
   }
 
+  /** A newer import, paste or tool selection supersedes this pending placement. */
+  async requestPicture(load: () => Promise<PicturePixels | null>, currentView: () => boolean): Promise<void> {
+    const revision = ++this.toolRevision;
+    const current = () => !this.life.ended && this.toolRevision === revision && currentView();
+    try {
+      const pixels = await load();
+      if (pixels && current()) this.armPicture(pixels);
+    } catch (error) {
+      if (current()) this.opts.onError?.(String(error));
+    }
+  }
+
   /**
    * Prepare a picture for one placement drag, as a signature is prepared: the
    * drag says where and how wide, and the picture keeps its proportions.
    */
   armPicture(pixels: PicturePixels): void {
     if (!visible(pixels)) return;
+    const preview = pictureCanvas(pixels);
     this.armDraw("picture");
     this.tool = { kind: "draw", mark: "picture", stamp: null, picture: pixels };
-    this.signaturePreview = pictureCanvas(pixels);
+    this.signaturePreview = preview;
   }
 
   /**

@@ -246,20 +246,9 @@ def main() -> int:
             scan.write_bytes(scan_pdf(picture.read_bytes(), 200, 1))
             copies = [scan, copied]
         if args.phase == "pictures":
-            # Two renders of the fixture's first page at different sizes, and a
-            # directory for what the phase writes.
             copied = room / "copies"
             copied.mkdir()
-            tool = args.binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
-            pictures = []
-            for name, dpi in (("large.png", "72"), ("small.png", "36")):
-                made = subprocess.run([str(tool), "render", str(first), "-o", str(room / name), "--dpi", dpi],
-                                      capture_output=True, text=True, timeout=120, check=False)
-                if made.returncode != 0:
-                    print(f"[FAIL] {tool} could not render the fixture: {made.stderr.strip()}")
-                    return 1
-                pictures.append(room / name)
-            copies = [*pictures, copied]
+            copies = [*picture_inputs(room), copied]
         if args.phase in ("pictures", "recognise"):
             # Open first.pdf through a different directory spelling. A symlink
             # on Unix covers a real save-panel alias. Windows needs no link privilege.
@@ -602,11 +591,37 @@ def smaller_files(source: Path, directory: Path, binary: Path) -> bool:
     return all(good for _, good in checks)
 
 
+def picture_inputs(directory: Path) -> list[Path]:
+    """Two RGB PNGs with no density metadata, so one pixel occupies one PDF point.
+
+    Rendering the same page at two DPIs preserves its physical size in both PNGs.
+    Use different physical extents so the saved pages identify both inputs and their order.
+    """
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    paths = []
+    for name, width, height, colour in (
+        ("landscape.png", 96, 48, b"\xff\x00\x00"),
+        ("portrait.png", 48, 96, b"\x00\x00\xff"),
+    ):
+        header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+        rows = (b"\x00" + colour * width) * height
+        path = directory / name
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+                         + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+        paths.append(path)
+    return paths
+
+
 def picture_files(directory: Path, binary: Path) -> bool:
     """What the pictures phase left on disk, read by the tool from outside the app.
 
-    `album.pdf` has two pages of two sizes, the second half the first; the
-    refused document was never written.
+    The 96 by 48 point landscape page precedes the 48 by 96 point portrait.
+    The refused document was never written.
     """
     tool = binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
     album = directory / "album.pdf"
@@ -619,11 +634,11 @@ def picture_files(directory: Path, binary: Path) -> bool:
         except (ValueError, KeyError, IndexError):
             described = {}
         sizes = described.get("page_sizes", [])
-        widths = [size["width_pt"] for size in sizes]
+        extents = [(size["width_pt"], size["height_pt"]) for size in sizes]
         checks = [
             ("album.pdf has two pages", described.get("pages") == 2),
-            (f"the second page is half as wide as the first: {widths}",
-             len(widths) == 2 and widths[1] > 0 and abs(widths[0] - 2 * widths[1]) <= 1),
+            (f"the pages have their pictures' sizes in selection order: {extents}",
+             extents == [(96, 48), (48, 96)]),
         ]
     else:
         checks = [("album.pdf was written", False)]

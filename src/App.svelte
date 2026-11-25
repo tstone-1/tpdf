@@ -527,7 +527,7 @@
   import { duplicate, type DuplicateDeps } from "./lib/duplicate";
   import { MarkClipboard, notCopied, shapeOf } from "./lib/markclipboard";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
-  import { pastedPicture, readPicture, type PicturePixels } from "./lib/picture";
+  import { pastedBytes, pastedPicture, readPicture, type PicturePixels } from "./lib/picture";
   import { regionName, regionImageRequest, regionSaid } from "./lib/regionshot";
   import { pick as pickAttachmentIn, saved as attachmentSaved, type Embedded } from "./lib/attachments";
   import { fetchTilePng, tileSpec, type TileRequest } from "./lib/tiles";
@@ -1888,6 +1888,7 @@
     textEditorGeneration++;
     textEditor?.destroy();
     formLayer?.destroy();
+    if (viewer) screen.unmounted(viewer);
     viewer?.destroy();
     sidebar?.destroy();
     panes.unmounted(openView);
@@ -2423,19 +2424,16 @@
     if (!target || doc < 0 || documentBusy || opening || copyTaskBusy) return;
     const queued = __TPDF_CHECKS__ ? queuedPictures : null;
     queuedPictures = null;
-    try {
+    await target.requestPicture(async () => {
       const picked = queued?.[0] ?? await openDialog({
         multiple: false,
         directory: false,
         title: TEXT().choosePicture,
         filters: [{ name: TEXT().pictures, extensions: PICTURE_EXTENSIONS }],
       });
-      if (typeof picked !== "string") return;
-      const pixels = readPicture(await call("picture_open", { path: picked }));
-      if (stillIn(view, model, target)) target.armPicture(pixels);
-    } catch (e) {
-      say(String(e));
-    }
+      if (typeof picked !== "string") return null;
+      return readPicture(await call("picture_open", { path: picked }));
+    }, () => stillIn(view, model, target));
   }
 
   /**
@@ -2713,19 +2711,10 @@
     if (!into || openDoc < 0 || documentBusy || opening || copyTaskBusy) return;
     event.preventDefault();
     const file = pastedPicture(event.clipboardData);
-    if (!file) {
-      say(TEXT().noPictureToPaste);
-      return;
-    }
-    void (async () => {
-      try {
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        const pixels = readPicture(await call("picture_decode", bytes));
-        if (stillIn(view, model, into)) into.armPicture(pixels);
-      } catch (e) {
-        say(String(e));
-      }
-    })();
+    void into.requestPicture(async () => {
+      if (!file) throw TEXT().noPictureToPaste;
+      return readPicture(await call("picture_decode", await pastedBytes(file)));
+    }, () => stillIn(view, model, into));
   }
 
   async function drawn(
@@ -4278,7 +4267,10 @@
       });
     }
     await Promise.all(moves);
-    if (syncScroll) lockSides();
+    if (syncScroll) {
+      syncFollow.release();
+      lockSides();
+    }
   }
 
   /**
@@ -4292,9 +4284,9 @@
     const model = edits, shown = viewer;
     if (!model || !shown) return;
     showPassage(passage, (page) => model.map.slotOf(page), {
+      clearRing: () => shown.clearRegion(),
       ring: (slot, rect) => shown.showRegion(slot, rect),
-      // No ring left from the row before.
-      page: (slot) => { shown.clearRegion(); shown.goToDestination(slot, null); },
+      page: (slot) => shown.goToDestination(slot, null),
       gone: () => say(PAGE_GONE),
     });
   }
@@ -5069,20 +5061,24 @@
   /** The colour a presentation is blanked to, or none. See `ScreenMode.blank`. */
   let screenBlank = $state<"black" | "white" | null>(null);
 
-  // The viewer is taken at entry: what a change of screen puts back belongs to
-  // the document that was in front when it was asked for.
-  async function toggleFullScreen() {
-    const shown = viewer;
-    if (screen.mode === "window") await screen.full(getCurrentWindow());
-    else await screen.leave(shown, getCurrentWindow());
-    showScreen();
+  const screenChanges = new Serial();
+
+  function changeScreen(change: () => void | Promise<void>): void {
+    void screenChanges.run(async () => {
+      await change();
+      showScreen();
+    }).catch((error: unknown) => say(String(error)));
   }
 
-  async function togglePresentation() {
-    const shown = viewer;
-    if (screen.mode === "presenting") await screen.leave(shown, getCurrentWindow());
-    else if (shown) await screen.present(shown, getCurrentWindow());
-    showScreen();
+  function toggleFullScreen() {
+    changeScreen(() => screen.mode === "window" ? screen.full(getCurrentWindow()) : screen.leave(getCurrentWindow()));
+  }
+
+  function togglePresentation() {
+    changeScreen(() => {
+      if (screen.mode === "presenting") return screen.leave(getCurrentWindow());
+      if (viewer) return screen.present(getCurrentWindow());
+    });
   }
 
   /**
@@ -5094,8 +5090,12 @@
     screenBlank = screen.blank;
     const presenting = screen.mode === "presenting";
     document.documentElement.classList.toggle("presenting", presenting);
-    viewer?.setPresenting(presenting);
-    viewer?.rereadSurround();
+    for (const id of [openView, ...stage.parked]) asDocument(id, () => {
+      if (!viewer) return;
+      screen.show(viewer);
+      viewer.setPresenting(presenting);
+      viewer.rereadSurround();
+    });
   }
 
   /**
@@ -5105,7 +5105,7 @@
   function leaveScreenOnEscape(event: KeyboardEvent): boolean {
     if (event.key !== "Escape" || event.defaultPrevented || screen.mode === "window") return false;
     event.preventDefault();
-    void screen.leave(viewer, getCurrentWindow()).then(showScreen);
+    changeScreen(() => screen.leave(getCurrentWindow()));
     return true;
   }
 
@@ -5225,6 +5225,7 @@
   function currentPlace(inFile = true): Place | null {
     if (!viewer || !openPathName) return null;
     const where = viewer.position;
+    const layout = screen.layoutOf(viewer);
     return {
       path: openPathName,
       // The page of the *file*, not the slot. A place outlives the edits that
@@ -5247,11 +5248,11 @@
         ? (edits?.map.nearestSourceAt(where.page) ?? where.page)
         : where.page,
       top_pt: where.top,
-      zoom: viewer.currentZoom,
-      fit: viewer.fitMode,
+      zoom: layout.zoom,
+      fit: layout.fit,
       turns: viewer.rotation,
       sidebar: sidebarShown,
-      ...placeOfSpread(viewer.spread),
+      ...placeOfSpread(layout.spread),
       page_count: openPageCount,
     };
   }
@@ -5898,17 +5899,14 @@
       // says it is full screen. Taking one of those for a way out would undo
       // the change that caused it.
       await getCurrentWindow().onResized(async () => {
-        if (screen.mode === "window") {
-          windowWasFull = false;
-          return;
-        }
         if (await getCurrentWindow().isFullscreen()) {
           windowWasFull = true;
           return;
         }
         if (!windowWasFull) return;
         windowWasFull = false;
-        screen.left(viewer);
+        if (screen.mode === "window") return;
+        screen.left();
         showScreen();
       });
       await getCurrentWindow().onCloseRequested(async (event) => {
@@ -6262,8 +6260,12 @@
     refreshMenu();
   }
 
+  function matchingFile(path: string, candidates: string[], forOutput = false) {
+    return call("matching_open_path", { path, candidates, forOutput });
+  }
+
   function matchingTab(path: string, prefer?: ViewId, forOutput = false) {
-    return tabs.matchingPath(path, (name, candidates) => call("matching_open_path", { path: name, candidates, forOutput }), prefer);
+    return tabs.matchingPath(path, (name, candidates) => matchingFile(name, candidates, forOutput), prefer);
   }
 
   /**
@@ -6413,6 +6415,7 @@
           await call("close_document", { doc: doc.id }).catch(console.warn);
           throw new Error("document reports no pages");
         }
+        await tabRecorder.opened(path, matchingFile);
         tabs.add({ view: viewOf(doc.id), doc, path, edits: editsFor(doc), place: null, ...freshState() });
         panes.joined(viewOf(doc.id));
         refreshTabs();
@@ -6940,6 +6943,7 @@
     panel.thumbnails?.setPages(model.state.pages.length);
     if (resume) shown.restore({ ...resume, spread: spreadOfPlace(resume) });
     // A tab opened or brought forward while presenting is presented too.
+    screen.show(shown);
     shown.setPresenting(screen.mode === "presenting");
     // Only for a tab being returned to. A document opened for the first time
     // has no search to put back and opens on the tab the sidebar starts on.
@@ -7284,6 +7288,7 @@
       // is returned to keeps the name it has.
       const view = retained?.view ?? viewOf(doc.id);
       const pages = pageTable(doc);
+      await tabRecorder.opened(path, matchingFile);
 
       for (const twin of twins) {
         asDocument(twin.view, () => { if (!discard) commitPopups(); keepActiveTab(); unmountDocument(); });

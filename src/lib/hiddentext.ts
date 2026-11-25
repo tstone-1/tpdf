@@ -158,18 +158,21 @@ export function placeOf(
 /**
  * Goes to a passage: `ring` for one with a place on its page, `page` for one
  * outside the page, which has its page and nothing on it to ring, and `gone`
- * for one whose page the reader has since deleted. Exactly one is called.
+ * for one whose page the reader has since deleted. Both destinations without a
+ * rectangle clear the previous row's ring.
  */
 export function showPassage(
   passage: Passage,
   slotOf: (filePage: number) => number | undefined,
   on: {
+    clearRing(): void;
     ring(slot: number, rect: [number, number, number, number]): void;
     page(slot: number): void;
     gone(): void;
   },
 ): void {
   const place = placeOf(passage, slotOf);
+  if (!place?.rect) on.clearRing();
   if (!place) on.gone();
   else if (place.rect) on.ring(place.slot, place.rect);
   else on.page(place.slot);

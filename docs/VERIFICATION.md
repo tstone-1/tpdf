@@ -7356,3 +7356,17 @@ original, verified its removal and refused a copy with no control word.
 The render worker measured the same content bounds for a pending crop and
 for the saved crop after reopening. Clearing the pending crop restored the
 original bounds, including the drawing outside the crop.
+
+## Case-sensitive tabs and presentation, verified 2026-11-25
+
+On Windows NTFS, two spellings of a file in an ordinary directory returned one native file ID
+and one tab. In a directory with per-directory case sensitivity enabled, `Report.pdf` and
+`report.pdf` contained different data and returned separate IDs and tabs. A hard link to the
+lowercase file resolved to its own tab. These checks exercised the frontend matcher with the
+native identity comparison in both open and output modes.
+
+The native screen check enters presentation at 150%, brings forward a tab previously viewed at
+75%, then exits with the window's own fullscreen control. It reads back both zooms after exit
+and remount. The picture check builds two PNGs with distinct physical extents and verifies both
+pages' sizes and order in the saved PDF. Rendering one page at different resolutions preserves
+its physical size when the PNGs carry their density.

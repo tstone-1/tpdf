@@ -2279,6 +2279,24 @@ fn trailing_movement(items: &[Object], size: f64) -> f64 {
     movement * size / 1000.
 }
 
+/// The source advance up to the last glyph. A grouped run ends with the
+/// final member's show; the scanner has already applied a leading adjustment
+/// to the run's origin. An empty run paints nothing at that origin.
+pub(super) fn drawn_advance(page: &Inspection, run: &Run) -> f64 {
+    if run.text.is_empty() {
+        return 0.;
+    }
+    let last = page
+        .groups
+        .get(&run.operator)
+        .and_then(|members| members.last())
+        .unwrap_or(&run.operator);
+    match page.content.operations[*last as usize].operands.as_slice() {
+        [Object::Array(items)] => run.advance - trailing_movement(items, run.size),
+        _ => run.advance,
+    }
+}
+
 fn centred_one_line() -> String {
     said!("A centred line cannot be wrapped yet. Keep the text on one line.")
 }
@@ -2518,19 +2536,10 @@ fn validate<'a>(
     // text set again with its own kerns, and an unchanged centred line moved
     // back by half the difference.
     let (source_spacing, source_word_spacing) = page.text_spacing[&run.operator];
-    let last = page
-        .groups
-        .get(&run.operator)
-        .and_then(|members| members.last())
-        .unwrap_or(&run.operator);
-    let tail = match page.content.operations[*last as usize].operands.as_slice() {
-        [Object::Array(items)] => trailing_movement(items, run.size),
-        _ => 0.,
-    };
     let original_width = as_drawn(
         &original_metrics,
         &run.text,
-        run.advance - tail,
+        drawn_advance(page, run),
         (run.size, source_spacing, source_word_spacing),
         gap,
     );

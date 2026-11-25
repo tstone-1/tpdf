@@ -365,9 +365,15 @@ handle and model, which `openPath` then mounts again. The answers about the file
 comments, outline, form) are read by each view for itself.
 `scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase views` drives it.
 
+Tab selection and single-file output protection use native file identity for differently spelled paths.
+A Windows directory can be case-sensitive. Retained session paths preserve case until the filesystem confirms an alias.
+Presentation keeps the ordinary spread, fit and zoom for each mounted viewer. A tab parked or reopened during presentation records those ordinary settings with its reading position.
+
 Scrolling the two sides together is `src/lib/syncscroll.ts`: an offset between two places,
 each a page and the share of it above the top of the view, so it holds across two zooms and
-two page sizes. `keepInStep` in `App.svelte` runs in every frame of either document and
+two page sizes. A facing row shares its vertical progress between its two pages in reading order. A cover or an unpaired last page occupies a complete row. Closing a background tab keeps the offset of the two mounted viewers.
+
+`keepInStep` in `App.svelte` runs in every frame of either document and
 moves the other with `Viewer.followTo`, which draws before it returns; a follower woken for
 the next animation frame would trail by that frame for as long as the reader scrolled.
 Three rules keep the two from pulling at each other: a frame that moved nothing leads

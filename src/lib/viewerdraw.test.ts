@@ -20,6 +20,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as picture from "./picture";
 import { ICON_SIZE, INK_WIDTH, MIN_BOX } from "./markband";
 import { pageId, type MarkKind, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
@@ -77,8 +78,9 @@ function turnedPage(turns: number): PageView[] {
 }
 
 /** A one-page document, 600 by 800 points, optionally turned. */
-function build(pages?: PageView[]): Viewer {
+function build(pages?: PageView[], onError = (_message: string) => {}): Viewer {
   const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+    onError,
     doc: 1,
     pageCount: 1,
     pages: [{ width_pt: 600, height_pt: 800 }],
@@ -175,6 +177,45 @@ function corners(at = -1): [number, number, number, number] {
   const [left, top, right, bottom] = box.shape.quads;
   return [left ?? 0, top ?? 0, right ?? 0, bottom ?? 0];
 }
+
+describe("a pending picture placement", () => {
+  const pixels = { width: 1, height: 1, rgba: new Uint8Array([1, 2, 3, 255]) };
+
+  it("keeps a newer tool and drops errors from superseded requests", async () => {
+    const error = vi.fn();
+    const viewer = build(undefined, error);
+    const old = viewer.requestPicture(async () => pixels, () => true);
+    viewer.armDraw("square");
+    await old;
+    expect(viewer.drawArmed).toBe("square");
+    const failed = () => Promise.reject(new Error("could not read"));
+    const late = viewer.requestPicture(failed, () => true);
+    await viewer.requestPicture(async () => null, () => true);
+    await late;
+    await viewer.requestPicture(failed, () => false);
+    expect(error).not.toHaveBeenCalled();
+    await viewer.requestPicture(failed, () => true);
+    expect(error).toHaveBeenCalledExactlyOnceWith("Error: could not read");
+    viewer.destroy();
+  });
+
+  it("arms only the last picture requested and only in its original view", async () => {
+    const canvas = vi.spyOn(picture, "pictureCanvas").mockReturnValue(document.createElement("canvas"));
+    const viewer = build();
+    try {
+      const other = { ...pixels, rgba: new Uint8Array([4, 5, 6, 255]) };
+      const first = viewer.requestPicture(async () => pixels, () => true);
+      const second = viewer.requestPicture(async () => other, () => true);
+      await Promise.all([first, second]);
+      await viewer.requestPicture(async () => pixels, () => false);
+      expect(canvas).toHaveBeenCalledExactlyOnceWith(other);
+      expect(viewer.drawArmed).toBe("picture");
+    } finally {
+      canvas.mockRestore();
+      viewer.destroy();
+    }
+  });
+});
 
 describe("arming the tool", () => {
   it("does nothing to a document until a drag happens", async () => {

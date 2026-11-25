@@ -9,6 +9,7 @@ export function passwordKeys(
   });
   dialog.addEventListener("keydown", (event) => {
     event.stopPropagation();
+    if (event.isComposing) return;
     const first = fields[0]!;
     if (event.key === "Escape") {
       event.preventDefault();

@@ -195,6 +195,17 @@ pub(super) fn rewrite(page: &mut Inspection, operator: u32, replacement: &str) {
 
 pub(super) fn patch(page: &mut Inspection, operator: u32, replacement: &str) -> Result<(), String> {
     if let Some(&index) = page.actual_text.get(&operator) {
+        // On reopen an all-empty span belongs to its first show. A deletion
+        // of a later show would give the next edit another position or style.
+        if replacement.is_empty()
+            && page.content.operations[index + 1..operator as usize]
+                .iter()
+                .any(|op| matches!(op.operator.as_str(), "Tj" | "TJ"))
+        {
+            return Err(said!(
+                "Deleting this text would lose its position when the document is reopened."
+            ));
+        }
         let dict = page.content.operations[index].operands[1]
             .as_dict_mut()
             .map_err(|_| invalid())?;

@@ -30,6 +30,22 @@ export async function picturesCheck(host: OpenCheckHost, expected: string, repor
     await pause(100);
   };
 
+  // Each refusal must come from this command. Earlier attempts display the same text.
+  const dismissProblem = async () => {
+    document.querySelector<HTMLButtonElement>('[data-testid="problem-dismiss"]')?.click();
+    if (!await settle(() => shown() === "", SETTLE_MS)) throw new Error("the prior message was not dismissed");
+  };
+  const tryOpenDestination = async (path: string) => {
+    await dismissProblem();
+    const asked = host.saveSuggestions().length;
+    host.answerPictures([first]);
+    host.answerSave(path);
+    host.run("file.fromPictures");
+    await host.idle();
+    return await settle(() => shown().includes("Close the open destination"), WRITE_MS)
+      && host.saveSuggestions().length === asked + 1;
+  };
+
   // ---- 1. With nothing open: two pictures, two pages, and the document shown.
   report.check("the control: no document is open", host.path() === "", host.path());
   host.answerPictures([first, second]);
@@ -48,6 +64,7 @@ export async function picturesCheck(host: OpenCheckHost, expected: string, repor
 
   await host.open(alias);
   await host.open(at("album.pdf"));
+  await dismissProblem();
   const askedBeforeCopy = host.saveSuggestions().length;
   host.answerSave(target);
   host.run("file.saveCopy");
@@ -55,12 +72,8 @@ export async function picturesCheck(host: OpenCheckHost, expected: string, repor
   report.check("Save a copy refuses the same aliased background document",
     host.saveSuggestions().length === askedBeforeCopy + 1 && shown().includes("Close the open destination"), shown());
 
-  host.answerPictures([first]);
-  host.answerSave(target);
-  host.run("file.fromPictures");
-  await host.idle();
   report.check("an open PDF reached through a directory alias is protected in the background",
-    await settle(() => shown().includes("Close the open destination"), WRITE_MS)
+    await tryOpenDestination(target)
       && host.path() === at("album.pdf") && host.tabs().some((tab) => tab.path === alias), shown());
 
   // Try to replace this two-page album with a one-page file. The disk check
@@ -70,11 +83,7 @@ export async function picturesCheck(host: OpenCheckHost, expected: string, repor
       host.run("edit.rotatePageClockwise");
       if (!await settle(() => host.edits()?.state.dirty === true, SETTLE_MS)) throw new Error("rotation failed");
     }
-    host.answerPictures([first]);
-    host.answerSave(at("album.pdf"));
-    host.run("file.fromPictures");
-    await host.idle();
-    const refused = await settle(() => shown().includes("Close the open destination"), WRITE_MS);
+    const refused = await tryOpenDestination(at("album.pdf"));
     report.check(`an open album is preserved (dirty=${dirty})`, refused && host.edits()?.state.dirty === dirty
       && host.path() === at("album.pdf") && host.edits()?.state.pages.length === 2, shown());
   }

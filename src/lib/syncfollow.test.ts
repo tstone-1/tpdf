@@ -106,6 +106,26 @@ describe("SyncFollow", () => {
     expect(right.moves).toEqual([{ page: 6, fraction: 0 }]);
   });
 
+  it("preserves the offset when the same two viewers stay mounted at a clamped end", () => {
+    const { left, right, follow } = pair();
+    left.reading = { page: 50, fraction: 0 };
+    // The short viewer can go only to page 9.
+    right.followTo = (page, fraction) => { right.reading = { page: Math.min(page, 9), fraction }; };
+    follow.step(1, left, false);
+    expect(right.reading.page).toBe(9);
+    // Closing a background tab reconciles the two fronts without replacing either.
+    follow.hold({ id: 1, viewer: left }, { id: 2, viewer: right });
+    left.reading = { page: 3, fraction: 0 };
+    follow.step(1, left, false);
+    expect(right.reading.page).toBe(6);
+    // A newly mounted viewer under the same ID starts a new alignment.
+    const replacement = new Fake(1);
+    follow.hold({ id: 1, viewer: left }, { id: 2, viewer: replacement });
+    left.reading = { page: 4, fraction: 0 };
+    follow.step(1, left, false);
+    expect(replacement.reading.page).toBe(2);
+  });
+
   it("moves nothing once released, or for a document it does not hold", () => {
     const { left, right, follow } = pair();
     left.reading = { page: 9, fraction: 0 };

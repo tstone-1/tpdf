@@ -229,6 +229,9 @@ Other bounded inline or outer `/Span` ActualText sequences are validated without
 blocking unrelated runs. A single visible fragment whose logical text agrees can
 be edited; the writer patches both its show and ActualText, including deletion and
 single-line layout previews. Empty cursor-restoration shows stay read-only.
+If an empty show precedes the word inside the same span, a nonempty edit keeps
+the word at its own position. Deletion is refused because, when all shows are
+empty, reopening gives the first show ownership of the next edit.
 Different logical text or multiple visible fragments remain read-only with embedded
 glyph bounds used for collision checks. Nested spans, extra semantic properties,
 malformed encodings and multiline ActualText layout edits remain refused.
@@ -809,6 +812,10 @@ it carries and each operator's work are in `textedit/inspect.rs`: `Graphics` (wh
 `Q` restores), `TextObject` (what `BT` resets), `Marked` (marked-content sequences), `Checked`
 (the page's validated resources) and `Found` (the result being built). A new construct usually
 adds one arm to the dispatch and one method there.
+
+On an untagged page the paragraph detector measures a column through the last
+glyph of a run. A trailing cursor move in a `TJ` array can position the next
+show across a gutter. That space belongs to neither column.
 
 ## LibreOffice 26.2 tables
 

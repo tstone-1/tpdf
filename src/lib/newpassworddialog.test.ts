@@ -48,6 +48,20 @@ function open(): {
 }
 
 describe("NewPasswordDialog", () => {
+  it("keeps composition confirmation and cancellation inside the password field", async () => {
+    const { dialog, backdrop, first, second } = open();
+    const answer = dialog.ask("report.pdf");
+    first.value = second.value = "composed";
+    for (const key of ["Enter", "Escape"]) {
+      let prevented = false;
+      backdrop.dispatch("keydown", { key, target: first, isComposing: true, preventDefault: () => { prevented = true; } });
+      expect(prevented).toBe(false);
+      expect(dialog.isOpen).toBe(true);
+    }
+    backdrop.dispatch("keydown", { key: "Enter", target: first });
+    await expect(answer).resolves.toBe("composed");
+  });
+
   it("keeps Find inside the modal and lets Cancel handle Enter", async () => {
     const { dialog, backdrop, cancel } = open();
     const answer = dialog.ask("report.pdf");

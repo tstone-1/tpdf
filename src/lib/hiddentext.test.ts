@@ -186,6 +186,7 @@ describe("going to a passage", () => {
   const went = (which: Passage) => {
     const log: unknown[] = [];
     showPassage(which, shifted, {
+      clearRing: () => log.push(["clear"]),
       ring: (slot, rect) => log.push(["ring", slot, rect]),
       page: (slot) => log.push(["page", slot]),
       gone: () => log.push(["gone"]),
@@ -198,11 +199,11 @@ describe("going to a passage", () => {
   });
 
   it("shows the page alone for words outside it", () => {
-    expect(went(passage({ offPage: true, rect: [-400, 500, -300, 512] }))).toEqual([["page", 1]]);
+    expect(went(passage({ offPage: true, rect: [-400, 500, -300, 512] }))).toEqual([["clear"], ["page", 1]]);
   });
 
   it("says so, and goes nowhere, once the page has been deleted", () => {
-    expect(went(passage({ page: 1 }))).toEqual([["gone"]]);
+    expect(went(passage({ page: 1 }))).toEqual([["clear"], ["gone"]]);
   });
 });
 
@@ -313,7 +314,8 @@ describe("the window's wiring", () => {
   it("takes a pressed row through showPassage, and hands chooseTab the viewer's clearRegion", () => {
     expect(missingFrom(functionIn(app, "function showHidden(passage: Passage): void {"), [
       "showPassage(passage, (page) => model.map.slotOf(page), {",
-      "page: (slot) => { shown.clearRegion(); shown.goToDestination(slot, null); },",
+      "clearRing: () => shown.clearRegion(),",
+      "page: (slot) => shown.goToDestination(slot, null),",
       "gone: () => say(PAGE_GONE),",
     ])).toEqual([]);
     expect(missingFrom(app, [

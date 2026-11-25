@@ -8,7 +8,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { installFakeDom, type FakeDom } from "./testdom";
+import { SyncFollow } from "./syncfollow";
+import { ScrollLock } from "./syncscroll";
+import { FakeElement, installFakeDom, type FakeDom } from "./testdom";
 import { Viewer } from "./viewer";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -39,9 +41,9 @@ const PAGES = 6;
 const SIZE = { width_pt: 600, height_pt: 800 };
 
 /** Six 600x800 pt pages, and every position the viewer reported. */
-function build(zoom = 1) {
+function build(zoom = 1, root = dom.root) {
   const reported: number[] = [];
-  const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+  const viewer = new Viewer(root as unknown as HTMLElement, {
     doc: 1,
     pageCount: PAGES,
     pages: [SIZE, ...Array.from({ length: PAGES - 1 }, () => SIZE)],
@@ -71,6 +73,37 @@ describe("a viewer moved by another", () => {
     viewer.followTo(3, 0.5);
     expect(viewer.reading.page).toBe(3);
     expect(viewer.reading.fraction).toBeCloseTo(0.5, 6);
+  });
+
+  it.each([
+    { coverAlone: false, first: 2 },
+    { coverAlone: true, first: 1 },
+  ])("scrolls forward and back through a paired row with coverAlone=$coverAlone", ({ coverAlone, first }) => {
+    const single = build().viewer;
+    const root = new FakeElement("div");
+    root.clientWidth = dom.root.clientWidth;
+    root.clientHeight = dom.root.clientHeight;
+    const paired = build(1, root).viewer;
+    paired.setSpread({ columns: 2, coverAlone, continuous: true, rightToLeft: false });
+    paired.goToPage(first + 2);
+    const nextRow = paired.offset;
+    paired.goToPage(first);
+    const rowTop = paired.offset;
+    const pitch = nextRow - rowTop;
+    expect(pitch).toBeGreaterThan(0);
+    single.goToPage(first);
+    const follow = new SyncFollow<number, Viewer>(new ScrollLock());
+    follow.hold({ id: 1, viewer: single }, { id: 2, viewer: paired });
+    single.followTo(first, 0.9);
+    follow.step(1, single, false);
+    expect(paired.offset).toBeCloseTo(rowTop + 0.45 * pitch);
+    single.goToPage(first + 1);
+    follow.step(1, single, false);
+    expect(paired.offset).toBeCloseTo(rowTop + 0.5 * pitch);
+    // The paired viewer now leads backwards by a quarter of its physical row.
+    root.dispatch("wheel", { deltaX: 0, deltaY: -pitch / 4, deltaMode: 0, preventDefault() {} });
+    follow.step(2, paired, false);
+    expect(single.reading).toEqual({ page: first, fraction: 0.5 });
   });
 
   it("arrives at the same share of the page at another zoom", () => {

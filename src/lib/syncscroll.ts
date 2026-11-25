@@ -12,7 +12,7 @@
  * document to {@link ScrollLock.moved} and carries out what it answers.
  */
 
-/** The top of a view: a page, counted from 0, and the share of that page above it. */
+/** Logical page progress at the top edge. A paired row counts for two pages. */
 export interface Reading {
   page: number;
   fraction: number;

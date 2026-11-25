@@ -275,6 +275,22 @@ describe("One page at a time in the viewer", () => {
     expect(viewer.position).toEqual({ page: 2, top: 0 });
   });
 
+  it("keeps the point on a tall page when a sidebar narrows the window", () => {
+    const viewer = build();
+    viewer.setZoomFixed(3);
+    viewer.setSpread(ONE_AT_A_TIME);
+    viewer.goToPage(4);
+    wheel(300, 1000);
+    expect(viewer.position).toEqual({ page: 4, top: 100 });
+    dom.root.clientWidth -= 200;
+    (viewer as unknown as { onResize(): void }).onResize();
+    expect(viewer.position).toEqual({ page: 4, top: 100 });
+    // Once the page fits vertically, the same point must clamp to the row's top.
+    dom.root.clientHeight = 1400;
+    (viewer as unknown as { onResize(): void }).onResize();
+    expect(viewer.position).toEqual({ page: 4, top: 0 });
+  });
+
   it("keeps the reader's page when the window changes height", () => {
     // At zoom 1 the pages are shorter than the window, so each slot is the
     // window's height and a resize moves every page after the first.

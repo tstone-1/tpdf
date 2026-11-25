@@ -8,6 +8,12 @@ fn fixture(body: &str) -> Document {
     doc
 }
 
+fn reopen(mut doc: Document) -> Document {
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    Document::load_mem(&bytes).unwrap()
+}
+
 #[test]
 fn actual_text_single_line_layout_survives_reopen_and_a_second_edit() {
     for replacement in ["IN", ""] {
@@ -33,6 +39,7 @@ fn actual_text_single_line_layout_survives_reopen_and_a_second_edit() {
             }],
         )
         .unwrap();
+        doc = reopen(doc);
         let after = inspect(&doc, 0).unwrap();
         assert_eq!(after.runs.runs.len(), 2);
         assert_eq!(after.runs.runs[0].text, replacement);
@@ -69,8 +76,56 @@ fn actual_text_single_line_layout_survives_reopen_and_a_second_edit() {
             }],
         )
         .unwrap();
-        assert_eq!(scan(&doc, 0).unwrap().runs[0].text, second);
+        let final_page = inspect(&reopen(doc), 0).unwrap();
+        let run = &final_page.runs.runs[0];
+        assert_eq!(run.text, second);
+        assert_eq!(run.matrix, before.runs[0].matrix);
+        let at = final_page.actual_text[&run.operator];
+        let properties = final_page.content.operations[at].operands[1]
+            .as_dict()
+            .unwrap();
+        assert_eq!(
+            super::logical(properties.get(b"ActualText").unwrap()).unwrap(),
+            second
+        );
     }
+}
+
+#[test]
+fn an_actual_text_caption_after_an_empty_show_keeps_its_edit_position() {
+    let mut doc = fixture("BT /F1 12 Tf /Span << /ActualText (FIRST) >> BDC 40 200 Td () Tj 1 0 0 1 100 120 Tm (FIRST) Tj EMC ET");
+    for (original, replacement) in [("FIRST", "IN"), ("IN", "I")] {
+        let page = scan(&doc, 0).unwrap();
+        assert_eq!(page.runs.len(), 1);
+        let run = &page.runs[0];
+        assert_eq!(run.text, original);
+        assert_eq!(run.matrix[4..], [100., 120.]);
+        let mut change = Change {
+            page: 0,
+            revision: page.revision,
+            operator: run.operator,
+            original: original.into(),
+            replacement: String::new(),
+            layout: Some(Layout::opened(run, EditFont::Original)),
+        };
+        let old = doc.objects.clone();
+        assert!(write(&mut doc, &[change.clone()])
+            .unwrap_err()
+            .contains("lose its position"));
+        assert_eq!(doc.objects, old);
+        change.replacement = replacement.into();
+        write(&mut doc, &[change]).unwrap();
+        doc = reopen(doc);
+    }
+    let page = inspect(&doc, 0).unwrap();
+    let run = &page.runs.runs[0];
+    assert_eq!(run.text, "I");
+    assert_eq!(run.matrix[4..], [100., 120.]);
+    let props = &page.content.operations[page.actual_text[&run.operator]].operands[1];
+    assert_eq!(
+        super::logical(props.as_dict().unwrap().get(b"ActualText").unwrap()).unwrap(),
+        "I"
+    );
 }
 
 #[test]

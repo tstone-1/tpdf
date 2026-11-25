@@ -372,17 +372,31 @@ describe("tabs from last time that a launch could not open", () => {
   it("forgets a reopened Windows path across spellings and distinguishes POSIX case", async () => {
     for (const [retained, reopened, remains] of [
       ["D:\\Docs\\A.pdf", "d:/docs/a.pdf", false],
+      ["D:/Docs/A.pdf", "D:/Docs/a.pdf", true],
       ["/Docs/A.pdf", "/docs/a.pdf", true],
     ] as const) {
       const sent: string[][] = [];
       const tabs = new TabRecorder(async (paths) => { sent.push(paths); });
       tabs.keepUnopened([retained], [retained, "/b.pdf"]);
+      await tabs.opened(reopened, async (path, candidates) => {
+        expect(path).toBe(reopened);
+        expect(candidates).toContain(retained);
+        return remains ? null : retained;
+      });
       tabs.note([reopened, "/b.pdf"], reopened);
       tabs.note(["/b.pdf"], "/b.pdf");
       await tabs.settled();
       expect(sent[0]).toEqual(remains ? [retained, reopened, "/b.pdf"] : [reopened, "/b.pdf"]);
       expect(sent.at(-1)).toEqual(remains ? [retained, "/b.pdf"] : ["/b.pdf"]);
     }
+  });
+
+  it("does not query unrelated retained files on an offline volume when a tab opens", async () => {
+    const tabs = new TabRecorder(async () => {});
+    tabs.keepUnopened(["\\\\offline\\share\\retained.pdf"], []);
+    let probes = 0;
+    await tabs.opened("C:/docs/report.pdf", async () => { probes++; return null; });
+    expect(probes).toBe(0);
   });
 
   it("goes back after the tab before it, or first when none is open", () => {

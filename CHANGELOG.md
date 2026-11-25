@@ -19,6 +19,12 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Editing a caption refuses a deletion that would move the next edit to a different position. Text wrapping keeps columns separate when a label ends with a cursor movement across the gutter.
+- Windows tabs distinguish case-sensitive file names and still reuse filesystem aliases. Comparison and side-by-side commands accept the exact case of each displayed name.
+- Linked scrolling advances through facing pages in order and keeps its alignment when a background tab closes. Resizing a pane preserves the reading position on tall pages.
+- Presentation restores each tab's own layout and zoom after switching documents. A refused fullscreen request preserves the previous mode.
+- Selecting a new tool cancels pending picture placement. Clipboard pictures over 50 MiB are refused before reading. Selecting hidden text on a deleted page clears the previous highlight, and password dialogs allow input-method composition to finish.
+
 - Comparing long, repetitive passages beside a blank or scanned page keeps the result incomplete when their reading order cannot be established. The CLI returns exit 1.
 - Find in Selection includes spaces inside the selection when it starts partway through a run of whitespace.
 - Text edits keep the original font when the replacement can be spelled with overlapping ligatures.
