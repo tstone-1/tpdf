@@ -109,6 +109,24 @@ fn load(store: &Path) -> Result<Vec<Remembered>, String> {
 /// read or is damaged, which is left exactly as it is; or the list not being
 /// written.
 pub fn add(store: &Path, path: &Path, password: &str) -> Result<Remembered, String> {
+    let save_error =
+        |e: std::io::Error| said!("The list of certificate files could not be saved: {e}.");
+    if let Some(dir) = store.parent() {
+        std::fs::create_dir_all(dir).map_err(save_error)?;
+    }
+    // Keep the lock on a stable sibling: rename replaces the list's inode.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(store.with_extension("json.lock"))
+        .map_err(save_error)?;
+    // SAFETY: lock owns this valid descriptor until the replacement is published.
+    // Closing the descriptor also releases the lock if the importer exits early.
+    if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), libc::LOCK_EX) } != 0 {
+        return Err(save_error(std::io::Error::last_os_error()));
+    }
     let mut list = load(store)
         .map_err(|why| said!("{why} Nothing was added; move it aside to start a new list."))?;
     let bytes =
@@ -123,10 +141,6 @@ pub fn add(store: &Path, path: &Path, password: &str) -> Result<Remembered, Stri
     drop(opened);
     list.retain(|other| other.path != path);
     list.push(entry.clone());
-    if let Some(dir) = store.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| said!("The list of certificate files could not be saved: {e}."))?;
-    }
     let text = serde_json::to_vec_pretty(&list).map_err(|e| e.to_string())?;
     let part = store.with_extension("json.part");
     std::fs::write(&part, text)

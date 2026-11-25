@@ -95,8 +95,16 @@ export class FakeElement {
     return child;
   }
 
-  append(...children: FakeElement[]): void {
-    for (const child of children) this.appendChild(child);
+  append(...children: (FakeElement | string)[]): void {
+    for (const child of children) {
+      if (typeof child === "string") {
+        const node = new FakeElement("");
+        node.textContent = child;
+        this.appendChild(node);
+      } else {
+        this.appendChild(child);
+      }
+    }
   }
 
   insertBefore(child: FakeElement, before: FakeElement | null): FakeElement {

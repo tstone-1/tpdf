@@ -74,6 +74,7 @@ function signed(): Signature {
     when: "2026-05-25 08:05:07 UTC",
     covers_whole_file: true,
     starts_at_zero: true,
+    range_valid: true,
     covered_bytes: 1024,
     appended_bytes: 0,
     appendix: null,
@@ -171,6 +172,15 @@ describe("coverageOf", () => {
     expect(coverageOf(signed(), 1024)).toEqual({
       name: "Covers",
       value: "the whole file, except the signature container it cannot cover",
+    });
+  });
+
+  it("reports structural coverage independently of cryptographic support", () => {
+    const signature: Signature = { ...signed(), covers_whole_file: false, appended_bytes: 10,
+      integrity: { verdict: "unchecked", why: "format", method: "", digest: "" } };
+    expect(coverageOf(signature, 1034).value).toContain("everything up to the signature");
+    expect(coverageOf({ ...signature, range_valid: false }, 1034)).toMatchObject({
+      value: "the stated byte range could not be verified", warn: true,
     });
   });
 
@@ -969,7 +979,11 @@ describe("the signing certificate", () => {
     const sig = signed();
     sig.certificate = cert;
 
-    const row = certificateRows(sig).find((r) => r.name === "Extensions");
+    const rows = certificateRows(sig);
+    expect(rows.find((r) => r.name === "Key is for")).toMatchObject({
+      value: expect.stringContaining("could not determine key usage"), warn: true,
+    });
+    const row = rows.find((r) => r.name === "Extensions");
     expect(row?.value).toContain("2");
     expect(row?.warn).toBe(true);
   });

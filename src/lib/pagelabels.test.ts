@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { positionsFor, printedLabel, printedRuns, runsOf, withPrinted } from "./pagelabels";
+import { positionForLabel, positionsFor, printedLabel, printedRuns, runsOf, withPrinted } from "./pagelabels";
 
 /** The labels `outline-labels.pdf` states: roman front matter, a body, an appendix. */
 const LABELS = ["i", "ii", "1", "2", "3", "4", "App-A", "App-B"];
 
 /** Slot to label on an unedited document. */
 const unedited = (labels: readonly string[]) => (slot: number) => printedLabel(labels, slot, slot + 1);
+
+it("shows a shortened label without treating its prefix as an exact match", () => {
+  const prefix = "a".repeat(32);
+  const labels = [prefix, "short"];
+  const clipped = new Set([0]);
+  const exact = (slot: number) => printedLabel(labels, slot, slot + 1, clipped);
+  expect(printedLabel(labels, 0, 1)).toBe(prefix);
+  expect(positionForLabel(prefix, 2, exact)).toBeNull();
+  expect(positionForLabel(prefix + "x", 2, exact)).toBeNull();
+  expect(positionForLabel("short", 2, exact)).toContain("type 2");
+});
 
 describe("printedLabel", () => {
   it("names a page whose printed number is not its position", () => {

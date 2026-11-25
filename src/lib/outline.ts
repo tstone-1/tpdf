@@ -108,6 +108,7 @@ export interface Outline {
    * where one is shown.
    */
   page_labels: string[];
+  clipped_labels: number[];
 }
 
 /** One drawable row. */

@@ -344,6 +344,9 @@ pub struct Outline {
     /// reply written before the field existed still parses.
     #[serde(default)]
     pub page_labels: Vec<String>,
+    /// Zero-based pages whose display label is only a prefix of the printed label.
+    #[serde(default)]
+    pub clipped_labels: Vec<u32>,
 }
 
 /// Every page's label, or nothing when the document states none.
@@ -352,10 +355,15 @@ pub struct Outline {
 /// page of a document with no `/PageLabels` --- so an all-empty list is
 /// returned as no list at all, and the frontend has one case for "this
 /// document does not number its pages".
-fn page_labels(bindings: Bindings, document: FPDF_DOCUMENT, page_count: u32) -> Vec<String> {
+fn page_labels(
+    bindings: Bindings,
+    document: FPDF_DOCUMENT,
+    page_count: u32,
+) -> (Vec<String>, Vec<u32>) {
+    let mut clipped = Vec::new();
     let mut labels = Vec::with_capacity(page_count as usize);
-    for index in 0..page_count {
-        let Ok(index) = c_int::try_from(index) else {
+    for page in 0..page_count {
+        let Ok(index) = c_int::try_from(page) else {
             break;
         };
         // SAFETY: the documented two-call form --- a null buffer asks for the
@@ -379,13 +387,16 @@ fn page_labels(bindings: Bindings, document: FPDF_DOCUMENT, page_count: u32) -> 
             )
         } as usize;
         buffer.truncate(written.min(needed));
-        labels.push(sanitize_title(&decode_title(&buffer), MAX_LABEL_CHARS).0);
+        let (label, shortened) = sanitize_title(&decode_title(&buffer), MAX_LABEL_CHARS);
+        if shortened {
+            clipped.push(page);
+        }
+        labels.push(label);
     }
     if labels.iter().all(String::is_empty) {
-        Vec::new()
-    } else {
-        labels
+        labels.clear();
     }
+    (labels, clipped)
 }
 
 /// State threaded through the walk. Separate from [`Outline`] because the
@@ -435,7 +446,7 @@ pub fn read(document: &OpenDocument) -> Outline {
             crate::links::correct_outline_destinations(graph, &mut items, walk.page_count as usize);
         }
     }
-    let page_labels = page_labels(walk.bindings, walk.document, walk.page_count);
+    let (page_labels, clipped_labels) = page_labels(walk.bindings, walk.document, walk.page_count);
 
     Outline {
         items,
@@ -444,6 +455,7 @@ pub fn read(document: &OpenDocument) -> Outline {
         walk_ms: started.elapsed().as_secs_f64() * 1000.0,
         urls: walk.urls,
         page_labels,
+        clipped_labels,
     }
 }
 

@@ -30,16 +30,40 @@ use crate::fingerprint::Fingerprint;
 /// The file cannot be read, or its bytes are not the ones `opened_as`
 /// recorded --- the document changed on disk since it was opened.
 pub fn read_to_sign(source: &Path, opened_as: &Fingerprint) -> Result<Vec<u8>, Refusal> {
-    let bytes = std::fs::read(source)
-        .map_err(|e| Refusal::from(said!("could not read {path}: {e}", path = source.display())))?;
-    let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    if bytes.len() as u64 != opened_as.len || digest != opened_as.digest {
+    crate::sign_cms::refuse_too_large(opened_as.len)?;
+    read_opened(source, opened_as)
+}
+
+/// Reads at most one byte beyond the fingerprinted length to detect growth.
+pub(crate) fn read_opened(source: &Path, opened_as: &Fingerprint) -> Result<Vec<u8>, Refusal> {
+    let unread = |e: std::io::Error| {
+        Refusal::from(said!("could not read {path}: {e}", path = source.display()))
+    };
+    let file = std::fs::File::open(source).map_err(unread)?;
+    let bytes = read_bounded(file, opened_as.len).map_err(unread)?;
+    if bytes.len() as u64 != opened_as.len
+        || <[u8; 32]>::from(Sha256::digest(&bytes)) != opened_as.digest
+    {
         return Err(Refusal::changed(said!(
             "the file on disk is not the one that was opened, so it was not signed --- \
              reopen it to sign what is there now"
         )));
     }
     Ok(bytes)
+}
+
+fn read_bounded(file: impl std::io::Read, len: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    file.take(len.saturating_add(1)).read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+#[test]
+fn a_growing_source_is_read_only_one_byte_past_its_opening_length() {
+    let mut file = std::io::Cursor::new([7; 4096]);
+    assert_eq!(read_bounded(&mut file, 10).unwrap().len(), 11);
+    assert_eq!(file.position(), 11);
 }
 
 /// Writes a signed document to `out`, atomically, and never over `source`.

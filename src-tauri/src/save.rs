@@ -4978,6 +4978,7 @@ pub fn pdf_date(at: std::time::SystemTime) -> String {
 mod marks;
 
 mod signed;
+pub(crate) use signed::read_opened;
 pub use signed::{read_to_sign, write_signed};
 
 /// The marks half of a save: see [`marks`] for what is in it and why.

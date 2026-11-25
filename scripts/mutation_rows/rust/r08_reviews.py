@@ -1646,7 +1646,7 @@ ROWS += [
     Mutation(
         "dss: call a survey complete whatever the walk said",
         "src/sign_dss.rs",
-        "        complete: values.complete,",
+        "        complete: values.complete && found.limits.signatures_dropped == 0,",
         "        complete: true,",
         "a_value_that_cannot_be_read_makes_the_survey_incomplete",
     ),

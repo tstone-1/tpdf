@@ -68,14 +68,14 @@ describe("which attachment an answer names", () => {
   it("takes a number from 1, and refuses one past the list", () => {
     expect(pick("2", files)).toEqual({ index: 1 });
     expect(pick(" 3 ", files)).toEqual({ index: 2 });
-    expect(pick("0", files)).toEqual({ problem: "There is no attachment 0; there are 3" });
-    expect(pick("4", files)).toEqual({ problem: "There is no attachment 4; there are 3" });
+    expect(pick("0", files)).toEqual({ problem: "Choose one of the listed attachments (1 to 3). 0 is outside that list." });
+    expect(pick("4", files)).toEqual({ problem: "Choose one of the listed attachments (1 to 3). 4 is outside that list." });
   });
 
   it("takes part of exactly one name, ignoring case", () => {
     expect(pick("XML", files)).toEqual({ index: 1 });
-    expect(pick("orders", files)).toEqual({ problem: '2 attachments have "orders" in their names; type a number' });
-    expect(pick("pdf", files)).toEqual({ problem: 'No attachment\'s name has "pdf" in it' });
+    expect(pick("orders", files)).toEqual({ problem: '2 listed attachments have "orders" in their names; type a number' });
+    expect(pick("pdf", files)).toEqual({ problem: 'No listed attachment has "pdf" in its name' });
     expect(pick("", files)).toEqual({ problem: "Which attachment: 1 to 3, or part of its name" });
   });
 

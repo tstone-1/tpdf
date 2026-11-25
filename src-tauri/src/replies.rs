@@ -254,6 +254,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 covers_whole_file: false,
                 starts_at_zero: true,
                 covered_bytes: 100_000,
+                range_valid: true,
                 appended_bytes: 23_456,
                 appendix: Some(docinfo::Appendix {
                     added: 4,
@@ -734,7 +735,8 @@ fn samples() -> BTreeMap<&'static str, String> {
             urls: vec!["https://example.org/further".into()],
             // Non-empty, so the key is in the bytes the mirror is held to; one
             // entry empty, which is a page the document gives no label.
-            page_labels: vec!["i".into(), "".into(), "1".into()],
+            page_labels: vec!["i".into(), "".into(), "x".repeat(32)],
+            clipped_labels: vec![2],
         },
     );
 

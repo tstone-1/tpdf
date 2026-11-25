@@ -59,7 +59,7 @@ pub struct GraphicFound {
     /// Top-level page objects inside the region.
     pub objects: u32,
     /// `jpg` or `png`: the region holds one picture and nothing else, and this
-    /// is the form it is stored in. `None` for anything else.
+    /// is the available export format (stored JPEG bytes or a generated PNG). `None` for anything else.
     pub original: Option<String>,
     /// Why no SVG can be made, or `None` when one can.
     pub no_svg: Option<String>,

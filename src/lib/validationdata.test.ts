@@ -18,7 +18,7 @@ import {
 
 /** A document's properties with these signature fields, signed or empty. */
 function properties(...signed: boolean[]): Properties {
-  return { signatures: signed.map((is) => ({ signed: is })) } as unknown as Properties;
+  return { limits: { locked: false, signatures_dropped: 0, unreadable: 0 }, signatures: signed.map((is) => ({ signed: is })) } as unknown as Properties;
 }
 
 const SAID =
@@ -98,6 +98,14 @@ describe("adding long-term validation data", () => {
       expect(await addValidationData(s)).toBe(NOTHING_SIGNED);
       expect(asked).toEqual(["settle", "dirty", "properties"]);
     }
+  });
+
+  it("reports an incomplete survey before asking for an authority", async () => {
+    const partial = properties(false);
+    partial.limits.signatures_dropped = 1;
+    const { s, asked } = shell({ properties: async () => partial });
+    expect(await addValidationData(s)).toContain("Some signature fields could not be read");
+    expect(asked).not.toContain("authority");
   });
 
   it("is cancelled by the dialog and by the save panel, and adds nothing", async () => {

@@ -1775,7 +1775,7 @@ ROWS += [
         "certificate: collapse an unstated key usage onto an empty one",
         "src/lib/properties.ts",
         """      usage === null
-        ? said.keyNotStated
+        ? (usageUnclear ? said.keyUnknown : said.keyNotStated)
         : usage.length > 0
           ? usage.join(", ")
           : said.keyNothing,""",
@@ -1790,8 +1790,8 @@ ROWS += [
         # was never written.
         "certificate: omit the key usage row when nothing is stated",
         "src/lib/properties.ts",
-        "  const usage = certificate.key_usage;\n  rows.push({",
-        "  const usage = certificate.key_usage;\n  if (usage !== null) rows.push({",
+        "  const usageUnclear = usage === null && certificate.extensions_unread > 0;\n  rows.push({",
+        "  const usageUnclear = usage === null && certificate.extensions_unread > 0;\n  if (usage !== null) rows.push({",
         "tells a certificate that states no use apart from one that states none",
     ),
     Mutation(

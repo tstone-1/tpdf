@@ -553,7 +553,15 @@ fn verify_one(env: &Env<'_>, path: &Path, fetch_roots: bool) -> (report::File, A
         Ok(opened) => opened,
         Err(why) => return failed(ErrorKind::Unreadable, why),
     };
-    let properties = match env.worker().properties(&file, len) {
+    let worker = env.worker();
+    let snapshot = fetch_roots
+        .then(|| snapshot_for_roots(&file, len))
+        .flatten();
+    let offline = match &snapshot {
+        Some(bytes) => worker.properties_snapshot(bytes),
+        None => worker.properties(&file, len),
+    };
+    let properties = match offline {
         Ok(properties) => properties,
         Err(Declined::Refused(why)) => {
             return failed(ErrorKind::Refused, format!("{shown}: {why}"));
@@ -566,14 +574,10 @@ fn verify_one(env: &Env<'_>, path: &Path, fetch_roots: bool) -> (report::File, A
     if properties.limits.locked {
         return failed(ErrorKind::Locked, locked_sentence(&shown));
     }
-    let properties = if fetch_roots && roots_may_be_missing(&properties.signatures) {
-        match read_again_after_fetching(env, &file, len) {
-            Some(read) => read,
-            None => properties,
-        }
-    } else {
-        properties
-    };
+    let properties = snapshot
+        .filter(|_| roots_may_be_missing(&properties.signatures))
+        .and_then(|bytes| worker.refresh_signature_properties(&bytes).ok())
+        .unwrap_or(properties);
     let after = after_last_signature(&properties.signatures);
     (file_report(shown, &properties), after)
 }
@@ -620,15 +624,8 @@ fn roots_may_be_missing(signatures: &[docinfo::Signature]) -> bool {
     })
 }
 
-/// `--fetch-roots`: lets Windows fetch the roots, and reads the document in a new
-/// worker. `None` when either step failed, which leaves the offline answer
-/// standing, and that answer is the stricter one.
-fn read_again_after_fetching(
-    env: &Env<'_>,
-    file: &std::fs::File,
-    len: usize,
-) -> Option<docinfo::Properties> {
-    use crate::save::Verifier as _;
+/// The bounded input shared by the offline and refreshed checks under `--fetch-roots`.
+fn snapshot_for_roots(file: &std::fs::File, len: usize) -> Option<Vec<u8>> {
     use std::io::{Read as _, Seek as _};
     // The survey reads the whole document into this process, so it has the
     // bound every other whole-document read here has (`sign`'s), checked
@@ -645,13 +642,26 @@ fn read_again_after_fetching(
     if bytes.len() as u64 > bound {
         return None;
     }
-    let worker = env.worker();
-    let survey = worker.survey(&bytes).ok()?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
-    let _asked = crate::longterm::fetch_roots(&survey, now);
-    worker.properties(file, len).ok()
+    Some(bytes)
+}
+
+#[test]
+fn a_root_lookup_snapshot_keeps_the_original_bytes_across_an_in_place_rewrite() {
+    let dir = crate::testutil::TempDir::new("root-snapshot");
+    let path = dir.join("source.pdf");
+    std::fs::write(&path, b"first").unwrap();
+    let opened = crate::fingerprint::Fingerprint::of(&path).unwrap();
+    let file = std::fs::File::open(&path).unwrap();
+    let desktop = crate::save::read_opened(&path, &opened).unwrap();
+    let cli = snapshot_for_roots(&file, 5).unwrap();
+    std::fs::write(&path, b"other").unwrap();
+    assert_eq!(desktop, b"first");
+    assert_eq!(cli, b"first");
+    assert!(
+        crate::save::read_opened(&path, &opened)
+            .unwrap_err()
+            .changed
+    );
 }
 
 /// Why a document's signatures were not read: it needs a password.

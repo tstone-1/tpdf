@@ -84,16 +84,34 @@ fn add_file(file: &std::path::Path, env: &Env<'_>, out: &mut dyn Write) -> Resul
         .ok_or_else(|| refused("Nothing was added.".to_string()))?;
     let entry = crate::certfiles::add(&store, file, password.expose_secret()).map_err(refused)?;
     let certificate = entry.certificate();
-    let subject = sign_cms::usable(&certificate, env.now)
-        .map_or_else(|_| sign_cms::named(&certificate), |offer| offer.subject);
-    say(
-        out,
-        &format!(
-            "Added {subject}. Sign with it as --identity {}",
-            crate::keystore::id_of(&certificate)
-        ),
-    );
+    say(out, &import_message(&certificate, env.now));
     Ok(Exit::Ok)
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn import_message(certificate: &[u8], now: u64) -> String {
+    match sign_cms::usable(certificate, now) {
+        Ok(offer) => format!(
+            "Added {}. Sign with it as --identity {}",
+            offer.subject,
+            crate::keystore::id_of(certificate)
+        ),
+        Err(why) => format!(
+            "Added {}. It cannot sign: {why}",
+            sign_cms::named(certificate)
+        ),
+    }
+}
+
+#[test]
+fn an_imported_identity_only_offers_signing_when_usable() {
+    use crate::sign_cms::testkeys::{certificate, Soft, Spec, NOW};
+    let spec = Spec::new("Test Signer");
+    let cert = certificate(&Soft::p256(42), &spec);
+    assert!(import_message(&cert, NOW).contains("--identity"));
+    let expired = import_message(&cert, spec.not_after + 1);
+    assert!(expired.contains("cannot sign"));
+    assert!(!expired.contains("--identity"));
 }
 
 /// `identities --add` off Linux, where certificate files go into the system's

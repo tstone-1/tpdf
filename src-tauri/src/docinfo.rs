@@ -343,6 +343,9 @@ pub struct Signature {
     pub starts_at_zero: bool,
     /// How many bytes the signature covers, and how many there are.
     pub covered_bytes: u64,
+    /// The byte ranges and the excluded signature container passed structural validation.
+    #[serde(default)]
+    pub range_valid: bool,
     /// How many bytes sit **after** the last byte `/ByteRange` covers.
     ///
     /// This is the number a reader wants and `covered_bytes` cannot give them.
@@ -529,7 +532,7 @@ pub struct Limits {
     /// ciphertext. Everything reported alongside this flag is either from the
     /// trailer, which is plaintext by necessity, or from the raw bytes.
     pub locked: bool,
-    /// `/Info` entries dropped at [`MAX_FIELDS`].
+    /// `/Info` entries omitted because their value was unreadable or the count reached [`MAX_FIELDS`].
     pub fields_dropped: usize,
     /// Values shortened at [`MAX_VALUE_CHARS`].
     pub values_clipped: usize,
@@ -818,7 +821,16 @@ fn scan_judged(
         fields,
         encryption,
         signatures,
-        tagged: catalog.map(|c| c.has(b"StructTreeRoot")),
+        tagged: catalog.and_then(|c| {
+            if !c.has(b"StructTreeRoot") {
+                return Some(false);
+            }
+            match c.get_deref(b"StructTreeRoot", document) {
+                Ok(Object::Dictionary(_)) => Some(true),
+                Ok(Object::Null) => Some(false),
+                _ => None,
+            }
+        }),
         language,
         attachments,
         embedded,
@@ -1127,7 +1139,7 @@ fn read_fields(document: &Document, limits: &mut Limits) -> Vec<Field> {
             // than skipped silently: an `/Info` entry that is an array is a
             // malformed document, and saying nothing looks like an absent key.
             _ => {
-                limits.unreadable += 1;
+                limits.fields_dropped += 1;
                 return;
             }
         };
@@ -1692,7 +1704,8 @@ fn read_signature(
         .ok()
         .and_then(|o| resolve(document, o).as_str().ok());
     let pieces = contents.and_then(|raw| crate::integrity::covered(bytes, &strict, raw));
-    out.covers_whole_file = pieces.is_some() && out.appended_bytes == 0;
+    out.range_valid = pieces.is_some();
+    out.covers_whole_file = out.range_valid && out.appended_bytes == 0;
     let blob = signature_contents(document, sig, MAX_SIG_BLOB, &mut limits.timestamps_unread);
 
     let integrity = crate::integrity::check_pieces(pieces, blob.as_deref(), &out.kind, budget);
@@ -4617,6 +4630,21 @@ mod tests {
     fn a_tagged_document_says_so_and_an_untagged_one_says_that() {
         let untagged = read(&document(Dictionary::new()));
         assert_eq!(untagged.tagged, Some(false));
+        assert_eq!(
+            read(&document(dictionary! { "StructTreeRoot" => Object::Null })).tagged,
+            Some(false)
+        );
+        assert_eq!(
+            read(&document(dictionary! { "StructTreeRoot" => 17 })).tagged,
+            None
+        );
+
+        let mut indirect = Document::load_mem(&document(Dictionary::new())).unwrap();
+        let root = indirect.add_object(Object::Null);
+        indirect.catalog_mut().unwrap().set("StructTreeRoot", root);
+        let mut bytes = Vec::new();
+        indirect.save_to(&mut bytes).unwrap();
+        assert_eq!(read(&bytes).tagged, Some(false));
 
         let tagged = read(&document(dictionary! {
             "StructTreeRoot" => dictionary! { "Type" => "StructTreeRoot" },
@@ -4647,6 +4675,19 @@ mod tests {
     }
 
     // ----------------------------------------------------------------- fields
+
+    #[test]
+    fn malformed_metadata_does_not_make_a_complete_signature_walk_incomplete() {
+        let mut doc = Document::load_mem(&document(Dictionary::new())).unwrap();
+        let info = doc.add_object(dictionary! { "Title" => Object::Array(Vec::new()) });
+        doc.trailer.set("Info", info);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let properties = read(&bytes);
+        assert_eq!(properties.limits.fields_dropped, 1);
+        assert_eq!(properties.limits.unreadable, 0);
+        assert_eq!(properties.limits.signatures_dropped, 0);
+    }
 
     /// The standard keys come out in the specification's order, custom after.
     #[test]
@@ -5390,6 +5431,7 @@ mod tests {
             // Where the range begins, which the panel words; not a judgement.
             starts_at_zero: _,
             covered_bytes: _,
+            range_valid: _,
             // A count of bytes, not a judgement about them. What was appended
             // decides whether an append matters, and reading that is not done
             // here --- see `coverageOf`, which says when and not what.

@@ -133,6 +133,7 @@ const TEXT = catalog({
     runs: (from: string, until: string): string => `${from} to ${until}`,
     serial: "Serial",
     keyIsFor: "Key is for",
+    keyUnknown: "could not determine key usage because a certificate extension was unreadable",
     keyNotStated: "not stated — the certificate places no limit on what the key is used for",
     keyNothing: "nothing — the certificate names no use for its own key",
     issuedFor: "Issued for",
@@ -308,6 +309,7 @@ const TEXT = catalog({
     runs: (from: string, until: string): string => `${from} bis ${until}`,
     serial: "Seriennummer",
     keyIsFor: "Schlüssel ist für",
+    keyUnknown: "Die Schlüsselverwendung ließ sich wegen einer unlesbaren Zertifikatserweiterung nicht bestimmen",
     keyNotStated: "nicht angegeben — das Zertifikat schränkt nicht ein, wofür der Schlüssel verwendet wird",
     keyNothing: "nichts — das Zertifikat nennt keine Verwendung für seinen eigenen Schlüssel",
     issuedFor: "Ausgestellt für",
@@ -534,6 +536,7 @@ export interface Signature {
   /** Whether the signed range begins at the file's first byte. */
   starts_at_zero: boolean;
   covered_bytes: number;
+  range_valid: boolean;
   appended_bytes: number;
   appendix: Appendix | null;
   certification: number;
@@ -782,7 +785,7 @@ export function coverageOf(signature: Signature, bytes: number): Row {
       warn: true,
     };
   }
-  if (signature.integrity?.why === "range") return { name: said.covers, value: said.invalidRange, warn: true };
+  if (!signature.range_valid || signature.integrity?.why === "range") return { name: said.covers, value: said.invalidRange, warn: true };
   if (signature.covers_whole_file) {
     // Not "the whole file", which was the old wording and is false of every
     // signature: the container is excluded and always will be. Saying so once,
@@ -911,15 +914,16 @@ export function certificateRows(signature: Signature): Row[] {
   // constraint mean anything. The trust row is where that chain is reported;
   // this row stays the issuer's word, as NOT_CHECKED says.
   const usage = certificate.key_usage;
+  const usageUnclear = usage === null && certificate.extensions_unread > 0;
   rows.push({
     name: said.keyIsFor,
     value:
       usage === null
-        ? said.keyNotStated
+        ? (usageUnclear ? said.keyUnknown : said.keyNotStated)
         : usage.length > 0
           ? usage.join(", ")
           : said.keyNothing,
-    warn: usage !== null && usage.length === 0,
+    warn: usageUnclear || usage?.length === 0,
   });
 
   const purposes = certificate.extended_usage;
@@ -1261,13 +1265,11 @@ export function briefly(signature: Signature, rows: Row[]): Brief[] {
  * timestamp may only be waiting for one. Not for an encrypted document, whose
  * signatures a worker started without its password cannot read again.
  */
-export function rootsMayBeFetched(properties: Properties): boolean {
-  return (
-    !properties.encryption &&
-    properties.signatures.some(
-      (signature) => rootMayBeMissing(signature.trust) || rootMayBeMissing(signature.timestamp?.trust ?? null),
-    )
-  );
+export function missingRootCount(properties: Properties): number {
+  if (properties.encryption) return 0;
+  return properties.signatures.reduce((count, signature) => count
+    + Number(rootMayBeMissing(signature.trust))
+    + Number(rootMayBeMissing(signature.timestamp?.trust ?? null)), 0);
 }
 
 /**

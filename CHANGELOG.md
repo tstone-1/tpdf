@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Refreshing Windows certificate trust uses the same document bytes throughout. Signature properties distinguish unreadable key usage and invalid byte ranges, and report how many certificate chains still lack a trusted root.
+- Incomplete signature and attachment lists now explain their limits. Attachment export results stay with the originating pane. Properties keeps keyboard focus while open, and shortened page labels no longer produce exact-match hints.
+- Concurrent Linux certificate imports preserve both entries, and the command line explains when an imported certificate cannot sign.
+
 - Signature verification follows the cross-signed authorities on the trusted path. Archive timestamps receive credit for sealing validation data only when the timestamped revision contains it. Embedded timestamps can use issuer certificates stored in the PDF.
 - Adding fields preserves an author's tab order. Explicit sorting follows the final page rotation and includes fields with indirect rectangles and mixed heights. On-page signing buttons now follow the same eligibility rules as the command palette.
 - Windows Explorer integration checks the active PDF handler and preserves other programs' registry settings on removal. Its confirmation and results follow the interface language.

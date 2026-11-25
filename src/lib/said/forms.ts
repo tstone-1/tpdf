@@ -357,6 +357,7 @@ export default {
   "invalid attachment predictor dimensions": "Ungültige Abmessungen für den Prädiktor des Anhangs",
   "invalid attachment predictor rows": "Ungültige Zeilen für den Prädiktor des Anhangs",
   "incomplete or invalid LZW attachment": "Unvollständige oder ungültige LZW-Daten im Anhang",
+  "Attachment {number} is outside the incomplete attachment list.": "Anhang {number} liegt außerhalb der unvollständigen Anhangsliste.",
   "The document has no attachment {number} (it has {count}).":
     "Das Dokument hat keinen Anhang {number} (es hat {count}).",
   "{name} holds no file to save.": "{name} enthält keine Datei zum Speichern.",

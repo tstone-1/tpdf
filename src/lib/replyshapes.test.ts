@@ -314,6 +314,7 @@ const SCHEMA = {
     limits: ["object"],
     walk_ms: ["number"],
     page_labels: ["array"],
+    clipped_labels: ["array"],
   } satisfies Shape<Outline>,
   PageMapping: {
     composite: ["number"],

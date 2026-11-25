@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import sample from "../../src-tauri/testdata/replies/Properties.json";
 import { rootMayBeMissing } from "./integrity";
-import type { Properties } from "./properties";
+import { missingRootCount, type Properties } from "./properties";
 import { PropertiesDialog } from "./propertiesdialog";
-import { installFakeDom, settle, type FakeDom, type FakeElement } from "./testdom";
+import { installFakeDom, settle, type FakeDom, FakeElement } from "./testdom";
 
 type Trust = NonNullable<Properties["signatures"][number]["trust"]>;
 
@@ -15,9 +15,11 @@ let dom: FakeDom;
 
 beforeEach(() => {
   dom = installFakeDom();
+  vi.stubGlobal("HTMLElement", FakeElement);
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   dom.restore();
 });
 
@@ -62,6 +64,36 @@ describe("rootMayBeMissing", () => {
   });
 });
 
+describe("Properties keyboard focus", () => {
+  it("wraps focus in both directions, consumes document shortcuts and restores focus on Escape", () => {
+    const shown = dialog(async () => withTrust(missing));
+    const previous = dom.root;
+    let active: FakeElement = previous;
+    Object.defineProperty(document, "activeElement", { get: () => active, configurable: true });
+    shown.show(withTrust(missing), "");
+    const backdrop = previous.children[0]!;
+    const panel = backdrop.children[0]!;
+    const first = offer()!;
+    const last = new FakeElement("summary");
+    Object.assign(panel, { querySelectorAll: () => [first, last] });
+    const press = (key: string, shiftKey = false) => {
+      const stopPropagation = vi.fn();
+      backdrop.dispatch("keydown", { key, shiftKey, stopPropagation, preventDefault: vi.fn() });
+      expect(stopPropagation).toHaveBeenCalled();
+    };
+    active = last;
+    press("Tab");
+    expect(first.focused).toBe(true);
+    active = first;
+    press("Tab", true);
+    expect(last.focused).toBe(true);
+    press("r");
+    press("Escape");
+    expect(previous.focused).toBe(true);
+    expect(shown.isOpen).toBe(false);
+  });
+});
+
 describe("the offer to ask Windows for a root", () => {
   it("asks nobody until it is pressed", () => {
     const ask = vi.fn(() => Promise.resolve(withTrust(trusted)));
@@ -103,22 +135,29 @@ describe("the offer to ask Windows for a root", () => {
     let reject!: (reason: string) => void;
     const pending = new Promise<Properties>((yes, no) => { resolve = yes; reject = no; });
     const shown = dialog(() => pending);
-    vi.stubGlobal("HTMLElement", dom.root.constructor);
-    try {
-      shown.show(withTrust(missing), "");
-      offer()!.dispatch("click", {});
-      shown.close();
-      shown.show(withTrust(missing), "");
-      const second = offer();
-      if (outcome === "success") resolve(withTrust(trusted));
-      else reject("previous file changed");
-      await settle();
-      expect(offer()).toBe(second);
-      expect(second).toBeDefined();
-      expect(said("previous file changed")).toBe(false);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    shown.show(withTrust(missing), "");
+    offer()!.dispatch("click", {});
+    shown.close();
+    shown.show(withTrust(missing), "");
+    const second = offer();
+    if (outcome === "success") resolve(withTrust(trusted));
+    else reject("previous file changed");
+    await settle();
+    expect(offer()).toBe(second);
+    expect(second).toBeDefined();
+    expect(said("previous file changed")).toBe(false);
+  });
+
+  it("reports the remaining missing root after a partially successful lookup", async () => {
+    const before = withTrust(missing);
+    const signature = before.signatures[0]!;
+    before.signatures = [{ ...signature, timestamp: null }, { ...signature, field: "Second", timestamp: null }];
+    const after = structuredClone(before);
+    after.signatures[0]!.trust = trusted;
+    dialog(async () => after).show(before, "");
+    offer()!.dispatch("click", {});
+    await settle();
+    expect(said("Certificate chains still missing a trusted root: 1.")).toBe(true);
   });
 
   it("says so when the answer did not change, and a failure keeps the first answer", async () => {
@@ -126,7 +165,7 @@ describe("the offer to ask Windows for a root", () => {
     dialog(() => answer()).show(withTrust(missing), "");
     offer()!.dispatch("click", {});
     await settle();
-    expect(said("Windows did not fetch a root that changes this answer.")).toBe(true);
+    expect(said(`Certificate chains still missing a trusted root: ${missingRootCount(withTrust(missing))}.`)).toBe(true);
 
     answer = () => Promise.reject("the file on disk changed");
     offer()!.dispatch("click", {});

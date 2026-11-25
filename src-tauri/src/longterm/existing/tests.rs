@@ -608,6 +608,12 @@ fn a_survey_that_is_not_complete_is_refused() {
             survey.complete = false;
             Ok(survey)
         }) as fn(Survey) -> Result<Survey, String>,
+        |mut survey| {
+            survey.complete = false;
+            survey.signatures.clear();
+            survey.values.clear();
+            Ok(survey)
+        },
         // A value that could not be read, and a value under another name.
         |mut survey| {
             survey.values[0].1.clear();

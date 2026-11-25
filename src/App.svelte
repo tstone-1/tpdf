@@ -1643,7 +1643,8 @@
    * list, so an answer given after a tab changed still saves from the
    * document the question was about.
    */
-  let attachmentQuestion: { doc: number; source: string; files: Embedded[] } | null = null;
+  type AttachmentQuestion = { doc: number; source: string; files: Embedded[]; view: ViewId; model: Edits | null };
+  let attachmentQuestion: AttachmentQuestion | null = null;
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
   let newPasswordDialog: NewPasswordDialog | null = null;
@@ -1754,13 +1755,14 @@
    * ever replaced whole and a deep proxy over a 10,000-entry tree buys nothing.
    */
   let rawOutline = $state.raw<Outline | null>(null);
+  const clippedLabels = $derived(new Set(rawOutline?.clipped_labels));
   /**
    * The printed number of the page in a zero-based slot, where it is not the
    * position (`pagelabels.ts`). A label is a page of the file's, so it is
    * looked up through the page map.
    */
-  function printedOf(slot: number): string | null {
-    return printedLabel(rawOutline?.page_labels ?? [], edits?.map.sourceOf(slot), slot + 1);
+  function printedOf(slot: number, exact = false): string | null {
+    return printedLabel(rawOutline?.page_labels ?? [], edits?.map.sourceOf(slot), slot + 1, exact ? clippedLabels : undefined);
   }
 
   /** Path of the open document, which is what a remembered place is keyed on. */
@@ -1947,7 +1949,7 @@
     fillForm: () => formLayer?.focus(),
     pageCount: () => status?.pageCount ?? 0,
     printedPages: (runs) => printedRuns(runs, printedOf),
-    printedOf: (slot) => printedOf(slot),
+    printedOf: (slot) => printedOf(slot, true),
     openDocument: () => void pickAndOpen(),
     reloadDocument: () => void reloadDocument(),
     diskChangeMode: () => diskChangeMode,
@@ -2660,7 +2662,7 @@
         if (!incomplete) tell(TEXT().noAttachments);
         return;
       }
-      const asked = { doc, source, files };
+      const asked = { doc, source, files, view, model };
       if (files.length === 1 && !incomplete) {
         await saveAttachmentAt(asked, 0);
         return;
@@ -2685,16 +2687,20 @@
    * (`attachment_save`). The file is never opened; the window says what kind
    * its name claims, and warns when that is a program.
    */
-  async function saveAttachmentAt(asked: { doc: number; source: string; files: Embedded[] }, index: number): Promise<void> {
+  async function saveAttachmentAt(asked: AttachmentQuestion, index: number): Promise<void> {
     const file = asked.files[index];
     if (!file) return;
     try {
       const chosen = await saveDialog({ title: TEXT().saveAttachment, defaultPath: file.name });
       if (!chosen) return;
       const bytes = await call("attachment_save", { doc: asked.doc, source: asked.source, index, path: chosen });
-      tell(attachmentSaved(file, bytes, basename(chosen)));
+      asDocument(asked.view, () => {
+        if (edits === asked.model) tell(attachmentSaved(file, bytes, basename(chosen)));
+      });
     } catch (e) {
-      say(String(e));
+      asDocument(asked.view, () => {
+        if (edits === asked.model) say(String(e));
+      });
     }
   }
 
@@ -5685,7 +5691,7 @@
    * gives: ⌘K was unreachable by any check while it lived in this file.
    */
   function onWindowKey(event: KeyboardEvent) {
-    if (printPreviewDialog?.isOpen || compressDialog?.isOpen) return;
+    if (propertiesDialog?.isOpen || printPreviewDialog?.isOpen || compressDialog?.isOpen) return;
     // First, and it has to be: Escape closes the menu rather than the find bar,
     // and the arrows walk its rows rather than scrolling the document under it.
     // A closed menu consumes nothing, so this costs one boolean per keystroke.

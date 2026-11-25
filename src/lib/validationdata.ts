@@ -68,6 +68,7 @@ const TEXT = catalog({
       "document has edits that are not in it yet.",
     waiting:
       "Asking the certificate authorities and the timestamp authority, and writing the copy...",
+    incomplete: "Some signature fields could not be read, so validation data cannot be added for every signature.",
     nothingSigned:
       "This document has no signature, so there is nothing to add long-term validation data for.",
     help:
@@ -95,6 +96,7 @@ const TEXT = catalog({
     waiting:
       "Die Zertifizierungsstellen und der Zeitstempeldienst werden angefragt, und die Kopie wird " +
       "geschrieben...",
+    incomplete: "Einige Signaturfelder waren unlesbar. Deshalb lassen sich nicht für alle Signaturen Validierungsdaten hinzufügen.",
     nothingSigned:
       "Dieses Dokument hat keine Signatur, also gibt es nichts, wofür Langzeitvalidierungsdaten " +
       "hinzugefügt werden könnten.",
@@ -193,7 +195,10 @@ export async function addValidationData(shell: ValidationShell): Promise<string 
   // commits only when its control loses the keyboard.
   await shell.settle();
   if (shell.dirty()) return UNSAVED;
-  if (!hasSignature(await shell.properties())) return NOTHING_SIGNED;
+  const properties = await shell.properties();
+  const limits = properties.limits;
+  if (limits.locked || limits.signatures_dropped > 0 || limits.unreadable > 0) return TEXT().incomplete;
+  if (!hasSignature(properties)) return NOTHING_SIGNED;
   const timestamp = await shell.chooseAuthority();
   if (timestamp === null) return null;
   const path = await shell.saveAs(keptName(shell.openPath));

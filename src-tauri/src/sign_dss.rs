@@ -217,7 +217,7 @@ fn survey_within(signed: &[u8], pages: u32, bound: usize) -> Survey {
         signatures: found.signatures,
         values: values.values,
         store: values.store,
-        complete: values.complete,
+        complete: values.complete && found.limits.signatures_dropped == 0,
         held,
         store_cut: values.store_cut,
         certified: crate::sign_prepare::certification(&document),

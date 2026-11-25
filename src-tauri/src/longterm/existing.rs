@@ -364,9 +364,6 @@ fn room(
 /// signature or a signature's timestamp that does not read as intact.
 fn held(survey: &crate::sign_dss::Survey) -> Result<Vec<(&Signature, &[u8])>, Refusal> {
     let signed: Vec<&Signature> = survey.signatures.iter().filter(|s| s.signed).collect();
-    if signed.is_empty() {
-        return Err(Refusal::Unsigned);
-    }
     // The values are listed by the walk the scan lists the fields by, so the
     // two agree name for name --- or one of them was cut short.
     let agree = signed.len() == survey.values.len()
@@ -376,6 +373,9 @@ fn held(survey: &crate::sign_dss::Survey) -> Result<Vec<(&Signature, &[u8])>, Re
             .all(|(signature, (name, value))| &signature.field == name && !value.is_empty());
     if !survey.complete || !agree {
         return Err(Refusal::Incomplete);
+    }
+    if signed.is_empty() {
+        return Err(Refusal::Unsigned);
     }
     // The catalog's own certification, which need not be one of the fields:
     // the level a further signature field is refused by when the document

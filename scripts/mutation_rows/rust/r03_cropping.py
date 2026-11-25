@@ -1968,8 +1968,8 @@ ROWS += [
         # is what carries the difference.
         "docinfo: report a locked document as untagged rather than unknown",
         "src/docinfo.rs",
-        '        tagged: catalog.map(|c| c.has(b"StructTreeRoot")),',
-        '        tagged: Some(catalog.is_some_and(|c| c.has(b"StructTreeRoot"))),',
+        '        tagged: catalog.and_then(|c| {',
+        '        tagged: catalog.map_or(Some(false), |c| {',
         "a_document_that_needs_a_password_says_so_rather_than_reporting_nothing",
     ),
     Mutation(
@@ -1999,7 +1999,7 @@ ROWS += [
         # the half of the check that reading the code calls redundant.
         "docinfo: check only where the signed range ends, not where it starts",
         "src/docinfo.rs",
-        "    out.covers_whole_file = pieces.is_some() && out.appended_bytes == 0;",
+        "    out.covers_whole_file = out.range_valid && out.appended_bytes == 0;",
         "    out.covers_whole_file = out.appended_bytes == 0;",
         "a_range_that_skips_the_start_of_the_file_is_not_whole_coverage",
     ),

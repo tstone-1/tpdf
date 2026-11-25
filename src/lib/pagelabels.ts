@@ -45,8 +45,8 @@ const MAX_RUNS = 4;
  * position, so after a deletion the page printed `2` sits at position 1 and is
  * shown as printed `2`.
  */
-export function printedLabel(labels: readonly string[], source: number | undefined, position: number): string | null {
-  if (source === undefined) return null;
+export function printedLabel(labels: readonly string[], source: number | undefined, position: number, clipped?: ReadonlySet<number>): string | null {
+  if (source === undefined || clipped?.has(source)) return null;
   const label = labels[source];
   if (!label || label === String(position)) return null;
   return label;

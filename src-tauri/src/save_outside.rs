@@ -774,7 +774,32 @@ impl InWorker {
         file: &std::fs::File,
         len: usize,
     ) -> Result<crate::docinfo::Properties, Declined> {
-        let mapped = Shm::map_open_file(file, len).map_err(Declined::Failed)?;
+        self.properties_mapped(Shm::map_open_file(file, len).map_err(Declined::Failed)?)
+    }
+
+    /// Rechecks properties in a fresh worker over the same bytes used for root lookup.
+    pub(crate) fn refresh_signature_properties(
+        &self,
+        bytes: &[u8],
+    ) -> Result<crate::docinfo::Properties, Declined> {
+        let survey = self.survey(bytes).map_err(Declined::Failed)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let _asked = crate::longterm::fetch_roots(&survey, now);
+        self.properties_snapshot(bytes)
+    }
+
+    pub(crate) fn properties_snapshot(
+        &self,
+        bytes: &[u8],
+    ) -> Result<crate::docinfo::Properties, Declined> {
+        let mut mapped = Shm::create(bytes.len()).map_err(Declined::Failed)?;
+        mapped.as_mut_slice().copy_from_slice(bytes);
+        self.properties_mapped(mapped)
+    }
+
+    fn properties_mapped(&self, mapped: Shm) -> Result<crate::docinfo::Properties, Declined> {
         let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)
             .map_err(Declined::Failed)?;
         let pid = worker.pid();

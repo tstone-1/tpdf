@@ -273,11 +273,9 @@ pub async fn fetch_signature_roots(
     })?;
     let worker = crate::save::InWorker::at(crate::pdfium_library_dir(&app));
     tauri::async_runtime::spawn_blocking(move || {
-        use crate::save::Verifier as _;
         let unread = |why: String| said!("the signatures could not be read again: {why}");
         let source = std::path::PathBuf::from(source);
-        let file = std::fs::File::open(&source).map_err(|e| unread(e.to_string()))?;
-        let original = crate::save::read_to_sign(&source, &opened_as).map_err(|why| {
+        let original = crate::save::read_opened(&source, &opened_as).map_err(|why| {
             if why.changed {
                 said!(
                     "the file on disk is not the one that was opened, so its signatures were \
@@ -287,13 +285,8 @@ pub async fn fetch_signature_roots(
                 unread(why.message)
             }
         })?;
-        let survey = worker.survey(&original).map_err(unread)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_secs());
-        let _asked = crate::longterm::fetch_roots(&survey, now);
         worker
-            .properties(&file, original.len())
+            .refresh_signature_properties(&original)
             .map_err(|declined| {
                 use crate::save_outside::Declined;
                 match declined {

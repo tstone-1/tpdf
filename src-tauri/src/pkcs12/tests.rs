@@ -304,6 +304,27 @@ fn an_added_file_is_listed_reopened_and_refused_once_replaced() {
     let stored = std::fs::read_to_string(&store).unwrap();
     assert!(!stored.contains("geheim"), "the password is not written");
 
+    // CLI and GUI imports take independent opens of the same store lock.
+    let barrier = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        for name in ["first.p12", "second.p12"] {
+            let copy = dir.join(name);
+            std::fs::copy(&file, &copy).unwrap();
+            let (store, barrier) = (&store, &barrier);
+            scope.spawn(move || {
+                barrier.wait();
+                crate::certfiles::add(store, &copy, "geheim").expect("concurrent import");
+            });
+        }
+    });
+    let entries = crate::certfiles::read(&store);
+    for name in ["mine.p12", "first.p12", "second.p12"] {
+        assert!(
+            entries.iter().any(|entry| entry.path.ends_with(name)),
+            "{name}"
+        );
+    }
+
     // Another certificate and key under the same name.
     assert!(self_signed(
         &dir,

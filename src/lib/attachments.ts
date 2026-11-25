@@ -33,9 +33,9 @@ const TEXT = catalog({
     program: "a program or script",
     otherEnding: (end: string) => `a .${end} file`,
     which: (count: number) => `Which attachment: 1 to ${count}, or part of its name`,
-    noNumber: (number: number, count: number) => `There is no attachment ${number}; there are ${count}`,
-    noName: (typed: string) => `No attachment's name has "${typed}" in it`,
-    severalNames: (count: number, typed: string) => `${count} attachments have "${typed}" in their names; type a number`,
+    noNumber: (number: number, count: number) => `Choose one of the listed attachments (1 to ${count}). ${number} is outside that list.`,
+    noName: (typed: string) => `No listed attachment has "${typed}" in its name`,
+    severalNames: (count: number, typed: string) => `${count} listed attachments have "${typed}" in their names; type a number`,
     saves: (described: string) => `Saves ${described}`,
     programWarning: " Its name says it is a program or script: open it only if you trust the document it came from.",
     macroWarning:
@@ -64,10 +64,10 @@ const TEXT = catalog({
     program: "ein Programm oder Skript",
     otherEnding: (end: string) => `eine .${end}-Datei`,
     which: (count: number) => `Welcher Anhang: 1 bis ${count} oder ein Teil seines Namens`,
-    noNumber: (number: number, count: number) => `Es gibt keinen Anhang ${number}; es gibt ${count}`,
-    noName: (typed: string) => `Kein Anhang hat „${typed}“ im Namen`,
+    noNumber: (number: number, count: number) => `Die Liste enthält die Anhänge 1 bis ${count}. ${number} liegt außerhalb dieses Bereichs.`,
+    noName: (typed: string) => `Kein aufgelisteter Anhang hat „${typed}“ im Namen`,
     severalNames: (count: number, typed: string) =>
-      `${count} Anhänge haben „${typed}“ im Namen; gib eine Nummer ein`,
+      `${count} aufgelistete Anhänge haben „${typed}“ im Namen; gib eine Nummer ein`,
     saves: (described: string) => `Speichert ${described}`,
     programWarning:
       " Laut Name ist die Datei ein Programm oder Skript: Öffne sie nur, wenn du dem Dokument vertraust, aus dem sie stammt.",
@@ -79,7 +79,7 @@ const TEXT = catalog({
   },
   "de-DE-formal": {
     severalNames: (count: number, typed: string) =>
-      `${count} Anhänge haben „${typed}“ im Namen; geben Sie eine Nummer ein`,
+      `${count} aufgelistete Anhänge haben „${typed}“ im Namen; geben Sie eine Nummer ein`,
     programWarning: " Laut Name ist die Datei ein Programm oder Skript: Öffnen Sie sie nur, wenn Sie dem Dokument vertrauen, aus dem sie stammt.",
     macroWarning:
       " Laut Name ist die Datei eine Office-Datei, die Makros enthalten kann, und Makros führen Code aus: Lassen Sie sie nur " +

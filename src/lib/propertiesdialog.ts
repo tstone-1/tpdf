@@ -32,7 +32,7 @@
  * the `sinks` gate is what keeps that true rather than this comment.
  */
 
-import { type Properties, type Section, rootsMayBeFetched, sections } from "./properties";
+import { type Properties, type Section, missingRootCount, sections } from "./properties";
 import { catalog } from "./i18n";
 
 const TEXT = catalog({
@@ -44,7 +44,7 @@ const TEXT = catalog({
     askRootHelp:
       "Windows asks Microsoft for it. Nothing of the document is sent, and a certificate " +
       "somebody issued to themselves stays not trusted.",
-    rootNotFound: "Windows did not fetch a root that changes this answer.",
+    rootsMissing: (count: number) => `Certificate chains still missing a trusted root: ${count}.`,
   },
   "de-DE": {
     title: "Dokumenteigenschaften",
@@ -54,7 +54,7 @@ const TEXT = catalog({
     askRootHelp:
       "Windows fragt dafür bei Microsoft an. Nichts aus dem Dokument wird gesendet, und ein " +
       "Zertifikat, das sich jemand selbst ausgestellt hat, bleibt nicht vertrauenswürdig.",
-    rootNotFound: "Windows hat kein Stammzertifikat abgerufen, das diese Antwort ändert.",
+    rootsMissing: (count: number) => `Zertifikatsketten, denen noch ein vertrauenswürdiges Stammzertifikat fehlt: ${count}.`,
   },
 });
 
@@ -88,9 +88,10 @@ export class PropertiesDialog {
     this.backdrop = document.createElement("div");
     this.backdrop.className = DIALOG_CLASS;
     this.backdrop.style.cssText =
-      "position:fixed;inset:0;display:none;z-index:60;" +
+      "position:fixed;inset:0;z-index:60;" +
       "background:rgba(0,0,0,0.28);align-items:flex-start;justify-content:center;";
 
+    this.backdrop.style.display = "none";
     this.panel = document.createElement("div");
     this.panel.setAttribute("role", "dialog");
     this.panel.setAttribute("aria-modal", "true");
@@ -122,9 +123,17 @@ export class PropertiesDialog {
       if (event.target === this.backdrop) this.close();
     });
     this.backdrop.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Tab") {
+        const stops = Array.from(this.panel.querySelectorAll<HTMLElement>("button:enabled, summary"));
+        const current = stops.indexOf(document.activeElement as HTMLElement);
+        const next = event.shiftKey ? (current <= 0 ? stops.at(-1) : stops[current - 1]) : stops[current + 1] ?? stops[0];
+        event.preventDefault();
+        (next ?? this.panel).focus();
+        return;
+      }
       if (event.key !== "Escape") return;
       event.preventDefault();
-      event.stopPropagation();
       this.close();
     });
   }
@@ -159,7 +168,7 @@ export class PropertiesDialog {
     } else if (!properties) {
       this.body.append(this.message(TEXT().reading, false));
     } else {
-      if (rootsMayBeFetched(properties)) this.body.append(this.rootOffer(properties, said));
+      if (missingRootCount(properties)) this.body.append(this.rootOffer(properties, said));
       for (const section of sections(properties)) {
         this.body.append(this.section(section));
       }
@@ -187,7 +196,8 @@ export class PropertiesDialog {
       this.askRoot().then(
         (answer) => {
           if (this.isShowing(display)) {
-            this.show(answer, "", rootsMayBeFetched(answer) ? TEXT().rootNotFound : "");
+            const missing = missingRootCount(answer);
+            this.show(answer, "", missing ? TEXT().rootsMissing(missing) : "");
           }
         },
         (why) => {

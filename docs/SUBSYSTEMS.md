@@ -31,6 +31,12 @@ Copy captures the selection and its draft note before requesting the source page
 or picture pixels. It can finish after the reader switches tabs. Cut checks the source
 view and selection again before removing anything.
 
+Root-certificate refresh uses the same fingerprinted bytes for its initial survey
+and for the fresh worker's properties report. A file handle can still see an
+in-place rewrite while Windows is retrieving a root. Structural byte-range
+validity travels separately from the cryptographic verdict, since an unsupported
+signature format can also have an invalid range.
+
 Before any save/copy writing command, the application reads digital-signature
 metadata from the worker and asks for consent if signatures/certification exist
 or enumeration was incomplete. DocMDP permission to fill forms does not bypass

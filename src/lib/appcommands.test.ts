@@ -1627,8 +1627,8 @@ describe("the page operations", () => {
       const argument = choice(registry)?.argument;
       expect(argument?.placeholder).toBe("Which attachment: 1 to 3, or part of its name");
       expect(argument?.preview("xml")).toBe("Saves invoice.xml (an XML file)");
-      expect(argument?.problem("orders")).toContain("2 attachments have");
-      expect(argument?.problem("4")).toBe("There is no attachment 4; there are 3");
+      expect(argument?.problem("orders")).toContain('2 listed attachments have "orders"');
+      expect(argument?.problem("4")).toBe("Choose one of the listed attachments (1 to 3). 4 is outside that list.");
       expect(registry.run("file.saveAttachment.choice", "4")).toBe(false);
       expect(registry.run("file.saveAttachment.choice", "2")).toBe(true);
       expect(fired).toEqual(["pickAttachment:2"]);

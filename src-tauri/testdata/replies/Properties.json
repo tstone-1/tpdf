@@ -38,6 +38,7 @@
       "covers_whole_file": false,
       "starts_at_zero": true,
       "covered_bytes": 100000,
+      "range_valid": true,
       "appended_bytes": 23456,
       "appendix": {
         "added": 4,

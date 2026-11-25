@@ -610,6 +610,9 @@ describe("edits requested in a mounted view", () => {
     const saving = functionIn(app, "async function saveAttachment(");
     expect(saving).toMatch(/await call\("document_properties", \{ doc \}\);\s*if \(!stillIn\(view, model\)\) return;/);
     expect(saving).toContain('palette?.askFor("file.saveAttachment.choice", () => { attachmentQuestion = asked; });');
+    const completion = functionIn(app, "async function saveAttachmentAt(");
+    expect(completion).toMatch(/asDocument\(asked.view, \(\) => \{\s*if \(edits === asked.model\) tell\(attachmentSaved/);
+    expect(completion).toMatch(/catch \(e\) \{\s*asDocument\(asked.view, \(\) => \{\s*if \(edits === asked.model\) say\(String\(e\)\)/);
   });
 
   it("sends both window routes through the gesture's commit, with the palette requesting a rearm", () => {

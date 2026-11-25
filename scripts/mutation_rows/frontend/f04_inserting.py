@@ -1644,8 +1644,8 @@ ROWS += [
         "  if (shell.dirty()) return UNSAVED;\n  await shell.settle();",
         "settles drafts before it reads dirty"),
     Mutation("validation-data: ask for an authority for a document nobody signed", "src/lib/validationdata.ts",
-        "  if (!hasSignature(await shell.properties())) return NOTHING_SIGNED;",
-        "  await shell.properties();",
+        "  if (!hasSignature(properties)) return NOTHING_SIGNED;",
+        "  void hasSignature(properties);",
         "tells a document with no signature so, before any dialog"),
     Mutation("validation-data: count an empty signature field as a signature", "src/lib/validationdata.ts",
         "  return properties.signatures.some((signature) => signature.signed);",
@@ -1856,8 +1856,8 @@ ROWS += [
     Mutation(
         "root offer: offer the lookup on an encrypted document, which cannot be read again",
         "src/lib/properties.ts",
-        "    !properties.encryption &&",
-        "    properties.pages >= 0 &&",
+        "  if (properties.encryption) return 0;",
+        "  if (properties.pages < 0) return 0;",
         "is not offered where no root may be missing, or on an encrypted document",
     ),
     Mutation(

@@ -67,12 +67,18 @@ pub(crate) fn list_with_count(document: &Document) -> (Vec<Embedded>, Option<usi
 /// No file at that place, a file specification with no bytes, or bytes that
 /// do not decode within [`MAX_DECODE`].
 pub fn content(document: &Document, index: usize) -> Result<Vec<u8>, String> {
-    let found = entries(document).files;
-    let Some((key, spec)) = found.get(index) else {
+    let found = entries(document);
+    let Some((key, spec)) = found.files.get(index) else {
+        if found.incomplete {
+            return Err(said!(
+                "Attachment {number} is outside the incomplete attachment list.",
+                number = index.saturating_add(1)
+            ));
+        }
         return Err(said!(
             "The document has no attachment {number} (it has {count}).",
-            number = index + 1,
-            count = found.len()
+            number = index.saturating_add(1),
+            count = found.files.len()
         ));
     };
     let name = describe(document, key, spec).name;
@@ -799,6 +805,11 @@ mod tests {
             let doc = carrying(&vec![("a", "a.txt", b"a".as_slice(), false); n], true);
             let (files, count) = list_with_count(&doc);
             assert_eq!((files.len(), count), (n.min(MAX_FILES), expected));
+            if count.is_none() {
+                assert!(content(&doc, MAX_FILES)
+                    .unwrap_err()
+                    .contains("outside the incomplete attachment list"));
+            }
         }
         let mut doc = carrying(&[("a", "a.txt", b"a", false)], false);
         let names = doc.catalog().unwrap().get(b"Names").unwrap();
