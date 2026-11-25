@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BLOCK = re.compile(r"<summary>([^<]+)</summary>(.*?)</details>", re.DOTALL)
 PATH_ROW = re.compile(r"^- `([^`\n]+)`[ \t]*$", re.MULTILINE)
 FOLDER_ROW = re.compile(r"^- `[^`\n]+/` \(([\d,]+) files?\)$", re.MULTILINE)
-APP_DIRS = ("src/", "src-tauri/src/", "api/python/")
+APP_DIRS = ("src/", "src-tauri/src/", "src-tauri/tests/", "api/python/")
 APP_TYPES = {".ts", ".svelte", ".css", ".rs", ".py"}
 CODE_TYPES = APP_TYPES | {".js", ".mjs", ".c", ".swift", ".ps1", ".sh", ".cmd", ".nsh", ".html"}
 

@@ -284,9 +284,9 @@ predictor remain refused.
 
 Stencil masks (`/ImageMask true`, 1 bit) are `images/stencil.rs`: unfiltered,
 Flate, or pure CCITT Group 4 (`K < 0`, `Columns` = `Width`, `Rows` absent, 0 or
-`Height`, no byte-aligned rows or EOL codes). The G4 stream must decode to
-exactly `Height` rows through `fax::decoder::Group4Decoder`, driven row by row
-because `decode_g4` pads missing rows with white. A stencil paints the fill
+`Height`, no byte-aligned rows or EOL codes). The G4 stream must provide
+the first `Height` complete rows through `fax::decoder::Group4Decoder`, driven row by row
+because `decode_g4` pads missing rows with white. Data after those rows is preserved. A stencil paints the fill
 colour, so `Do` checks that colour at every use; a preserved form, whose colour
 is not tracked, refuses one. Tests build their G4 data with the crate's encoder.
 Generate synthetic JPEG cases with
@@ -323,11 +323,13 @@ because reserving the box of a form that turns out to be hidden refuses a layout
 that would have fitted, while the reverse would let new text land on visible
 graphics. Text state (`Tc Tw Tz TL Tf Tr Ts`) is accepted outside a text object
 as well as inside, which is where Acrobat's page-number stamps set it (ISO
-32000-1 Table 51); positioning and showing still require the text object.
+32000-1 Table 51); positioning and showing still require the text object. Only a
+show with nonempty text reserves the form box against nearby text edits.
 External forms, soft-mask graphics states and pattern colours remain refused. Indexed eight-bit
 images validate palette length and every sample. Page images, preserved forms and
 the images those forms draw share a 32 MiB byte budget (`MAX_IMAGES`, checked
-before decoding; a screenshot with its soft mask is ~13 MB). An image inside a
+before decoding; a screenshot with its soft mask is ~13 MB). Repeated draws
+of one image name in a form share its validation and decoded-byte charge. An image inside a
 form was charged to the form's content bound until 2026-09-18, which refused a
 figure of 29 small rasters (12.3 MB decoded) that the page budget holds. Figure MCIDs may use P stream markers for preserved
 graphics; direct figure text remains refused, and a Span inside a figure, PowerPoint's

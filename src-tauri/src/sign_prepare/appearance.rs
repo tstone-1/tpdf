@@ -175,12 +175,16 @@ impl Options {
     /// asks for it.
     #[must_use]
     pub fn draws_name(&self) -> bool {
+        self.draws(&Part::Name, self.name)
+    }
+
+    fn draws(&self, part: &Part, by_default: bool) -> bool {
         if self.text.is_empty() {
-            self.name
+            by_default
         } else {
             self.text
                 .iter()
-                .any(|line| parts(line).is_ok_and(|parts| parts.contains(&Part::Name)))
+                .any(|line| parts(line).is_ok_and(|parts| parts.contains(part)))
         }
     }
 }
@@ -428,7 +432,7 @@ pub fn words(name: &str, pdf_date: &str, options: &Options) -> Vec<String> {
 /// Refuses free text the appearance cannot draw, or the dictionary should not
 /// carry: too long, a control character, or a character Helvetica with
 /// `/WinAnsiEncoding` has no glyph for.
-fn check_note(what: &str, text: Option<&str>) -> Result<(), String> {
+fn check_note(what: &str, text: Option<&str>, drawn: bool) -> Result<(), String> {
     let Some(text) = text else { return Ok(()) };
     if text.chars().count() > MAX_NOTE_CHARS {
         return Err(said!(
@@ -437,7 +441,7 @@ fn check_note(what: &str, text: Option<&str>) -> Result<(), String> {
     }
     // Written out for each of the two, so that each sentence names its
     // placeholders once (`said!`'s rule for the window's recognition).
-    if text.chars().any(char::is_control) || !textbox::encodable(text) {
+    if text.chars().any(char::is_control) || (drawn && !textbox::encodable(text)) {
         return Err(if what == "reason" {
             said!(
                 "the reason, {text}, has characters tpdf cannot draw in a visible signature yet \
@@ -528,7 +532,8 @@ fn check_text(visible: &Visible) -> Result<(), String> {
 ///
 /// Nothing is drawn; the name is drawn and is empty, too long, or holds a
 /// character outside the Latin-1 part of WinAnsi (control characters included);
-/// the reason or location is too long or holds such a character; or the image
+/// metadata is too long, contains a control, or needs an unavailable glyph in
+/// a drawn line; or the image
 /// is not a valid signature raster.
 pub fn check(visible: &Visible) -> Result<(), String> {
     let options = &visible.options;
@@ -569,8 +574,16 @@ pub fn check(visible: &Visible) -> Result<(), String> {
             ));
         }
     }
-    check_note("reason", options.reason())?;
-    check_note("location", options.location())?;
+    check_note(
+        "reason",
+        options.reason(),
+        options.draws(&Part::Reason, !options.hide_reason),
+    )?;
+    check_note(
+        "location",
+        options.location(),
+        options.draws(&Part::Location, !options.hide_location),
+    )?;
     if visible.image.as_ref().is_some_and(|image| !image.valid()) {
         return Err(said!("the saved signature image is damaged"));
     }
@@ -586,20 +599,7 @@ pub fn check(visible: &Visible) -> Result<(), String> {
 /// side is shorter than [`MIN_SIDE`].
 pub fn place(visible: &Visible, shown: DisplayedPage, unit: f64) -> Result<[f64; 4], String> {
     let [left, top, right, bottom] = visible.rect;
-    let (width, height) = (f64::from(shown.width), f64::from(shown.height));
-    // Half a point of slack, for a drag clamped to the page in display pixels
-    // and converted to points with a rounding either way.
-    let slack = 0.5 / unit;
-    let on_page = visible.rect.iter().all(|v| v.is_finite())
-        && f64::from(left) >= -slack
-        && f64::from(top) >= -slack
-        && f64::from(right) <= width + slack
-        && f64::from(bottom) <= height + slack;
-    if !on_page {
-        return Err(said!(
-            "the rectangle chosen for the signature is not on its page"
-        ));
-    }
+    check_on_page(visible.rect, shown, unit)?;
     if f64::from(right - left) * unit < MIN_SIDE || f64::from(bottom - top) * unit < MIN_SIDE {
         return Err(said!(
             "the rectangle chosen for the signature is smaller than {MIN_SIDE} points a side, \
@@ -609,6 +609,25 @@ pub fn place(visible: &Visible, shown: DisplayedPage, unit: f64) -> Result<[f64;
     let page = crate::text::from_device(shown.turns, shown.width, shown.height, visible.rect);
     let (ox, oy) = (f64::from(shown.origin.0), f64::from(shown.origin.1));
     Ok([page[0] + ox, page[1] + oy, page[2] + ox, page[3] + oy])
+}
+
+pub(super) fn check_on_page(rect: [f32; 4], shown: DisplayedPage, unit: f64) -> Result<(), String> {
+    let [left, top, right, bottom] = rect;
+    let (width, height) = (f64::from(shown.width), f64::from(shown.height));
+    // Half a point of slack, for a drag clamped to the page in display pixels
+    // and converted to points with a rounding either way.
+    let slack = 0.5 / unit;
+    let on_page = rect.iter().all(|v| v.is_finite())
+        && f64::from(left) >= -slack
+        && f64::from(top) >= -slack
+        && f64::from(right) <= width + slack
+        && f64::from(bottom) <= height + slack;
+    if !on_page {
+        return Err(said!(
+            "the rectangle chosen for the signature is not on its page"
+        ));
+    }
+    Ok(())
 }
 
 /// Where each thing goes, in the reader's frame: `u` right and `v` down from the

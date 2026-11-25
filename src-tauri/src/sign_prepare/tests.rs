@@ -2930,3 +2930,68 @@ fn a_visible_template_must_leave_ink_after_substitution() {
     mark.options.location = "Berlin".into();
     appearance::check(&mark).unwrap();
 }
+
+#[test]
+fn visible_signing_requires_a_visible_field_on_the_displayed_page() {
+    for (flags, outside) in [(0, false), (1, false), (2, false), (32, false), (0, true)] {
+        let mut doc = Document::load_mem(&with_fields(0)).unwrap();
+        let id = scanned(&doc, "Witness").widget;
+        let flags_ref = doc.add_object(Object::Integer(flags));
+        let dict = doc.get_dictionary_mut(id).unwrap();
+        dict.set("F", flags_ref);
+        if outside {
+            dict.set(
+                "Rect",
+                vec![10000.into(), 10000.into(), 10150.into(), 10060.into()],
+            );
+        }
+        let mut input = Vec::new();
+        doc.save_to(&mut input).unwrap();
+        let request = visible(0, [0., 0., 30., 30.], None);
+        let result = prepare_noted(input.clone(), NOW, None, Some(&request), &into("Witness"));
+        if flags == 0 && !outside {
+            assert!(result.is_ok());
+        } else {
+            assert!(result.unwrap_err().contains(if outside {
+                "not on its page"
+            } else {
+                "hidden"
+            }));
+        }
+        let invisible = prepare_noted(input.clone(), NOW, None, None, &into("Witness")).unwrap();
+        let after = reread(&input, &invisible);
+        assert_eq!(
+            after
+                .get_dictionary(id)
+                .unwrap()
+                .get(b"F")
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            flags | 132
+        );
+    }
+}
+
+#[test]
+fn unicode_metadata_only_needs_a_glyph_when_the_appearance_displays_it() {
+    let original = two_pages(0);
+    let mut placed = visible(1, [20., 30., 220., 130.], None);
+    placed.options.location = "東京".into();
+    placed.options.hide_location = true;
+    for lines in [vec![], vec!["Office".to_string()]] {
+        placed.options.text = lines;
+        let prepared = prepare_visible(original.clone(), NOW, None, &placed).unwrap();
+        let after = reread(&original, &prepared);
+        let (_, widget) = new_widget(&after, &prepared);
+        let info = signature_of(&after, &widget);
+        assert_eq!(
+            crate::annots::decode_text_string(&bytes_of(&info, b"Location").unwrap()),
+            "東京"
+        );
+    }
+    placed.options.text = vec!["{location}".into()];
+    assert!(prepare_visible(original, NOW, None, &placed)
+        .unwrap_err()
+        .contains("cannot draw"));
+}

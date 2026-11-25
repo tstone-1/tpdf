@@ -345,6 +345,8 @@ struct Target {
     page: ObjectId,
     /// The widget's rectangle, in the page's own space.
     rect: [f64; 4],
+    display_rect: [f32; 4],
+    flags: i64,
     /// What the field's own `/Lock` asks the signature to lock.
     lock: Option<FieldLock>,
 }
@@ -386,6 +388,11 @@ fn empty_field(document: &Document, pages: &[ObjectId], name: &str) -> Result<Ta
         widget: (widget.widget.0, widget.widget.1),
         page,
         rect: widget.rect,
+        display_rect: widget.display_rect,
+        flags: document
+            .get_dictionary(widget.widget)
+            .map(|w| crate::forms::annotation_flags(document, w))
+            .map_err(|e| e.to_string())?,
         lock,
     })
 }
@@ -820,6 +827,10 @@ fn build(
             .ok_or_else(|| said!("the signature page has an invalid physical scale"))?;
         let shown = crate::pagetree::displayed_page(&prev, page);
         let rect = if let Some(target) = &target {
+            if crate::forms::hidden(target.flags) {
+                return Err(said!("This field is hidden"));
+            }
+            appearance::check_on_page(target.display_rect, shown, unit)?;
             let [left, bottom, right, top] = target.rect;
             let (width, height) = ((right - left) * unit, (top - bottom) * unit);
             let least = appearance::MIN_SIDE;
@@ -911,8 +922,7 @@ fn build(
             .map_err(|e| e.to_string())?;
         // Print and Locked, as a field of the signature's own has, over
         // whatever else the widget says.
-        let flags = widget.get(b"F").and_then(Object::as_i64).unwrap_or(0);
-        widget.set("F", Object::Integer(flags | 132));
+        widget.set("F", Object::Integer(target.flags | 132));
         if let Some((_, form)) = drawn {
             widget.set("AP", dictionary! { "N" => form });
         }

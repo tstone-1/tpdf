@@ -333,6 +333,8 @@ fn textedit_preserved_forms_accept_text_state_outside_a_text_object() {
     // layout missed the form.
     for (body, reserved) in [
         ("0 Tc 0 TL 0 0 40 30 re f", false),
+        ("BT /F1 12 Tf 14.4 TL ET 0 0 40 30 re f", false),
+        ("BT () Tj [10 ()] TJ ET 0 0 40 30 re f", false),
         ("0 Tc 0 TL BT /F1 12 Tf 0 10 Td (SECOND) Tj ET", true),
     ] {
         let (mut doc, _, form) = fixture(false);
@@ -444,21 +446,33 @@ fn textedit_preserved_forms_accept_large_figures_up_to_their_own_bounds() {
 // the form's own content is charged to that budget as well.
 #[test]
 fn textedit_preserved_form_images_share_the_page_image_budget() {
-    for (height, accepted) in [(1280, true), (textedit::MAX_IMAGES / 8192, false)] {
+    for (height, distinct, accepted) in [
+        (1280, 1, true),
+        (1280, 4, false),
+        (textedit::MAX_IMAGES / 8192, 1, false),
+    ] {
         let (mut doc, _, form) = fixture(false);
-        let image = doc.add_object(Stream::new(
+        let image = Stream::new(
             dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => 8192, "Height" => height as i64, "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray", "Filter" => "FlateDecode" },
             deflate(&vec![0; 8192 * height]),
-        ));
+        );
+        let mut objects = lopdf::Dictionary::new();
+        let mut content = String::new();
+        for index in 0..distinct {
+            objects.set(format!("Im{index}"), doc.add_object(image.clone()));
+        }
+        for index in 0..4 {
+            content.push_str(&format!("q /Im{} Do Q ", index % distinct));
+        }
         let stream = doc.get_object_mut(form).unwrap().as_stream_mut().unwrap();
-        stream.set_content(b"q 40 0 0 30 0 0 cm /Im Do Q".to_vec());
+        stream.set_content(content.into_bytes());
         stream
             .dict
             .get_mut(b"Resources")
             .unwrap()
             .as_dict_mut()
             .unwrap()
-            .set("XObject", dictionary! { "Im" => image });
+            .set("XObject", objects);
         let scanned = textedit::scan(&doc, 0);
         assert_eq!(scanned.is_ok(), accepted, "{height}");
         if !accepted {

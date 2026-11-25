@@ -285,6 +285,7 @@ export class ContextMenu {
   /** Where the open menu was asked for, for {@link onRun}. */
   private openedAt: At | null = null;
   private open_ = false;
+  private returnFocus: HTMLElement | null = null;
   /**
    * Run after a command is chosen, with where the menu was opened.
    *
@@ -309,6 +310,7 @@ export class ContextMenu {
     this.root = document.createElement("div");
     this.root.setAttribute("role", "menu");
     this.root.className = "context-menu";
+    this.root.tabIndex = -1;
     // Inline, as `palette.ts` styles itself and for the same reason: this
     // element is appended to `document.body`, where a Svelte component's scoped
     // styles do not reach it. The system colour keywords are what make it follow
@@ -393,6 +395,9 @@ export class ContextMenu {
     this.open_ = true;
     this.openedAt = at;
     this.root.style.display = "block";
+    const active = document.activeElement as HTMLElement | null;
+    this.returnFocus = typeof active?.focus === "function" ? active : null;
+    this.root.focus({ preventScroll: true });
     this.place(at);
     this.highlight(-1);
     return true;
@@ -400,6 +405,10 @@ export class ContextMenu {
 
   /** Hides the menu and forgets what it was showing. */
   close(): void {
+    if (this.open_ && this.root.contains(document.activeElement)) {
+      this.returnFocus?.focus({ preventScroll: true });
+    }
+    this.returnFocus = null;
     this.root.style.display = "none";
     this.root.replaceChildren();
     this.rows = [];
@@ -419,6 +428,10 @@ export class ContextMenu {
    */
   handleKey(event: KeyboardEvent): boolean {
     if (!this.open_) return false;
+    if (event.key === "Tab") {
+      this.close();
+      return false;
+    }
     if (event.key === "Escape") {
       this.close();
       return true;
@@ -430,6 +443,7 @@ export class ContextMenu {
       // menu opened by keyboard does everywhere else.
       const next = this.at < 0 ? (step > 0 ? 0 : count - 1) : (this.at + step + count) % count;
       this.highlight(next);
+      this.rows[next]?.element.focus({ preventScroll: true });
       return true;
     }
     if (event.key === "Enter" && this.at >= 0) {
@@ -480,6 +494,7 @@ export class ContextMenu {
       keys.textContent = command.keys;
       element.appendChild(keys);
     }
+    element.tabIndex = -1;
     element.addEventListener("mouseenter", () => this.highlight(index));
     element.addEventListener("click", () => this.choose(index));
     return element;

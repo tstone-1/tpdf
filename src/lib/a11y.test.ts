@@ -12,7 +12,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AccessibleText, elementFor } from "./a11y";
-import { installFakeDom } from "./testdom";
+import { installFakeDom, type FakeElement } from "./testdom";
 
 describe("elementFor", () => {
   it("gives a heading the level the document stated", () => {
@@ -246,36 +246,37 @@ describe("AccessibleText and links", () => {
   }
 
   /** Builds the tree and returns the root, with the fake DOM still installed. */
-  function build(links: unknown[]): {
-    dom: ReturnType<typeof installFakeDom>;
-    spans: { textContent: string; attributes: Map<string, string>; dataset: Record<string, string> }[];
-    text: string;
-  } {
+  function build(links: unknown[], follow?: (id: number) => void) {
     const dom = installFakeDom();
-    const layer = new AccessibleText(dom.root as never, 1);
+    const layer = new AccessibleText(dom.root as never, 1, undefined, undefined, undefined, follow);
     layer.sync([0], () => page() as never);
     layer.setLinks(links as never);
 
-    const spans: {
-      textContent: string;
-      attributes: Map<string, string>;
-      dataset: Record<string, string>;
-    }[] = [];
+    const spans: FakeElement[] = [];
     let text = "";
-    const walk = (element: {
-      tagName: string;
-      textContent: string;
-      children: unknown[];
-      attributes: Map<string, string>;
-      dataset: Record<string, string>;
-    }): void => {
+    const walk = (element: FakeElement): void => {
       if (element.attributes.get("role") === "link") spans.push(element);
       if (element.children.length === 0) text += element.textContent;
-      for (const child of element.children) walk(child as never);
+      for (const child of element.children) walk(child);
     };
-    walk(dom.root as never);
+    walk(dom.root);
     return { dom, spans, text };
   }
+
+  it("activates the requested accessible link by ID", () => {
+    for (const kind of ["page", "web", "refused"]) {
+      const followed: number[] = [];
+      const { dom, spans } = build([link(), link({ id: 42, rect: [36, 98, 56, 114], target: { kind } })],
+        (id) => followed.push(id));
+      try {
+        expect(spans).toHaveLength(2);
+        spans[1]!.dispatch("click", {});
+        expect(followed).toEqual(kind === "refused" ? [] : [42]);
+      } finally {
+        dom.restore();
+      }
+    }
+  });
 
   it("announces a link as a link, and only the characters it covers", () => {
     const { dom, spans, text } = build([link()]);

@@ -644,7 +644,6 @@ ROWS += [
         "weblink: let Enter open the address instead of cancelling",
         "src/lib/weblinkdialog.ts",
         "        event.preventDefault();\n"
-        "        event.stopPropagation();\n"
         "        this.settle(false);\n"
         "      }\n"
         "    });\n"
@@ -652,7 +651,6 @@ ROWS += [
         "\n"
         "  /** Whether it is on screen. */",
         "        event.preventDefault();\n"
-        "        event.stopPropagation();\n"
         "        this.settle(true);\n"
         "      }\n"
         "    });\n"

@@ -58,6 +58,32 @@ function webTarget(over: Partial<WebTarget> = {}): WebTarget {
 }
 
 describe("WebLinkDialog", () => {
+  it("keeps Tab in both directions and Find inside the confirmation", async () => {
+    const { dialog, cancel, openButton, backdrop } = open();
+    const invoker = document.createElement("div");
+    const restore = vi.spyOn(invoker, "focus");
+    Object.assign(document, { activeElement: invoker });
+    const answer = dialog.ask(ADDRESS);
+    for (const shiftKey of [false, true]) {
+      for (const [from, to] of [[cancel, openButton], [openButton, cancel]] as const) {
+        const focus = vi.spyOn(to, "focus");
+        const preventDefault = vi.fn();
+        backdrop.dispatch("keydown", { key: "Tab", target: from, shiftKey, preventDefault });
+        expect(preventDefault).toHaveBeenCalled();
+        expect(focus).toHaveBeenCalled();
+        focus.mockRestore();
+      }
+    }
+    const stopPropagation = vi.fn(), preventDefault = vi.fn();
+    backdrop.dispatch("keydown", { key: "f", ctrlKey: true, target: cancel, stopPropagation, preventDefault });
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(preventDefault).toHaveBeenCalled();
+    expect(dialog.isOpen).toBe(true);
+    backdrop.dispatch("keydown", { key: "Escape" });
+    expect(restore).toHaveBeenCalled();
+    await expect(answer).resolves.toBe(false);
+  });
+
   it("resolves true only when Open is pressed", async () => {
     const { dialog, openButton } = open();
     const answer = dialog.ask(ADDRESS);

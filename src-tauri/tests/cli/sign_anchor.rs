@@ -9,7 +9,7 @@ use std::rc::Rc;
 /// One page, 400 by 300, with *Signature:* once at (60, 200) and *Date here*
 /// twice on one line, at x 60 and x 200, all in 12-point Helvetica. PDF space:
 /// the baselines are 100 and 200 points down from the top.
-fn worded_pdf() -> Vec<u8> {
+fn worded_pdf(first_size: f32) -> Vec<u8> {
     use lopdf::{dictionary, Object, Stream};
     let mut doc = Document::with_version("1.7");
     let pages = doc.new_object_id();
@@ -21,10 +21,12 @@ fn worded_pdf() -> Vec<u8> {
     });
     let content = doc.add_object(Stream::new(
         dictionary! {},
-        b"BT /F1 12 Tf 60 200 Td (Signature:) Tj ET\n\
-          BT /F1 12 Tf 60 100 Td (Date here) Tj ET\n\
+        format!(
+            "BT /F1 12 Tf 60 200 Td (Signature:) Tj ET\n\
+          BT /F1 {first_size} Tf 60 100 Td (Date here) Tj ET\n\
           BT /F1 12 Tf 200 100 Td (Date here) Tj ET"
-            .to_vec(),
+        )
+        .into_bytes(),
     ));
     let page = doc.add_object(dictionary! {
         "Type" => "Page",
@@ -51,7 +53,7 @@ pub fn places_beside_text(report: &mut Report) {
     let dir = scratch("sign-anchor");
     let s = |p: &Path| p.display().to_string();
     let worded = dir.join("worded.pdf");
-    std::fs::write(&worded, worded_pdf()).expect("input");
+    std::fs::write(&worded, worded_pdf(12.0)).expect("input");
     let store = || Counting {
         certificate: certificate(now),
         saved: None,
@@ -266,4 +268,38 @@ pub fn places_beside_text(report: &mut Report) {
             &format!("exit {code}: {stderr}"),
         );
     }
+    // Search still counts the first hit even when it is too small to locate.
+    std::fs::write(&worded, worded_pdf(0.45)).unwrap();
+    for (name, extra, diagnostic) in [
+        ("ambiguous", vec!["--anchor", "Date here"], "2 times"),
+        (
+            "first",
+            vec!["--anchor", "Date here", "--anchor-match", "1"],
+            "no usable rectangle",
+        ),
+    ] {
+        let out = dir.join(format!("thin-{name}.pdf"));
+        let held = store();
+        let (code, _, stderr) = signs(&line(&out, &extra), &held, now);
+        report.check(
+            &format!("thin anchor: {name} placement refused before the key"),
+            code == 3
+                && stderr.contains(diagnostic)
+                && !out.exists()
+                && held.asked.identities.get() == 0,
+            &format!("exit {code}: {stderr}"),
+        );
+    }
+    let out = dir.join("thin-second.pdf");
+    let (code, stdout, stderr) = signs(
+        &line(&out, &["--anchor", "Date here", "--anchor-match", "2"]),
+        &store(),
+        now,
+    );
+    let rect = rect_of(&stdout);
+    report.check(
+        "thin anchor: the second occurrence keeps its ordinal",
+        code == 0 && out.exists() && rect.len() == 4 && (rect[0] - 200.0).abs() < 1.5,
+        &stderr,
+    );
 }

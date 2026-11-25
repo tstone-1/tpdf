@@ -644,6 +644,15 @@ fn expired(subject: &str) -> Spec<'_> {
 }
 
 #[test]
+fn two_registrations_of_the_same_certificate_are_one_choice() {
+    let der = cert(3, &Spec::new("Sample"));
+    let list = listed(&[der.clone(), der]);
+    assert_eq!(resolve("Sample", &list), Ok(0));
+    assert_eq!(resolve(&list[0].0.id, &list), Ok(0));
+    assert_eq!(identities_report(&list).usable.len(), 1);
+}
+
+#[test]
 fn an_identity_nobody_holds_is_refused_and_says_where_to_look() {
     let list = listed(&[cert(3, &Spec::new("Alice"))]);
     let why = resolve("Bob", &list).expect_err("no Bob");

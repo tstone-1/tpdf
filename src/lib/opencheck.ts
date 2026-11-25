@@ -467,6 +467,19 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       host.run("view.showThumbnails");
       const row = document.querySelector<HTMLElement>('[data-sidebar-panel="pages"] [data-page="1"]');
       if (!row) throw new Error("second thumbnail missing");
+      row.focus();
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 80 }));
+      const popup = document.querySelector<HTMLElement>('.context-menu[role="menu"]');
+      report.check("the open menu receives the thumbnail's keyboard focus", document.activeElement === popup, document.activeElement?.getAttribute("role") ?? "no focus");
+      for (const key of ["ArrowDown", "Enter"]) {
+        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      }
+      const turned = await settle(() => host.edits()?.state.pages[1]?.turns === 1, SETTLE_MS);
+      report.check("keyboard rotation changes only the thumbnail that opened the menu",
+        turned && host.edits()!.state.pages.every((p, i) => p.turns === (i === 1 ? 1 : 0)),
+        JSON.stringify(host.edits()?.state.pages.map((page) => page.turns)));
+      host.run("edit.undo");
+      if (!await settle(() => host.edits()?.dirty === false, SETTLE_MS)) throw new Error("undo keyboard rotation did not land");
       row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 80 }));
       const menu = document.querySelectorAll<HTMLElement>('.context-menu [role="menuitem"]');
       const remove = Array.from(menu).find((item) => item.textContent?.trim() === "Delete page");

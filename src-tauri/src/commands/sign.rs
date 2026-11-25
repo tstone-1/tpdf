@@ -380,6 +380,15 @@ pub async fn sign_identities() -> Result<sign_cms::Choices, String> {
     .map_err(|e| said!("the certificate search did not run: {e}"))?
 }
 
+/// Sets the language of the native Linux PIN and password prompt.
+#[tauri::command]
+pub fn set_signing_language(locale: String) {
+    #[cfg(target_os = "linux")]
+    crate::pin_prompt::set_language(&locale);
+    #[cfg(any(target_os = "macos", windows))]
+    let _ = locale;
+}
+
 /// Linux: remembers the certificate file at `path` for signing (`certfiles.rs`),
 /// once its password, asked in the native dialog (`pin_prompt.rs`) so it never
 /// reaches the webview, opens it and it holds an ECDSA key. `None` when the

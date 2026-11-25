@@ -4,6 +4,25 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Signature placement and keyboard focus (2026-11-25)
+
+The CLI signing fixture places the same text twice, first at 0.45 points and then
+at 12 points. Omitting the ordinal reported both matches. Selecting the first
+refused before certificate enumeration and left no output. The second signed
+within 1.5 points of its expected horizontal position. Worker tests also checked
+hidden, invisible, NoView and off-page widgets and read back hidden Unicode
+location metadata.
+
+On macOS arm64, the thumbnail menu received focus from page two. Arrow Down
+and Enter rotated only page two of four. In the native viewer on `links.pdf`,
+the reading tree exposed four links on page one, covering 247 of 2,990
+characters. Replacing the link role with a data attribute in a separate build
+failed both the link assertion and its surrounding-text control. These checks
+inspect the DOM. Screen-reader speech was outside the run.
+
+On Linux, the PIN and password wording tests exercised informal German, formal
+German and the English terminal prompt. The CLI terminal input tests also passed.
+
 ### Shared form fields, selected search and text redaction (2026-11-25)
 
 On macOS arm64, the form writer renamed a two-page field and changed its

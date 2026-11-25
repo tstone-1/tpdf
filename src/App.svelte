@@ -2,7 +2,7 @@
   import { TextEditor } from "./lib/textedit";
   import { FormLayer } from "./lib/forms";
   import { onMount, tick } from "svelte";
-  import { catalog, message, readLanguageChoice, writeLanguageChoice, type LanguageChoice } from "./lib/i18n";
+  import { catalog, message, UI_LOCALE, readLanguageChoice, writeLanguageChoice, type LanguageChoice } from "./lib/i18n";
 
   const LANGUAGE_TEXT = catalog({
     "en-US": {
@@ -4999,7 +4999,7 @@
       if (!event) return;
       menuInstalled = true;
       await listen<string>(event, (chosen) => {
-        runMenuCommand(commands, palette, chosen.payload);
+        if (!webLinkDialog?.isOpen) runMenuCommand(commands, palette, chosen.payload);
       });
     } catch (e) {
       // Shown, not swallowed. A menu that failed to build is invisible by
@@ -5694,7 +5694,7 @@
    * gives: ⌘K was unreachable by any check while it lived in this file.
    */
   function onWindowKey(event: KeyboardEvent) {
-    if (propertiesDialog?.isOpen || printPreviewDialog?.isOpen || compressDialog?.isOpen) return;
+    if (webLinkDialog?.isOpen || propertiesDialog?.isOpen || printPreviewDialog?.isOpen || compressDialog?.isOpen) return;
     // First, and it has to be: Escape closes the menu rather than the find bar,
     // and the arrows walk its rows rather than scrolling the document under it.
     // A closed menu consumes nothing, so this costs one boolean per keystroke.
@@ -5779,6 +5779,7 @@
 
       // On `document.body` rather than inside the viewer, for the reason the
       // context menu is: a modal that lives in a scroll box is clipped by it.
+      if (isLinux()) await call("set_signing_language", { locale: UI_LOCALE });
       signatureDialog = new SignatureDialog(document.body);
       propertiesDialog = new PropertiesDialog(document.body, askWindowsForRoot);
 

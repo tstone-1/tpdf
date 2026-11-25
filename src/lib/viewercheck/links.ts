@@ -28,6 +28,7 @@ import {
   WIDTH,
 } from "./common";
 import { preview } from "./invert";
+import { corpusEntry } from "./search";
 
 /**
  * Whether a screen reader is told that a cross-reference is a link.
@@ -42,7 +43,7 @@ import { preview } from "./invert";
  * marked-up run must carry the role, and the page's ordinary text must not ---
  * a layer that put the role on every element would announce a page of links.
  */
-export async function linkAnnouncementChecks(viewer: Viewer): Promise<void> {
+async function linkAnnouncementChecks(viewer: Viewer, first: number): Promise<void> {
   const names = [
     "a link in the page is announced as a link",
     "the text around it is not",
@@ -50,7 +51,6 @@ export async function linkAnnouncementChecks(viewer: Viewer): Promise<void> {
   ];
 
   // Whichever page the links live on, since most of the corpus has none at all.
-  const first = viewer.firstLinkPage;
   if (first === -1) {
     for (const name of names) skip(name, "the document has no links");
     return;
@@ -60,7 +60,7 @@ export async function linkAnnouncementChecks(viewer: Viewer): Promise<void> {
 
   const page = viewer.accessibleText.elementFor(first);
   if (!page) {
-    for (const name of names) skip(name, `page ${first + 1} is not in the tree yet`);
+    for (const name of names) check(name, false, `page ${first + 1} is missing from the reading tree`);
     return;
   }
 
@@ -143,6 +143,11 @@ export async function linkChecks(
   );
 
   viewer.setLinks(links.items);
+  const expected = (await corpusEntry())?.expected;
+  // The links fixture states the page independently of the scan. Its checks
+  // must run even if the scanner accidentally returns an empty list.
+  const fixturePage: unknown = Array.isArray(expected) ? expected[0]?.page : undefined;
+  await linkAnnouncementChecks(viewer, typeof fixturePage === "number" ? fixturePage : links.items[0]?.page ?? -1);
   check(
     "the viewer takes the links",
     viewer.linkCount === links.items.length,

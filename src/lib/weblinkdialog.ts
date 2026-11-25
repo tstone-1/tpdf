@@ -244,9 +244,15 @@ export class WebLinkDialog {
       if (event.target === this.backdrop) this.settle(false);
     });
     this.backdrop.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") event.preventDefault();
+      if (event.key === "Tab") {
+        event.preventDefault();
+        (event.target === this.cancel ? open : this.cancel).focus();
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
-        event.stopPropagation();
         this.settle(false);
         return;
       }
@@ -275,7 +281,6 @@ export class WebLinkDialog {
         const tag = (event.target as { tagName?: string } | null)?.tagName;
         if (tag?.toLowerCase() === "button") return;
         event.preventDefault();
-        event.stopPropagation();
         this.settle(false);
       }
     });

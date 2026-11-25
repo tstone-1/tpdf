@@ -24,7 +24,6 @@ import {
   WIDTH,
 } from "./common";
 import { GUESSED_TEXT_CHECK, manifestOf, UNMAPPED_PAGE } from "./search";
-import { linkAnnouncementChecks } from "./links";
 import { pickNeedle, preview } from "./invert";
 
 /**
@@ -146,8 +145,6 @@ export async function accessibilityChecks(
             `"${preview(spoken)}" vs "${preview(expected)}"`,
     );
   }
-
-  await linkAnnouncementChecks(viewer);
 
   await structureChecks(doc, viewer.accessibleText.elementFor(0));
 

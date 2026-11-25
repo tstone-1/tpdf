@@ -260,6 +260,18 @@ pub const COMB: &str = "Comb fields are not supported yet";
 pub const RICH_TEXT: &str = "Rich-text fields are not supported yet";
 /// The widget's `/F` says hidden, invisible or no-view.
 pub const HIDDEN: &str = "This field is hidden";
+
+pub(crate) fn annotation_flags(doc: &Document, widget: &Dictionary) -> i64 {
+    widget
+        .get(b"F")
+        .and_then(|value| crate::encoding::resolve(doc, value).as_i64())
+        .unwrap_or(0)
+}
+
+pub(crate) fn hidden(flags: i64) -> bool {
+    flags & (1 | 2 | 32) != 0
+}
+
 /// A group of radio buttons one of whose buttons has a single drawing where
 /// its two states were. See [`scan`].
 pub const FIXED_BUTTON: &str =
@@ -754,7 +766,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             if text_bytes > 1_048_576 {
                 return Err(said!("This form exceeds the text limit"));
             }
-            let annotation_flags = w.get(b"F").and_then(Object::as_i64).unwrap_or(0);
+            let annotation_flags = annotation_flags(doc, w);
             // A turn that is not a whole number of quarters is not one the
             // specification allows, and is read as none.
             let turns = w
@@ -785,7 +797,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 // A field with `/RV` is refused, because writing `/V` would
                 // leave the formatted copy saying the old answer.
                 Some(said!("Rich-text fields are not supported yet"))
-            } else if annotation_flags & (1 | 2 | 32) != 0 {
+            } else if hidden(annotation_flags) {
                 Some(said!("This field is hidden"))
             } else {
                 None

@@ -515,6 +515,7 @@ export interface Commands {
     reply: import("./pictures").Made;
   };
   /** The reader's certificates with a key, sorted into offered and not. */
+  set_signing_language: { args: { locale: import("./i18n").UiLocale }; reply: void };
   sign_identities: { args: NoArgs; reply: Choices };
   sign_add_certificate_file: { args: { path: string }; reply: string | null };
   /**

@@ -2440,7 +2440,7 @@ ROWS += [
     Mutation(
         "second launch: the socket left open to others",
         "src/secondlaunch.rs",
-        "    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600)).ok()?;\n",
+        "    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;\n",
         "",
         "a_command_line_reaches_the_running_window_and_is_answered",
         # `secondlaunch` is compiled on macOS only (lib.rs), so on Windows and
@@ -2450,9 +2450,9 @@ ROWS += [
     Mutation(
         "second launch: a live window's socket taken over",
         "src/secondlaunch.rs",
-        "            if UnixStream::connect(socket).is_ok() {\n                return None;\n            }\n",
-        "",
-        "a_stale_socket_is_replaced_and_a_live_one_is_left_alone",
+        "Ok(_) => std::thread::sleep(Duration::from_millis(250)),",
+        "Ok(_) => std::fs::remove_file(socket)?,",
+        "an_older_listener_keeps_its_socket_until_it_closes",
         only_on="macos",
     ),
     Mutation(

@@ -104,8 +104,27 @@ pub fn decode(bytes: &[u8]) -> Option<(String, Vec<String>)> {
 /// Hands a command line to the window listening on `socket`. True only when
 /// that window answered that it has it.
 pub fn hand_over(socket: &Path, cwd: &str, args: &[String]) -> bool {
-    let Ok(mut stream) = UnixStream::connect(socket) else {
-        return false;
+    let mut stream = match UnixStream::connect(socket) {
+        Ok(stream) => stream,
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+            ) && socket.with_extension("lock").exists() =>
+        {
+            // A queued window needs a moment to replace the departed owner's socket.
+            let mut next = None;
+            for _ in 0..5 {
+                std::thread::sleep(Duration::from_millis(10));
+                if let Ok(stream) = UnixStream::connect(socket) {
+                    next = Some(stream);
+                    break;
+                }
+            }
+            let Some(stream) = next else { return false };
+            stream
+        }
+        Err(_) => return false,
     };
     let _ = stream.set_write_timeout(Some(WAIT));
     let _ = stream.set_read_timeout(Some(WAIT));
@@ -118,11 +137,11 @@ pub fn hand_over(socket: &Path, cwd: &str, args: &[String]) -> bool {
 }
 
 /// Listens on `socket` on a thread of its own, calling `receive` with each
-/// command line and its working folder. Does nothing when another window is
-/// already listening there, or the socket cannot be made.
+/// command line and its working folder. Other windows wait for ownership so one
+/// can take over when the current listener exits.
 pub fn listen(socket: PathBuf, receive: impl Fn(Vec<String>, String) + Send + 'static) {
     std::thread::spawn(move || {
-        let Some(listener) = bind(&socket) else {
+        let Ok((_ownership, listener)) = acquire(&socket) else {
             return;
         };
         for stream in listener.incoming().flatten() {
@@ -131,21 +150,40 @@ pub fn listen(socket: PathBuf, receive: impl Fn(Vec<String>, String) + Send + 's
     });
 }
 
-/// The listening socket, replacing one left by a window that is gone.
-fn bind(socket: &Path) -> Option<UnixListener> {
-    let listener = match UnixListener::bind(socket) {
-        Ok(listener) => listener,
-        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
-            if UnixStream::connect(socket).is_ok() {
-                return None;
+/// Keep the lock file in the private user directory. Unlinking it would let
+/// another window lock a different inode while others wait on the first.
+fn acquire(socket: &Path) -> std::io::Result<(std::fs::File, UnixListener)> {
+    use std::io::ErrorKind;
+    use std::os::unix::fs::OpenOptionsExt;
+    let ownership = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(socket.with_extension("lock"))?;
+    // SAFETY: ownership holds the descriptor open for the entire wait.
+    if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&ownership), libc::LOCK_EX) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let listener = loop {
+        match UnixListener::bind(socket) {
+            Ok(listener) => break listener,
+            Err(error) if error.kind() == ErrorKind::AddrInUse => {
+                match UnixStream::connect(socket) {
+                    // An older process can own the socket without the lock.
+                    Ok(_) => std::thread::sleep(Duration::from_millis(250)),
+                    Err(error) if error.kind() == ErrorKind::ConnectionRefused => {
+                        std::fs::remove_file(socket)?;
+                    }
+                    Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error),
+                }
             }
-            let _ = std::fs::remove_file(socket);
-            UnixListener::bind(socket).ok()?
+            Err(error) => return Err(error),
         }
-        Err(_) => return None,
     };
-    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600)).ok()?;
-    Some(listener)
+    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+    Ok((ownership, listener))
 }
 
 /// Reads one message, hands it on, and answers.
@@ -272,6 +310,7 @@ mod tests {
             0o600
         );
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("lock"));
     }
 
     #[test]
@@ -283,6 +322,7 @@ mod tests {
         drop(stale);
         assert!(!hand_over(&path, "/work", &args(&["tpdf", "a.pdf"])));
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("lock"));
     }
 
     #[test]
@@ -321,6 +361,72 @@ mod tests {
         );
         assert!(never.try_recv().is_err());
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("lock"));
+    }
+
+    #[test]
+    fn an_older_listener_keeps_its_socket_until_it_closes() {
+        let path = socket("legacy");
+        let first = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        first.set_nonblocking(true).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let next = path.clone();
+        std::thread::spawn(move || tx.send(super::acquire(&next)).unwrap());
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match first.accept() {
+                Ok(_) => break, // the successor has probed the live listener
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "no probe reached the old listener"
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("checking the existing socket: {e}"),
+            }
+        }
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(first);
+        let (owner, listener) = rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+        drop(listener);
+        drop(owner);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(path.with_extension("lock")).unwrap();
+    }
+
+    #[test]
+    fn a_waiting_window_takes_over_after_the_listener_exits() {
+        let path = socket("takeover");
+        let (ownership, first) = super::acquire(&path).unwrap();
+        let (ready, started) = mpsc::channel();
+        let successor_path = path.clone();
+        let successor = std::thread::spawn(move || {
+            ready.send(()).unwrap();
+            let (_owner, listener) = super::acquire(&successor_path).unwrap();
+            let stream = listener.accept().unwrap().0;
+            super::serve(stream, &|args, cwd| {
+                assert_eq!(args, ["tpdf", "second.pdf"]);
+                assert_eq!(cwd, "/work");
+            });
+        });
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        let first_path = path.clone();
+        let launch =
+            std::thread::spawn(move || hand_over(&first_path, "/work", &args(&["first.pdf"])));
+        super::serve(first.accept().unwrap().0, &|args, _| {
+            assert_eq!(args, ["first.pdf"])
+        });
+        assert!(launch.join().unwrap());
+        drop(first);
+        drop(ownership);
+        assert!(hand_over(&path, "/work", &args(&["tpdf", "second.pdf"])));
+        successor.join().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(path.with_extension("lock")).unwrap();
     }
 
     #[test]
@@ -340,5 +446,6 @@ mod tests {
         assert!(!hand_over(&path, "/work", &args(&["tpdf", &long])));
         assert!(got.recv_timeout(Duration::from_millis(200)).is_err());
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("lock"));
     }
 }

@@ -170,6 +170,7 @@ export class AccessibleText {
     /** Holds the page announcement until the window will be heard (`livetext.ts`); none writes at once. */
     clock?: FocusClock,
     private readonly cropLinks = (_page: number, links: Link[]) => links,
+    private readonly followLink?: (id: number) => void,
   ) {
     this.pageCount = pageCount;
     this.printedOf = printedOf;
@@ -407,7 +408,7 @@ export class AccessibleText {
       const out: HTMLElement[] = [];
       for (const line of block.lines) {
         const paragraph = document.createElement("p");
-        if (!fill(paragraph, content, line.ranges, links)) continue;
+        if (!fill(paragraph, content, line.ranges, links, this.followLink)) continue;
         out.push(paragraph);
       }
       return out;
@@ -426,7 +427,7 @@ export class AccessibleText {
     const ranges = block.lines.flatMap((line, at) =>
       at === 0 ? line.ranges : [SEPARATOR, ...line.ranges],
     );
-    if (!fill(element, content, ranges, links)) return [];
+    if (!fill(element, content, ranges, links, this.followLink)) return [];
     // The document's own word for it, on every block including the ones that
     // become a paragraph. It is not announced --- it is here so that a
     // `/Figure`, a `/TD` or a type nobody has seen before is *visible* to a check
@@ -465,6 +466,7 @@ function fill(
   content: PageText,
   ranges: readonly { from: number; to: number }[],
   links: readonly Link[],
+  followLink?: (id: number) => void,
 ): boolean {
   const runs = linkRunsIn(
     ranges.filter((range) => range !== SEPARATOR),
@@ -562,6 +564,10 @@ function fill(
       // it is a link and then given nothing has been misled by us rather than by
       // the file.
       span.setAttribute("aria-disabled", "true");
+    }
+    if (run.link.target.kind === "page" || run.link.target.kind === "web") {
+      const id = run.link.id;
+      span.addEventListener("click", () => followLink?.(id));
     }
     element.appendChild(span);
     all += piece;

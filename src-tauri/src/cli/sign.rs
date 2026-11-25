@@ -739,27 +739,15 @@ fn anchored(
     if let Some(text) = found.texts.get_mut(&(page - 1)) {
         super::regions::physical_text(text, unit).map_err(refused)?;
     }
-    // Each match's first box: where its text starts.
-    let boxes: Vec<[f32; 4]> = found
-        .matches
-        .iter()
-        .filter_map(|hit| {
-            let halves = super::regions::halves(std::slice::from_ref(hit));
-            let text = found.texts.get(&(page - 1))?;
-            super::regions::regions_on(text, page - 1, &halves)
-                .first()
-                .copied()
-        })
-        .collect();
     let text = &anchor.text;
-    let chosen = match (anchor.nth, boxes.len()) {
+    let hit = match (anchor.nth, found.matches.len()) {
         (_, 0) => {
             return Err(refused(format!(
                 "page {page} of {shown} has no text `{text}` to put the signature beside --- \
                  nothing was written"
             )))
         }
-        (None, 1) => boxes[0],
+        (None, 1) => &found.matches[0],
         (None, many) => {
             return Err(refused(format!(
                 "page {page} of {shown} has `{text}` {many} times, so it does not say where the \
@@ -767,7 +755,7 @@ fn anchored(
                  nothing was written"
             )))
         }
-        (Some(nth), many) => *boxes.get(nth as usize - 1).ok_or_else(|| {
+        (Some(nth), many) => found.matches.get(nth as usize - 1).ok_or_else(|| {
             refused(format!(
                 "page {page} of {shown} has `{text}` {many} time{}, and `--anchor-match {nth}` \
                  is not one of them --- nothing was written",
@@ -775,6 +763,12 @@ fn anchored(
             ))
         })?,
     };
+    let halves = super::regions::halves(std::slice::from_ref(hit));
+    let chosen = found.texts.get(&(page - 1))
+        .and_then(|page_text| super::regions::regions_on(page_text, page - 1, &halves).first().copied())
+        .ok_or_else(|| refused(format!(
+            "the selected occurrence of `{text}` on page {page} has no usable rectangle for a signature --- nothing was written"
+        )))?;
     let [dx, dy] = anchor.offset;
     let [w, h] = anchor.size;
     let physical = rectangle_of(chosen[0] + dx, chosen[1] + dy, w, h).ok_or_else(|| {

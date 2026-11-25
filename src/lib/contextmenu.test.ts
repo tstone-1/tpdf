@@ -331,10 +331,17 @@ describe("keyboard", () => {
     expect(menu.handleKey(key("ArrowDown"))).toBe(false);
   });
 
-  it("closes on Escape", () => {
-    const { menu } = menuOf();
+  it("closes on Escape and returns focus to the invoker", () => {
+    const { menu, host } = menuOf();
+    const invoker = document.createElement("button");
+    const restore = vi.spyOn(invoker, "focus");
+    Object.assign(document, { activeElement: invoker });
     menu.show(PAGE_MENU, { x: 10, y: 10 });
+    const popup = host.children[0]!;
+    expect(popup.focused).toBe(true);
+    Object.assign(document, { activeElement: popup });
     expect(menu.handleKey(key("Escape"))).toBe(true);
+    expect(restore).toHaveBeenCalled();
     expect(menu.isOpen).toBe(false);
   });
 

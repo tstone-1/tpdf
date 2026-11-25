@@ -173,7 +173,11 @@ pub fn identities_report(listed: &[(Listed, String)]) -> report::Identities {
         usable: Vec::new(),
         not_usable: Vec::new(),
     };
+    let mut seen = std::collections::HashSet::new();
     for (entry, subject) in listed {
+        if !seen.insert(&entry.id) {
+            continue;
+        }
         match &entry.offer {
             Ok(offer) => out.usable.push(usable_of(entry, offer)),
             Err(why) => out.not_usable.push(report::NotUsable {
@@ -242,10 +246,11 @@ pub fn resolve(wanted: &str, listed: &[(Listed, String)]) -> Result<usize, Strin
         };
     }
 
+    let mut seen = std::collections::HashSet::new();
     let named: Vec<usize> = listed
         .iter()
         .enumerate()
-        .filter(|(_, (_, subject))| subject == wanted)
+        .filter(|(_, (entry, subject))| subject == wanted && seen.insert(&entry.id))
         .map(|(at, _)| at)
         .collect();
     let usable: Vec<usize> = named

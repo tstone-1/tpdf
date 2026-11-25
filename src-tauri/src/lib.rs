@@ -1140,6 +1140,7 @@ pub fn run() {
             split_document,
             merge_documents,
             images_to_pdf,
+            set_signing_language,
             sign_identities,
             sign_add_certificate_file,
             sign_preview,

@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Anchored signatures keep the selected occurrence when another match has no measurable rectangle. Visible signing checks that the field is visible on its page. Hidden signature metadata can use Unicode, and duplicate registrations of one certificate count as one CLI choice.
+- A graphics-only figure can contain font setup without blocking nearby text edits. Reusing an image within a figure counts its decoded bytes once.
+- Context menus take keyboard focus. Web-link confirmation keeps focus until dismissed, and links in the accessible reading tree can be activated directly.
+- A remaining macOS window takes over positioned document launches when the first window exits. The Linux signing prompt follows the selected interface language.
+
 - Signature reports name the signer only when the certificate matches. The desktop and CLI describe the B-B signing time as unattested, including when a timestamp is present.
 - Bookmarks and saved positions respect combined page and view rotations. Find reveals offscreen hits horizontally, and its Results panel explains invalid patterns and scanned pages.
 - Wrapped text edits preserve no-break spaces, recognize rotated columns and place the hit target of a moved, previously clipped line at its saved bounds.

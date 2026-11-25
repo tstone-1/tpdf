@@ -1880,7 +1880,7 @@ export class Viewer {
     this.pages = unedited(opts.pageCount);
     this.text = new TextCache(opts.doc, this.recovery.text);
     this.a11y = new AccessibleText(root, opts.pageCount, opts.printedOf, opts.focusClock,
-      (page, links) => this.croppedLinks(page, links));
+      (page, links) => this.croppedLinks(page, links), (id) => this.followLink(id));
     this.searcher = new Search(
       opts.doc,
       opts.pageCount,
@@ -4316,17 +4316,6 @@ export class Viewer {
    */
   get linkRows(): readonly Link[] {
     return this.linkWalk;
-  }
-
-  /**
-   * The first page carrying a link, or -1. For the check harness.
-   *
-   * From the walk order rather than from the scan order, so it is the page a
-   * reader reaches first rather than the one whose annotation the file happened
-   * to write first.
-   */
-  get firstLinkPage(): number {
-    return this.linkWalk[0]?.page ?? -1;
   }
 
   /** Whether Back and Forward would do anything. For the check harness. */

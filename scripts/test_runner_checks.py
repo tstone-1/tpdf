@@ -29,8 +29,9 @@ class ReviewCoverage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "src").mkdir()
-            files = {"src/read.ts", "src/edited.ts", "src/skim.ts", "src/new.ts"}
+            files = {"src/read.ts", "src/edited.ts", "src/skim.ts", "src/new.ts", "src-tauri/tests/cli.rs"}
             for name in files:
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
                 (root / name).touch()
             reports = root / "docs" / "reviews"
             reports.mkdir(parents=True)
@@ -48,9 +49,10 @@ class ReviewCoverage(unittest.TestCase):
             ), patch.object(sys, "argv", ["coverage", "--list", "revisit"]), redirect_stdout(io.StringIO()) as output:
                 review_coverage.main()
             result = output.getvalue()
-            self.assertIn("Fully read at least once: 2/4 (50.0%)", result)
-            self.assertIn("Full read, matching current contents: 1/4 (25.0%)", result)
-            self.assertIn("Only skimmed or searched: 1/4 (25.0%)", result)
+            application = result.split("Application and client source/tests", 1)[1].split("Repository code", 1)[0]
+            self.assertIn("Fully read at least once: 2/5 (40.0%)", application)
+            self.assertIn("Full read, matching current contents: 1/5 (20.0%)", application)
+            self.assertIn("Only skimmed or searched: 1/5 (20.0%)", application)
             self.assertTrue(result.endswith("Application paths (revisit): 1\nsrc/edited.ts\n"))
 
     def test_a_prior_clean_revision_does_not_certify_a_dirty_review(self):

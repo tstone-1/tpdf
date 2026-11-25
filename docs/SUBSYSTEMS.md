@@ -80,6 +80,7 @@ measured on the pair. The worker's reply says whether the revision locks (`Unsig
 data that did not come, and `sign_finish::read_back` answers `ReadBack::Lock` for a copy
 whose new signature does not read back at level 1. Long-term signing also requires the
 reopened file to have the expected length and an intact archive timestamp over its final byte.
+A visible signature requires a widget inside the displayed page with none of the Invisible, Hidden or NoView flags. Invisible signing preserves the widget flags.
 Signing an existing field requires its full name. A widget without a name cannot be selected, since an absent target asks the writer to create a new field. Field order alone cannot identify a new timestamp when signing an existing empty field. The window asks whether anyone else still
 needs to sign, with no answer selected, and locks for *No* (`signlock.ts`, since 2026-10-15;
 a checkbox ticked by default before); `tpdf sign` locks only with `--lock`, since a script's output must
@@ -195,7 +196,7 @@ field as a DocMDP violation. PDFKit does not rasterise a `/Sig` widget on a turn
 `SignatureDialog` (`APPEARANCE_WORDS`), or none --- the three lines each switchable, and a reason
 and location, which `sign_prepare.rs` also writes as `/Reason` and `/Location` text strings
 (`text_string`: PDFDocEncoding where it equals Latin-1 and does not begin like a byte-order mark,
-UTF-16BE otherwise). They travel as `sign_prepare::Options` inside `Placement` and `Visible`,
+UTF-16BE otherwise). The appearance font limits only the values a standard or custom line actually draws. They travel as `sign_prepare::Options` inside `Placement` and `Visible`,
 defaulted so an older request means the three lines. The **preview** is `sign_preview`: the app
 process reads the name from the certificate, and the document's worker runs
 `sign_prepare::preview` --- the signing's own `prepare_visible` over a blank page the size of the

@@ -1050,7 +1050,7 @@ fn stencil(content: Vec<u8>) -> Stream {
 
 // Scanned pages and Acrobat's OCR output keep text as CCITT stencil masks.
 // They paint the current fill colour, are kept byte for byte, and must
-// decode to exactly Height complete rows.
+// supply at least Height complete rows.
 #[test]
 fn textedit_ccitt_stencil_masks_are_decoded_whole_and_kept() {
     let mask = stencil(group4(4));

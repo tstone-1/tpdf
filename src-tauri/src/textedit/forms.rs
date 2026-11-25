@@ -194,14 +194,12 @@ fn visit(
         return Err(invalid());
     }
     let mut has_text = false;
+    let mut checked_images = std::collections::HashSet::new();
     let mut inside = false;
     let mut stack = 0;
     for op in &content.operations {
         match (op.operator.as_str(), op.operands.as_slice()) {
-            ("BT", []) if !inside => {
-                inside = true;
-                has_text = true;
-            }
+            ("BT", []) if !inside => inside = true,
             ("ET", []) if inside => inside = false,
             ("q", []) if !inside && stack < 64 => stack += 1,
             ("Q", []) if !inside && stack > 0 => stack -= 1,
@@ -216,7 +214,7 @@ fn visit(
                     .map_err(|_| invalid())?;
                 if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Form") {
                     has_text |= visit(doc, resources, child, depth + 1, budget)?.0.is_some();
-                } else {
+                } else if checked_images.insert(name) {
                     let image = images::check(doc, resources, name, budget.remaining)?;
                     // A form's fill colour is not tracked, and a stencil paints it.
                     if image.stencil {
@@ -240,7 +238,17 @@ fn visit(
             // stamps set it before BT. Positioning and showing need the text
             // object, whose own state this form restores on return either way.
             ("Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts", _) => {}
-            ("Td" | "TD" | "Tm" | "T*" | "Tj" | "TJ" | "'" | "\"", _) if inside => {}
+            ("Td" | "TD" | "Tm" | "T*", _) if inside => {}
+            ("Tj" | "'", [Object::String(bytes, _)]) | ("\"", [_, _, Object::String(bytes, _)])
+                if inside =>
+            {
+                has_text |= !bytes.is_empty();
+            }
+            ("TJ", [Object::Array(items)]) if inside => {
+                has_text |= items
+                    .iter()
+                    .any(|item| matches!(item, Object::String(bytes, _) if !bytes.is_empty()));
+            }
             _ => return Err(invalid()),
         }
     }

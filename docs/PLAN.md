@@ -6624,9 +6624,7 @@ the words next door; overlap makes a link announce itself with a stray word at e
 
 **It is a `<span role="link">` and never an `<a>`, and the security constraint chose that.**
 `scripts/check_webview_sinks.py` refuses the creation of any URL-bearing element anywhere in the
-frontend, which is what lets `docs/THREAT-MODEL.md` T8 claim sufficiency from a grep. A span
-carrying a role is announced as a link by every screen reader and can hold no URL at all, so the
-gate and the accessible outcome want the same element. A refused link gets `aria-disabled`
+frontend, which is what lets `docs/THREAT-MODEL.md` T8 claim sufficiency from a grep. The span exposes link semantics without a URL attribute. Activating a page or web link in the reading tree calls the viewer by annotation ID, including its usual confirmation for a web address. A refused link gets `aria-disabled`
 rather than being left silently inert — a reader told it is a link and then given nothing has
 been misled by us rather than by the file.
 
@@ -18399,7 +18397,7 @@ the middle of the window; fit content after it, as it lands on the page in front
 window takes a second launch's place on Windows and Linux through the single-instance plugin,
 and on macOS through `secondlaunch.rs`: a launch with a place, and only one with a place, hands
 its command line over a socket in the user's own temporary folder and ends, or starts on its
-own if no window answers within two seconds (`docs/THREAT-MODEL.md` §T6.44). Evidence:
+own if no window answers within two seconds (`docs/THREAT-MODEL.md` §T6.44). Other macOS windows wait on a file lock and take over the socket when its owner exits. Evidence:
 `open_check.py`, run in `window_checks.py` as `open`, on the second Mac: page 12 at fit page from a
 cold launch (5 of 5) and handed to a running window (6 of 6), the second process ending with 0
 at once. Not measured: Windows and Linux, where the route is the plugin's and the phases are the

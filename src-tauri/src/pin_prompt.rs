@@ -41,14 +41,67 @@ fn names(asked: Asked<'_>) -> (&'static str, &'static str) {
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Language {
+    #[default]
+    English,
+    German,
+    FormalGerman,
+}
+
+static LANGUAGE: std::sync::RwLock<Language> = std::sync::RwLock::new(Language::English);
+
+impl Language {
+    fn from_locale(locale: &str) -> Self {
+        match locale {
+            "de-DE" => Self::German,
+            "de-DE-formal" => Self::FormalGerman,
+            _ => Self::English,
+        }
+    }
+
+    fn dialog_words(self, asked: Asked<'_>) -> (&'static str, String, &'static str, &'static str) {
+        if self == Self::English {
+            return (names(asked).0, question(asked), "Cancel", "Sign");
+        }
+        let (title, question) = match asked {
+            Asked::Pin(token) => {
+                (
+                    "Mit einer Smartcard signieren",
+                    if self == Self::FormalGerman {
+                        format!("Geben Sie zum Signieren die PIN der Smartcard oder des Tokens „{token}“ ein.")
+                    } else {
+                        format!("Gib zum Signieren die PIN der Smartcard oder des Tokens „{token}“ ein.")
+                    },
+                )
+            }
+            Asked::Password(file) => (
+                "Zertifikatsdatei",
+                if self == Self::FormalGerman {
+                    format!("Geben Sie das Passwort der Zertifikatsdatei „{file}“ ein.")
+                } else {
+                    format!("Gib das Passwort der Zertifikatsdatei „{file}“ ein.")
+                },
+            ),
+        };
+        (title, question, "Abbrechen", "Signieren")
+    }
+}
+
+pub(crate) fn set_language(locale: &str) {
+    *LANGUAGE.write().unwrap_or_else(|error| error.into_inner()) = Language::from_locale(locale);
+}
+
 /// Installs the application's prompt: a modal GTK dialog over the main window.
 pub fn install_dialog(app: tauri::AppHandle) {
     crate::pkcs11::set_pin_asker(Box::new(move |asked| dialog(&app, asked)));
 }
 
 fn dialog(app: &tauri::AppHandle, asked: Asked<'_>) -> Result<Option<AuthPin>, String> {
-    let question = question(asked);
-    let (title, _) = names(asked);
+    let (title, question, cancel, sign) = LANGUAGE
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .dialog_words(asked);
     let app_for_dialog = app.clone();
     let ask = move || -> Option<Zeroizing<String>> {
         use gtk::prelude::*;
@@ -64,8 +117,8 @@ fn dialog(app: &tauri::AppHandle, asked: Asked<'_>) -> Result<Option<AuthPin>, S
             parent.as_ref(),
             gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
             &[
-                ("Cancel", gtk::ResponseType::Cancel),
-                ("Sign", gtk::ResponseType::Accept),
+                (cancel, gtk::ResponseType::Cancel),
+                (sign, gtk::ResponseType::Accept),
             ],
         );
         dialog.set_default_response(gtk::ResponseType::Accept);
@@ -277,5 +330,28 @@ mod tests {
         let mut full = vec![b'7'; MOST];
         full.push(b'\r');
         assert_eq!(keys(&full).map(|t| t.map(|t| t.len())), Ok(Some(MOST)));
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn the_dialog_follows_the_window_language_and_the_terminal_uses_english() {
+        for asked in [Asked::Pin("Demo"), Asked::Password("Demo")] {
+            for (locale, start) in [("de-DE", "Gib "), ("de-DE-formal", "Geben Sie ")] {
+                let (title, question, cancel, sign) =
+                    Language::from_locale(locale).dialog_words(asked);
+                assert_ne!(title, names(asked).0);
+                assert!(question.starts_with(start) && question.contains("„Demo“"));
+                assert_eq!((cancel, sign), ("Abbrechen", "Signieren"));
+            }
+            assert_eq!(
+                Language::from_locale("en-GB").dialog_words(asked).1,
+                question(asked)
+            );
+            assert!(terminal_prompt(asked).starts_with("Enter the "));
+        }
     }
 }
