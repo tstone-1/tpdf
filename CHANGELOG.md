@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Graphic export follows unsaved page rotations and preserves small SVG transforms.
+- Link hit regions, keyboard focus and the focus outline respect multiline links, visibility flags and page crops. A document at the link limit reports omitted links only if more were found.
+- Document properties and CLI info distinguish document-level conformance declarations from nested metadata, read CDATA and legacy PDF/X identifiers, and report incomplete XML.
+
 - Reload clears redaction results attached to an earlier version in every view. Confirmed reload holds the target document while opening its replacement. Closing another tab leaves the current draft alone.
 - Automatic reload respects a message or preference that changes while drafts settle. CLI text comparison accepts Flate streams with explicit no-op parameters.
 - Signature verification accounts for removed layer settings, distinguishes repeated free entries from new removals, and follows each page's effective inherited resources.

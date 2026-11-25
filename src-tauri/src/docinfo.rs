@@ -619,11 +619,8 @@ pub struct Properties {
     /// before the list existed still parses.
     #[serde(default)]
     pub embedded: Vec<crate::attachments::Embedded>,
-    /// The XMP metadata packet, when the document carries one.
-    ///
-    /// `None` is a document with no `/Metadata`, which is a fact about it;
-    /// `Some` with [`crate::xmp::Xmp::unread`] set is one whose packet could
-    /// not be read, which is a fact about tpdf. The two are never the same row.
+    /// Document conformance claims from XMP and the early PDF/X Info keys.
+    /// An Info-only result has zero packet bytes.
     pub xmp: Option<crate::xmp::Xmp>,
     /// What could not be read.
     pub limits: Limits,
@@ -834,7 +831,7 @@ fn scan_judged(
         language,
         attachments,
         embedded,
-        xmp: catalog.and_then(|c| read_xmp(document, c)),
+        xmp: catalog.and_then(|c| conformance(document, c)),
         limits,
         scan_ms: started.elapsed().as_secs_f64() * 1000.0,
     })
@@ -1112,6 +1109,45 @@ pub(crate) fn read_xmp(document: &Document, catalog: &Dictionary) -> Option<crat
         });
     }
     Some(crate::xmp::scan(&packet))
+}
+
+/// Combine XMP claims with the identification keys used by early PDF/X editions.
+fn conformance(document: &Document, catalog: &Dictionary) -> Option<crate::xmp::Xmp> {
+    let mut claims = read_xmp(document, catalog);
+    if let Ok(info) = document
+        .trailer
+        .get_deref(b"Info", document)
+        .and_then(Object::as_dict)
+    {
+        let text = |key: &[u8]| {
+            info.get_deref(key, document)
+                .and_then(Object::as_str)
+                .ok()
+                .filter(|bytes| bytes.len() <= 128)
+                .map(decode_text_string)
+        };
+        let version = text(b"GTS_PDFXVersion");
+        let level = text(b"GTS_PDFXConformance");
+        let legacy = match (version.as_deref(), level.as_deref()) {
+            (Some("PDF/X-1:2001"), Some("PDF/X-1a:2001")) => Some("PDF/X-1a:2001"),
+            (
+                value @ Some(
+                    "PDF/X-1:2001" | "PDF/X-1a:2001" | "PDF/X-1a:2003" | "PDF/X-2:2003"
+                    | "PDF/X-3:2002" | "PDF/X-3:2003",
+                ),
+                _,
+            ) => value,
+            _ => None,
+        };
+        if let Some(value) = legacy {
+            let list = &mut claims.get_or_insert_with(Default::default).conformance;
+            if !list.iter().any(|other| other == value) {
+                list.push(value.to_owned());
+                list.sort();
+            }
+        }
+    }
+    claims
 }
 
 /// Reads the `/Info` dictionary, standard keys first.
@@ -7519,6 +7555,33 @@ mod tests {
         let mut out = Vec::new();
         document.save_to(&mut out).expect("a writable document");
         out
+    }
+
+    #[test]
+    fn legacy_pdfx_info_can_supply_a_claim_or_disagree_with_xmp() {
+        let mut doc = Document::new();
+        let mut catalog = dictionary! {};
+        let info = doc.add_object(
+            dictionary! { "GTS_PDFXVersion" => Object::string_literal("PDF/X-3:2002") },
+        );
+        doc.trailer.set("Info", info);
+        assert_eq!(
+            conformance(&doc, &catalog).unwrap().conformance,
+            ["PDF/X-3:2002"]
+        );
+        for (xmp_version, expected) in [
+            ("PDF/X-3:2002", vec!["PDF/X-3:2002"]),
+            ("PDF/X-4", vec!["PDF/X-3:2002", "PDF/X-4"]),
+        ] {
+            let packet = format!(
+                r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:x="http://www.npes.org/pdfx/ns/id/" x:GTS_PDFXVersion="{xmp_version}"/></rdf:RDF>"#
+            );
+            catalog.set(
+                "Metadata",
+                doc.add_object(lopdf::Stream::new(dictionary! {}, packet.into_bytes())),
+            );
+            assert_eq!(conformance(&doc, &catalog).unwrap().conformance, expected);
+        }
     }
 
     /// A PDF/A claim in the packet reaches the readout.

@@ -8,7 +8,7 @@ edition = "2021"
 # the document's fingerprint has been hashed. Raised from 1.85 on 2026-08-19,
 # and clippy is what noticed: `incompatible_msrv` compares this line against
 # the APIs actually called, so the claim cannot drift from the code. Nothing
-# builds against the minimum in practice --- `rust-toolchain.toml` pins 1.97.1
+# builds against the minimum in practice --- `rust-toolchain.toml` pins the build compiler
 # and the `toolchain` gate asserts it --- which is exactly why the claim needs
 # something checking it rather than somebody remembering.
 rust-version = "1.86"

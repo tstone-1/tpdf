@@ -13202,8 +13202,7 @@ that is stated here rather than implied by silence.
 
 **Done 2026-08-21, and the scope was decided by measurement.** The catalog's `/Metadata` is an
 RDF/XML packet, and `xmp.rs` reads **one thing** out of it: a conformance claim. PDF/A, PDF/UA
-and PDF/X are declared in XMP or nowhere, so this is a fact about a document that nothing else
-in tpdf could see.
+and modern PDF/X use XMP. Earlier PDF/X editions also identify themselves through the Info dictionary.
 
 The numbers, over 41 real PDFs in `~/Downloads`:
 

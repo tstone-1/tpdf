@@ -7,6 +7,7 @@ import {
   linkAt,
   linkRunsIn,
   noticeFor,
+  clippedLink,
   onPage,
   orderedLinks,
   refusalFor,
@@ -525,4 +526,19 @@ describe("samePlace", () => {
     expect(samePlace({ page: 1, top: 100 }, { page: 1, top: 200 })).toBe(true);
     expect(samePlace({ page: 1, top: 100 }, { page: 1, top: 700 })).toBe(false);
   });
+});
+
+it("hits separate polygons and clips the active shape to the crop", () => {
+  const link: Link = { id: 1, page: 0, rect: [0, 0, 40, 40], target: { kind: "none" },
+    quads: [[[0, 4], [10, 0], [12, 5], [2, 9]], [[20, 25], [40, 25], [40, 30], [20, 30]]] };
+  expect(linkAt([link], 0, 5, 5, 0)).toBe(link);
+  expect(linkAt([link], 0, 25, 27, 0)).toBe(link);
+  expect(linkAt([link], 0, 10, 15, 0)).toBeNull();
+  expect(linkAt([link], 0, 0, 0, 0)).toBeNull();
+  const visible = clippedLink(link, [0, 20, 30, 40])!;
+  expect(visible.rect).toEqual([20, 25, 30, 30]);
+  expect(visible.quads).toHaveLength(1);
+  expect(clippedLink(link, [0, 12, 40, 18])).toBeNull();
+  const rotated = turnedFor([visible], 1, 40, 40);
+  expect(linkAt(rotated, 0, 12, 25, 0)?.id).toBe(1);
 });

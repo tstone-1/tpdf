@@ -229,15 +229,14 @@ ROWS += [
         # produces looks exactly like an ordinary file.
         "xmp: read a conformance claim only when it is a child element",
         "src/xmp.rs",
-        """                read_attributes(
-                    &reader,
-                    &element,
-                    &mut out,
-                    &mut pdfa_part,
-                    &mut pdfa_conformance,
-                );
-                stack.push(property);""",
-        "                stack.push(property);",
+        """                            read_attributes(
+                                &reader,
+                                &element,
+                                &mut out,
+                                &mut pdfa_part,
+                                &mut pdfa_conformance,
+                            );""",
+        "",
         "a_claim_written_as_attributes_is_read_as_the_same_claim",
     ),
     Mutation(
@@ -260,14 +259,14 @@ ROWS += [
                     append(buffer, &text, &mut out.unread);
                 }
             }
-            Ok(Event::GeneralRef(reference)) => {""",
+            Ok(Event::CData(text)) => {""",
         """                if let Some((_, _, buffer)) = &mut pending {
                     if buffer.is_empty() {
                         append(buffer, &text, &mut out.unread);
                     }
                 }
             }
-            Ok(Event::GeneralRef(reference)) => {""",
+            Ok(Event::CData(text)) => {""",
         "a_value_arriving_in_pieces_is_put_back_together",
     ),
     Mutation(
@@ -352,7 +351,7 @@ ROWS += [
         # packet -- which is true of most of them.
         "docinfo: report every document as carrying no metadata packet",
         "src/docinfo.rs",
-        "        xmp: catalog.and_then(|c| read_xmp(document, c)),",
+        "        xmp: catalog.and_then(|c| conformance(document, c)),",
         "        xmp: catalog.and_then(|_| None),",
         "a_conformance_claim_in_the_metadata_stream_reaches_the_readout",
     ),

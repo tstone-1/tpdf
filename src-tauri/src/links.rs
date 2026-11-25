@@ -105,6 +105,9 @@ pub struct Link {
     /// `[left, top, right, bottom]` in points, from the displayed page's
     /// top-left --- the same space [`crate::annots::Comment::rect`] uses.
     pub rect: [f32; 4],
+    /// Convex hit regions in displayed page coordinates, in perimeter order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quads: Vec<[[f32; 2]; 4]>,
     /// Where it points, or why it points nowhere.
     pub target: Target,
 }
@@ -231,9 +234,10 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String
         .collect();
     let names = Destinations::of(document);
 
+    // Bound geometry across the complete IPC reply as well as per link.
+    let mut quad_budget = 65_536;
     for (index, page) in pages.values().take(page_count).enumerate() {
-        if items.len() >= MAX_TOTAL {
-            limits.over_budget = true;
+        if limits.over_budget {
             break;
         }
         read_page(
@@ -246,6 +250,7 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String
             &mut limits,
             &mut urls,
             &names,
+            &mut quad_budget,
         );
     }
 
@@ -259,7 +264,7 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Links, String
 
 /// Reads one page's `/Annots`, keeping the links.
 ///
-/// Nine arguments, and the allow is the same one `walk_outline` below carries
+/// The page scan arguments, and the allow is the same one `walk_outline` below carries
 /// for the same shape: the document, the page, and the three things built once
 /// in `scan_from` (two indexes and the named destinations), and the rest are
 /// where the walk puts what it finds.
@@ -277,6 +282,7 @@ fn read_page(
     limits: &mut Limits,
     urls: &mut Vec<String>,
     names: &Destinations<'_>,
+    quad_budget: &mut usize,
 ) {
     let Ok(dict) = document.get_dictionary(page) else {
         limits.unreadable += 1;
@@ -301,15 +307,6 @@ fn read_page(
     let mut on_this_page = 0usize;
 
     for entry in entries {
-        if items.len() >= MAX_TOTAL {
-            limits.over_budget = true;
-            return;
-        }
-        if on_this_page >= MAX_PER_PAGE {
-            limits.crowded_pages += 1;
-            return;
-        }
-
         let object = match entry {
             Object::Reference(id) => match document.get_object(*id) {
                 Ok(object) => object,
@@ -336,7 +333,7 @@ fn read_page(
             }
         }
 
-        // `/F` bit 2 is Hidden: the page does not show this annotation, so
+        // Hidden and NoView both disable screen interaction: the page does not show this annotation, so
         // there is nothing under the pointer to have been clicked. Dropped here
         // rather than carried with a flag --- which is what `annots.rs` does ---
         // because a hidden *comment* is still listed in the panel a reader
@@ -345,7 +342,7 @@ fn read_page(
             .get(b"F")
             .ok()
             .and_then(|flags| resolve(document, flags).as_i64().ok())
-            .is_some_and(|flags| flags & 0b10 != 0);
+            .is_some_and(|flags| flags & (2 | 32) != 0);
         if hidden {
             continue;
         }
@@ -358,10 +355,24 @@ fn read_page(
             continue;
         }
 
+        if items.len() >= MAX_TOTAL {
+            limits.over_budget = true;
+            return;
+        }
+        if on_this_page >= MAX_PER_PAGE {
+            limits.crowded_pages += 1;
+            return;
+        }
+
+        let Some(quads) = link_quads(document, annot, shown, quad_budget) else {
+            limits.unreadable += 1;
+            continue;
+        };
         items.push(Link {
             id: items.len() as u32,
             page: number,
             rect,
+            quads,
             target: target_of(annot, document, numbers, geometry, limits, urls, names),
         });
         on_this_page += 1;
@@ -1142,6 +1153,73 @@ fn page_geometry(document: &Document, page: ObjectId) -> PageBox {
         turns: shown.turns,
         origin: shown.origin,
     }
+}
+
+/// Read link quadrilaterals under a reply-wide budget. Malformed coordinates
+/// use the PDF rectangle fallback. Oversized geometry cannot be read completely.
+fn link_quads(
+    doc: &Document,
+    annot: &Dictionary,
+    page: PageBox,
+    budget: &mut usize,
+) -> Option<Vec<[[f32; 2]; 4]>> {
+    let Ok(points) = annot
+        .get_deref(b"QuadPoints", doc)
+        .and_then(Object::as_array)
+    else {
+        return Some(Vec::new());
+    };
+    let count = points.len() / 8;
+    if points.len() % 8 != 0 || count == 0 {
+        return Some(Vec::new());
+    }
+    if count > 512 || count > *budget {
+        return None;
+    }
+    let Some(rect) = annot
+        .get(b"Rect")
+        .ok()
+        .and_then(|r| crate::pagetree::numbers_of(doc, r, 4))
+    else {
+        return Some(Vec::new());
+    };
+    let mut quads = Vec::with_capacity(count);
+    for raw in points.chunks_exact(8) {
+        let mut corners = [[0.0_f32; 2]; 4];
+        for (xy, corner) in raw.chunks_exact(2).zip(&mut corners) {
+            let (Ok(x), Ok(y)) = (
+                resolve(doc, &xy[0]).as_float(),
+                resolve(doc, &xy[1]).as_float(),
+            ) else {
+                return Some(Vec::new());
+            };
+            if !(rect[0].min(rect[2])..=rect[0].max(rect[2])).contains(&x)
+                || !(rect[1].min(rect[3])..=rect[1].max(rect[3])).contains(&y)
+            {
+                return Some(Vec::new());
+            }
+            let x = f64::from(x) - f64::from(page.origin.0);
+            let y = f64::from(y) - f64::from(page.origin.1);
+            let [left, top, ..] =
+                crate::text::to_device(page.turns, page.width, page.height, [x, y, x, y]);
+            *corner = [left, top];
+        }
+        // Producers use both perimeter and text-markup ordering.
+        let cx = corners.iter().map(|p| f64::from(p[0])).sum::<f64>() / 4.0;
+        let cy = corners.iter().map(|p| f64::from(p[1])).sum::<f64>() / 4.0;
+        let angle = |p: &[f32; 2]| (f64::from(p[1]) - cy).atan2(f64::from(p[0]) - cx);
+        corners.sort_by(|a, b| angle(a).total_cmp(&angle(b)));
+        for i in 0..4 {
+            let [a, b, c] =
+                [corners[i], corners[(i + 1) % 4], corners[(i + 2) % 4]].map(|p| p.map(f64::from));
+            if (b[0] - a[0]) * (c[1] - b[1]) <= (b[1] - a[1]) * (c[0] - b[0]) {
+                return Some(Vec::new());
+            }
+        }
+        quads.push(corners);
+    }
+    *budget -= count;
+    Some(quads)
 }
 
 /// A link's `/Rect`, normalised and mapped into display space.
@@ -2023,14 +2101,59 @@ mod tests {
         let mut printing = link(vec![300.into(), 700.into(), 400.into(), 720.into()]);
         printing.set("F", 4);
 
-        let (mut document, _) = build(1, &[(0, vec![invisible, printing])]);
+        let mut annots = vec![invisible, printing];
+        for flags in [32, 36] {
+            let mut no_view = link(rect());
+            no_view.set("F", flags);
+            annots.push(no_view);
+        }
+        let (mut document, _) = build(1, &[(0, annots)]);
         let links = scan_of(&mut document, 1);
-        assert_eq!(links.items.len(), 1, "only the hidden one is dropped");
+        assert_eq!(links.items.len(), 1, "only the visible Print link remains");
         assert_eq!(links.items[0].rect[0], 300.0);
         assert!(
             !links.limits.any(),
             "a hidden link is the document's intent, not a bound firing"
         );
+    }
+
+    #[test]
+    fn separated_quadrilaterals_survive_the_worker_scan() {
+        let mut a = link(rect());
+        a.set(
+            "QuadPoints",
+            [
+                100, 720, 140, 720, 100, 711, 140, 711, 160, 700, 200, 700, 200, 709, 160, 709,
+            ]
+            .map(Object::from)
+            .to_vec(),
+        );
+        let (mut doc, _) = build(1, &[(0, vec![a])]);
+        let links = scan_of(&mut doc, 1);
+        assert_eq!(
+            links.items[0].quads,
+            [
+                [[100., 72.], [140., 72.], [140., 81.], [100., 81.]],
+                [[160., 83.], [200., 83.], [200., 92.], [160., 92.]],
+            ]
+        );
+    }
+
+    #[test]
+    fn exactly_full_link_lists_do_not_report_missing_links() {
+        let mut page = vec![link(rect()); MAX_PER_PAGE];
+        page.push(dictionary! { "Subtype" => "Text" });
+        let mut pages: Vec<_> = (0..MAX_TOTAL / MAX_PER_PAGE)
+            .map(|i| (i, page.clone()))
+            .collect();
+        let count = pages.len() + 1;
+        let (doc, _) = build(count, &pages);
+        let full = scan_from(&doc, count).unwrap();
+        assert_eq!(full.items.len(), MAX_TOTAL);
+        assert!(!full.limits.any());
+        pages.push((count - 1, vec![link(rect())]));
+        let (doc, _) = build(count, &pages);
+        assert!(scan_from(&doc, count).unwrap().limits.over_budget);
     }
 
     #[test]
@@ -2612,6 +2735,7 @@ mod tests {
             page,
             rect,
             target,
+            ..
         } = &links.items[0];
 
         let mut strings: Vec<String> = vec![id.to_string(), page.to_string()];

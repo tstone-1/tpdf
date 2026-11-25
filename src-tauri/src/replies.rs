@@ -623,6 +623,7 @@ fn samples() -> BTreeMap<&'static str, String> {
         &links::Links {
             items: vec![
                 links::Link {
+                    quads: vec![[[10.0, 20.0], [110.0, 20.0], [110.0, 60.0], [10.0, 60.0]]],
                     id: 1,
                     page: 0,
                     rect: [10.0, 20.0, 110.0, 60.0],
@@ -639,12 +640,14 @@ fn samples() -> BTreeMap<&'static str, String> {
                     },
                 },
                 links::Link {
+                    quads: Vec::new(),
                     id: 2,
                     page: 0,
                     rect: [0.0, 0.0, 10.0, 10.0],
                     target: outline::Target::Broken,
                 },
                 links::Link {
+                    quads: Vec::new(),
                     id: 3,
                     page: 1,
                     rect: [0.0, 0.0, 10.0, 10.0],
@@ -653,6 +656,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     },
                 },
                 links::Link {
+                    quads: Vec::new(),
                     id: 4,
                     page: 1,
                     rect: [0.0, 0.0, 10.0, 10.0],
@@ -662,6 +666,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 // header gives: an arm no sample mentions is one the mirror can
                 // be wrong about indefinitely.
                 links::Link {
+                    quads: Vec::new(),
                     id: 5,
                     page: 1,
                     rect: [0.0, 0.0, 10.0, 10.0],

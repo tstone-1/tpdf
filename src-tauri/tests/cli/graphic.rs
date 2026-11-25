@@ -335,6 +335,35 @@ fn layered_and_rotated(dir: &Path, angle: i64, visible: bool) -> Result<(), Stri
     Ok(())
 }
 
+/// The same asymmetric Form with a pending quarter turn and a stored one.
+fn pending_turns(dir: &Path) -> Result<(), String> {
+    let source = dir.join("pending-turns.pdf");
+    fixture(&source);
+    let mut worker = Worker::spawn(&source, &library_dir())?;
+    let mut doc = Document::load(&source).map_err(|e| e.to_string())?;
+    let page = doc.get_pages()[&1];
+    for turns in 1..=3 {
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Rotate", i64::from(turns) * 90);
+        let stored = dir.join(format!("stored-{turns}.pdf"));
+        doc.save(&stored).map_err(|e| e.to_string())?;
+        let mut reopened = Worker::spawn(&stored, &library_dir())?;
+        for format in [GraphicFormat::Png, GraphicFormat::Svg] {
+            let request = GraphicRequest {
+                object: Some(1),
+                ..region(0, 0, 100, 100, format)
+            };
+            let (pending, _) = export(&mut worker, GraphicRequest { turns, ..request })?;
+            let (saved, _) = export(&mut reopened, request)?;
+            if pending.is_empty() || pending != saved {
+                return Err(format!("graphic at {turns} turns differs in {format:?}"));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn exports_what_the_region_holds(report: &mut Report) {
     let dir = scratch("graphic");
     for angle in [0, 90, 180, 270] {
@@ -347,6 +376,12 @@ pub(super) fn exports_what_the_region_holds(report: &mut Report) {
             );
         }
     }
+    let rotation = pending_turns(&dir);
+    report.check(
+        "pending and stored page rotations export identical drawings",
+        rotation.is_ok(),
+        &format!("{rotation:?}"),
+    );
     let caption = pending_caption(&dir);
     report.check(
         "export draws the accepted caption before saving",

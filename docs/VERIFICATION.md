@@ -5015,10 +5015,12 @@ paragraph, and one shares its line with the form's read-only text.
 source glyphs were left over on one line for the edited line, so a whole line of other text moved
 sideways, moved up, or split between two distances passed, and the count check still added up.
 The left-over glyphs must now sit on a line that holds the original's characters. It also
-accepts several downward distances, a whole line at a time, each supported by at least three
-glyphs (`SUPPORT`). `--self-test` runs six synthetic controls, both ways; without the new
-assertion three of them fail. It does not count paragraph breaks; the break counts above were
-taken by hand.
+accepted several downward distances, each supported by at least three glyphs. The six
+controls at the time missed a line divided between its original position and a single
+downward displacement. The current matcher chooses one displacement per baseline and
+compares character frequencies with the request. Its eight controls include a partly
+moved line and a same-length substitution in the text following the edit. Paragraph
+breaks were counted by hand.
 
 **Round trips**: four newly accepted edits (two per file with flips, seed 7) pass the probe,
 `qpdf --check`, `text_wrap_check.py --compare`, and keep every break (6 -> 6 and 1 -> 1). Both
@@ -6642,9 +6644,10 @@ with a sentence.
 (9 at +25%, 17 at +50%), the 2 on the export and the 6 on its untagged twin went through
 `text-edit-probe --roundtrip`, which holds the worker's preview and the saved page to the
 same pixels, and then through `scripts/text_wrap_check.py --compare`, which pairs every
-glyph before and after as pdfplumber reads them: 34 of 34 passed. In each, every glyph of
-the page either stayed or moved straight down with its line, the page gained exactly the
-glyphs the request adds, and no pair of glyphs overlaps (0 before, 0 after, every time). On
+glyph before and after as pdfplumber reads them: 34 of 34 passed the checks then in use.
+The measured net glyph counts matched the requests, and overlapping pairs stayed at
+zero. Those checks admitted partial line movement and
+same-count substitutions. The 34 historical results establish counts and overlaps only. On
 the signed document between 151 and 2,084 glyphs moved, by 14.0 pt in 23 of the 26, by
 11.0 and 11.3 pt in 2 and by 14.8 pt in 1.
 
@@ -7435,3 +7438,12 @@ page overrides it. Removing a catalog layer configuration counts as affecting
 both fixture pages, while removing the same unreferenced object counts as
 affecting neither. The compressed cross-reference controls encode the same
 expected free-object numbers as plain Flate and as PNG Up rows.
+
+## Text wrapping and boxed layout, 2026-11-25
+
+Three list items in the committed LibreOffice fixture were expanded and saved again
+with the strengthened glyph check. Each gained exactly the characters requested, the
+following lines moved down by 10.4 points, and overlapping glyph pairs stayed at zero.
+pypdf, PDFium and PDFKit all read the added sentence and the following text in order.
+The separate boxed-layout check accepted the saved three-line replacement and rejected
+a copy with all four words and their fonts intact on a single baseline.

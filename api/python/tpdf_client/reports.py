@@ -1176,7 +1176,7 @@ class Document(TypedDict):
     encryption: Encryption | None
     # Whether it has a structure tree; None when that could not be asked.
     tagged: bool | None
-    # What its XMP metadata claims; None when it carries none.
+    # Conformance declared in XMP or the legacy PDF/X Info keys.
     conformance: Conformance | None
     # Embedded files; None when they could not be counted.
     attachments: int | None

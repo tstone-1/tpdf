@@ -2,7 +2,7 @@
  * The links on a page, mirroring `links.rs`, plus the history that makes them
  * usable.
  *
- * ## A link is a rectangle and a destination, and nothing else
+ * ## A link carries its hit regions and destination
  *
  * There is no title, no tooltip and no URL here, because there is none in the
  * backend's `Link` either --- see `links.rs` on why that is structural rather
@@ -25,17 +25,21 @@
  * from.
  */
 
-import { onPage as placedOnPage, turnedFor as placedTurnedFor } from "./comments";
+import { onPage as placedOnPage, viewRect } from "./comments";
 import { catalog } from "./i18n";
 import { isNavigable, reasonFor, type Target } from "./outline";
 import { centreOfCharacter, type IndexRange } from "./text";
 
-/** One clickable rectangle, mirroring `links.rs`'s `Link`. */
+type Point = [number, number];
+
+/** Clickable regions and their destination in file display coordinates. */
 export interface Link {
   id: number;
   page: number;
   /** `[left, top, right, bottom]` in points from the displayed page's top-left. */
   rect: [number, number, number, number];
+  /** Perimeter-ordered link polygons when the file supplies QuadPoints. */
+  quads?: Point[][];
   target: Target;
 }
 
@@ -67,6 +71,62 @@ export interface Links {
  */
 export const LINK_SLACK_PT = 1;
 
+/** Clip a convex link polygon to the visible rectangle in the same space. */
+function clippedPolygon(points: Point[], rect: Link["rect"]): Point[] {
+  for (const edge of [0, 1, 2, 3] as const) {
+    const axis = edge % 2 as 0 | 1;
+    const boundary = rect[edge];
+    const inside = (p: Point) => edge < 2 ? p[axis] >= boundary : p[axis] <= boundary;
+    const next: Point[] = [];
+    let previous = points.at(-1);
+    if (!previous) return [];
+    for (const point of points) {
+      if (inside(previous) !== inside(point)) {
+        const t = (boundary - previous[axis]) / (point[axis] - previous[axis]);
+        next.push([previous[0] + t * (point[0] - previous[0]), previous[1] + t * (point[1] - previous[1])]);
+      }
+      if (inside(point)) next.push(point);
+      previous = point;
+    }
+    points = next;
+  }
+  const area = points.reduce((sum, p, i) => {
+    const q = points[(i + 1) % points.length]!;
+    return sum + p[0] * q[1] - p[1] * q[0];
+  }, 0);
+  return area > 0 ? points : [];
+}
+
+/** Intersect file-space link geometry with a crop, keeping it in file space. */
+export function clippedLink(link: Link, box: Link["rect"]): Link | null {
+  const r = link.rect;
+  const rect: Link["rect"] = [Math.max(box[0], r[0]), Math.max(box[1], r[1]),
+    Math.min(box[2], r[2]), Math.min(box[3], r[3])];
+  if (rect[0] >= rect[2] || rect[1] >= rect[3]) return null;
+  if (!link.quads?.length) return { ...link, rect };
+  const quads = link.quads.map(q => clippedPolygon(q, rect)).filter(q => q.length);
+  if (!quads.length) return null;
+  const corners = quads.flat();
+  const xs = corners.map(p => p[0]), ys = corners.map(p => p[1]);
+  return { ...link, quads, rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+}
+
+/** Translate every hit region to the cropped page's origin. */
+export function offsetLink(link: Link, x: number, y: number): Link {
+  const [l, t, r, b] = link.rect;
+  return { ...link, rect: [l - x, t - y, r - x, b - y],
+    ...(link.quads && { quads: link.quads.map(q => q.map(([px, py]): Point => [px - x, py - y])) }) };
+}
+
+/** Distance from the pointer to each clockwise edge in displayed coordinates. */
+function containsPoint(points: Point[], x: number, y: number, slack: number): boolean {
+  return points.every(([px, py], i) => {
+    const [qx, qy] = points[(i + 1) % points.length]!;
+    const dx = qx - px, dy = qy - py;
+    return dx * (y - py) - dy * (x - px) >= -slack * Math.hypot(dx, dy);
+  });
+}
+
 /** The link under a point on `page`, in page points, or `null`. */
 export function linkAt(
   items: readonly Link[],
@@ -94,6 +154,7 @@ export function linkAt(
     ) {
       continue;
     }
+    if (item.quads?.length && !item.quads.some(q => containsPoint(q, x, y, slack))) continue;
     const area = width * height;
     if (area <= bestArea) {
       best = item;
@@ -115,7 +176,16 @@ export function turnedFor(
   width: number,
   height: number,
 ): Link[] {
-  return placedTurnedFor(items, turns, width, height);
+  if (turns % 4 === 0) return [...items];
+  return items.map(link => {
+    const r = viewRect(link.rect, turns, width, height);
+    const rotate = ([x, y]: Point): Point => {
+      const point = viewRect([x, y, x, y], turns, width, height);
+      return [point.left, point.top];
+    };
+    return { ...link, rect: [r.left, r.top, r.right, r.bottom],
+      ...(link.quads && { quads: link.quads.map(q => q.map(rotate)) }) };
+  });
 }
 
 /**

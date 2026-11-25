@@ -665,10 +665,8 @@ export interface Properties {
 }
 
 /**
- * The XMP metadata packet, as `xmp.rs` reports it.
- *
- * `null` is a document with no packet. `unread` on a packet that is there is
- * tpdf's failure, not the document's silence, and the two never share a row.
+ * Document conformance declarations. An Info-only PDF/X declaration has
+ * zero packet bytes. An unread XMP packet carries its own warning.
  */
 export interface Xmp {
   bytes: number;
@@ -827,11 +825,7 @@ export function coverageOf(signature: Signature, bytes: number): Row {
 }
 
 /**
- * What the XMP packet claims about the standards the document conforms to.
- *
- * Nothing else in a PDF says this: PDF/A, PDF/UA and PDF/X are declared in XMP
- * or not at all. Measured at 8 of 41 real documents, seven PDF/UA-1 and one
- * PDF/A-3B, which is why this is the one thing read out of the packet.
+ * The standards the document declares in XMP or the early PDF/X Info keys.
  *
  * **A claim, not a verdict**, and the wording carries that: tpdf does not
  * validate a document against PDF/A, and a file stating PDF/A-3B may break it

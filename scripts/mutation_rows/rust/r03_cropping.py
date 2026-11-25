@@ -215,7 +215,7 @@ ROWS += [
         # in that test is a printing link rather than an unflagged one.
         "links: treat any /F as hidden",
         "src/links.rs",
-        "            .is_some_and(|flags| flags & 0b10 != 0);",
+        "            .is_some_and(|flags| flags & (2 | 32) != 0);",
         "            .is_some_and(|flags| flags != 0);",
         "a_hidden_link_is_not_clickable_and_a_printing_one_is",
     ),

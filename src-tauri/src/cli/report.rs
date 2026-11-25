@@ -886,7 +886,7 @@ pub struct Document {
     pub encryption: Option<crate::docinfo::Encryption>,
     /// Whether it has a structure tree; `null` when that could not be asked.
     pub tagged: Option<bool>,
-    /// What its XMP metadata claims; `null` when it carries none.
+    /// Conformance declared in XMP or the legacy PDF/X Info keys.
     pub conformance: Option<Conformance>,
     /// Embedded files; `null` when they could not be counted.
     pub attachments: Option<usize>,

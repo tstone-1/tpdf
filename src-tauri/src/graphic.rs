@@ -281,10 +281,7 @@ impl Svg {
             Some((rule, rgba)) => {
                 attributes.push_str(&format!(" fill=\"{}\"", colour(rgba)));
                 if rgba[3] != 255 {
-                    attributes.push_str(&format!(
-                        " fill-opacity=\"{}\"",
-                        num(f64::from(rgba[3]) / 255.0)
-                    ));
+                    attributes.push_str(&format!(" fill-opacity=\"{}\"", opacity(rgba[3])));
                 }
                 if rule == Rule::EvenOdd {
                     attributes.push_str(" fill-rule=\"evenodd\"");
@@ -299,10 +296,7 @@ impl Svg {
                 num(stroke.width.max(0.0))
             ));
             if stroke.rgba[3] != 255 {
-                attributes.push_str(&format!(
-                    " stroke-opacity=\"{}\"",
-                    num(f64::from(stroke.rgba[3]) / 255.0)
-                ));
+                attributes.push_str(&format!(" stroke-opacity=\"{}\"", opacity(stroke.rgba[3])));
             }
             let cap = ["butt", "round", "square"]
                 .get(stroke.cap as usize)
@@ -378,18 +372,21 @@ impl Svg {
     }
 }
 
-/// A number as SVG takes it: at most four decimals, no trailing zeros.
+/// Preserve the geometry of a path even when its transform has a very small scale.
 fn num(value: f64) -> String {
-    if !value.is_finite() {
-        return "0".to_owned();
-    }
-    let text = format!("{value:.4}");
-    let text = text.trim_end_matches('0').trim_end_matches('.');
-    if text == "-0" || text.is_empty() {
+    if value == 0.0 || !value.is_finite() {
         "0".to_owned()
     } else {
-        text.to_owned()
+        value.to_string()
     }
+}
+
+/// Four fractional digits distinguish every eight-bit alpha level.
+fn opacity(alpha: u8) -> String {
+    format!("{:.4}", f64::from(alpha) / 255.0)
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_owned()
 }
 
 fn colour(rgba: [u8; 4]) -> String {
@@ -623,7 +620,8 @@ mod engine {
                     ((around[3] - around[1]) * scale).round().max(1.0) as u32,
                 ),
             };
-            if single.is_none() && page.quarter_turns() % 2 == 1 {
+            let turns = (page.quarter_turns() + request.turns % 4) % 4;
+            if single.is_none() && turns % 2 == 1 {
                 std::mem::swap(&mut width, &mut height);
             }
             let mut found = GraphicFound {
@@ -669,6 +667,9 @@ mod engine {
                             return Err(said!("could not isolate the selected artwork"));
                         }
                     }
+                    // This private page belongs only to this export. Apply the turn after
+                    // selecting objects, so the bitmap uses the saved-page geometry.
+                    bindings.FPDFPage_SetRotation(handle, i32::from(turns));
                     crate::render::encode_png(
                         &alone_pixels(bindings, &page, around, scale, width, height)?,
                         width,
@@ -684,7 +685,7 @@ mod engine {
                     for &object in &chosen {
                         draw(bindings, &copy, &page, object, IDENTITY, &mut svg)?;
                     }
-                    svg.finish_on_page(unit, page.quarter_turns()).into_bytes()
+                    svg.finish_on_page(unit, turns).into_bytes()
                 }
             };
             Ok((bytes, found))
@@ -1581,8 +1582,9 @@ mod tests {
     #[test]
     fn numbers_are_short_and_never_negative_zero() {
         assert_eq!(num(1.0), "1");
-        assert_eq!(num(0.12345), "0.1235");
-        assert_eq!(num(-0.00001), "0");
+        assert_eq!(num(0.12345), "0.12345");
+        assert_eq!(num(-0.00001), "-0.00001");
+        assert_eq!(num(-0.0), "0");
         assert_eq!(num(f64::NAN), "0");
     }
 }

@@ -124,6 +124,8 @@ import type { Anchor } from "./popup";
 import { hitTest, viewRect, type Comment } from "./comments";
 import {
   History,
+  clippedLink,
+  offsetLink,
   linkAt,
   linkTitle,
   onPage as linksOnPage,
@@ -1483,6 +1485,7 @@ export class Viewer {
   } | null = null;
   /** Every comment in the document, in page order. Empty until it arrives. */
   private commentItems: readonly Comment[] = [];
+  private sourceLinks: readonly Link[] = [];
   private linkItems: readonly Link[] = [];
   /**
    * The links of one page, already turned into the view's space.
@@ -4261,13 +4264,28 @@ export class Viewer {
    * this adds is the ability to follow one, and the pointer that says you can.
    */
   setLinks(items: readonly Link[]): void {
+    this.sourceLinks = items;
+    this.refreshLinks();
+  }
+
+  /** Rebuild pointer, keyboard and accessible regions after a scan or crop. */
+  private refreshLinks(cropChanged = false): void {
+    const items: Link[] = [];
+    for (const link of this.sourceLinks) {
+      const id = this.pages.idOf(link.page);
+      const crop = id === undefined ? undefined : this.crops.get(id);
+      const visible = crop ? clippedLink(link, [crop.left, crop.top,
+        crop.left + crop.width_pt, crop.top + crop.height_pt])
+        : link.quads?.length ? clippedLink(link, link.rect) : link;
+      if (visible) items.push(visible);
+    }
     this.linkItems = items;
     this.linkWalk = orderedLinks(items);
     this.turnedLinks = null;
     const focused = this.focusedLink;
     if (focused) {
       const current = items.find(link => link.id === focused.id && link.page === focused.page &&
-        link.rect.every((v, i) => v === focused.rect[i]) &&
+        (cropChanged || link.rect.every((v, i) => v === focused.rect[i])) &&
         JSON.stringify(link.target) === JSON.stringify(focused.target));
       if (current) {
         this.focusedLink = current;
@@ -5187,7 +5205,7 @@ export class Viewer {
 
   private croppedLinks(page: number, links: Link[]): Link[] {
     const crop = this.cropAt(page);
-    return crop.left || crop.top ? links.map((link) => ({ ...link, rect: intoCrop(link.rect, crop) })) : links;
+    return crop.left || crop.top ? links.map(link => offsetLink(link, crop.left, crop.top)) : links;
   }
 
   /** One page's links in the view's space, memoised across pointer moves. */
@@ -7062,7 +7080,7 @@ export class Viewer {
       // The keyboard follows the pointer onto the link, so a reader who clicks
       // one and then presses "next link" continues from there rather than from
       // wherever the keyboard was left.
-      this.focusedLink = target;
+      this.focusedLink = this.linkItems.find(link => link.id === target.id) ?? null;
       this.placeRing();
       this.followLink(target.id);
       return;
@@ -7659,7 +7677,7 @@ export class Viewer {
           ),
         );
       }
-      this.turnedLinks = null;
+      if (this.sourceLinks.length) this.refreshLinks(true);
       this.a11y.invalidatePage(slot);
       this.scroller.invalidatePage(slot);
       this.opts.onPageGeometryChanged?.(slot);

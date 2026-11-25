@@ -168,6 +168,27 @@ function withinPage(viewer: Viewer, found: string[]): void {
 }
 
 describe("a rectangle on a page an edit turned", () => {
+  it("places the focus ring at the same position after a click and a keyboard step", async () => {
+    const dom = installFakeDom();
+    const viewer = build(dom);
+    try {
+      viewer.setZoomFixed(1);
+      viewer.setPageTurns(0, 1);
+      await settle();
+      viewer.setLinks([{ ...link(), target: { kind: "none" } }]);
+      expect(viewer.stepLink(1)).toBe(true);
+      const ring = (viewer as unknown as { ring: HTMLElement }).ring;
+      const position = () => [ring.style.left, ring.style.top];
+      const keyboard = position();
+      viewer.clearLinkFocus();
+      expect(pressAt(dom, viewer, 730, 120, () => viewer.linkFocus)).toBe(9);
+      expect(position()).toEqual(keyboard);
+    } finally {
+      viewer.destroy();
+      dom.restore();
+    }
+  });
+
   for (const turn of [0, 1, 2, 3]) {
     it(`places a comment where a mark with the same rectangle is, at ${turn} turns`, async () => {
       const dom = installFakeDom();

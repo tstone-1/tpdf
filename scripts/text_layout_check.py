@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Synthetic boxed-edit round trip, independently read with pypdf.
+"""Synthetic boxed-edit round trip, independently read with pypdf and pdfplumber.
 
 uv run --with pypdf scripts/text_layout_check.py --generate scratch/layout-fixture
 text-edit-probe --roundtrip scratch/layout-fixture/source.pdf scratch/layout-fixture/requests.json scratch/layout-result
-uv run --with pypdf scripts/text_layout_check.py --check scratch/layout-fixture/source.pdf scratch/layout-result/edited.pdf
+uv run --with pypdf --with pdfplumber scripts/text_layout_check.py --check scratch/layout-fixture/source.pdf scratch/layout-result/edited.pdf
 """
 import argparse
 import json
@@ -36,12 +36,37 @@ def generate(directory):
     print("[OK] generated synthetic two-page layout fixture and edit requests")
 
 
+def check_wrap_positions(words):
+    assert [word["text"] for word in words] == ["SYNTHETIC", "FIRST", "SECOND", "THIRD"]
+    first, same_line, second, third = [word["top"] for word in words]
+    assert abs(first - same_line) < 0.1 and first + 1 < second < third - 1, "incorrect baselines"
+    assert all(39.9 <= word["x0"] < word["x1"] <= 125.1 for word in words)
+    assert all(128 <= word["top"] < word["bottom"] <= 205 for word in words)
+    assert third - first < 65
+
+
 def check(source, saved):
     before, after = PdfReader(source), PdfReader(saved)
     assert len(after.pages) == len(before.pages) == 2
     text = after.pages[0].extract_text()
     assert "ACME \u03a9 Al\u2082O\u2083" in text
     assert "SYNTHETIC FIRST SECOND THIRD" in " ".join(text.split())
+    # Independently measure the wrapped run, including the automatic line break
+    # before SECOND and the requested break before THIRD.
+    import pdfplumber
+    with pdfplumber.open(saved) as pdf:
+        words = [word for word in pdf.pages[0].extract_words(extra_attrs=["fontname"])
+                 if word["text"] in {"SYNTHETIC", "FIRST", "SECOND", "THIRD"}]
+    check_wrap_positions(words)
+    # Keep each word's text, width and height while moving it to the first line.
+    top = words[0]["top"]
+    flat = [dict(word, top=top, bottom=top + (word["bottom"] - word["top"])) for word in words]
+    try:
+        check_wrap_positions(flat)
+    except AssertionError as error:
+        assert str(error) == "incorrect baselines"
+    else:
+        raise AssertionError("the position check accepted a flattened baseline")
     assert all(word in text for word in ["NEXT", "NEIGHBOUR", "UNCHANGED BELOW"])
     assert "TITLE" not in text and "WIDE CELL" not in text
     assert before.pages[1].extract_text() == after.pages[1].extract_text()

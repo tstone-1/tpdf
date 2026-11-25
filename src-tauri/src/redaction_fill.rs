@@ -188,18 +188,6 @@ pub(crate) fn paint(
             {
                 return Err(said!("The redaction fill has an invalid rectangle").into());
             }
-            let current = doc.get_dictionary(page).map_err(|e| e.to_string())?;
-            let mut annots = match current.get(b"Annots") {
-                Ok(value) => doc
-                    .dereference(value)
-                    .map_err(|e| e.to_string())?
-                    .1
-                    .as_array()
-                    .map_err(|e| e.to_string())?
-                    .clone(),
-                Err(lopdf::Error::DictKey(_)) => Vec::new(),
-                Err(e) => return Err(e.to_string().into()),
-            };
             let content = lopdf::content::Content {
                 operations: vec![
                     lopdf::content::Operation::new("q", vec![]),
@@ -235,10 +223,28 @@ pub(crate) fn paint(
                 "Border" => vec![0.into(), 0.into(), 0.into()],
                 "AP" => dictionary! { "N" => appearance },
             });
-            annots.push(annotation.into());
-            doc.get_dictionary_mut(page)
+            // Detach an indirect array once. A different page may still use it.
+            let page_dict = doc.get_dictionary(page).map_err(|e| e.to_string())?;
+            let owned = match page_dict.get(b"Annots") {
+                Ok(Object::Array(_)) => None,
+                Ok(value) => Some(
+                    doc.dereference(value)
+                        .and_then(|(_, o)| o.as_array())
+                        .map_err(|e| e.to_string())?
+                        .clone(),
+                ),
+                Err(lopdf::Error::DictKey(_)) => Some(Vec::new()),
+                Err(e) => return Err(e.to_string().into()),
+            };
+            let page_dict = doc.get_dictionary_mut(page).map_err(|e| e.to_string())?;
+            if let Some(annots) = owned {
+                page_dict.set("Annots", annots);
+            }
+            page_dict
+                .get_mut(b"Annots")
+                .and_then(Object::as_array_mut)
                 .map_err(|e| e.to_string())?
-                .set("Annots", annots);
+                .push(annotation.into());
         }
     }
     Ok(())
@@ -534,13 +540,10 @@ mod tests {
         let existing = doc.add_object(dictionary! { "Subtype" => "Text" });
         let list = doc.add_object(vec![Object::Reference(existing)]);
         let page = doc.add_object(dictionary! { "Type" => "Page", "Annots" => list });
-        paint(
-            &mut doc,
-            &[page],
-            &[region(0, [-20.0, 30.0, 80.0, 90.0])],
-            Fill::Black,
-        )
-        .unwrap();
+        let sibling = doc.add_object(dictionary! { "Type" => "Page", "Annots" => list });
+        let mut plan = region(0, [-20.0, 30.0, 80.0, 90.0]);
+        plan.areas.push([10.0, 20.0, 40.0, 70.0]);
+        paint(&mut doc, &[page, sibling], &[plan], Fill::Black).unwrap();
         let annots = doc
             .get_dictionary(page)
             .unwrap()
@@ -548,7 +551,16 @@ mod tests {
             .unwrap()
             .as_array()
             .unwrap();
-        assert_eq!(annots.len(), 2);
+        assert_eq!(
+            doc.get_dictionary(sibling)
+                .unwrap()
+                .get_deref(b"Annots", &doc)
+                .unwrap()
+                .as_array()
+                .unwrap(),
+            &[Object::Reference(existing)]
+        );
+        assert_eq!(annots.len(), 3);
         assert_eq!(annots[0].as_reference().unwrap(), existing);
         let fill = doc
             .get_dictionary(annots[1].as_reference().unwrap())

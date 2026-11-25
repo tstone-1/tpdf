@@ -190,8 +190,8 @@ class Pool:
         return [c for found in self.by_text.values() for c in found]
 
 
-def visible(text):
-    return sum(1 for ch in text if not ch.isspace())
+def characters(text):
+    return Counter(ch for ch in text if not ch.isspace())
 
 
 def compare(source, saved, page, request=None):
@@ -242,12 +242,12 @@ def compare(source, saved, page, request=None):
     unchanged, moved, gone = 0, 0, []
     for top in sorted(lines, key=lambda top: top not in moving):
         for c in lines[top]:
-            if top in moving and left.take(c[0], c[1], top + moving[top]) is not None:
-                moved += 1
-            elif left.take(c[0], c[1], top) is not None:
-                unchanged += 1
-            else:
+            if left.take(c[0], c[1], top + moving.get(top, 0)) is None:
                 gone.append(c)
+            elif top in moving:
+                moved += 1
+            else:
+                unchanged += 1
     tops = sorted({c[2] for c in gone})
     assert not gone or tops[-1] - tops[0] < 1, (
         f"{len(gone)} source glyphs neither stayed nor moved down by one of {drops} pt, "
@@ -269,11 +269,12 @@ def compare(source, saved, page, request=None):
             held.subtract(ch for ch in edit["original"] if not ch.isspace())
             assert all(n >= 0 for n in held.values()), (
                 "the source glyphs left over are on a line that does not hold the edited run")
-        added = visible(edit["replacement"]) - visible(edit["original"])
-        assert len(new) - len(gone) == added, (
-            f"the saved page gained {len(new) - len(gone)} glyphs over the source's "
-            f"leftovers, and the replacement adds {added} to the original")
-        counted = f", {added} added as the request says"
+        expected = characters(edit["replacement"])
+        expected.subtract(characters(edit["original"]))
+        actual = characters("".join(c[0] for c in new))
+        actual.subtract(characters("".join(c[0] for c in gone)))
+        assert actual == expected, "the characters gained and lost differ from the request"
+        counted = f", {sum(expected.values())} added as the request says"
     crowded = overlaps(before), overlaps(after)
     assert crowded[1] <= crowded[0], (
         f"{crowded[1]} pairs of glyphs overlap on the saved page, {crowded[0]} on the source")
@@ -297,15 +298,17 @@ def self_test():
     def line(top, x0=10, text="abcdefgh", dx=0):
         return [(ch, x0 + 7 * i + dx, top, 5) for i, ch in enumerate(text)]
 
-    source = line(10) + line(30) + line(90, text="xyz")
-    edited = line(90, text="xyzQ")
+    source = line(10) + line(30) + line(90, text="xyzABC")
+    edited = line(90, text="xyzQABC")
     cases = [
         ("two distances, whole lines", line(22) + line(36) + edited, True),
         ("one line split across two",
          line(22) + line(42, text="abcd") + line(36, x0=38, text="efgh") + edited, False),
         ("a line moved sideways", line(22, dx=5) + line(36) + edited, False),
         ("a line moved up", line(4) + line(36) + edited, False),
-        ("the edit replaced a glyph", line(22) + line(36) + line(90, text="xzQQ"), True),
+        ("part of an untouched line stayed", line(22, text="abcde") + line(10, x0=45, text="fgh") + line(36) + edited, False),
+        ("the edit replaced a different glyph", line(22) + line(36) + line(90, text="xzQQABC"), False),
+        ("a flowed follower changed", line(22) + line(36) + line(90, text="xyzQADC"), False),
         ("a glyph lost from a moved line", line(22, text="abcdefg") + line(36) + edited, False),
     ]
     global glyphs, overlaps

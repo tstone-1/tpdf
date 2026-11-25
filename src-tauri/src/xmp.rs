@@ -1,9 +1,8 @@
 //! The XMP metadata packet: what a document says about itself in RDF/XML.
 //!
 //! A PDF may carry a second set of document properties beside `/Info`, as an
-//! XML packet hanging off the catalog's `/Metadata`. One thing lives there and
-//! nowhere else: a **conformance claim**. PDF/A, PDF/UA and PDF/X are declared
-//! only in XMP, so a document saying it is archival says it here or not at all.
+//! XML packet hanging off the catalog's `/Metadata`. PDF/A, PDF/UA and modern
+//! PDF/X use XMP. Earlier PDF/X declarations can also live in `/Info`.
 //!
 //! That is all this reads, and the scope was decided by measurement rather than
 //! by taste. Across 41 real PDFs, 24 carry XMP and **8 state a conformance
@@ -62,6 +61,8 @@ const MAX_DEPTH: usize = 64;
 
 /// Longest value kept from any one property.
 const MAX_VALUE: usize = 4096;
+
+const NS_RDF: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 
 /// PDF/A's identification namespace.
 const NS_PDFAID: &str = "http://www.aiim.org/pdfa/ns/id/";
@@ -138,12 +139,16 @@ pub fn scan(packet: &[u8]) -> Xmp {
     // been trimmed as the ends of their own fragments. The whole value is
     // trimmed once, where it is stored.
 
-    // The stack holds the property each open element names, and `pending`
-    // accumulates the text of the innermost one that names a property. Text is
-    // accumulated rather than taken from the first event, because a value
-    // containing an entity arrives in pieces: `AT&amp;T` is three events, and
-    // taking the first would report the value as `AT`.
-    let mut stack: Vec<Option<Property>> = Vec::new();
+    // Only direct properties of the document description belong to this PDF.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Element {
+        Wrapper,
+        Rdf,
+        Document,
+        Other,
+    }
+    let mut stack = Vec::new();
+    let mut subject: Option<String> = None;
     let mut pending: Option<(Property, usize, String)> = None;
     let mut buffer = Vec::new();
     let mut pdfa_part = String::new();
@@ -156,36 +161,74 @@ pub fn scan(packet: &[u8]) -> Xmp {
         // resolving the element's *attributes* in the same breath --- and the
         // attribute form of a property is 3 of the 8 claims in the wild.
         match reader.read_event_into(&mut buffer) {
-            Ok(Event::Eof) => break,
-            Ok(Event::Start(element)) => {
+            Ok(Event::Eof) => {
+                out.unread |= !stack.is_empty();
+                break;
+            }
+            Ok(event @ (Event::Start(_) | Event::Empty(_))) => {
+                let empty = matches!(event, Event::Empty(_));
+                let element = match event {
+                    Event::Start(element) | Event::Empty(element) => element,
+                    _ => unreachable!(),
+                };
                 if stack.len() >= MAX_DEPTH {
                     out.unread = true;
                     break;
                 }
-                let (resolved, local) = reader.resolver().resolve_element(element.name());
-                let property = named(resolved, local.as_ref());
-                // Attribute form: `<rdf:Description pdfuaid:part="1"/>` says the
-                // same thing as the element form and is a third of what occurs.
-                read_attributes(
-                    &reader,
-                    &element,
-                    &mut out,
-                    &mut pdfa_part,
-                    &mut pdfa_conformance,
-                );
-                stack.push(property);
-                if let (Some(property), None) = (property, &pending) {
-                    pending = Some((property, stack.len(), String::new()));
+                let (ns, local) = reader.resolver().resolve_element(element.name());
+                let namespace = match &ns {
+                    ResolveResult::Bound(ns) => ns.as_ref(),
+                    _ => "",
+                };
+                let parent = stack.last().copied();
+                let kind = match (parent, namespace, local.as_ref()) {
+                    (None, "adobe:ns:meta/", "xmpmeta" | "xapmeta") => Element::Wrapper,
+                    (None | Some(Element::Wrapper), NS_RDF, "RDF") => Element::Rdf,
+                    (Some(Element::Rdf), NS_RDF, "Description") => {
+                        let about = element.attributes().flatten().find(|a| {
+                            let (ns, name) = reader.resolver().resolve_attribute(a.key);
+                            matches!(ns, ResolveResult::Bound(ns) if ns.as_ref() == NS_RDF)
+                                && name.as_ref() == "about"
+                        });
+                        let about = about.as_ref().map(|a| a.value.as_ref()).unwrap_or("");
+                        // XMP describes one subject. When a packet also describes
+                        // a named resource, prefer the enclosing document ("").
+                        if let Some(previous) = &subject {
+                            if previous != about {
+                                out.unread = true;
+                                if about.is_empty() || !previous.is_empty() {
+                                    out.conformance.clear();
+                                    pdfa_part.clear();
+                                    pdfa_conformance.clear();
+                                    subject = Some(String::new());
+                                }
+                            }
+                        }
+                        if subject.get_or_insert_with(|| about.to_owned()) == about {
+                            read_attributes(
+                                &reader,
+                                &element,
+                                &mut out,
+                                &mut pdfa_part,
+                                &mut pdfa_conformance,
+                            );
+                            Element::Document
+                        } else {
+                            Element::Other
+                        }
+                    }
+                    _ => Element::Other,
+                };
+                if !empty {
+                    if parent == Some(Element::Document) {
+                        pending = property_of(namespace, local.as_ref())
+                            .map(|p| (p, stack.len() + 1, String::new()));
+                    } else if pending.is_some() {
+                        // A structured value is not a literal conformance declaration.
+                        pending = None;
+                    }
+                    stack.push(kind);
                 }
-            }
-            Ok(Event::Empty(element)) => {
-                read_attributes(
-                    &reader,
-                    &element,
-                    &mut out,
-                    &mut pdfa_part,
-                    &mut pdfa_conformance,
-                );
             }
             Ok(Event::End(_)) => {
                 // Flush when the element that opened the accumulation closes,
@@ -209,6 +252,11 @@ pub fn scan(packet: &[u8]) -> Xmp {
                 // Text events carry **no** entities: quick-xml delivers every
                 // `&...;` as a separate `GeneralRef`, measured rather than
                 // assumed. So there is nothing to unescape here.
+                if let Some((_, _, buffer)) = &mut pending {
+                    append(buffer, &text, &mut out.unread);
+                }
+            }
+            Ok(Event::CData(text)) => {
                 if let Some((_, _, buffer)) = &mut pending {
                     append(buffer, &text, &mut out.unread);
                 }
@@ -385,6 +433,44 @@ mod tests {
 
         assert_eq!(xmp.conformance, vec!["PDF/A-3B"]);
         assert!(!xmp.unread);
+    }
+
+    #[test]
+    fn nested_resources_cannot_contribute_to_the_document_claim() {
+        let body = r#"<rdf:Description xmlns:a="http://www.aiim.org/pdfa/ns/id/" xmlns:e="urn:example" rdf:about="">
+          <a:part><![CDATA[3]]></a:part>
+          <e:source rdf:parseType="Resource"><a:part>1</a:part><a:conformance>A</a:conformance></e:source>
+          <e:other><rdf:Description a:conformance="U"/></e:other>
+        </rdf:Description>"#;
+        assert_eq!(scan(&packet(body)).conformance, ["PDF/A-3"]);
+        assert!(
+            scan(&packet(&body.replace("<a:part><![CDATA[3]]></a:part>", "")))
+                .conformance
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn named_resource_does_not_override_an_explicit_document_subject() {
+        let named = r#"<rdf:Description rdf:about="urn:example:source" xmlns:a="http://www.aiim.org/pdfa/ns/id/" a:part="1" a:conformance="B"/>"#;
+        let root = r#"<rdf:Description rdf:about="" xmlns:a="http://www.aiim.org/pdfa/ns/id/" a:part="4"/>"#;
+        for descriptions in [format!("{named}{root}"), format!("{root}{named}")] {
+            let claims = scan(&packet(&descriptions));
+            assert_eq!(claims.conformance, ["PDF/A-4"]);
+            assert!(claims.unread);
+        }
+    }
+
+    #[test]
+    fn mixed_cdata_survives_and_unclosed_wrappers_are_reported() {
+        let body = r#"<rdf:Description xmlns:x="http://www.npes.org/pdfx/ns/id/"><x:GTS_PDFXVersion>PDF/X-<![CDATA[4]]></x:GTS_PDFXVersion></rdf:Description>"#;
+        let whole = String::from_utf8(packet(body)).unwrap();
+        let complete = scan(whole.as_bytes());
+        assert_eq!(complete.conformance, ["PDF/X-4"]);
+        assert!(!complete.unread);
+        let partial = scan(whole.split("</rdf:RDF>").next().unwrap().as_bytes());
+        assert_eq!(partial.conformance, complete.conformance);
+        assert!(partial.unread);
     }
 
     /// The same claim written as attributes, which is 3 of the 8 in the wild.

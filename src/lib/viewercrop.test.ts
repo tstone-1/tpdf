@@ -197,6 +197,20 @@ function placed(viewer: Viewer, rect: [number, number, number, number]) {
 }
 
 describe("a cropped page", () => {
+  it("removes a cropped-away link from the walk and restores it on undo", async () => {
+    const viewer = build();
+    try {
+      viewer.setLinks([{ id: 1, rect: [530, 350, 550, 370], page: 0, target: { kind: "none" } }]);
+      viewer.setPages(pages(true));
+      await settle();
+      expect(viewer.stepLink(1)).toBe(false);
+      viewer.setPages(pages(false));
+      await settle();
+      expect(viewer.stepLink(1)).toBe(true);
+      expect(viewer.linkFocus).toBe(1);
+    } finally { viewer.destroy(); }
+  });
+
   it("walks from the viewport in file coordinates after a top crop", async () => {
     const viewer = build();
     try {
