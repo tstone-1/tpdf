@@ -728,7 +728,6 @@ export class PrintPreviewDialog {
   private movePreview(direction: number): void {
     this.startSide += direction * SIDES_PER_PREVIEW;
     this.list.scrollTop = 0;
-    this.drawn.clear();
     this.lay(this.allSheets);
   }
 
@@ -740,6 +739,10 @@ export class PrintPreviewDialog {
     this.startSide = Math.max(0, Math.min(this.startSide,
       Math.floor((sheets.length - 1) / SIDES_PER_PREVIEW) * SIDES_PER_PREVIEW));
     this.sheets = sheets.slice(this.startSide, this.startSide + SIDES_PER_PREVIEW);
+    const pages = new Set(this.sheets.flatMap(sheet => sheet.placements.map(placed => placed.page)));
+    for (const page of this.drawn.keys()) {
+      if (!pages.has(page)) this.drawn.delete(page);
+    }
     this.previousSides.hidden = this.nextSides.hidden = sheets.length <= SIDES_PER_PREVIEW;
     this.previousSides.disabled = this.startSide === 0;
     this.nextSides.disabled = this.startSide + SIDES_PER_PREVIEW >= sheets.length;
@@ -828,10 +831,12 @@ export class PrintPreviewDialog {
     const marks = this.marks;
     this.drawing = page;
     this.refreshNotes();
+    const stillWanted = () => run === this.run && this.shown && marks === this.marks
+      && this.sheets.some(sheet => sheet.placements.some(placed => placed.page === page));
     void draw(page, width, marks)
       .then((url) => {
         // Drawn for the other choice of marks: the next pump draws it again.
-        if (run !== this.run || !this.shown || marks !== this.marks) return;
+        if (!stillWanted()) return;
         if (isPicture(url)) {
           this.drawn.set(page, { width, url });
           for (const box of this.boxes) {
@@ -842,7 +847,7 @@ export class PrintPreviewDialog {
         }
       })
       .catch((error: unknown) => {
-        if (run !== this.run || !this.shown || marks !== this.marks) return;
+        if (!stillWanted()) return;
         this.drawn.set(page, { error: TEXT().notDrawnBecause(page + 1, spokenError(error)) });
       })
       .finally(() => {

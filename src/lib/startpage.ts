@@ -178,6 +178,7 @@ export function recentCommands(
 ): Command[] {
   return rows.map((row) => ({
     id: row.command,
+    selectionKey: JSON.stringify(["recent", row.path]),
     // Prefixed with the verb so the row reads as a command next to "Zoom in"
     // rather than as a stray filename. Ranking is subsequence matching, so
     // typing part of the name still finds it.

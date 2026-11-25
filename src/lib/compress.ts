@@ -121,8 +121,7 @@ export interface Choice {
 /**
  * The ready choices, from the one that loses nothing to the smallest.
  *
- * The numbers are `Preset`'s in `compress.rs`, and a test holds the two
- * together through the sample the backend writes.
+ * These are the desktop equivalents of the presets in the compression worker.
  */
 export const CHOICES: readonly Choice[] = [
   {

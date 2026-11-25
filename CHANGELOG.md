@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Compressing a shared photo preserves its resolution at the largest placement when a PDF references the Form subtype indirectly. The preview tries other affected pages when the first looks unchanged. The CLI reports when it cannot produce a requested PNG.
+- Palette questions stay with their document. Keyboard selection survives recent-file refreshes and scrolls into view. The palette respects text composition, primary clicks, exact command titles and supplementary Unicode characters.
+- macOS reports failures that prevent the print panel from opening. Changing the print range releases preview images for pages outside the displayed group.
+
 - Repeated imported pages keep their internal links when saved. Insert Pages flags tagged sources before asking which pages to insert.
 - Editing, deleting, undoing and redoing a file comment refresh the page popup and the sidebar. Links and comments stay clickable after cropping, and keyboard and screen-reader navigation use the corrected positions.
 - Certificate signing offers named fields, keeps the preview and saved signature choice current, and suggests saving beside the original. Archiving a signature also suggests the source folder.

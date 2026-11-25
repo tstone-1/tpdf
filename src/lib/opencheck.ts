@@ -1582,11 +1582,38 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         check("copy name copies the clicked tab's file name alone",
           copiedPath === name(first) && copiedPath !== first && host.edits()?.doc === b.id);
       } finally { navigator.clipboard.writeText = clipboardWrite; }
+      const commands = [...document.querySelectorAll("button")].find(b => b.textContent === "Commands");
+      const paletteInput = document.querySelector<HTMLInputElement>(".tpdf-palette input");
+      if (!commands || !paletteInput) throw new Error("palette controls missing");
+      const enter = () => paletteInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      const askExtract = () => {
+        commands.click();
+        paletteInput.value = "Extract pages...";
+        paletteInput.dispatchEvent(new Event("input", { bubbles: true }));
+        enter();
+        if (!paletteInput.getAttribute("aria-label")?.startsWith("Extract pages:")) throw new Error("no extract question");
+        paletteInput.value = "1";
+        paletteInput.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      askExtract();
       const button = document.getElementById(`document-tab-${a.id}`);
       button?.click();
       if (!await settle(() => host.path() === first && !!host.viewer(), SETTLE_MS))
         throw new Error("clicking the first tab did not activate it");
       await pause(200);
+      const priorPanels = host.saveSuggestions().length;
+      host.answerSave("");
+      paletteInput.focus();
+      enter();
+      await host.idle();
+      check("a range entered on the previous tab never reaches the extract writer",
+        host.saveSuggestions().length === priorPanels);
+      askExtract();
+      host.answerSave("");
+      enter();
+      await host.idle();
+      check("answering Extract on its original tab reaches the save dialog",
+        host.saveSuggestions().length === priorPanels + 1);
       check("switching keeps the original backend handle", host.edits()?.doc === a.id);
       check("switching keeps page edits", host.edits()?.state.pages[0]?.turns === 1);
       check("switching commits the open note to its own tab", host.edits()?.state.marks[0]?.note === "Synthetic tab note");

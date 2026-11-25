@@ -37,6 +37,8 @@ const TEXT = catalog({
 
 /** What the palette may do to the document behind it. */
 export interface PaletteOptions {
+  /** Capture the view that owns an argument, for validation at submission. */
+  questionOwner?: () => () => boolean;
   /** The active input source can change while the window is open. */
   keyboardPositions?: () => Promise<Record<string, string>>;
   /**
@@ -96,6 +98,8 @@ export class Palette {
   private readonly turnPage: ((forward: boolean) => void) | null;
   private readonly namesAreSpoken: boolean;
   private readonly keyboardPositions: PaletteOptions["keyboardPositions"];
+  private readonly questionOwner: PaletteOptions["questionOwner"];
+  private ownerStillCurrent: (() => boolean) | undefined;
   private layoutRequest = 0;
 
   private results: Ranked[] = [];
@@ -114,6 +118,7 @@ export class Palette {
 
   constructor(registry: CommandRegistry, options: PaletteOptions = {}) {
     this.registry = registry;
+    this.questionOwner = options.questionOwner;
     this.keyboardPositions = options.keyboardPositions;
     this.turnPage = options.turnPage ?? null;
     this.namesAreSpoken = options.namesAreSpoken ?? !isMac();
@@ -222,7 +227,10 @@ export class Palette {
     if (request !== this.layoutRequest) return;
     setPrintedKeys(printed);
     relabelCommands(this.registry);
-    if (this.isOpen && !this.asking) this.paint();
+    if (this.isOpen && !this.asking) {
+      this.paint();
+      this.revealSelection();
+    }
   }
 
   /**
@@ -236,7 +244,14 @@ export class Palette {
    */
   reload(): void {
     if (!this.isOpen || this.asking) return;
-    this.refresh();
+    const previous = this.results[this.selected]?.command;
+    this.results = this.registry.search(this.input.value).slice(0, 64);
+    if (previous) {
+      const key = previous.selectionKey ?? previous.id;
+      this.selected = this.results.findIndex(({ command }) => (command.selectionKey ?? command.id) === key);
+    }
+    this.paint();
+    this.revealSelection();
   }
 
   close(): void {
@@ -259,6 +274,7 @@ export class Palette {
    */
   private leave(): void {
     const left = this.asking;
+    this.ownerStillCurrent = undefined;
     this.asking = null;
     this.input.setAttribute("aria-label", SEARCH_PLACEHOLDER());
     this.heard.textContent = "";
@@ -334,6 +350,7 @@ export class Palette {
   private ask(command: Command): void {
     if (!command.argument) return;
     this.leave();
+    this.ownerStillCurrent = this.questionOwner?.();
     this.asking = command;
     this.letDocumentThrough(true);
     this.input.value = "";
@@ -381,6 +398,11 @@ export class Palette {
   private submitArgument(): void {
     const command = this.asking;
     if (!command?.argument) return;
+    const current = this.ownerStillCurrent;
+    if (current && !current()) {
+      this.close();
+      return;
+    }
     const raw = this.input.value;
     // A refused value leaves the palette exactly as it is, still showing why.
     // Closing on a bad value would discard what was typed and say nothing.
@@ -392,10 +414,11 @@ export class Palette {
     // Unless the registry would not run it after all --- a command whose
     // document went away while it was being asked --- in which case it was
     // abandoned, and whatever it holds is released.
-    if (!this.registry.run(command.id, raw)) command.argument.dismissed?.();
+    if ((current && !current()) || !this.registry.run(command.id, raw)) command.argument.dismissed?.();
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.isComposing) return;
     if (event.key === "ArrowDown") this.move(1);
     else if (event.key === "ArrowUp") this.move(-1);
     else if (event.key === "Enter") this.runSelected();
@@ -419,8 +442,14 @@ export class Palette {
   private move(delta: number): void {
     const count = this.results.length;
     if (count === 0) return;
-    this.selected = (this.selected + delta + count) % count;
+    const from = this.selected < 0 && delta < 0 ? 0 : this.selected;
+    this.selected = (from + delta + count) % count;
     this.paint();
+    this.revealSelection();
+  }
+
+  private revealSelection(): void {
+    this.list.children[this.selected]?.scrollIntoView({ block: "nearest" });
   }
 
   private refresh(): void {
@@ -513,11 +542,13 @@ export class Palette {
         row.appendChild(keys);
       }
 
-      // `pointerdown` rather than `click`: the input has focus, and a click
-      // would blur it first, which on some platforms closes the panel before
-      // the row is ever notified.
+      // Keep the input focused. Dispatch only once the browser confirms a click,
+      // so a secondary press or the beginning of a touch scroll cannot run an edit.
       row.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
+        if (event.button === 0 && event.pointerType !== "touch") event.preventDefault();
+      });
+      row.addEventListener("click", (event) => {
+        if (event.button !== 0) return;
         this.selected = index;
         this.runSelected();
       });

@@ -28,6 +28,8 @@
 interface CommandBase {
   /** Stable identity, e.g. `view.zoomIn`. Used for recents, never displayed. */
   id: string;
+  /** Stable target for a command whose positional ID can be reassigned. */
+  selectionKey?: string;
   /** What the palette shows. */
   title: string;
   /**
@@ -148,21 +150,7 @@ const CONSECUTIVE = 8;
 const BASE = 1;
 /** Penalty per character skipped before the first match. */
 const LEADING_SKIP = 1;
-/**
- * Score for the query being the *whole* title rather than the start of it.
- *
- * Larger than any difference the three above can produce between two titles one
- * of which prefixes the other, which is the only case it decides: such a pair
- * matches at the same word starts, consecutively, with the same leading skip,
- * so they tie and registration order picks the winner. A reader who types a
- * command's title in full and gets the *other* command highlighted has been
- * given the wrong answer by a rule that never considered the question.
- *
- * Two such pairs exist in the real registry --- "Redact and save" inside
- * "Redact and save as…", and "Save" inside "Save a copy..." --- and only the
- * first was wrong, because `file.save` happens to be registered before
- * `file.saveCopy`. Correct by registration order is not correct.
- */
+/** Bonus for a complete keyword. Complete titles are ranked in their own group. */
 const EXACT = WORD_START * 4;
 
 /**
@@ -230,7 +218,7 @@ function runIn(needle: string, hay: string, title: string): number[] | null {
       break;
     }
   }
-  return first < 0 ? null : Array.from(needle, (_, index) => first + index);
+  return first < 0 ? null : Array.from({ length: needle.length }, (_, index) => first + index);
 }
 
 /**
@@ -262,8 +250,8 @@ export function fuzzyMatch(
   for (const wanted of needle) {
     const found = hay.indexOf(wanted, at);
     if (found < 0) return null;
-    greedy.push(found);
-    at = found + 1;
+    for (let unit = 0; unit < wanted.length; unit++) greedy.push(found + unit);
+    at = found + wanted.length;
   }
 
   const run = runIn(needle, hay, title);
@@ -332,7 +320,9 @@ export function rank(
     }));
   }
 
+  const exact: Ranked[] = [];
   const matched: Ranked[] = [];
+  const queryTitle = trimmed.toLowerCase();
   for (const command of enabled) {
     const hit = fuzzyMatch(trimmed, command.title);
     const word = keywordMatch(trimmed, command.keywords);
@@ -341,28 +331,26 @@ export function rank(
     // word-start match, so typing something specific always beats history.
     const recency = recents.indexOf(command.id);
     const bonus = recency < 0 ? 0 : Math.max(1, WORD_START / 2 - recency);
-    // Folded the way `fuzzyMatch` folds, so "redact and save" earns it too ---
-    // nothing else here is case-sensitive and an exactness rule that was would
-    // be the one place typing in lower case changed the answer.
-    const whole =
-      command.title.toLowerCase() === trimmed.toLowerCase() ? EXACT : 0;
-    const byTitle = hit ? hit.score + whole : null;
-    // The title wins a tie, so its letters are emboldened whenever they can be.
-    if (word && (byTitle === null || word.score > byTitle)) {
+    if (hit && command.title.toLowerCase() === queryTitle) {
+      exact.push({ command, score: hit.score + bonus, positions: hit.positions });
+      continue;
+    }
+    if (word && (!hit || word.score > hit.score)) {
       matched.push({
         command,
         score: word.score + bonus,
         positions: [],
         keyword: word.keyword,
       });
-    } else if (hit && byTitle !== null) {
-      matched.push({ command, score: byTitle + bonus, positions: hit.positions });
+    } else if (hit) {
+      matched.push({ command, score: hit.score + bonus, positions: hit.positions });
     }
   }
 
   // Stable by construction: equal scores keep registration order, which is
   // grouped by area, so the list does not reshuffle as someone types.
-  return matched.sort((a, b) => b.score - a.score);
+  const byScore = (a: Ranked, b: Ranked) => b.score - a.score;
+  return [...exact.sort(byScore), ...matched.sort(byScore)];
 }
 
 /** The commands, and which ones were used recently. */

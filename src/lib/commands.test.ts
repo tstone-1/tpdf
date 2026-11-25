@@ -528,3 +528,11 @@ describe("keywords", () => {
     expect(rank("compress", off)).toEqual([]);
   });
 });
+
+it("highlights every UTF-16 unit of matched supplementary characters", () => {
+  const symbol = String.fromCodePoint(0x1f600);
+  const title = "Open " + symbol + "a.pdf";
+  expect(fuzzyMatch(symbol, title)?.positions).toEqual([5, 6]);
+  expect(fuzzyMatch(symbol + "a", title)?.positions).toEqual([5, 6, 7]);
+  expect(fuzzyMatch(symbol + ".", title)?.positions).toEqual([5, 6, 8]);
+});

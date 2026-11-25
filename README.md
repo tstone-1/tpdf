@@ -1007,8 +1007,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   see, and three that also scale pictures down, for printing (300 pixels an inch), for
   screen and office printing (150) and for reading on a screen (110). Each is listed with
   the size the copy would have. Select one that changes pictures and the dialog shows a
-  part of a page as it is now beside the same part as the copy would draw it, enlarged to
-  200%, so you see how soft the pictures become and not only a percentage. *Your own
+  part of a page as it is now beside the same part as the copy would draw it, at up to
+  200% (3,000 pixels on the longer page side), so you see how soft the pictures become and not only a percentage. *Your own
   numbers* sets the resolution and the JPEG quality directly, and whether photographs may
   be stored as JPEG at all. A choice that would not make the file smaller cannot be saved.
   The open document and the file it came from keep every pixel; the copy includes changes
@@ -1092,10 +1092,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   nothing comes out in the clear.
 
   Two things are still refused, and both say why. A document nobody has unlocked cannot be
-  rewritten at all, because there is no key to put back. And **printing** part of an
-  encrypted document is declined rather than rewritten: re-encrypting would hand the
-  printer a file it cannot read, and not re-encrypting would hand it a decrypted copy of a
-  document somebody encrypted on purpose. A file that opens without a password can be printed whole and unchanged.
+  rewritten at all, because there is no key to put back. For **printing**, tpdf refuses to rewrite an encrypted PDF as a page subset. A file that opens without a password can go to the print system whole and unchanged. The Windows print preview can select pages from that job without creating a decrypted intermediate PDF.
   tpdf cannot print a file that requires a password to open.
 
 Use **Edit text** or **Edit existing text** in the command palette to choose an
@@ -2049,9 +2046,9 @@ drawings are not pictures and stay sharp at any zoom.
 
 Before you write anything, `--dry-run` reports the size the copy would have, and
 `--preview preview.png` writes a picture of what changes: the part of a page that differs
-most, as it is now on the left and as the copy would draw it on the right, at 200%.
+most on a sampled page, before on the left and after on the right. Pages are rendered at up to 200%, capped at 3,000 pixels on the longer side.
 Together they show how much space is saved and how soft the pictures get.
-When writing both files, the PDF is published first. If replacing the preview fails afterward,
+When writing both files, the PDF is published first. If no visible difference can be sampled, or publishing the preview fails afterward,
 the command returns an error. Its JSON identifies the published `output` with `written: true`
 and the requested preview with `preview_requested` and `preview_written: false`.
 

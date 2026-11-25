@@ -102,7 +102,12 @@ fn parsed(json: &str) -> serde_json::Value {
 
 /// The same photo is a one-inch thumbnail and the source of a five-inch print.
 fn shared_photo_sizes(report: &mut Report, dir: &Path, doc: &Document, photo: ObjectId) {
-    for (kind, preset) in [("inherited", "screen"), ("alternate", "print")] {
+    for (kind, preset) in [
+        ("inherited", "screen"),
+        ("alternate", "print"),
+        ("direct-form", "screen"),
+        ("indirect-form", "screen"),
+    ] {
         let mut doc = doc.clone();
         let page = doc.get_pages()[&1];
         let pages = doc
@@ -135,6 +140,15 @@ fn shared_photo_sizes(report: &mut Report, dir: &Path, doc: &Document, photo: Ob
                 vec![123],
             );
             doc.add_object(base)
+        } else if kind.ends_with("-form") {
+            let mut subtype = Object::Name(b"Form".to_vec());
+            if kind == "indirect-form" {
+                subtype = Object::Reference(doc.add_object(subtype));
+            }
+            doc.add_object(Stream::new(dictionary! {
+                "Type" => "XObject", "Subtype" => subtype, "BBox" => vec![0.into(), 0.into(), 1.into(), 1.into()],
+                "Resources" => dictionary! { "XObject" => dictionary! { "Photo" => photo } },
+            }, b"/Photo Do".to_vec()))
         } else {
             photo
         };
@@ -191,6 +205,82 @@ fn shared_photo_sizes(report: &mut Report, dir: &Path, doc: &Document, photo: Ob
     }
 }
 
+/// The largest pixel loss on paper can be invisible on the rendered page.
+fn preview_after_uniform_picture(report: &mut Report, dir: &Path) {
+    let (mut doc, photo) = photo_document();
+    let page = doc.get_pages()[&1];
+    let mut uniform_page = doc.get_dictionary(page).unwrap().clone();
+    let parent = uniform_page.get(b"Parent").unwrap().as_reference().unwrap();
+    let mut uniform = doc.get_object(photo).unwrap().as_stream().unwrap().clone();
+    uniform.dict.set("Width", 800);
+    uniform.dict.set("Height", 800);
+    uniform.set_content(vec![255; 800 * 800 * 3]);
+    let image = doc.add_object(uniform);
+    uniform_page
+        .get_mut(b"Resources")
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .get_mut(b"XObject")
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Im", image);
+    let first = doc.add_object(uniform_page);
+    let input = dir.join("uniform-first.pdf");
+    let preview = dir.join("sampled.png");
+    let output = dir.join("sampled.pdf");
+    let run = || {
+        tool(
+            &[
+                "compress",
+                input.to_str().unwrap(),
+                "--pictures",
+                "screen",
+                "-o",
+                output.to_str().unwrap(),
+                "--preview",
+                preview.to_str().unwrap(),
+                "--force",
+                "--json",
+            ],
+            &[],
+        )
+    };
+    let tree = doc.get_dictionary_mut(parent).unwrap();
+    tree.set(
+        "Kids",
+        vec![Object::Reference(first), Object::Reference(page)],
+    );
+    tree.set("Count", 2);
+    doc.save(&input).unwrap();
+    let (code, json, stderr) = run();
+    let made = std::fs::read(&preview).unwrap_or_default();
+    report.check(
+        "the visible change on the second page produces a preview",
+        code == 0
+            && parsed(&json)["preview"] == preview.to_str().unwrap()
+            && made.starts_with(b"\x89PNG"),
+        &stderr,
+    );
+    let tree = doc.get_dictionary_mut(parent).unwrap();
+    tree.set("Kids", vec![Object::Reference(first)]);
+    tree.set("Count", 1);
+    doc.save(&input).unwrap();
+    let (code, json, stderr) = run();
+    let result = parsed(&json);
+    report.check(
+        "a requested preview with no visible difference reports the PDF and preserves the old PNG",
+        code != 0
+            && result["written"] == true
+            && result["preview_written"] == false
+            && result["preview_requested"] == preview.to_str().unwrap()
+            && !made.is_empty()
+            && std::fs::read(&preview).unwrap_or_default() == made,
+        &stderr,
+    );
+}
+
 pub(super) fn writes_a_smaller_copy(report: &mut Report) {
     let dir = scratch("compress");
     let at = |name: &str| dir.join(name).display().to_string();
@@ -198,6 +288,7 @@ pub(super) fn writes_a_smaller_copy(report: &mut Report) {
     let (mut doc, photo) = photo_document();
     doc.save(&source).expect("the input");
     shared_photo_sizes(report, &dir, &doc, photo);
+    preview_after_uniform_picture(report, &dir);
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;

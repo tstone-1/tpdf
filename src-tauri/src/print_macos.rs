@@ -111,6 +111,9 @@ fn read_inner(bytes: &[u8], with_text: bool) -> Option<Reading> {
 /// PDFKit refusing the document, or declining to build an operation for it.
 pub fn present(bytes: &[u8], title: &str, mtm: MainThreadMarker) -> Result<bool, String> {
     let document = parse(bytes).ok_or_else(|| said!("PDFKit could not read the print job"))?;
+    if unsafe { document.isLocked() } {
+        return Err(crate::print::encrypted_refusal(true));
+    }
     let info = NSPrintInfo::sharedPrintInfo();
 
     // PDFKit auto-rotates a page to fill the sheet. On a page that carries a

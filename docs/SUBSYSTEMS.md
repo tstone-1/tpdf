@@ -694,7 +694,7 @@ The window measures a temporary copy made from the current edit plan. For a pict
 asks the worker for `Request::Shrink` on the working document, including unsaved changes. On save
 it checks the staged file is smaller before replacing the destination and reports the measured sizes. `render::run_shrink`
 adds the sample: it opens the estimate's bytes as a second document in the same worker and
-draws one page from each. `commands/compress.rs` turns the sample into two PNG `data:` URLs
+compares up to four distinct affected pages in descending order of pixel loss, stopping at the first visible difference. A white image can lose pixels while its page looks identical. In both the sizing walk and the fallback for unreadable content, Form and Image subtype names can be indirect. `commands/compress.rs` turns the sample into two PNG `data:` URLs
 for `compressdialog.ts`. `docs/PLAN.md` *A smaller copy* has the measurements and
 `docs/THREAT-MODEL.md` §T6.32 what the decoders are given.
 

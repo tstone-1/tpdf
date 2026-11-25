@@ -185,7 +185,7 @@ describe("the keyword table", () => {
    *
    * So a one-word keyword that is the first word of another command's title
    * belongs only to a command whose own title has that word. A title that is
-   * the word and nothing else is not hidden, since it wins on `EXACT` itself
+   * the word and nothing else is not hidden, since exact titles are ranked first
    * (*Verkleinern*). The exceptions are listed with their reason; the first
    * sweep found seventeen, and fourteen were wrong.
    */
@@ -359,4 +359,11 @@ describe("a word the two locales spell differently", () => {
     }).map(([word, id]) => `${word} -> ${id}`);
     expect(lost).toEqual([]);
   });
+});
+
+it("keeps the full German Zoom out title ahead of the recently used Compress keyword", () => {
+  const commands = everyCommand("de-DE");
+  for (const recent of [[], ["file.compress"]]) {
+    expect(rank("Verkleinern", commands, recent)[0]?.command.id).toBe("view.zoomOut");
+  }
 });

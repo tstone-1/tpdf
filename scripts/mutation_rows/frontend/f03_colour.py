@@ -1217,7 +1217,7 @@ ROWS += [
         # Swallow a run the registry refused, leaving the file held.
         "palette: hold on to a question the registry would not run",
         "src/lib/palette.ts",
-        "    if (!this.registry.run(command.id, raw)) command.argument.dismissed?.();",
+        "    if ((current && !current()) || !this.registry.run(command.id, raw)) command.argument.dismissed?.();",
         "    this.registry.run(command.id, raw);",
         "is a dismissal when the command can no longer run as answered",
     ),

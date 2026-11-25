@@ -169,6 +169,20 @@ export async function paletteChecks(viewer: Viewer, pageCount: number): Promise<
 
   await argumentChecks(viewer, palette, registry, pageCount, type, press);
 
+  registry.register(...Array.from({ length: 60 }, (_, i) => ({
+    id: `scroll.${i}`, title: `Scroll check ${i}`, run: () => {},
+  })));
+  palette.open();
+  type("Scroll check");
+  press("ArrowUp");
+  const selected = document.querySelector('.tpdf-palette [aria-selected="true"]');
+  const bounds = selected?.getBoundingClientRect();
+  const list = selected?.parentElement?.getBoundingClientRect();
+  check("the selected palette command stays visible when the keyboard wraps",
+    palette.highlighted === "Scroll check 59" && !!list && !!bounds &&
+      list.top <= bounds.top + 1 && bounds.bottom <= list.bottom + 1,
+    `selected ${palette.highlighted} at ${bounds?.top}, list at ${list?.top} to ${list?.bottom}`);
+
   palette.destroy();
 }
 

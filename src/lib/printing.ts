@@ -37,7 +37,7 @@ const TEXT = catalog({
  */
 export const PROGRESS_EVENT = "tpdf://print-progress";
 
-/** Windows and GTK both report a failure after the print dialog has closed. */
+/** A print operation failed after the platform accepted the request. */
 export const FAILURE_EVENT = "tpdf://print-failure";
 
 export function printFailure(detail: string, locale: UiLocale = UI_LOCALE): string {

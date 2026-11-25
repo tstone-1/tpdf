@@ -423,7 +423,7 @@ fn the_preview_ignores_a_larger_losslessly_reencoded_image() {
         ],
     );
     assert_eq!(
-        super::estimate(&doc, SCREEN).unwrap().focus.unwrap().page,
+        super::estimate(&doc, SCREEN).unwrap().preview_pages[0].page,
         1
     );
 }
@@ -447,7 +447,7 @@ fn a_shared_images_preview_names_the_page_where_its_dpi_was_measured() {
     );
     root.set("Count", 2);
     let estimate = super::estimate(&doc, SCREEN).unwrap();
-    let focus = estimate.focus.unwrap();
+    let focus = estimate.preview_pages[0];
     assert_eq!(
         (focus.page, focus.dpi_before, focus.dpi_after),
         (1, 150, 110)
@@ -564,7 +564,7 @@ fn preview_accepts_indirect_image_dimensions() {
         .set("Width", width);
     let estimated = super::estimate(&doc, SCREEN).unwrap();
     assert_eq!(estimated.estimate.done.pictures_changed, 1);
-    assert_eq!(estimated.focus.unwrap().page, 0);
+    assert_eq!(estimated.preview_pages[0].page, 0);
 }
 
 #[test]
@@ -606,7 +606,7 @@ fn a_change_only_to_opacity_counts_the_parent_and_selects_a_preview() {
         .set("SMask", mask);
     let estimate = super::estimate(&doc, SCREEN).unwrap();
     assert_eq!(estimate.estimate.done.pictures_changed, 1);
-    let focus = estimate.focus.unwrap();
+    let focus = estimate.preview_pages[0];
     assert_eq!(
         (focus.page, focus.dpi_before, focus.dpi_after),
         (0, 400, 110)
@@ -902,7 +902,7 @@ fn an_estimate_writes_nothing_and_names_the_page_that_loses_most() {
     let done = estimated.estimate.done;
     assert_eq!((done.pictures, done.pictures_changed), (2, 2));
     assert_eq!(
-        estimated.focus,
+        estimated.preview_pages.first().copied(),
         Some(Focus {
             page: 1,
             dpi_before: 600,
@@ -924,7 +924,7 @@ fn an_estimate_writes_nothing_and_names_the_page_that_loses_most() {
 
     // Nowhere to look when no picture changes.
     let lossless = estimate(&doc, Compress::Lossless).expect("estimates");
-    assert!(lossless.focus.is_none());
+    assert!(lossless.preview_pages.is_empty());
     assert_eq!(lossless.estimate.done.pictures, 2);
     assert_eq!(lossless.estimate.done.pictures_changed, 0);
 }
@@ -1385,7 +1385,7 @@ fn a_picture_that_was_only_deflated_is_excluded_from_the_preview() {
     assert_eq!(filter(&copy, picture), "FlateDecode", "the fixture");
     let estimated = estimate(&doc, SCREEN).expect("estimates");
     assert_eq!(estimated.estimate.done.pictures_changed, 0);
-    assert!(estimated.focus.is_none());
+    assert!(estimated.preview_pages.is_empty());
 }
 
 /// A sample's stated size is held to its pixels before a picture is made from

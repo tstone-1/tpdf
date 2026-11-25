@@ -5782,6 +5782,11 @@
       // After the spike entry points, which exit the process: none of them mount
       // the shell, and a palette attached to `document.body` would outlive it.
       palette = new Palette(commands, {
+        questionOwner: () => {
+          const view = openView;
+          const model = edits;
+          return () => !opening && openView === view && edits === model;
+        },
         ...(isMac() && { keyboardPositions: () => call("keyboard_positions") }),
         turnPage: (forward) => (forward ? viewer?.nextPage() : viewer?.previousPage()),
       });

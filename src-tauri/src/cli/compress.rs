@@ -7,9 +7,8 @@
 //! directly (`crate::compress`).
 //!
 //! `--dry-run` writes nothing and reports the size the copy would have.
-//! `--preview` writes a PNG of the picture that loses the most, before on the
-//! left and after on the right, each pixel of the original one pixel wide: the
-//! answer to how it will look, which a percentage is not.
+//! `--preview` compares affected pages, before on the left and after on the right.
+//! The scale is up to two pixels per page point, capped at 3,000 pixels on the longer side.
 //!
 //! The copy is staged beside its destination and opened in a fresh worker
 //! before it is published. It must have the source's pages, be encrypted
@@ -290,7 +289,7 @@ impl Compress {
                 std::fs::write(&staged, png).map_err(|why| {
                     Failure::new(Exit::Internal, format!("{}: {why}", path.display()))
                 })?;
-                staged_preview = Some((staging, staged, path));
+                staged_preview = Some((staging, staged));
             }
         }
 
@@ -368,7 +367,7 @@ impl Compress {
         }
 
         let mut preview = None;
-        if let Some((_staging, staged, path)) = &staged_preview {
+        if let Some(path) = &self.preview {
             let published = if self
                 .output
                 .as_ref()
@@ -378,8 +377,16 @@ impl Compress {
                     Exit::Refused,
                     "the preview now names the published PDF",
                 ))
-            } else {
+            } else if let Some((_staging, staged)) = &staged_preview {
                 Temporary::publish(inputs, staged, path, self.force)
+            } else {
+                Err(Failure::new(
+                    Exit::Refused,
+                    format!(
+                        "{}: no visible difference could be sampled for the requested preview",
+                        path.display()
+                    ),
+                ))
             };
             if let Err(failure) = published {
                 let Some(pdf) = &self.output else {
@@ -487,7 +494,7 @@ fn plain(report: &report::Compressed) -> String {
     }
     if let Some(preview) = &report.preview {
         lines.push(format!(
-            "{preview}: the picture that loses the most, before on the left and after on the right."
+            "{preview}: page detail before (left) and after (right)."
         ));
     }
     if report.signatures_invalidated > 0 || (report.signatures_unknown && report.written) {
@@ -699,7 +706,7 @@ mod tests {
             "a.pdf: a copy would be 400 bytes, 60% smaller than the 1000 it is; target picture \
              resolution 150 pixels an inch, JPEG quality 75 (balanced)\n\
              3 of 7 pictures stored smaller.\n\
-             p.png: the picture that loses the most, before on the left and after on the right."
+             p.png: page detail before (left) and after (right)."
         );
         said.bytes_after = 1200;
         said.saved_percent = 0;

@@ -5352,9 +5352,7 @@ because the arm it ran was the one written for "any other platform".
     document is gone, and the platform's own parse afterwards is the readback this document
     describes elsewhere and wants.
 
-    **The print refusal moved with the parse, and had to.** An encrypted document may be
-    saved and may not be printed in part, and that decision used to be made in the
-    coordinator between the two phases of a parse the coordinator was doing. It is now
+    **The print refusal moved with the parse, and had to.** An encrypted document may be saved. The worker refuses to rewrite a subset as a print intermediate. The Windows print preview can select output pages after receiving the whole unchanged job. The coordinator used to decide the rewrite refusal between the two phases of its parse. It is now
     `save::Job` — one value carrying both of the ways a print job differs from a save, the
     reader's view rotation and this refusal — travelling on `Request::Rewrite` and decided
     in `save::rewrite_update`. Leaving it behind would have meant shipping a decrypted copy

@@ -133,6 +133,7 @@ export function favouriteCommands(
 ): Command[] {
   return list.map((favourite, index) => ({
     id: `${FAVOURITE_PREFIX}${index}`,
+    selectionKey: JSON.stringify(["favourite", favourite.path, favourite.page]),
     title: TEXT().goTo(favourite.name, basename(favourite.path), favourite.page + 1),
     run: () => go(favourite),
   }));

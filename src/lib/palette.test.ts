@@ -389,3 +389,96 @@ describe("what a screen reader is told while a value is typed", () => {
       placeholder: "", problem: () => null, preview: () => "", run: () => {} } })).toBe("Go to page");
   });
 });
+
+it("dismisses an argument when its owning document changes, including a focus change on close", () => {
+  let documentId = "A";
+  let dismissed = 0;
+  const ran: string[] = [];
+  const registry = new CommandRegistry();
+  registry.register({
+    id: "extract", title: "Extract", argument: {
+      placeholder: "Pages", problem: () => null, preview: () => "",
+      run: () => { ran.push(documentId); }, dismissed: () => { dismissed++; },
+    },
+  });
+  const palette = new Palette(registry, { questionOwner: () => {
+    const owner = documentId;
+    return () => owner === documentId;
+  } });
+  palette.askFor("extract");
+  palette.runSelected();
+  palette.askFor("extract");
+  documentId = "B";
+  palette.runSelected();
+  expect(palette.isOpen).toBe(false);
+  expect(ran).toEqual(["A"]);
+  expect(dismissed).toBe(1);
+  const otherPane = new FakeElement("button");
+  otherPane.focus = () => { documentId = "A"; };
+  Object.assign(document, { activeElement: otherPane });
+  palette.askFor("extract");
+  palette.runSelected();
+  expect(ran).toEqual(["A"]);
+  expect(dismissed).toBe(2);
+});
+
+it("leaves candidate confirmation and cancellation to the input method", () => {
+  const { palette, events, type, key } = asked();
+  const input = (document.body as unknown as FakeElement).querySelector("input")!;
+  type("draft");
+  for (const k of ["Enter", "Escape"]) {
+    input.dispatch("keydown", { key: k, isComposing: true, preventDefault: () => { throw Error("intercepted"); } });
+  }
+  expect(palette.isAsking).toBe(true);
+  expect(events).toEqual([]);
+  type("finished");
+  key("Enter");
+  expect(events).toEqual(["run:finished"]);
+});
+
+it("runs a palette row on a confirmed primary click", () => {
+  const ran: string[] = [];
+  const registry = new CommandRegistry();
+  registry.register({ id: "delete", title: "Delete", run: () => { ran.push("delete"); } });
+  const palette = new Palette(registry);
+  palette.open();
+  const body = document.body as unknown as FakeElement;
+  const row = body.children[0]!.children[0]!.children[1]!.children[0]!;
+  expect(row.getAttribute("role")).toBe("option");
+  for (const button of [1, 2]) {
+    row.dispatch("pointerdown", { button, pointerType: "mouse" });
+    row.dispatch("click", { button });
+  }
+  row.dispatch("pointerdown", { button: 0, pointerType: "touch" });
+  row.dispatch("pointercancel", { button: 0, pointerType: "touch" });
+  expect(ran).toEqual([]);
+  row.dispatch("pointerdown", { button: 0, pointerType: "mouse" });
+  row.dispatch("click", { button: 0 });
+  expect(ran).toEqual(["delete"]);
+});
+
+it("keeps the selected file when refreshed positions change and refuses a removed selection", () => {
+  const registry = new CommandRegistry();
+  const ran: string[] = [];
+  const files = (...paths: string[]) => registry.replace("recent.", paths.map((path, i) => ({
+    id: "recent." + i, selectionKey: path, title: path, run: () => { ran.push(path); },
+  })));
+  files("A", "B");
+  const palette = new Palette(registry);
+  const field = (document.body as unknown as FakeElement).querySelector("input")!;
+  palette.open();
+  field.dispatch("keydown", { key: "ArrowDown" });
+  palette.reload();
+  expect(palette.highlighted).toBe("B");
+  files("C", "A", "B");
+  palette.reload();
+  expect(palette.highlighted).toBe("B");
+  field.dispatch("keydown", { key: "Enter" });
+  expect(ran).toEqual(["B"]);
+  palette.open();
+  files("D", "E");
+  palette.reload();
+  expect(palette.highlighted).toBe("");
+  field.dispatch("keydown", { key: "Enter" });
+  expect(ran).toEqual(["B"]);
+});

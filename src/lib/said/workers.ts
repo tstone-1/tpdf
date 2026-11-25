@@ -200,6 +200,7 @@ export default {
   "the print job could not be read back, so it will not be printed":
     "der Druckauftrag konnte nicht zurückgelesen werden und wird deshalb nicht gedruckt",
   "the working document has no plan to print": "das Arbeitsdokument hat keinen Plan zum Drucken",
+  "the print panel could not be shown on the main thread": "der Druckdialog konnte im Hauptthread nicht angezeigt werden",
   "the print panel could not be shown on the main thread: {e}":
     "der Druckdialog konnte im Hauptthread nicht angezeigt werden: {e}",
   "the print job could not be read back, so it will not be printed: {e}":

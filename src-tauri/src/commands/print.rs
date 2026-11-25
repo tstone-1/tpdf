@@ -925,15 +925,19 @@ fn present_job(
         .ok_or_else(|| said!("the print job could not be read back, so it will not be printed"))?;
     print::expect_pages(reading.pages.len(), expected)?;
 
+    let window = app.clone();
     app.run_on_main_thread(move || {
         let Some(mtm) = objc2::MainThreadMarker::new() else {
             // Unreachable by construction, and silence here would be a print
             // command that does nothing and says nothing.
-            diag::note("[print] dispatched off the main thread; no panel shown");
+            report_print_failure(
+                &window,
+                &said!("the print panel could not be shown on the main thread"),
+            );
             return;
         };
         if let Err(e) = print_macos::present(&bytes, &title, mtm) {
-            diag::note(&format!("[print] {e}"));
+            report_print_failure(&window, &e);
         }
     })
     // The same rule: what failed was the hop to the main thread, and without
@@ -997,12 +1001,10 @@ fn present_job(
 #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
 pub const PROGRESS_EVENT: &str = "tpdf://print-progress";
 
-#[cfg(any(windows, target_os = "linux"))]
 pub const FAILURE_EVENT: &str = "tpdf://print-failure";
 
 /// The dialog has closed. Let the window localize the message and show the
 /// driver's own detail in a native error dialog.
-#[cfg(any(windows, target_os = "linux"))]
 fn report_print_failure(app: &tauri::AppHandle, detail: &str) {
     use tauri::Emitter;
     if let Err(error) = app.emit(FAILURE_EVENT, detail) {

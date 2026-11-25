@@ -16,8 +16,8 @@ ROWS += [
         # and save as..." for a reader who had typed the first one in full.
         "rank: score a whole-title match like any other match",
         "src/lib/commands.ts",
-        "      command.title.toLowerCase() === trimmed.toLowerCase() ? EXACT : 0;",
-        "      false ? EXACT : 0;",
+        "    if (hit && command.title.toLowerCase() === queryTitle) {",
+        "    if (hit && false) {",
         "ranks the exact title first, whatever the registration order",
     ),
     Mutation(
@@ -27,8 +27,8 @@ ROWS += [
         # type.
         "rank: make the whole-title match case-sensitive",
         "src/lib/commands.ts",
-        "      command.title.toLowerCase() === trimmed.toLowerCase() ? EXACT : 0;",
-        "      command.title === trimmed ? EXACT : 0;",
+        "    if (hit && command.title.toLowerCase() === queryTitle) {",
+        "    if (hit && command.title === trimmed) {",
         "is case-insensitive, as every other match here is",
     ),
     Mutation(
@@ -38,8 +38,8 @@ ROWS += [
         # than from one.
         "rank: rank a whole-title match below a partial one",
         "src/lib/commands.ts",
-        "const EXACT = WORD_START * 4;",
-        "const EXACT = -WORD_START * 4;",
+        "  return [...exact.sort(byScore), ...matched.sort(byScore)];",
+        "  return [...matched.sort(byScore), ...exact.sort(byScore)];",
         "ranks it first from the other registration order too",
     ),
     Mutation(

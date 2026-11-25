@@ -3127,8 +3127,13 @@ pub(crate) fn run_shrink(
     }
     let estimated = document.graph().shrink(compress)?;
     let mut estimate = estimated.estimate;
-    if let Some(focus) = estimated.focus {
-        estimate.sample = page_sample(bindings, document, estimated.bytes, focus).unwrap_or(None);
+    if !estimated.preview_pages.is_empty() {
+        if let Ok(copy) = OpenDocument::open_owned(bindings, estimated.bytes.into(), None) {
+            estimate.sample = estimated
+                .preview_pages
+                .into_iter()
+                .find_map(|focus| page_sample(bindings, document, &copy, focus).ok().flatten());
+        }
     }
     Ok(estimate)
 }
@@ -3189,10 +3194,9 @@ const SAMPLE_PAGE_SIDE: f32 = 3000.0;
 fn page_sample(
     bindings: Bindings,
     document: &OpenDocument,
-    bytes: Vec<u8>,
+    copy: &OpenDocument,
     focus: crate::compress::Focus,
 ) -> Result<Option<crate::compress::Sample>, String> {
-    let copy = OpenDocument::open_owned(bindings, bytes.into(), None).map_err(|why| why.reason)?;
     let (width_pt, height_pt) = {
         let page = document.page(focus.page)?;
         (page.width_pt(), page.height_pt())
@@ -3227,7 +3231,7 @@ fn page_sample(
             TileOutcome::Abandoned => Err(said!("the drawing was abandoned")),
         }
     };
-    let (before, after) = (drawn(document)?, drawn(&copy)?);
+    let (before, after) = (drawn(document)?, drawn(copy)?);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let zoom_percent = (scale * 100.0).round() as u32;
     Ok(crate::compress::Sample::of_page(

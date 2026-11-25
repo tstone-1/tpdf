@@ -250,6 +250,10 @@ fn resolved<'a>(doc: &'a Document, object: &'a Object) -> Option<&'a Object> {
     }
 }
 
+fn subtype<'a>(doc: &'a Document, dict: &'a Dictionary) -> Option<&'a [u8]> {
+    resolved(doc, dict.get(b"Subtype").ok()?)?.as_name().ok()
+}
+
 /// The XObject a resource dictionary names `name`, as the id it is stored
 /// under. One written inline has no id and is not followed.
 fn x_object(doc: &Document, resources: &Dictionary, name: &[u8]) -> Option<ObjectId> {
@@ -305,14 +309,14 @@ impl Walk<'_> {
             let Ok(stream) = doc.get_object(id).and_then(Object::as_stream) else {
                 continue;
             };
-            match stream.dict.get(b"Subtype").and_then(Object::as_name) {
-                Ok(b"Image") => {
+            match subtype(self.doc, &stream.dict) {
+                Some(b"Image") => {
                     self.unfollowed.insert(id);
                     if let Some(mask) = soft_mask(doc, id) {
                         self.unfollowed.insert(mask);
                     }
                 }
-                Ok(b"Form") if depth < MAX_NESTING => {
+                Some(b"Form") if depth < MAX_NESTING => {
                     if let Some(own) = stream
                         .dict
                         .get(b"Resources")
@@ -325,7 +329,7 @@ impl Walk<'_> {
                 }
                 // A block deeper than that is not looked into, and what it
                 // draws is not known.
-                Ok(b"Form") => self.lost = true,
+                Some(b"Form") => self.lost = true,
                 _ => {}
             }
         }
@@ -386,8 +390,8 @@ impl Walk<'_> {
         let Ok(stream) = self.doc.get_object(id).and_then(Object::as_stream) else {
             return;
         };
-        match stream.dict.get(b"Subtype").and_then(Object::as_name) {
-            Ok(b"Image") => {
+        match subtype(self.doc, &stream.dict) {
+            Some(b"Image") => {
                 let page = self.page;
                 let entry = self.shown.entry(id).or_insert(Shown {
                     page,
@@ -411,7 +415,7 @@ impl Walk<'_> {
                     }
                 }
             }
-            Ok(b"Form") => {
+            Some(b"Form") => {
                 let own = stream
                     .dict
                     .get(b"Resources")
@@ -487,7 +491,7 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
             };
             // A base image can select a different image for printing. That
             // alternate may also be drawn directly at a much smaller size.
-            if matches!(dict.get(b"Subtype").and_then(Object::as_name), Ok(b"Image")) {
+            if subtype(doc, dict) == Some(b"Image") {
                 if let Some(alternates) = dict
                     .get(b"Alternates")
                     .ok()
@@ -507,7 +511,7 @@ fn drawn(doc: &Document) -> BTreeMap<ObjectId, Shown> {
                     }
                 }
             }
-            let glyphs = matches!(dict.get(b"Subtype").and_then(Object::as_name), Ok(b"Type3"));
+            let glyphs = subtype(doc, dict) == Some(b"Type3");
             let pattern = dict
                 .get(b"PatternType")
                 .ok()
@@ -711,7 +715,7 @@ fn predictor(dict: &Dictionary) -> Option<i64> {
 fn picture(doc: &Document, id: ObjectId, as_mask: bool) -> Option<Picture> {
     let stream = doc.get_object(id).ok()?.as_stream().ok()?;
     let dict = &stream.dict;
-    if dict.get(b"Subtype").and_then(Object::as_name).ok()? != b"Image" {
+    if subtype(doc, dict)? != b"Image" {
         return None;
     }
     let flag = |key: &[u8]| {
@@ -1393,8 +1397,12 @@ fn pixel_loss(old: (i64, i64), new: (i64, i64)) -> (i64, i64) {
     (before.saturating_sub(after), before)
 }
 
-/// The picture `after` lost the most pixels of, and the page that draws it.
-fn focus(before: &Document, after: &Document, shown: &BTreeMap<ObjectId, Shown>) -> Option<Focus> {
+/// Sample distinct pages in descending order of the pixel loss of their pictures.
+fn preview_pages(
+    before: &Document,
+    after: &Document,
+    shown: &BTreeMap<ObjectId, Shown>,
+) -> Vec<Focus> {
     let size = |doc: &Document, id: ObjectId| -> Option<(i64, i64)> {
         let dict = &doc.get_object(id).ok()?.as_stream().ok()?.dict;
         Some((
@@ -1408,7 +1416,7 @@ fn focus(before: &Document, after: &Document, shown: &BTreeMap<ObjectId, Shown>)
             .and_then(|object| object.as_stream().ok())
             .map(|stream| stream.content.as_slice())
     }
-    let (shown, old, new) = shown
+    let candidates = shown
         .iter()
         .flat_map(|(id, shown)| {
             std::iter::once(*id)
@@ -1422,22 +1430,38 @@ fn focus(before: &Document, after: &Document, shown: &BTreeMap<ObjectId, Shown>)
             let filter = &after.get_object(id).ok()?.as_stream().ok()?.dict;
             let jpeg = filter.get(b"Filter").and_then(Object::as_name).ok() == Some(b"DCTDecode");
             (old != new || jpeg).then_some((*shown, old, new))
+        });
+    let mut pages = BTreeMap::new();
+    for (shown, old, new) in candidates {
+        let loss = pixel_loss(old, new);
+        let best = pages.entry(shown.page).or_insert((loss, shown, old, new));
+        if loss >= best.0 {
+            *best = (loss, shown, old, new);
+        }
+    }
+    let mut pages: Vec<_> = pages.into_values().collect();
+    pages.sort_by_key(|(loss, ..)| std::cmp::Reverse(*loss));
+    // Each candidate renders two potentially large page images in the worker.
+    pages
+        .into_iter()
+        .take(4)
+        .map(|(_, shown, old, new)| {
+            let dpi = |pixels: i64| -> u32 {
+                if shown.width <= 0.0 || !shown.width.is_finite() {
+                    return 0;
+                }
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                {
+                    (pixels as f64 * 72.0 / shown.width).round() as u32
+                }
+            };
+            Focus {
+                page: shown.page,
+                dpi_before: dpi(old.0),
+                dpi_after: dpi(new.0),
+            }
         })
-        .max_by_key(|(_, old, new)| pixel_loss(*old, *new))?;
-    let dpi = |pixels: i64| -> u32 {
-        if shown.width <= 0.0 || !shown.width.is_finite() {
-            return 0;
-        }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        {
-            (pixels as f64 * 72.0 / shown.width).round() as u32
-        }
-    };
-    Some(Focus {
-        page: shown.page,
-        dpi_before: dpi(old.0),
-        dpi_after: dpi(new.0),
-    })
+        .collect()
 }
 
 /// A smaller copy as [`estimate`] made it: what it comes to, its bytes, and
@@ -1447,8 +1471,8 @@ pub struct Estimated {
     pub estimate: Estimate,
     /// The copy, serialised and not encrypted.
     pub bytes: Vec<u8>,
-    /// The page to compare, when a picture changed.
-    pub focus: Option<Focus>,
+    /// Distinct candidate pages to compare, greatest image loss first.
+    pub preview_pages: Vec<Focus>,
 }
 
 /// What a copy of `doc` made smaller as `compress` says would come to.
@@ -1463,9 +1487,9 @@ pub fn estimate(doc: &Document, compress: Compress) -> Result<Estimated, String>
     let mut copy = doc.clone();
     let shown = drawn(doc);
     let done = apply_with_drawings(&mut copy, compress, &shown);
-    let focus = match compress {
-        Compress::Pictures(_) => focus(doc, &copy, &shown),
-        _ => None,
+    let preview_pages = match compress {
+        Compress::Pictures(_) => preview_pages(doc, &copy, &shown),
+        _ => Vec::new(),
     };
     let bytes = crate::save::serialise_packed(&mut copy, &said!("the smaller copy"))?;
     Ok(Estimated {
@@ -1475,7 +1499,7 @@ pub fn estimate(doc: &Document, compress: Compress) -> Result<Estimated, String>
             sample: None,
         },
         bytes,
-        focus,
+        preview_pages,
     })
 }
 

@@ -522,6 +522,15 @@ export async function printDialogChecks(record: typeof check): Promise<void> {
     driver.click();
     await turn();
     const displayed = copies.value;
+    // A late draw of page 1 finished while only page 2 was shown. Returning
+    // to each dropped page must draw it again, while a copy-count change reuses it.
+    const beforeRanges = draws.length;
+    change(pages, "1");
+    await turn();
+    change(pages, "2");
+    await turn();
+    record("changing print ranges releases withdrawn pages and ignores stale drawings",
+      draws.slice(beforeRanges).join() === "0,1", draws.slice(beforeRanges).join());
     const orientation = control<HTMLOptionElement>('option[value="landscape"]').parentElement as HTMLSelectElement;
     change(orientation, "landscape");
     await turn();
