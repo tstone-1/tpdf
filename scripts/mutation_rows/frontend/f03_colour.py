@@ -2300,7 +2300,7 @@ ROWS += [
         # `return` line matched twice. The gate caught it; a narrower anchor
         # would have mutated whichever came first.
         "  get editable(): boolean {\n"
-        "    return this.shown !== null && this.subject?.object != null && !this.subject.body_clipped;",
+        "    return this.shown !== null && this.subject?.object != null && !this.subject.body_clipped && !this.subject.contents_locked;",
         "  get editable(): boolean {\n    return this.shown !== null;",
         "offers no editor for a comment the file wrote without an object",
     ),

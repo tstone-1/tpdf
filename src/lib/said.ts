@@ -120,10 +120,12 @@ function render(wording: Wording, args: Record<string, string>): string {
   return wording.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name: string) => args[name] ?? `{${name}}`);
 }
 
+const DIAGNOSTIC_ARGUMENTS = new Set(["e", "why", "error", "reason", "detail", "cause", "err"]);
+
 /**
  * A sentence from Rust, in the window's language.
  *
- * Arguments are translated too, because one sentence often carries another:
+ * Nested diagnostics are translated too, because one sentence often carries another:
  * `the redaction did not run: {e}`. English, and anything unrecognised, comes
  * back unchanged.
  */
@@ -132,7 +134,9 @@ export function spoken(sentence: string, locale: UiLocale = UI_LOCALE, depth = 0
   const found = recognise(sentence);
   if (!found) return sentence;
   const args: Record<string, string> = {};
-  for (const [name, value] of Object.entries(found.args)) args[name] = spoken(value, locale, depth + 1);
+  for (const [name, value] of Object.entries(found.args)) {
+    args[name] = DIAGNOSTIC_ARGUMENTS.has(name) ? spoken(value, locale, depth + 1) : value;
+  }
   const key = found.template.key;
   return render((locale === "de-DE-formal" ? SIE[key] : undefined) ?? GERMAN[key]!, args);
 }

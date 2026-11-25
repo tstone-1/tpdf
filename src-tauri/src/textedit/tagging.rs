@@ -1007,7 +1007,7 @@ fn groups<'a>(
                 && child
                     .get(b"T")
                     .map_or(true, |title| title.as_str().is_ok_and(<[u8]>::is_empty))
-                && matches!(own.as_slice(), [Object::Integer(_) | Object::Dictionary(_)]);
+                && matches!(items, [Object::Integer(_) | Object::Dictionary(_)]);
             let group = Group {
                 id: *id,
                 page,

@@ -65,7 +65,7 @@ export async function propertiesChecks(doc: DocumentInfo): Promise<void> {
   // exactly one corpus the answer is yes.
   check(
     PROPERTIES_CHECKS[2] as string,
-    properties.tagged !== null && properties.attachments !== null,
+    properties.tagged !== null,
     `tagged=${properties.tagged}, attachments=${properties.attachments}`,
   );
 
@@ -75,6 +75,12 @@ export async function propertiesChecks(doc: DocumentInfo): Promise<void> {
   // would make this a test of which fixture the sweep happened to open.
   const rendered = sections(properties);
   const file = rendered.find((section) => section.title === "File");
+  const attachment = file?.rows.find(row => row.name === "Attachments");
+  const count = properties.attachments;
+  const expected = count === null ? `Incomplete list (${properties.embedded?.length ?? 0} shown)`
+    : count === 0 ? undefined : `${count} embedded file${count === 1 ? "" : "s"}; Save an attachment saves one`;
+  check(PROPERTIES_CHECKS[5] as string, attachment?.value === expected,
+    `attachment count=${count}, displayed=${attachment?.value ?? "absent"}`);
   const named = file?.rows.map((row) => row.name) ?? [];
   check(
     PROPERTIES_CHECKS[3] as string,
@@ -102,7 +108,7 @@ export async function propertiesChecks(doc: DocumentInfo): Promise<void> {
 }
 
 /**
- * The five checks {@link propertiesChecks} records.
+ * The checks {@link propertiesChecks} records.
  *
  * A module constant for the reason {@link COVERED_WORD_CHECKS} is: the failure
  * path has to report the same names the success path does, or a corpus whose
@@ -116,6 +122,7 @@ const PROPERTIES_CHECKS = [
   "a readable document answers about tagging rather than declining to",
   "the readout has a File section naming the three things every document has",
   "no heading in the readout reads as a verdict on a signature",
+  "the attachment row distinguishes an exact count from a partial list",
 ];
 
 

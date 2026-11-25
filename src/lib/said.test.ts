@@ -198,6 +198,13 @@ describe("spoken", () => {
     expect(spoken("This file could not be read from disk.", "en-GB")).toBe("This file could not be read from disk.");
   });
 
+  it("keeps a field's literal name when it also matches a diagnostic", () => {
+    for (const locale of ["de-DE", "de-DE-formal"] as const) {
+      expect(spoken("An earlier signature locked the field your PATH is too long.", locale))
+        .toBe("Eine frühere Signatur hat das Feld your PATH is too long gesperrt.");
+    }
+  });
+
   it("says Sie where the du sentence has a Sie entry, and the shared German where it has none", () => {
     expect(spoken("your PATH is too long", "de-DE")).toBe("Dein PATH ist zu lang");
     expect(spoken("your PATH is too long", "de-DE-formal")).toBe("Ihr PATH ist zu lang");

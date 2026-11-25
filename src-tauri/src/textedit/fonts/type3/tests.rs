@@ -96,6 +96,49 @@ fn type3_edit_delete_and_layout_preserve_fonts_and_following_text() {
 }
 
 #[test]
+fn type3_aliases_keep_program_identity_and_byte_specific_word_spacing() {
+    let (mut doc, font, glyph, cmap) = fixture();
+    let encode = |doc: &Document| {
+        embedded(doc, doc.get_dictionary(font).unwrap())
+            .unwrap()
+            .encode("A")
+    };
+    doc.get_object_mut(cmap)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .set_content(MAP.replace("<4E2D>", "<0041>").into_bytes());
+    // A and C select the same indirect program. Either code draws the same A.
+    assert_eq!(encode(&doc).unwrap(), [1]);
+    let different = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"600 0 0 -700 300 0 d1 0 0 m 300 0 l 300 -700 l h f".to_vec(),
+    ));
+    let procs = doc
+        .get_dictionary_mut(font)
+        .unwrap()
+        .get_mut(b"CharProcs")
+        .unwrap()
+        .as_dict_mut()
+        .unwrap();
+    procs.set("C", different);
+    assert!(encode(&doc).unwrap_err().contains("several glyphs"));
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .get_mut(b"CharProcs")
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("C", glyph);
+    doc.get_object_mut(cmap)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .set_content(MAP.replace("<0042>", "<0041>").into_bytes());
+    assert!(encode(&doc).unwrap_err().contains("several glyphs"));
+}
+
+#[test]
 fn type3_single_byte_word_spacing_and_curve_bounds_are_measured() {
     let (mut doc, font, glyph, _) = fixture();
     let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();

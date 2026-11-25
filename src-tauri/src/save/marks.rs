@@ -1317,6 +1317,9 @@ pub(super) fn discard_notes(
             // this is an annotation at all.
             return Err(said!("that comment is not an annotation").into());
         }
+        if crate::forms::annotation_flags(doc, dictionary) & crate::annots::LOCKED != 0 {
+            return Err(said!("This comment is locked and cannot be deleted").into());
+        }
         doomed.insert(id);
         // A popup is also listed directly on the page. Follow only a mutual
         // ownership link, so a mistaken /Popup cannot delete another note's window.
@@ -1347,6 +1350,9 @@ fn edited_text_box(
     let Ok(annot) = doc.get_dictionary(note.object) else {
         return Ok(None);
     };
+    if crate::forms::annotation_flags(doc, annot) & crate::annots::LOCKED_CONTENTS != 0 {
+        return Err(said!("The contents of this comment are locked").into());
+    }
     if annot.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"FreeText") {
         return Ok(None);
     }

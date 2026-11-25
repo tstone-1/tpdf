@@ -4,6 +4,31 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Page extraction, comment editing and tagged spans (2026-11-25)
+
+On macOS arm64, the CLI extracted a page whose luminosity mask drew an image
+from the page resources, then one whose mask owned the same image. At 72 DPI
+Poppler counted 10,000 red pixels in each source and each extracted page. The
+CLI integration test repeats both comparisons with the application renderer.
+
+After changing one word in a comment, an independent PDF reader recovered the
+original spaces, tabs and paragraph breaks around it. With the Locked flag set,
+rewriting succeeded and deletion failed. With LockedContents set, deletion
+succeeded and rewriting failed. Neither refusal produced an output file.
+The tagged-text probe still edited a single leaf with replacement text and
+withheld the same edit from a parent span containing another span.
+
+A blank cover followed by two searchable pages produced four matches and
+Cmd-G reached the second matching page. In the native window, 362 applicable
+checks passed on that fixture, 385 on the square-page fixture and 405 on the
+columns fixture. An image-only document with 1,001 attachments produced
+the textless result and displayed "Incomplete list (1000 shown)" in Properties.
+All 356 applicable checks passed.
+Search completion is observed for each submitted query, including repeated
+queries. As negative controls, putting the supposedly absent word on page three
+failed both the search and results-list assertions. Promising an additional
+matching page in the manifest failed the cross-page assertion.
+
 ### Redaction boundaries, text reliability and split publication (2026-11-25)
 
 On macOS arm64, Poppler rendered a 10-point square-capped rule before and after
@@ -31,6 +56,44 @@ exclusive-copy fallback can leave an incomplete output if writing is interrupted
 The mixed-page window fixture passed all three geometry measurements. Supplying
 malformed JSON failed each measurement and the run. An ordinary fixture without
 a geometry sidecar skipped those three measurements.
+
+### XMP claims, Type 3 aliases and window checks (2026-11-25)
+
+On macOS, `tpdf info --json` read PDF/A-3B from two descriptions of the same
+subject, with either a literal hyphen or its numeric XML reference. Splitting
+the declarations across two XML roots returned only PDF/A-3 and set `unread`.
+A self-closing child and an equivalent paired child both suppressed the
+structured property.
+
+The original-font text-edit probe replaced B with A in two Type 3 PDFs. Both
+the single-code control and the two-code alias produced identical preview and
+save pixels, preserved neighbouring pixels and left the input bytes unchanged.
+The font tests also distinguish independent programs and the word-spacing
+behaviour of byte 32.
+
+The macOS OCR window check passed 28/28. It closed and reopened the scan,
+verified a fresh document handle, then recovered the word a second time before
+testing edit invalidation. The driver compared the scan itself to its original
+bytes. The signature window check passed 21/21, including a pixel-for-pixel
+readback after clearing the seeded store. The mark check passed 41/41 on a
+copy of the links PDF outside the fixture directory.
+The Linux signature window passed 19/19 under Xvfb, including the absence of
+local reuse controls and readback of both saved stamps.
+
+On Linux, a GTK 3.24.41 Print to File dialog offered PDF, PostScript and SVG
+with zero manual capabilities. Declaring PDF generation removed the format
+selector. Submitting the source through the GTK file backend wrote an identical
+PDF, verified by byte comparison.
+
+On Windows, the printer test opened Microsoft Print to PDF, enumerated 84 paper
+sizes and verified that changing orientation changed the measured dimensions.
+The failure-message tests cover both a failure before submission and a failure
+after sides were sent.
+
+Each scroll benchmark regression was reintroduced separately. Rounding the
+zoom label failed the two-round comparison at 1x and 1.25x. Allowing an
+undrained queue failed the test that expects an error before any comparison
+is printed.
 
 ### Signature placement and keyboard focus (2026-11-25)
 
@@ -226,8 +289,8 @@ passed the Linux clippy gate on the same source snapshot.
 
 `tabs_check.py <checks-binary> testdata/text-base14.pdf --phase recognise`
 passed 24/24 on Windows and macOS. It checks a native-search miss followed by
-an OCR hit, highlight rectangles, unchanged source bytes, invalidation after an
-edit or reopen, the computed green success border, and a refusal returning to
+an OCR hit, highlight rectangles, unchanged bytes in the open alias target,
+invalidation after an edit, the computed green success border, and a refusal returning to
 the problem style. Native CLI tests also recover a scan and a page with an
 existing unusable text layer, then compare the source bytes.
 

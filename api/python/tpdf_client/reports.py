@@ -617,7 +617,7 @@ class _CommentRequired(TypedDict):
     quads: list[float]
     # The comment this one replies to, by id.
     reply_to: int | None
-    # /F bit 2.
+    # Hidden or NoView in /F.
     hidden: bool
     # /C as RGB in 0..1; None when absent or unreadable.
     color: list[float] | None
@@ -630,6 +630,8 @@ class Comment(_CommentRequired, total=False):
     """One original annotation."""
 
     body_clipped: bool
+    locked: bool
+    contents_locked: bool
 
 
 class CommentLimits(TypedDict):

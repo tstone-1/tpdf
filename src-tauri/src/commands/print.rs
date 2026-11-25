@@ -863,7 +863,7 @@ fn on_print_thread(
                 diag::note(&format!("[print] {e}"));
                 // Said in the window too, as on Linux: the dialog has closed, and
                 // until 26.10.24 a refused job on Windows was only this log line.
-                report_print_failure(&app, &e);
+                report_print_failure(&app, &e, sent);
             }
         }
     });
@@ -933,11 +933,12 @@ fn present_job(
             report_print_failure(
                 &window,
                 &said!("the print panel could not be shown on the main thread"),
+                0,
             );
             return;
         };
         if let Err(e) = print_macos::present(&bytes, &title, mtm) {
-            report_print_failure(&window, &e);
+            report_print_failure(&window, &e, 0);
         }
     })
     // The same rule: what failed was the hop to the main thread, and without
@@ -1003,11 +1004,17 @@ pub const PROGRESS_EVENT: &str = "tpdf://print-progress";
 
 pub const FAILURE_EVENT: &str = "tpdf://print-failure";
 
+#[derive(Clone, serde::Serialize)]
+struct PrintFailure<'a> {
+    detail: &'a str,
+    sent: u32,
+}
+
 /// The dialog has closed. Let the window localize the message and show the
 /// driver's own detail in a native error dialog.
-fn report_print_failure(app: &tauri::AppHandle, detail: &str) {
+fn report_print_failure(app: &tauri::AppHandle, detail: &str, sent: u32) {
     use tauri::Emitter;
-    if let Err(error) = app.emit(FAILURE_EVENT, detail) {
+    if let Err(error) = app.emit(FAILURE_EVENT, PrintFailure { detail, sent }) {
         diag::note(&format!(
             "[print] could not display the print failure: {error}"
         ));
@@ -1068,12 +1075,12 @@ fn present_job(
             .map(gtk::prelude::Cast::upcast_ref::<gtk::Window>);
         let reporting = shown.clone();
         if let Err(e) = crate::print_linux::present(staged, &title, parent, move |why| {
-            report_print_failure(&reporting, &why);
+            report_print_failure(&reporting, &why, 0);
         }) {
             diag::note(&format!("[print] {e}"));
             // Said in the window too: this is after the dialog closed, so the
             // reader pressed Print and nothing else would tell them it did not.
-            report_print_failure(&shown, &e);
+            report_print_failure(&shown, &e, 0);
         }
     })
     .map_err(|e| {

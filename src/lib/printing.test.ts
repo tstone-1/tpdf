@@ -26,12 +26,16 @@ describe("post-submission print failures", () => {
     expect(backend).toContain(`pub const FAILURE_EVENT: &str = "${FAILURE_EVENT}";`);
   });
 
+  it("reports partial submission when the driver has accepted a side", () => {
+    expect(printFailure({ detail: "EndPage failed", sent: 1 }, "en-US")).toBe(
+      "Printing did not finish. The printer may still print the sides it received. Sent 1 side to the printer.\n\nEndPage failed");
+  });
   it("localizes the heading and known reasons, preserving the driver's own detail", () => {
     for (const locale of ["de-DE", "de-DE-formal"] as const) {
-      expect(printFailure("queue reports E42", locale)).toBe("Das Dokument wurde nicht gedruckt.\n\nqueue reports E42");
-      expect(printFailure("no printer is installed", locale)).toBe("Das Dokument wurde nicht gedruckt.\n\nes ist kein Drucker installiert");
+      expect(printFailure({ detail: "queue reports E42", sent: 0 }, locale)).toBe("Das Dokument wurde nicht gedruckt.\n\nqueue reports E42");
+      expect(printFailure({ detail: "no printer is installed", sent: 0 }, locale)).toBe("Das Dokument wurde nicht gedruckt.\n\nes ist kein Drucker installiert");
     }
-    expect(printFailure("queue reports E42", "en-US")).toBe("The document was not printed.\n\nqueue reports E42");
+    expect(printFailure({ detail: "queue reports E42", sent: 0 }, "en-US")).toBe("The document was not printed.\n\nqueue reports E42");
   });
 });
 

@@ -227,7 +227,7 @@ export class CommentPopup {
    * data requirements apply: an addressable annotation and a complete body.
    */
   get editable(): boolean {
-    return this.shown !== null && this.subject?.object != null && !this.subject.body_clipped;
+    return this.shown !== null && this.subject?.object != null && !this.subject.body_clipped && !this.subject.contents_locked;
   }
 
   get hasDraft(): boolean {
@@ -274,7 +274,7 @@ export class CommentPopup {
    * can act on.
    */
   get deletable(): boolean {
-    return this.shown !== null && this.subject?.object != null;
+    return this.shown !== null && this.subject?.object != null && !this.subject.locked;
   }
 
   /**

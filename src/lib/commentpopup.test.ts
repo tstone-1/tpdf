@@ -327,6 +327,18 @@ describe("CommentPopup", () => {
     expect(editorOf(note)?.value).toBe("half a sentence");
   });
 
+  it("applies deletion and content locks to the corresponding actions", () => {
+    const note = popup();
+    note.show(comment({ id: 1, object: [12, 0], locked: true }), [], anchor(), false);
+    expect(note.editable).toBe(true);
+    note.remove();
+    expect(discards).toEqual([]);
+    note.show(comment({ id: 2, object: [13, 0], contents_locked: true }), [], anchor(), false);
+    expect(note.deletable).toBe(true);
+    note.edit();
+    expect(note.editing).toBe(false);
+  });
+
   it("sends the comment on show to be deleted, and closes", () => {
     // Two assertions and the second is the one with a mechanism behind it. The
     // popup hides *before* the callback: the state reply that follows rebuilds

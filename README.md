@@ -2182,7 +2182,7 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   (scan-local), one-based `page`, `kind`, `author`, `body`, `subject`, `date`,
   `rect` (`[left,top,right,bottom]`, unlike an edit request's width/height),
   flattened `quads`, `reply_to` (another scan-local id or null), `hidden`, `color`
-  and `object` (`[number,generation]` or null). A truncated comment has `body_clipped` set to true. Limits report `crowded_pages`,
+  and `object` (`[number,generation]` or null). An incomplete body has `body_clipped` set to true. Annotation locks appear as `locked` (deletion) and `contents_locked` (rewriting) when set. Limits report `crowded_pages`,
   `over_budget`, `bodies_clipped`, `unknown_kinds`, `unreadable`, `cycles` and
   `pages_missed`. `complete` is false when any limit applies.
 - `text-runs`: `input`, one-based `page`, `revision` (32 byte values) and `runs`.

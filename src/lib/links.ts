@@ -216,15 +216,22 @@ export const SAME_LINE_OVERLAP = 0.5;
  * pin exactly that, so a divergence is visible rather than silent.
  */
 export function orderedLinks(items: readonly Link[]): Link[] {
-  return [...items].sort((a, b) => {
-    if (a.page !== b.page) return a.page - b.page;
-    if (!sameLine(a, b)) return a.rect[1] - b.rect[1];
-    // Same line: across the page. Ties broken by id so the order is total ---
-    // two links with identical rectangles are pathological and must still come
-    // out in a stable order, or "the next one" is not a function.
-    if (a.rect[0] !== b.rect[0]) return a.rect[0] - b.rect[0];
-    return a.id - b.id;
-  });
+  // Pairwise overlap is not transitive. Establish bands top-to-bottom before
+  // ordering links across each band, keeping its first rectangle as the anchor.
+  const across = (a: Link, b: Link) => a.rect[0] - b.rect[0] || a.id - b.id;
+  const byPosition = [...items].sort((a, b) => a.page - b.page || a.rect[1] - b.rect[1] || across(a, b));
+  const ordered: Link[] = [];
+  let start = 0;
+  while (start < byPosition.length) {
+    const anchor = byPosition[start]!;
+    let end = start + 1;
+    while (end < byPosition.length && byPosition[end]!.page === anchor.page &&
+           sameLine(anchor, byPosition[end]!)) end++;
+    const band = byPosition.slice(start, end).sort(across);
+    for (const link of band) ordered.push(link);
+    start = end;
+  }
+  return ordered;
 }
 
 /** Whether two links sit on one line of the page. */
@@ -283,12 +290,9 @@ export function stepAlong<T extends Walkable>(
   }
 
   if (direction === 1) {
-    return ordered.find((item) => isAfter(item, at)) ?? null;
+    return ordered.find((item) => startsAtOrAfter(item, at)) ?? null;
   }
-  // The last one strictly before the viewport. `findLast` rather than a reverse
-  // scan for the first `!isAfter`, which is not the same predicate: a link
-  // *level* with the viewport top is neither ahead nor behind, and treating it
-  // as behind makes Previous land on the link Next just came from.
+  // A link level with the viewport is a forward candidate only.
   for (let index = ordered.length - 1; index >= 0; index -= 1) {
     const item = ordered[index];
     if (item && isBefore(item, at)) return item;
@@ -296,10 +300,10 @@ export function stepAlong<T extends Walkable>(
   return null;
 }
 
-/** Whether something starts after a place in the document. */
-function isAfter(item: Walkable, at: Place): boolean {
+/** Whether something starts at or after a place in the document. */
+function startsAtOrAfter(item: Walkable, at: Place): boolean {
   if (item.page !== at.page) return item.page > at.page;
-  return item.rect[1] > at.top;
+  return item.rect[1] >= at.top;
 }
 
 /** Whether something starts before a place in the document. */

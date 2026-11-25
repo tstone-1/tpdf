@@ -168,6 +168,15 @@ describe("orderedLinks", () => {
     expect(orderedLinks([marker, sentence]).map((item) => item.id)).toEqual([1, 0]);
   });
 
+  it("keeps staggered rectangles in reading order for every storage order", () => {
+    const a = link({ id: 1, rect: [60, 10, 80, 30] });
+    const b = link({ id: 2, rect: [40, 20, 60, 40] });
+    const c = link({ id: 3, rect: [20, 30, 40, 50] });
+    for (const items of [[a, b, c], [a, c, b], [b, a, c], [b, c, a], [c, a, b], [c, b, a]]) {
+      expect(orderedLinks(items).map(item => item.id)).toEqual([2, 1, 3]);
+    }
+  });
+
   it("is a total order even for identical rectangles", () => {
     // Pathological and it still has to be a function: "the next one" cannot
     // depend on which of two equal links the sort happened to see first.
@@ -214,7 +223,7 @@ describe("stepAlong", () => {
 
   it("goes back to the link before the viewport, not the one level with it", () => {
     // The control that says the two predicates differ. At exactly 300 the
-    // middle link is neither ahead nor behind; treating it as behind would make
+    // middle link is a forward candidate only; treating it as behind would make
     // Previous land on the link Next just arrived at.
     expect(stepAlong(ordered, null, at(300), -1)?.id).toBe(0);
     expect(stepAlong(ordered, null, at(301), -1)?.id).toBe(1);

@@ -5,6 +5,7 @@
  * which runs it; that file says what the check is and how it is run.
  */
 
+import { placedBox, turnQuad, type PageText } from "../text";
 import { Report, frame, settle as settleFor } from "../checkreport";
 import { MULTI_CLICK_SLOP_PX } from "../clicks";
 
@@ -231,4 +232,21 @@ export function describeThrown(e: unknown): string {
   } catch {
     return String(e);
   }
+}
+
+/** Compare glyph positions as well as dimensions: a square keeps its size after a turn. */
+export function textLayerMatchesTurn(raw: PageText, shown: PageText, turns: number): boolean {
+  const swapped = turns % 2 === 1;
+  if (shown.quarter_turns !== (raw.quarter_turns + turns) % 4 ||
+      shown.width_pt !== (swapped ? raw.height_pt : raw.width_pt) ||
+      shown.height_pt !== (swapped ? raw.width_pt : raw.height_pt) ||
+      shown.boxes.length !== raw.boxes.length) return false;
+  return raw.codes.every((_, index) => {
+    const from = placedBox(raw.boxes, index);
+    if (!from) return true;
+    const expected = turnQuad(from, turns, raw.width_pt, raw.height_pt);
+    const actual = placedBox(shown.boxes, index);
+    return actual !== null && actual.left === expected.left && actual.top === expected.top &&
+      actual.right === expected.right && actual.bottom === expected.bottom;
+  });
 }

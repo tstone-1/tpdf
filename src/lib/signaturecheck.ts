@@ -3,6 +3,7 @@ import type { OpenCheckHost } from "./opencheck";
 import { settle, pause, type Report } from "./checkreport";
 import { loadSignature, rememberSignature, forgetSignature } from "./signaturestore";
 import { call } from "./ipc";
+import { isLinux } from "./keys";
 
 export async function signatureCheck(host: OpenCheckHost, expected: string, report: Report): Promise<void> {
   const check = (name: string, ok: boolean) => report.check(name, ok, "signature workflow");
@@ -85,28 +86,43 @@ export async function signatureCheck(host: OpenCheckHost, expected: string, repo
   await place();
   check("imported pixels create a second signature", host.edits()!.state.marks.length === 2 && host.edits()!.state.marks.every((m) => !!m.image));
   check("local reuse is opt-in", JSON.stringify(await loadSignature()) === JSON.stringify(savedBefore));
-  // The app uses an isolated test identifier. Restore even an existing saved value.
-  try {
+  if (isLinux()) {
     host.run("edit.addSignature");
-    if (!await settle(() => !!dialog(), 3000)) throw new Error("reuse dialog did not open");
-    const sample = host.edits()!.state.marks[1]!.image!;
-    await rememberSignature(sample);
-    button("Use saved signature").click();
-    check("a saved signature is ready to place", await settle(() => !button("Place signature image").disabled, 3000));
-    const remember = [...dialog()!.querySelectorAll("label")].find((l) => l.textContent?.includes("Remember on this device"))!.querySelector("input")!;
-    remember.checked = true;
-    await place();
-    check("remembering stores the accepted pixels", (await loadSignature())?.rgba.length === sample.rgba.length);
-    host.run("edit.undo"); await host.idle();
-    host.run("edit.addSignature");
-    if (!await settle(() => !!dialog(), 3000)) throw new Error("forget dialog did not open");
-    button("Forget saved signature").click();
-    if (!await settle(() => dialog()!.querySelector('[role="status"]')?.textContent === "Saved signature removed from this device.", 3000)) throw new Error("forget did not finish");
-    check("the saved signature can be forgotten", await loadSignature() === null);
+    if (!await settle(() => !!dialog(), 3000)) throw new Error("signature dialog did not open");
+    check("Linux offers drawing and import without local reuse controls",
+      !dialog()!.textContent!.includes("Use saved signature") &&
+      !dialog()!.textContent!.includes("Remember on this device") &&
+      !dialog()!.textContent!.includes("Forget saved signature"));
     button("Cancel").click();
-  } finally {
-    if (savedBefore === null) await forgetSignature();
-    else await rememberSignature(savedBefore);
+  } else {
+    // The app uses an isolated test identifier. Restore even an existing saved value.
+    try {
+      host.run("edit.addSignature");
+      if (!await settle(() => !!dialog(), 3000)) throw new Error("reuse dialog did not open");
+      const sample = host.edits()!.state.marks[1]!.image!;
+      await rememberSignature(sample);
+      button("Use saved signature").click();
+      check("a saved signature is ready to place", await settle(() => !button("Place signature image").disabled, 3000));
+      await forgetSignature();
+      const remember = [...dialog()!.querySelectorAll("label")].find((l) => l.textContent?.includes("Remember on this device"))!.querySelector("input")!;
+      remember.checked = true;
+      await place();
+      const stored = await loadSignature();
+      const accepted = host.edits()!.state.marks.at(-1)?.image;
+      check("remembering stores the accepted pixels", !!stored && !!accepted &&
+        stored.width === accepted.width && stored.height === accepted.height &&
+        stored.rgba.length === accepted.rgba.length && stored.rgba.every((value, index) => value === accepted.rgba[index]));
+      host.run("edit.undo"); await host.idle();
+      host.run("edit.addSignature");
+      if (!await settle(() => !!dialog(), 3000)) throw new Error("forget dialog did not open");
+      button("Forget saved signature").click();
+      if (!await settle(() => dialog()!.querySelector('[role="status"]')?.textContent === "Saved signature removed from this device.", 3000)) throw new Error("forget did not finish");
+      check("the saved signature can be forgotten", await loadSignature() === null);
+      button("Cancel").click();
+    } finally {
+      if (savedBefore === null) await forgetSignature();
+      else await rememberSignature(savedBefore);
+    }
   }
   host.run("file.save"); await host.idle();
   if (!await settle(() => !host.edits()!.state.dirty, 10000)) throw new Error("signature save did not finish");

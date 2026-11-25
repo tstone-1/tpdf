@@ -21,6 +21,37 @@ import {
 import type { ReadingManifest } from "./reading";
 import { pickNeedle, preview } from "./invert";
 
+interface SearchSample {
+  /** First page with extracted characters, for checks that need visible content. */
+  textPage: number | null;
+  needle: string | null;
+  characters: number;
+  unread: number;
+  skipReason: string;
+}
+
+export async function searchSample(doc: DocumentInfo): Promise<SearchSample> {
+  // A blank cover does not tell us whether the rest of the document has text.
+  let needle: string | null = null;
+  let textPage: number | null = null;
+  let characters = 0;
+  let unread = 0;
+  for (let page = 0; page < doc.page_count && !needle; page++) {
+    const text = await invoke<{ codes: number[] }>("page_text", { doc: doc.id, page }).catch(() => null);
+    if (text) {
+      if (text.codes.length && textPage === null) textPage = page;
+      characters += text.codes.length;
+      needle = pickNeedle(text.codes);
+    } else {
+      unread++;
+    }
+  }
+
+  const skipReason = characters > 0 ? "no searchable word in the extracted text"
+    : unread ? "page text could not be read" : "the document has no extractable text";
+  return { needle, textPage, characters, unread, skipReason };
+}
+
 /**
  * Find in document.
  *
@@ -43,40 +74,22 @@ export async function searchChecks(
   // only the mirrored value. Every other consumer of `seen` takes the narrower
   // shape and still accepts this object.
   seen: { status: ViewerStatus | null; updates: number },
+  sample: SearchSample,
 ): Promise<void> {
   key(root, "Home");
   await settle(() => viewer.idle);
 
-  const first = await invoke<{ codes: number[] }>("page_text", {
-    doc: doc.id,
-    page: 0,
-  }).catch(() => null);
-  const needle = first ? pickNeedle(first.codes) : null;
-
-  // A document with no extractable text still has something to check, and it is
-  // the one thing that matters for it: that the viewer says so instead of
-  // reporting no matches for a query it never tested against anything.
+  const { needle, characters, unread } = sample;
   const probe = needle ?? "the";
-  viewer.search(probe);
-  await settle(() => (seen.status?.search.scanned ?? 0) >= doc.page_count);
+  const completed = await completedSearch(viewer, seen, probe, doc.page_count);
   check(
     "tells no text apart from no matches",
-    seen.status?.search.textless === (first?.codes.length === 0),
-    `document reports textless=${seen.status?.search.textless}, page 1 has ` +
-      `${first?.codes.length ?? "unknown"} characters`,
+    completed && (characters > 0 || unread === 0) && seen.status?.search.textless === (characters === 0),
+    `textless=${seen.status?.search.textless}, sampled characters=${characters}, unread pages=${unread}`,
   );
 
   if (!needle) {
-    // The reason has to distinguish the two ways this happens, because they call
-    // for opposite responses. An empty page is a fixture that cannot exercise
-    // search; a page full of text that `pickNeedle` could not read a word out of
-    // is a **harness** that cannot exercise search, and printing the first when
-    // the second is true is how seventeen checks stayed silently unexercised on a
-    // Japanese document while claiming the page had no text.
-    const why =
-      (first?.codes.length ?? 0) === 0
-        ? "page 1 has no extractable text"
-        : `no word could be read out of page 1's ${first?.codes.length} characters`;
+    const why = sample.skipReason;
     skip("finds a word taken from the document", why);
     skip("a match covers the characters searched for", why);
     skip("case is ignored", why);
@@ -149,17 +162,10 @@ export async function searchChecks(
   // The negative control. Without it, every check above is satisfied by a search
   // that returns matches for anything at all.
   const absent = `qxzj${needle}`;
-  viewer.search(absent);
-  // Waiting for `scanned` to reach the page count rather than for the scan to
-  // stop running. They are the same thing only while cancellation works: a
-  // mutation that removed the generation guard let an *older* scan finish and
-  // clear the running flag, and this check then read its result at a moment when
-  // neither scan had put anything in the list. It passed, for a reason that had
-  // nothing to do with the query being absent.
-  await settle(() => (seen.status?.search.scanned ?? 0) >= doc.page_count);
+  const finished = await completedSearch(viewer, seen, absent, doc.page_count);
   check(
     "a word that is not there is not found",
-    viewer.searchMatches.length === 0,
+    finished && viewer.searchMatches.length === 0,
     `"${absent}" -> ${viewer.searchMatches.length} matches over ` +
       `${seen.status?.search.scanned ?? 0} pages in ` +
       `${viewer.searchElapsedMs.toFixed(0)} ms`,
@@ -168,6 +174,28 @@ export async function searchChecks(
   await searchOptionChecks(viewer, seen, needle, firstHit, doc.page_count);
   await searchesFromHere(root, viewer, seen, needle, doc.page_count);
   await stepToAnotherPage(root, viewer, seen, needle, doc.page_count);
+}
+
+/** The last delivered status must belong to this search, including on timeout. */
+async function completedSearch(
+  viewer: Viewer, seen: { status: ViewerStatus | null; updates: number }, query: string, pageCount: number,
+): Promise<boolean> {
+  // Identical snapshots are coalesced. Observe a distinct idle state before
+  // repeating a query so even a one-frame scan has a completion to deliver.
+  if (seen.status?.search.query === query) {
+    viewer.clearSearch();
+    await settle(() => seen.status?.search.query === "");
+    if (seen.status?.search.query !== "") return false;
+  }
+  const before = seen.updates;
+  viewer.search(query);
+  const finished = () => {
+    const result = seen.status?.search;
+    return seen.updates > before && result?.query === query && !result.running &&
+      !viewer.searching && result.scanned === pageCount;
+  };
+  await settle(finished);
+  return finished();
 }
 
 /** What {@link resultsChecks} records, for its own skip path. */
@@ -196,21 +224,11 @@ export async function resultsChecks(
   viewer: Viewer,
   sidebar: Sidebar,
   doc: DocumentInfo,
-  seen: { status: ViewerStatus | null },
+  seen: { status: ViewerStatus | null; updates: number },
+  sample: SearchSample,
 ): Promise<void> {
-  const first = await invoke<{ codes: number[] }>("page_text", {
-    doc: doc.id,
-    page: 0,
-  }).catch(() => null);
-  const needle = first ? pickNeedle(first.codes) : null;
+  const { needle, skipReason: why } = sample;
   if (!needle) {
-    // Same distinction as in `searchesFromHere`: "no text" and "no word this
-    // harness could read" are different facts and only one of them is about the
-    // fixture.
-    const why =
-      (first?.codes.length ?? 0) === 0
-        ? "page 1 has no extractable text"
-        : `no word could be read out of page 1's ${first?.codes.length} characters`;
     for (const name of RESULTS_CHECKS) skip(name, why);
     return;
   }
@@ -225,17 +243,13 @@ export async function resultsChecks(
       viewer.searching,
     );
 
-  viewer.search(needle);
-  await settle(
-    () =>
-      !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count,
-  );
+  const needleFinished = await completedSearch(viewer, seen, needle, doc.page_count);
   feed();
 
   const total = viewer.searchMatches.length;
   check(
     RESULTS_CHECKS[0],
-    results.rowCount === Math.min(total, MAX_RESULT_ROWS) &&
+    needleFinished && results.rowCount === Math.min(total, MAX_RESULT_ROWS) &&
       results.rowCount > 0,
     `${results.rowCount} rows for ${total} matches --- "${results.status}"`,
   );
@@ -306,15 +320,11 @@ export async function resultsChecks(
   }
 
   const absent = `qxzj${needle}`;
-  viewer.search(absent);
-  await settle(
-    () =>
-      !viewer.searching && (seen.status?.search.scanned ?? 0) >= doc.page_count,
-  );
+  const absentFinished = await completedSearch(viewer, seen, absent, doc.page_count);
   feed();
   check(
     RESULTS_CHECKS[3],
-    results.rowCount === 0,
+    absentFinished && results.rowCount === 0,
     `"${absent}" -> ${results.rowCount} rows, "${results.status}"`,
   );
 
@@ -742,7 +752,7 @@ async function searchesFromHere(
 async function stepToAnotherPage(
   root: HTMLElement,
   viewer: Viewer,
-  seen: { status: ViewerStatus | null },
+  seen: { status: ViewerStatus | null; updates: number },
   needle: string,
   pageCount: number,
 ): Promise<void> {
@@ -756,16 +766,20 @@ async function stepToAnotherPage(
 
   key(root, "Home");
   await settle(() => viewer.idle);
-  viewer.search(needle);
-  // Waited out to the *end of the search*, not until matches appear on two
-  // pages. Written the second way first, and it is a wait for a condition that
-  // may never hold: on a document whose needle sits on one page it spent its
-  // whole bound and then reported a failure, when what it had established is
-  // that this fixture cannot exercise the check below. That is a precondition
-  // rather than a claim about searching, so it says so.
-  await settle(() => !viewer.searching);
+  // A generator's expected lines establish pages on which this search must hit.
+  // A regression that loses one of these pages must fail even if navigation skips.
+  const manifest = await manifestOf();
+  const expected = manifest?.pages.filter(page =>
+    page.lines.some(line => line.toLowerCase().includes(needle.toLowerCase())),
+  ).map(page => page.page) ?? [];
+  const finished = await completedSearch(viewer, seen, needle, pageCount);
   const pages = new Set(viewer.searchMatches.map((m) => m.page));
-  const detail = `${viewer.searchMatches.length} matches across ${pages.size} pages`;
+  const detail = `${viewer.searchMatches.length} matches on pages [${[...pages].join(", ")}], expected [${expected.join(", ")}], finished=${finished}`;
+  if (!finished || expected.some(page => !pages.has(page))) {
+    check(spread, false, detail);
+    skip(name, "the expected search results did not arrive");
+    return;
+  }
   if (pages.size < 2) {
     skip(spread, detail);
     skip(name, detail);

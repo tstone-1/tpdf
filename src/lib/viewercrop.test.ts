@@ -211,6 +211,19 @@ describe("a cropped page", () => {
     } finally { viewer.destroy(); }
   });
 
+  it("can focus a surviving link at the top edge of the first cropped page", async () => {
+    const viewer = build();
+    try {
+      viewer.setLinks([{ id: 1, page: 0, rect: [200, 130, 270, 170], target: { kind: "none" } }]);
+      viewer.setPages(pages(true));
+      await settle();
+      viewer.goToStart();
+      expect(viewer.stepLink(-1)).toBe(false);
+      expect(viewer.stepLink(1)).toBe(true);
+      expect(viewer.linkFocus).toBe(1);
+    } finally { viewer.destroy(); }
+  });
+
   it("walks from the viewport in file coordinates after a top crop", async () => {
     const viewer = build();
     try {

@@ -1945,7 +1945,7 @@ first-then-second.
 
 The fix is to drain between variants, not to average across orderings: `scrollbench.ts`
 waits for a variant's outstanding requests to settle before the next one starts, bounded,
-and shouts if the bound is hit. With that in place the two variants measured identically at
+and aborts with the variant and round if the bound is hit. With that in place the two variants measured identically at
 a slow scroll and reproduced within a tile at a fast one, in both orderings.
 
 The general form: **before trusting an A/B, ask what each variant leaves behind that the

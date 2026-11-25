@@ -268,9 +268,8 @@ impl Metrics {
     pub(super) fn single(
         codes: BTreeMap<u16, String>,
         glyphs: BTreeMap<u16, (f64, [f64; 2])>,
+        identities: BTreeMap<u16, (u16, u64)>,
     ) -> Self {
-        // Each Type3 code has its own glyph program.
-        let identities = codes.keys().map(|&code| (code, (code, 0))).collect();
         let (reverse, ambiguous) = reverse(&codes, &identities);
         Self {
             codes,
@@ -457,7 +456,10 @@ mod tests {
             .map(|(code, text)| (code, text.to_owned()))
             .collect();
         let widths = (1..=3).map(|code| (code, (600., [0.; 2]))).collect();
-        let metrics = Metrics::single(codes, widths);
+        let identities = (1..=3)
+            .map(|code| (code, (code, 600_f64.to_bits())))
+            .collect();
+        let metrics = Metrics::single(codes, widths, identities);
         assert_eq!(metrics.encode("αααβ").unwrap(), [2, 3]);
         assert_eq!(metrics.encode("ααβ").unwrap(), [1, 3]);
         assert_eq!(

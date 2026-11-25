@@ -3382,7 +3382,7 @@ registry key fragment in `explorer_check.py` look like variables and are not.
 | `TPDF_EAGER_OPEN` | `src-tauri/src/commands/document.rs` | With `TPDF_STARTUP`, starts the open before the webview asks for it | harness |
 | `TPDF_EMPTY_MENU` | `src-tauri/src/lib.rs` | Replaces Tauri's default application menu with an empty one, to measure what building it costs | harness |
 | `TPDF_GEOMETRY_MANIFEST` | `src-tauri/src/commands/spike.rs` | The `-geometry.json` beside a fixture, handed to the viewer check | harness |
-| `TPDF_MARKCHECK` | `src-tauri/src/commands/spike.rs` | What the mark check does this launch (`mark_check.py`) | harness |
+| `TPDF_MARKCHECK` | `src-tauri/src/commands/spike.rs` | Absolute path to the fixture icon supplied by `mark_check.py`; enables the mark check | harness |
 | `TPDF_OPENCHECK` | `src-tauri/src/commands/spike.rs` | What the file-association check asserts (`open_check.py`) | harness |
 | `TPDF_OPENCHECK_TIMEOUT` | `src-tauri/src/lib.rs` | Watchdog seconds for that check, 120 by default | harness |
 | `TPDF_PRINT_OUTPUT` | `src-tauri/src/printer.rs` | Windows: a file the printer driver writes instead of its port, for checks with Microsoft Print to PDF | harness |

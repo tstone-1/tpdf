@@ -1,3 +1,4 @@
+use super::list_tests::refused;
 use super::tests::{fixture, multipage, CONTENT};
 use crate::textedit::{self, Change};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
@@ -41,24 +42,6 @@ fn edit(doc: &Document, page: u32) -> Change {
         original: "FIRST".into(),
         replacement: "IN".into(),
     }
-}
-
-fn refused(mut doc: Document) {
-    let before = doc.objects.clone();
-    assert!(textedit::scan(&doc, 0).is_err());
-    assert!(textedit::write(
-        &mut doc,
-        &[Change {
-            layout: None,
-            page: 0,
-            revision: vec![],
-            operator: 0,
-            original: "FIRST".into(),
-            replacement: "IN".into()
-        }]
-    )
-    .is_err());
-    assert_eq!(doc.objects, before);
 }
 
 #[test]

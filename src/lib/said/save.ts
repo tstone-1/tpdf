@@ -505,6 +505,8 @@ export default {
     "Seite {page} ist kein Dictionary: {e}",
   "the comment being answered is not in this document any more: {e}":
     "Der Kommentar, auf den du antwortest, ist nicht mehr in diesem Dokument: {e}",
+  "This comment is locked and cannot be deleted": "Dieser Kommentar ist gesperrt und kann nicht gelöscht werden",
+  "The contents of this comment are locked": "Der Inhalt dieses Kommentars ist gesperrt",
   "that comment is not an annotation": "Dieser Kommentar ist keine Annotation",
   "Invalid signature or picture raster in save plan":
     "Ungültiges Unterschrifts- oder Bildraster im Speicherplan",

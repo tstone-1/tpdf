@@ -25,8 +25,8 @@
 //! - anything other than the group's own pages reaches the dictionary, or the
 //!   `/Resources` object it is reached through --- a form that shares its
 //!   page's resources is the common shape, and it names the second;
-//! - a form, a Type 3 font, a tiling pattern or an annotation's appearance on
-//!   one of the pages carries no `/Resources` of its own, which by the
+//! - a form, a soft-mask group, a Type 3 font, a tiling pattern or an annotation's
+//!   appearance carries no `/Resources` of its own, which by the
 //!   specification means it draws through the page's.
 //!
 //! A form field's `/DA` names a font too, and is no reason to keep one here:
@@ -396,6 +396,18 @@ fn leans_on_page(doc: &Document, page: ObjectId) -> bool {
     if entries(b"XObject").iter().any(form) || entries(b"Pattern").iter().any(|o| bare(o)) {
         return true;
     }
+    // A transparency group's drawing can also enter through a soft mask.
+    // Without local resources its Do and Tf operands refer to the page.
+    if entries(b"ExtGState").iter().any(|state| {
+        doc.dereference(state)
+            .and_then(|(_, value)| value.as_dict())
+            .and_then(|state| state.get_deref(b"SMask", doc))
+            .and_then(Object::as_dict)
+            .and_then(|mask| mask.get(b"G"))
+            .is_ok_and(bare)
+    }) {
+        return true;
+    }
     // A Type 3 font is a dictionary; its glyphs draw through its own
     // `/Resources`, or through the page's when it has none.
     let type3 = |object: &&Object| {
@@ -514,6 +526,38 @@ mod tests {
         let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
         doc.trailer.set("Root", catalog);
         (doc, images, pages)
+    }
+
+    #[test]
+    fn a_soft_mask_group_can_use_the_page_image_dictionary() {
+        for local in [false, true] {
+            let (mut doc, images, pages) = shared(false);
+            let mut group = dictionary! { "Subtype" => "Form" };
+            if local {
+                group.set(
+                    "Resources",
+                    dictionary! { "XObject" => dictionary! { "Im3" => images[2] } },
+                );
+            }
+            let group = doc.add_object(Stream::new(group, b"/Im3 Do".to_vec()));
+            let mask = doc.add_object(dictionary! { "S" => "Luminosity", "G" => group });
+            let state = doc.add_object(dictionary! { "SMask" => mask });
+            let resources = doc
+                .get_dictionary(pages[0])
+                .unwrap()
+                .get(b"Resources")
+                .unwrap()
+                .as_reference()
+                .unwrap();
+            doc.get_dictionary_mut(resources)
+                .unwrap()
+                .set("ExtGState", dictionary! { "Soft" => state });
+            // The local mask addresses its own copy of the name. Only the
+            // inherited mask requires the name in the page dictionary.
+            assert_eq!(prune(&mut doc).unwrap(), usize::from(local));
+            sweep::collect(&mut doc).unwrap();
+            assert!(doc.get_object(images[2]).is_ok());
+        }
     }
 
     #[test]

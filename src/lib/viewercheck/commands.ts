@@ -1719,8 +1719,9 @@ export async function appCommandChecks(
       id: "view.measureScale",
       argument: "195 cm",
       from: aMeasurement,
-      read: () => viewer.measureLines.at(-1)?.label ?? "",
-      moved: (before, after) => before !== "" && after === "195 cm (scale)",
+      // A line with unknown physical units has an empty label until calibrated.
+      read: () => viewer.measureLines.at(-1)?.label ?? "(no measurement)",
+      moved: (before, after) => before !== "(no measurement)" && before !== after && after === "195 cm (scale)",
       then: () => viewer.clearMeasures(),
     },
     {

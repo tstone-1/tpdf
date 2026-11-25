@@ -84,10 +84,10 @@ describe("the checks that depend on backend replies", () => {
 
   it.each(["rejected", "missing", "cleared"])("records a %s crop clear against the original page", async (reply) => {
     const { cropCommandChecks } = await import("./viewercheck/editing");
-    const first = { id: 7, source: { baseline: 0 } };
+    const first = { id: 7, source: { baseline: 1 } };
     const box = [1, 2, 30, 40];
     core.invoke.mockImplementation(async (command, args) => {
-      if (command === "edit_state") return { pages: [first] };
+      if (command === "edit_state") return { pages: [{ id: 6, source: { baseline: 0 } }, first] };
       if (command === "page_content_box" || command === "page_crop_box") return box;
       if (command === "page_geometry") return { left: 0, top: 0, width_pt: 100, height_pt: 100 };
       if (command === "page_crop") {
@@ -97,7 +97,7 @@ describe("the checks that depend on backend replies", () => {
         return { pages: reply === "missing" ? [{ id: 8 }] : [other, first] };
       }
     });
-    await cropCommandChecks(doc);
+    await cropCommandChecks({ ...doc, page_count: 2 }, 1);
     await drain();
     const clear = results().filter(line => line.includes("clearing the crop puts the page back"));
     expect(clear.map(line => RESULT.exec(line)?.[1])).toEqual([reply === "cleared" ? "OK" : "FAIL"]);

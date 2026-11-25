@@ -13,6 +13,7 @@ import { spoken } from "./said";
 
 const TEXT = catalog({
   "en-US": {
+    failedAfterSending: "Printing did not finish. The printer may still print the sides it received.",
     failed: "The document was not printed.",
     stoppedNothingSent: "Printing stopped. Nothing was sent to the printer.",
     stoppedSomeSent: "Printing stopped. The printer may still print the sides it already had.",
@@ -20,6 +21,7 @@ const TEXT = catalog({
     printing: (side: number, of: number) => `Printing side ${side} of ${of}...`,
   },
   "de-DE": {
+    failedAfterSending: "Der Druck wurde nicht abgeschlossen. Der Drucker druckt möglicherweise noch die bereits empfangenen Seiten.",
     failed: "Das Dokument wurde nicht gedruckt.",
     stoppedNothingSent: "Drucken abgebrochen. Es wurde nichts an den Drucker gesendet.",
     stoppedSomeSent: "Drucken abgebrochen. Der Drucker druckt möglicherweise noch die Druckseiten, die er schon erhalten hat.",
@@ -40,8 +42,12 @@ export const PROGRESS_EVENT = "tpdf://print-progress";
 /** A print operation failed after the platform accepted the request. */
 export const FAILURE_EVENT = "tpdf://print-failure";
 
-export function printFailure(detail: string, locale: UiLocale = UI_LOCALE): string {
-  return `${TEXT(locale).failed}\n\n${spoken(detail, locale)}`;
+export interface PrintFailure { detail: string; sent: number }
+
+export function printFailure({ detail, sent }: PrintFailure, locale: UiLocale = UI_LOCALE): string {
+  const text = TEXT(locale);
+  const heading = sent > 0 ? `${text.failedAfterSending} ${text.sent(sent)}` : text.failed;
+  return `${heading}\n\n${spoken(detail, locale)}`;
 }
 
 /** What the event carries. `Printing` in `commands/print.rs`. */

@@ -286,10 +286,16 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     let mut decoded = super::super::MAX_CONTENT;
     let mut operations = super::super::MAX_OPERATIONS;
     let mut outlines = BTreeMap::new();
-    for (name, value) in procs {
+    let mut programs = BTreeMap::new();
+    for (index, (name, value)) in (0_u16..).zip(procs.iter()) {
+        let (id, stream) = doc.dereference(value).map_err(|_| invalid())?;
+        let program = id.map_or(index, |id| *programs.entry(id).or_insert(index));
         outlines.insert(
             name.as_slice(),
-            outline(doc, value, &mut decoded, &mut operations)?,
+            (
+                program,
+                outline(doc, stream, &mut decoded, &mut operations)?,
+            ),
         );
     }
     let cmap = resolve(doc, get(font, b"ToUnicode")?)
@@ -300,11 +306,12 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
         return Err(invalid());
     }
     let mut glyphs = BTreeMap::new();
+    let mut identities = BTreeMap::new();
     let mut vertical = [0_f64; 2];
     let mut painted_space = false;
     for (&code, text) in &codes {
         let name = names.get(&code).ok_or_else(invalid)?;
-        let &(advance, bounds) = outlines.get(name).ok_or_else(invalid)?;
+        let &(program, (advance, bounds)) = outlines.get(name).ok_or_else(invalid)?;
         let width = *widths
             .get(usize::from(code) - first as usize)
             .ok_or_else(invalid)?;
@@ -329,13 +336,17 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
         }
         painted_space |= bounds != [0.; 4] && text.bytes().all(|ch| ch == b' ');
         vertical = [vertical[0].min(bottom), vertical[1].max(top)];
+        // Code 32 also receives PDF word spacing. Even the same program and
+        // width cannot substitute for that code without changing its advance.
+        let identity = if code == 32 { program + 256 } else { program };
+        identities.insert(code, (identity, width.to_bits()));
         glyphs.insert(code, (width, [left.min(0.), (right - width).max(0.)]));
     }
     Ok(Metrics {
         restricted: false,
         opaque: None,
         painted_space,
-        unicode: Some(unicode::Metrics::single(codes, glyphs)),
+        unicode: Some(unicode::Metrics::single(codes, glyphs, identities)),
         vertical_bounds: Some(vertical),
         widths: Box::new([None; 256]),
         horizontal_overhangs: None,

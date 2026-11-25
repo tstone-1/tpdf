@@ -19,6 +19,15 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Extracted pages preserve artwork painted through inherited soft-mask resources. Partial imports refuse ambiguous image dependencies.
+- Comment edits preserve spacing and respect annotation locks. Comments marked NoView no longer intercept clicks.
+- Fill Form skips fields removed or cropped away. Text editing preserves accessibility text shared with nested spans.
+
+- Properties and CLI info keep conformance claims within a single XML root and recognise equivalent RDF subject spellings.
+- Keyboard link navigation includes links clipped at the top of the viewport and uses a consistent reading order for overlapping rows.
+- Original-font text edits accept equivalent character codes in Type 3 fonts. German signing errors preserve field names.
+- Windows print failures report how many sides were already sent. Linux Print to File offers PDF output.
+
 - Graphic export follows unsaved page rotations and preserves small SVG transforms.
 - Link hit regions, keyboard focus and the focus outline respect multiline links, visibility flags and page crops. A document at the link limit reports omitted links only if more were found.
 - Document properties and CLI info distinguish document-level conformance declarations from nested metadata, read CDATA and legacy PDF/X identifiers, and report incomplete XML.

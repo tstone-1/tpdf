@@ -466,7 +466,7 @@
     type Passage,
     type Progress as HiddenProgress,
   } from "./lib/hiddentext";
-  import { FAILURE_EVENT as PRINT_FAILURE_EVENT, PROGRESS_EVENT as PRINT_PROGRESS_EVENT, printFailure, printingLine, stoppable, type Printing } from "./lib/printing";
+  import { FAILURE_EVENT as PRINT_FAILURE_EVENT, PROGRESS_EVENT as PRINT_PROGRESS_EVENT, printFailure, printingLine, stoppable, type PrintFailure, type Printing } from "./lib/printing";
   import { afterAdding, suggestedName as addedTextName, type Kind as AddTextKind } from "./lib/addtext";
   import { AddTextDialog } from "./lib/addtextdialog";
   import {
@@ -6004,7 +6004,7 @@
       await listen<HiddenProgress>(HIDDEN_PROGRESS_EVENT, (event) => {
         hiddenRuns.report(event.payload, (line) => { blockingTask = line; });
       });
-      await listen<string>(PRINT_FAILURE_EVENT, ({ payload }) => {
+      await listen<PrintFailure>(PRINT_FAILURE_EVENT, ({ payload }) => {
         const reason = printFailure(payload);
         void nativeMessage(reason, { title: "tpdf", kind: "error" }).catch(() => say(reason));
       });

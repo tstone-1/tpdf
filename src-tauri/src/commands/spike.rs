@@ -42,7 +42,7 @@ pub fn opencheck_mode() -> Option<String> {
     spike_env("TPDF_OPENCHECK")
 }
 
-/// What the mark check should do this launch, from `TPDF_MARKCHECK`.
+/// Absolute path of the mark check's picture fixture, from `TPDF_MARKCHECK`.
 ///
 /// [`sessioncheck_mode`]'s posture rather than [`opencheck_mode`]'s, and for a
 /// sharper version of the same reason: what it checks is the *wiring* between a

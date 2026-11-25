@@ -2908,6 +2908,8 @@ fn samples() -> Vec<(&'static str, String)> {
                     author: "Synthetic author".into(),
                     body: "Synthetic note".into(),
                     body_clipped: true,
+                    locked: true,
+                    contents_locked: true,
                     subject: String::new(),
                     date: Some("2026-09-29 12:00".into()),
                     rect: [10., 20., 30., 40.],

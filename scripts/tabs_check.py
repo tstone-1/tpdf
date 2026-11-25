@@ -134,6 +134,7 @@ message, so the empty-bar control can pass:
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -163,6 +164,8 @@ def main() -> int:
         parser.error("--identity is required by --phase sign, and taken by nothing else")
     if args.timeout is None:
         args.timeout = 900 if args.phase == "sign" else 90
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("--timeout must be a positive finite number")
     if args.saved_copy:
         args.saved_copy.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="tpdf-tabs-") as directory:
@@ -230,7 +233,8 @@ def main() -> int:
             if made.returncode != 0:
                 print(f"[FAIL] {tool} could not render the fixture: {made.stderr.strip()}")
                 return 1
-            scan.write_bytes(scan_pdf(picture.read_bytes(), 200, 1))
+            scan_bytes = scan_pdf(picture.read_bytes(), 200, 1)
+            scan.write_bytes(scan_bytes)
             long.write_bytes(scan_pdf(picture.read_bytes(), 200, 6))
             copies = [scan, long, copied]
         if args.phase in ("protect", "add-text"):
@@ -250,7 +254,8 @@ def main() -> int:
             if made.returncode != 0:
                 print(f"[FAIL] {tool} could not render the fixture: {made.stderr.strip()}")
                 return 1
-            scan.write_bytes(scan_pdf(picture.read_bytes(), 200, 1))
+            scan_bytes = scan_pdf(picture.read_bytes(), 200, 1)
+            scan.write_bytes(scan_bytes)
             copies = [scan, copied]
         if args.phase == "pictures":
             copied = room / "copies"
@@ -278,6 +283,7 @@ def main() -> int:
             copies.append(args.identity)
         joined = "|".join(str(copy) for copy in copies)
         env = dict(os.environ, TPDF_OPENCHECK=f"{args.phase}:{joined}",
+                   TPDF_OPENCHECK_TIMEOUT=str(math.ceil(args.timeout)),
                    TPDF_SESSION_FILE=str(room / "session.json"))
         if os.name == "nt":
             # Keep this unattended check running behind other windows without
@@ -323,7 +329,9 @@ def main() -> int:
         if args.phase == "sign":
             passed = signed_files(room / "signed") and passed
         if args.phase == "recognise":
-            passed = recognised_files(room / "copies") and passed
+            unchanged = scan.is_file() and scan.read_bytes() == scan_bytes
+            print(f"[{'OK' if unchanged else 'FAIL'}]   the recognised scan kept its original bytes")
+            passed = recognised_files(room / "copies") and unchanged and passed
         if args.phase == "protect":
             passed = protected_files(room / "copies", args.binary) and passed
         if args.phase == "add-text":

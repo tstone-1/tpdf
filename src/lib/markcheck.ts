@@ -155,11 +155,11 @@ function difference(a: Uint8Array, b: Uint8Array): { max: number; mean: number }
  * and a harness that replaced it would be testing something else.
  */
 export async function runMarkCheckIfRequested(host: MarkCheckHost): Promise<boolean> {
-  const mode = await call("markcheck_mode");
-  if (!mode) return false;
+  const icon = await call("markcheck_mode");
+  if (!icon) return false;
 
   try {
-    await run(host);
+    await run(host, icon);
   } catch (e) {
     report.check("the check ran", false, String(e));
   }
@@ -250,7 +250,7 @@ function inked(viewer: Viewer, box: { left: number; top: number; right: number; 
   return hit / (data.length / 4);
 }
 
-async function run(host: MarkCheckHost): Promise<void> {
+async function run(host: MarkCheckHost, icon: string): Promise<void> {
   const opened = await settle(() => host.path() !== "" && host.viewer() !== null);
   check(
     "a document is open to put a mark on",
@@ -568,10 +568,9 @@ async function run(host: MarkCheckHost): Promise<void> {
 
     // --- A picture from a file -------------------------------------------
     //
-    // The app's own 128 pixel icon, tracked beside the fixture, chosen through
+    // The app's own 128 pixel icon, supplied by the check driver, chosen through
     // the panel's queue and decoded by a worker. What reaches the model is
     // its size; the pixels come back through their own command.
-    const icon = host.path().replace(/testdata[\\/][^\\/]*$/, "src-tauri/icons/128x128.png");
     host.answerPictures([icon]);
     const chosen = host.run("edit.addPicture") && (await settle(() => viewer.drawArmed === "picture"));
     check("the add-picture command decodes the file and arms the placement", chosen,

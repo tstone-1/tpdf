@@ -148,6 +148,7 @@ pub fn scan(packet: &[u8]) -> Xmp {
         Other,
     }
     let mut stack = Vec::new();
+    let mut seen_root = false;
     let mut subject: Option<String> = None;
     let mut pending: Option<(Property, usize, String)> = None;
     let mut buffer = Vec::new();
@@ -181,6 +182,13 @@ pub fn scan(packet: &[u8]) -> Xmp {
                     _ => "",
                 };
                 let parent = stack.last().copied();
+                if parent.is_none() {
+                    if seen_root {
+                        out.unread = true;
+                        break;
+                    }
+                    seen_root = true;
+                }
                 let kind = match (parent, namespace, local.as_ref()) {
                     (None, "adobe:ns:meta/", "xmpmeta" | "xapmeta") => Element::Wrapper,
                     (None | Some(Element::Wrapper), NS_RDF, "RDF") => Element::Rdf,
@@ -190,7 +198,15 @@ pub fn scan(packet: &[u8]) -> Xmp {
                             matches!(ns, ResolveResult::Bound(ns) if ns.as_ref() == NS_RDF)
                                 && name.as_ref() == "about"
                         });
-                        let about = about.as_ref().map(|a| a.value.as_ref()).unwrap_or("");
+                        let Ok(value) = about
+                            .as_ref()
+                            .map(|a| a.normalized_value(quick_xml::XmlVersion::Implicit1_0))
+                            .transpose()
+                        else {
+                            out.unread = true;
+                            break;
+                        };
+                        let about = value.as_deref().unwrap_or("");
                         // XMP describes one subject. When a packet also describes
                         // a named resource, prefer the enclosing document ("").
                         if let Some(previous) = &subject {
@@ -219,13 +235,12 @@ pub fn scan(packet: &[u8]) -> Xmp {
                     }
                     _ => Element::Other,
                 };
+                // Any child, including an empty one, makes a pending literal structured.
+                pending = None;
                 if !empty {
                     if parent == Some(Element::Document) {
                         pending = property_of(namespace, local.as_ref())
                             .map(|p| (p, stack.len() + 1, String::new()));
-                    } else if pending.is_some() {
-                        // A structured value is not a literal conformance declaration.
-                        pending = None;
                     }
                     stack.push(kind);
                 }
@@ -458,6 +473,28 @@ mod tests {
             let claims = scan(&packet(&descriptions));
             assert_eq!(claims.conformance, ["PDF/A-4"]);
             assert!(claims.unread);
+        }
+    }
+
+    #[test]
+    fn claims_share_a_normalized_subject_only_within_one_root() {
+        let part = r#"<rdf:Description rdf:about="urn:x-y" xmlns:a="http://www.aiim.org/pdfa/ns/id/" a:part="3"/>"#;
+        let level = r#"<rdf:Description rdf:about="urn:x&#45;y" xmlns:a="http://www.aiim.org/pdfa/ns/id/" a:conformance="B"/>"#;
+        let same = scan(&packet(&format!("{part}{level}")));
+        assert_eq!(same.conformance, ["PDF/A-3B"]);
+        assert!(!same.unread);
+        let separate = scan(&[packet(part), packet(level)].concat());
+        assert_eq!(separate.conformance, ["PDF/A-3"]);
+        assert!(separate.unread);
+    }
+
+    #[test]
+    fn a_structured_property_is_never_a_literal() {
+        for child in ["<rdf:Description/>", "<rdf:Description></rdf:Description>"] {
+            let value = format!(
+                r#"<rdf:Description xmlns:a="http://www.aiim.org/pdfa/ns/id/"><a:part>3{child}</a:part></rdf:Description>"#
+            );
+            assert!(scan(&packet(&value)).conformance.is_empty());
         }
     }
 

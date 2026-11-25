@@ -120,8 +120,11 @@ pub fn present(
         let dialog: gtk::Dialog =
             unsafe { gtk::glib::translate::from_glib_none(raw.cast::<gtk::ffi::GtkDialog>()) };
         // No preview and nothing laid out by tpdf: the job is the finished PDF.
+        const GTK_PRINT_CAPABILITY_GENERATE_PDF: c_uint = 1 << 5;
         // SAFETY: `raw` is the dialog.
-        unsafe { gtk_print_unix_dialog_set_manual_capabilities(raw, 0) };
+        unsafe {
+            gtk_print_unix_dialog_set_manual_capabilities(raw, GTK_PRINT_CAPABILITY_GENERATE_PDF)
+        };
         let chosen = if dialog.run() == gtk::ResponseType::Ok {
             send(raw, &path, title, report_failure(report))
         } else {

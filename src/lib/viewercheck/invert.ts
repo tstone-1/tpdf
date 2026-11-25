@@ -301,6 +301,7 @@ async function invertReportedCheck(
  */
 export async function rotatedTileCheck(
   doc: DocumentInfo,
+  pageIndex: number,
   page: { width_pt: number; height_pt: number },
 ): Promise<void> {
   const name = "the renderer is asked for the rotation";
@@ -308,7 +309,7 @@ export async function rotatedTileCheck(
   const request = (turns: number) =>
     fetchRequiredTile({
       doc: doc.id,
-      page: 0,
+      page: pageIndex,
       // A whole small page, not a tile of one: a tile at a fixed offset can miss
       // the content entirely once the page turns, and two blank tiles differ in
       // no pixel at all.

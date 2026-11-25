@@ -15,8 +15,8 @@ ROWS += [
         # together are what say both halves work.
         "annots: drop a body's paragraph breaks",
         "src/annots.rs",
-        "            pending_breaks = (pending_breaks + 1).min(2);\n            pending_space = false;\n            continue;\n        }\n        if ch.is_whitespace()",
-        "            pending_breaks = 0;\n            pending_space = true;\n            continue;\n        }\n        if ch.is_whitespace()",
+        r"            '\n' | '\t' => out.push(ch),",
+        r"            '\n' | '\t' => out.push(' '),",
         "a_body_keeps_its_newlines_where_a_title_would_not",
     ),
     Mutation(

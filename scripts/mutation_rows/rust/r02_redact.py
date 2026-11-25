@@ -2550,8 +2550,8 @@ ROWS += [
         # broken here is which flattener a body is *routed* to.
         "annots: collapse a body's newlines, as a one-line title would",
         "src/annots.rs",
-        "    if keep_paragraphs {\n        sanitize_body(&decoded, limit)\n    } else {",
-        "    if false {\n        sanitize_body(&decoded, limit)\n    } else {",
+        "    if keep_paragraphs {\n        let (body, clipped) = sanitize_body(&decoded, limit);",
+        "    if false {\n        let (body, clipped) = sanitize_body(&decoded, limit);",
         "a_documents_body_keeps_its_paragraphs",
     ),
     Mutation(

@@ -74,6 +74,8 @@ export interface Comment {
   author: string;
   body: string;
   body_clipped?: boolean;
+  locked?: boolean;
+  contents_locked?: boolean;
   subject: string;
   date: string | null;
   /** `[left, top, right, bottom]`, points from the displayed page's top-left. */
@@ -309,7 +311,7 @@ export function rowsOf(items: readonly Comment[]): CommentRow[] {
  * document order would open whichever the producer happened to write last. Ties
  * go to the later comment, which is the one drawn on top.
  *
- * A hidden comment is never hit: `/F` bit 2 means the page does not show it, so
+ * A Hidden or NoView comment is never hit: the page does not show it, so
  * there is no mark under the pointer to have been clicked. It is still listed in
  * the panel, where the reader asked for it explicitly.
  */

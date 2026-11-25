@@ -101,7 +101,7 @@ interface Round {
   decodeMs: number;
 }
 
-/** How long a variant may take to drain before the next one starts anyway. */
+/** How long a variant may take to drain before the benchmark fails. */
 const SETTLE_FRAMES = 900;
 
 function nextFrame(): Promise<number> {
@@ -119,13 +119,14 @@ function nextFrame(): Promise<number> {
  * gave up on, because a variant that withdraws nothing can genuinely take four
  * seconds a tile to finish draining.
  */
-async function settle(variant: Variant, frames: number): Promise<number> {
+async function settle(variant: Variant, frames: number, round: number): Promise<void> {
   for (let frame = 0; frame < frames; frame++) {
     if (variant.scrollers.every((scroller) => scroller.outstanding === 0))
-      return frame;
+      return;
     await nextFrame();
   }
-  return frames;
+  if (variant.scrollers.some(scroller => scroller.outstanding > 0))
+    throw new Error(`render queue for ${variant.label} in round ${round + 1} did not drain within ${frames} frames`);
 }
 
 function quantile(values: number[], q: number): number {
@@ -396,7 +397,7 @@ function buildVariant(
 
   // Only labelled when there is more than one to tell apart, so the ordinary
   // single-variant run keeps its established row names.
-  const parts = [layout, `${zoom.toFixed(0)}x`];
+  const parts = [layout, `${zoom}x`];
   if (config.cancels.length > 1) parts.push(cancel ? "cancel" : "plain");
   if (config.panes.length > 1) parts.push(`${panes}p`);
 
@@ -645,7 +646,6 @@ export async function runScrollBenchIfRequested(): Promise<boolean> {
     const variants = buildVariants(stage, config, docs, page, viewport);
     const rounds: Round[] = [];
 
-    let unsettled = 0;
     for (let round = 0; round < config.rounds; round++) {
       for (const variant of variants) {
         for (const other of variants) other.host.style.display = "none";
@@ -654,8 +654,7 @@ export async function runScrollBenchIfRequested(): Promise<boolean> {
         // After the round, not before: the backlog to drain is the one this
         // round just created, and draining it here is what makes the next
         // variant's numbers its own.
-        if ((await settle(variant, SETTLE_FRAMES)) >= SETTLE_FRAMES)
-          unsettled++;
+        await settle(variant, SETTLE_FRAMES, round);
       }
     }
 

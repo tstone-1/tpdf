@@ -294,6 +294,22 @@ describe("a rectangle on a page an edit turned", () => {
     } finally { viewer.destroy(); dom.restore(); }
   });
 
+  it.each([true, false])("routes a press on a link overlapped by a comment (hidden %s)", async (hidden) => {
+    const dom = installFakeDom();
+    const viewer = build(dom);
+    try {
+      viewer.setComments([{ ...comment(), hidden }]);
+      viewer.setLinks([link()]);
+      await settle();
+      const selected = pressAt(dom, viewer, 120, 70, () => hidden ? viewer.linkFocus : viewer.commentOpen);
+      expect(selected).toBe(hidden ? 9 : 7);
+      expect(hidden ? viewer.commentOpen : viewer.linkFocus).toBe(-1);
+    } finally {
+      viewer.destroy();
+      dom.restore();
+    }
+  });
+
   it("moves comment and link hit boxes with a top crop and with its undo", async () => {
     const dom = installFakeDom();
     const viewer = build(dom, 1);

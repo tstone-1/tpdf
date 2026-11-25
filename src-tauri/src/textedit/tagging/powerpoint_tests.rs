@@ -605,6 +605,31 @@ fn textedit_a_span_whose_actual_text_is_not_its_words_stays_read_only() {
 // A Span holding a sequence on each of two pages: the ActualText is the text of
 // both, and neither page alone may rewrite it.
 #[test]
+fn a_spans_actual_text_covering_a_nested_leaf_stays_read_only() {
+    let source = std::str::from_utf8(CONTENT).unwrap().replace(
+        "/Standard << /MCID 1",
+        "/Span << /MCID 2 >> BDC BT /F1 12 Tf 100 180 Td (IN) Tj ET EMC /Standard << /MCID 1",
+    );
+    let (mut doc, ids) = spoken("FIRST", "SECOND", Some(&source));
+    let leaf = doc.add_object(dictionary! {
+        "Type" => "StructElem", "S" => "Span", "P" => ids[6], "Pg" => ids[0], "K" => 2
+    });
+    doc.get_dictionary_mut(ids[6])
+        .unwrap()
+        .set("K", vec![0.into(), Object::Reference(leaf)]);
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![
+            0.into(),
+            Object::Array(vec![ids[6].into(), ids[7].into(), leaf.into()]),
+        ],
+    );
+    assert_eq!(texts(&doc), ["SECOND"]);
+    replace(&mut doc, "SECOND", "IN", None).unwrap();
+    assert_eq!(spoken_text(&doc, ids[6]), "FIRST");
+}
+
+#[test]
 fn textedit_a_span_across_two_pages_stays_read_only() {
     let (mut doc, ids) = super::tests::multipage();
     let span = doc.add_object(dictionary! {

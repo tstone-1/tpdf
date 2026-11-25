@@ -673,7 +673,7 @@ export class FormLayer {
 
   /** Palette access also brings an off-screen field into view. */
   focus(): void {
-    const first = this.controls[0];
+    const first = this.controls.find((control) => this.anchor(control.widget) !== null);
     if (!first) { this.error(TEXT().noFormFields); return; }
     this.reveal(first.widget); this.layout(); first.input.focus({ preventScroll: true });
   }

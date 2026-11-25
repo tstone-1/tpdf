@@ -833,8 +833,8 @@ ROWS += [
         # let a caller delete a font, a page or the catalog out of the file.
         "save: delete whatever object a plan names",
         "src/save/marks.rs",
-        "            return Err(said!(\"that comment is not an annotation\").into());\n        }\n        doomed.insert(id);",
-        "        }\n        doomed.insert(id);",
+        "            return Err(said!(\"that comment is not an annotation\").into());\n        }\n        if crate::forms::annotation_flags(doc, dictionary)",
+        "        }\n        if crate::forms::annotation_flags(doc, dictionary)",
         "a_deletion_naming_something_that_is_not_an_annotation_is_refused",
     ),
     Mutation(

@@ -11,6 +11,8 @@
       "author": "Synthetic author",
       "body": "Synthetic note",
       "body_clipped": true,
+      "locked": true,
+      "contents_locked": true,
       "subject": "",
       "date": "2026-09-29 12:00",
       "rect": [

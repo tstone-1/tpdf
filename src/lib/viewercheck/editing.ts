@@ -78,23 +78,23 @@ const CROP_CHECKS = [
  * content box is measured from pixels, so a page of vector drawing has one and a
  * page of text has one, and the only page that would skip is a blank one.
  */
-export async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
+export async function cropCommandChecks(doc: DocumentInfo, pageIndex: number): Promise<void> {
   const opened = await attempt("edit_state", { doc: doc.id });
-  const first = opened.state?.pages[0];
-  if (!first) {
+  const target = opened.state?.pages[pageIndex];
+  if (!target) {
     for (const name of CROP_CHECKS) {
       skip(name, opened.error || "the model reports no pages");
     }
     return;
   }
 
-  const page = baselineOf(first.source);
+  const page = baselineOf(target.source);
   let found: [number, number, number, number] | null = null;
   let why = "";
   try {
     found = await invoke<[number, number, number, number] | null>(
       "page_content_box",
-      // **`baselineOf`, not `first.source`.** This asks PDFium about the file on
+      // **`baselineOf`, not `target.source`.** This asks PDFium about the file on
       // disk, so the argument is a page NUMBER; `PageSource` became a union on
       // 2026-08-30 and this line kept passing the whole object, which serialises
       // as a map and is refused by the command with `expected u32`. `invoke` is
@@ -137,10 +137,10 @@ export async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
 
   const cropped = await attempt("page_crop", {
     doc: doc.id,
-    page: first.id,
+    page: target.id,
     to: found,
   });
-  const back = cropped.state?.pages.find((page) => page.id === first.id)?.crop;
+  const back = cropped.state?.pages.find((page) => page.id === target.id)?.crop;
   check(
     CROP_CHECKS[2] ?? "",
     !!back && back.every((value, index) => Math.abs(value - (found?.[index] ?? NaN)) < 0.01),
@@ -169,14 +169,14 @@ export async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
 
   const cleared = await attempt("page_crop", {
     doc: doc.id,
-    page: first.id,
+    page: target.id,
     to: null,
   });
-  const restored = cleared.state?.pages.find((page) => page.id === first.id);
+  const restored = cleared.state?.pages.find((page) => page.id === target.id);
   check(
     CROP_CHECKS[5] ?? "",
     restored !== undefined && restored.crop === undefined,
-    cleared.error || (restored ? `crop ${JSON.stringify(restored.crop)}` : `page ${first.id} missing`),
+    cleared.error || (restored ? `crop ${JSON.stringify(restored.crop)}` : `page ${target.id} missing`),
   );
 
   // The new command, and then the differential worth having: `page_geometry`
@@ -239,7 +239,7 @@ export async function cropCommandChecks(doc: DocumentInfo): Promise<void> {
   // to say so rather than accept a page that renders as nothing.
   const refused = await attempt("page_crop", {
     doc: doc.id,
-    page: first.id,
+    page: target.id,
     to: [found[2], found[3], found[0], found[1]],
   });
   check(

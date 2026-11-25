@@ -91,6 +91,10 @@ const MAX_TOTAL: usize = 5_000;
 /// sidebar's memory from a field nobody bounded.
 const MAX_BODY_CHARS: usize = 4_000;
 
+/// Annotation flags for deletion and content editing, respectively.
+pub(crate) const LOCKED: i64 = 128;
+pub(crate) const LOCKED_CONTENTS: i64 = 512;
+
 /// Longest author or subject kept, in characters.
 const MAX_LINE_CHARS: usize = 120;
 
@@ -218,13 +222,18 @@ pub struct Comment {
     pub kind: Kind,
     /// `/T`, the annotation's author. Empty when the document names none.
     pub author: String,
-    /// `/Contents`, flattened to something a panel can show. Empty for a mark
+    /// Bounded `/Contents`, with whitespace preserved for editing. Empty for a mark
     /// somebody made without typing anything, which is reported rather than
     /// dropped --- the mark is on the page either way.
     pub body: String,
     /// The displayed body is incomplete and cannot safely seed a replacement.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub body_clipped: bool,
+    /// Operation-specific PDF annotation locks.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub contents_locked: bool,
     /// `/Subj`, which Acrobat shows as a title above the body.
     pub subject: String,
     /// `/M`, parsed and re-emitted as `YYYY-MM-DD HH:MM`. `None` when the
@@ -258,7 +267,7 @@ pub struct Comment {
     /// Acyclic by construction: a chain that loops has its last link cut, so a
     /// consumer can walk parents without a visited set of its own.
     pub reply_to: Option<u32>,
-    /// `/F` bit 2. A hidden comment is listed and marked, not dropped --- it is
+    /// Hidden or NoView in `/F`. A hidden comment is listed and marked, not dropped --- it is
     /// still something somebody wrote, and it is on the page's `/Annots` either
     /// way.
     pub hidden: bool,
@@ -307,8 +316,7 @@ pub struct Limits {
     pub crowded_pages: usize,
     /// Whether [`MAX_TOTAL`] was reached, so later pages were not read at all.
     pub over_budget: bool,
-    /// Bodies shortened at [`MAX_BODY_CHARS`], or declined at
-    /// [`MAX_STRING_BYTES`].
+    /// Bodies whose editable text is incomplete after decoding or either size limit.
     pub bodies_clipped: usize,
     /// Annotations with a `/Subtype` this does not know, left out.
     pub unknown_kinds: usize,
@@ -544,6 +552,7 @@ fn comment(
     let (author, _) = text_field(annot, document, b"T", MAX_LINE_CHARS, false);
     let (subject, _) = text_field(annot, document, b"Subj", MAX_LINE_CHARS, false);
 
+    let flags = crate::forms::annotation_flags(document, annot);
     Comment {
         id,
         page,
@@ -575,11 +584,9 @@ fn comment(
         // dictionary does not know whether it reached here through a reference
         // or was written inline in the array.
         object: None,
-        hidden: annot
-            .get(b"F")
-            .ok()
-            .and_then(|object| resolve(document, object).as_i64().ok())
-            .is_some_and(|flags| flags & 2 != 0),
+        hidden: flags & (2 | 32) != 0,
+        locked: flags & LOCKED != 0,
+        contents_locked: flags & LOCKED_CONTENTS != 0,
         color: color_of(annot, document),
     }
 }
@@ -661,9 +668,10 @@ fn text_field(
         // counts this as a clip either way.
         return (String::new(), true);
     }
-    let decoded = decode_text_string(raw);
+    let (decoded, lossy) = decoded_text(raw);
     if keep_paragraphs {
-        sanitize_body(&decoded, limit)
+        let (body, clipped) = sanitize_body(&decoded, limit);
+        (body, clipped || lossy)
     } else {
         crate::outline::sanitize_title(&decoded, limit)
     }
@@ -986,20 +994,29 @@ fn resolve_replies(
 /// is PDFDocEncoding (PDF 32000-1 §7.9.2.2). See the module note for why the
 /// table comes from `lopdf` and what is handled here instead of by it.
 pub fn decode_text_string(bytes: &[u8]) -> String {
+    decoded_text(bytes).0
+}
+
+/// Whether decoding discarded or substituted bytes matters when the displayed
+/// text will be sent back as an edit to the original comment.
+fn decoded_text(bytes: &[u8]) -> (String, bool) {
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        let units: Vec<u16> = rest
-            .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+        let pairs = rest.chunks_exact(2);
+        let mut lossy = !pairs.remainder().is_empty();
+        let text = char::decode_utf16(pairs.map(|pair| u16::from_be_bytes([pair[0], pair[1]])))
+            .map(|result| {
+                result.unwrap_or_else(|_| {
+                    lossy = true;
+                    char::REPLACEMENT_CHARACTER
+                })
+            })
             .collect();
-        // Lossy for the reason `outline::decode_title` is: `String::from_utf16`
-        // fails the *whole* string on one bad code unit, so a single malformed
-        // pair would blank an otherwise readable comment.
-        return char::decode_utf16(units)
-            .map(|result| result.unwrap_or(char::REPLACEMENT_CHARACTER))
-            .collect();
+        return (text, lossy);
     }
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        return String::from_utf8_lossy(rest).into_owned();
+        let text = String::from_utf8_lossy(rest);
+        let lossy = matches!(text, std::borrow::Cow::Owned(_));
+        return (text.into_owned(), lossy);
     }
 
     // PDFDocEncoding, in runs, because the table maps nothing below 0x18 and a
@@ -1024,7 +1041,9 @@ pub fn decode_text_string(bytes: &[u8]) -> String {
     if !run.is_empty() {
         out.push_str(&pdf_doc_encoded(&run));
     }
-    out
+    // A defined PDFDocEncoding byte maps to exactly one character.
+    let lossy = out.chars().count() != bytes.len();
+    (out, lossy)
 }
 
 /// Decodes one PDFDocEncoded run through `lopdf`'s own table.
@@ -1049,78 +1068,33 @@ fn pdf_doc_encoded(run: &[u8]) -> String {
         // and the rest of the string is not.
         Ok(text) => text.chars().skip(1).collect(),
         // A run this cannot decode is dropped rather than guessed at. The
-        // caller's `bodies_clipped` does not fire here, which is deliberate ---
-        // nothing was cut for length, and the alternative is inventing
-        // characters.
+        // caller detects the lost characters before permitting an edit.
         Err(_) => String::new(),
     }
 }
 
-/// Flattens a body into something a panel can show, keeping its paragraphs.
-///
-/// Returns the body and whether it was shortened. Deliberately *not*
-/// [`crate::outline::sanitize_title`], which collapses every run of whitespace
-/// including newlines: a title is one line by definition and a comment is not,
-/// and running a two-paragraph note through it returns one paragraph. Runs of
-/// spaces and tabs still collapse, and a run of blank lines collapses to one, so
-/// a body carrying forty newlines costs one gap rather than forty.
+/// Bounds the editable text in characters, preserving whitespace. Textareas
+/// use LF for all line endings. Other control characters are display-only.
 pub fn sanitize_body(body: &str, limit: usize) -> (String, bool) {
     let mut out = String::new();
-    let mut pending_space = false;
-    let mut pending_breaks = 0usize;
-    let mut kept = 0usize;
-    let mut clipped = false;
-
+    let mut incomplete = false;
     let mut chars = body.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\r' {
-            // A CRLF is one break, not two.
-            if chars.peek() == Some(&'\n') {
-                chars.next();
+    for _ in 0..limit {
+        let Some(ch) = chars.next() else { break };
+        match ch {
+            '\r' => {
+                chars.next_if_eq(&'\n');
+                out.push('\n');
             }
-            pending_breaks = (pending_breaks + 1).min(2);
-            pending_space = false;
-            continue;
-        }
-        if ch == '\n' {
-            pending_breaks = (pending_breaks + 1).min(2);
-            pending_space = false;
-            continue;
-        }
-        if ch.is_whitespace() || ch.is_control() {
-            // A control character that is not a break becomes a space, so
-            // "Chapter\u{7}One" stays two words --- the rule `outline.rs`
-            // states for titles.
-            if pending_breaks == 0 {
-                pending_space = !out.is_empty();
+            '\n' | '\t' => out.push(ch),
+            c if c.is_control() => {
+                out.push(' ');
+                incomplete = true;
             }
-            continue;
+            c => out.push(c),
         }
-        if kept >= limit {
-            clipped = true;
-            break;
-        }
-        if pending_breaks > 0 {
-            // Held rather than pushed, so neither a leading nor a trailing
-            // blank line survives --- the `is_empty` is what makes it both,
-            // and a body opening with two newlines is what a producer emits
-            // when somebody starts typing on the second line.
-            if !out.is_empty() {
-                for _ in 0..pending_breaks {
-                    out.push('\n');
-                }
-            }
-            pending_breaks = 0;
-            pending_space = false;
-        } else if pending_space {
-            out.push(' ');
-            pending_space = false;
-        }
-        out.push(ch);
-        kept += 1;
     }
-
-    (out, clipped)
+    (out, incomplete || chars.next().is_some())
 }
 
 /// Parses a PDF date and re-emits it as `YYYY-MM-DD HH:MM`.
@@ -1799,6 +1773,46 @@ mod tests {
     }
 
     #[test]
+    fn screen_visibility_and_edit_locks_are_independent() {
+        for flags in [
+            0,
+            2,
+            4,
+            32,
+            36,
+            LOCKED,
+            LOCKED_CONTENTS,
+            LOCKED | LOCKED_CONTENTS,
+        ] {
+            let comments = scan_annots(vec![dictionary! { "Subtype" => "Text", "F" => flags }]);
+            let note = &comments.items[0];
+            assert_eq!(note.hidden, matches!(flags, 2 | 32 | 36));
+            assert_eq!(note.locked, flags & LOCKED != 0);
+            assert_eq!(note.contents_locked, flags & LOCKED_CONTENTS != 0);
+        }
+    }
+
+    #[test]
+    fn a_lossy_decode_cannot_seed_an_edit() {
+        for raw in [
+            &b"A\x07B"[..],
+            b"A\x7fB",
+            b"\xfe\xff\x00A\x00",
+            b"\xfe\xff\xd8\x00",
+            b"\xef\xbb\xbfA\xff",
+        ] {
+            let notes = scan_annots(vec![dictionary! {
+                "Subtype" => "Text", "Contents" => Object::string_literal(raw)
+            }]);
+            assert!(notes.items[0].body_clipped, "{raw:?}");
+        }
+        assert_eq!(
+            decoded_text(b"\xef\xbb\xbf\xef\xbf\xbd"),
+            ("\u{fffd}".into(), false)
+        );
+    }
+
+    #[test]
     fn only_the_shortened_comment_is_flagged_as_a_preview() {
         let note =
             |body| dictionary! {"Subtype" => "Text", "Contents" => Object::string_literal(body)};
@@ -1856,13 +1870,12 @@ mod tests {
     }
 
     #[test]
-    fn a_body_collapses_runs_and_drops_other_controls() {
-        assert_eq!(sanitize_body("a  \t  b", 4_000).0, "a b");
-        assert_eq!(sanitize_body("Chapter\u{7}One", 4_000).0, "Chapter One");
-        // More than one blank line is one blank line.
-        assert_eq!(sanitize_body("a\n\n\n\n\nb", 4_000).0, "a\n\nb");
-        // And the edges are trimmed, in both directions and both kinds.
-        assert_eq!(sanitize_body("\n\n  a  \n\n", 4_000).0, "a");
+    fn an_editable_body_preserves_whitespace_and_counts_it_toward_the_limit() {
+        let body = "  a  \t  b\n\n\n    second line  ";
+        assert_eq!(sanitize_body(body, 4000), (body.into(), false));
+        assert_eq!(sanitize_body("a\r\nb\rc", 5), ("a\nb\nc".into(), false));
+        assert_eq!(sanitize_body("a   b", 3), ("a  ".into(), true));
+        assert_eq!(sanitize_body("a\u{7}b", 3), ("a b".into(), true));
     }
 
     #[test]
@@ -2403,6 +2416,8 @@ mod tests {
             author: "Jane Example".into(),
             body: "Have a look at https://example.invalid/ when you can.".into(),
             body_clipped: false,
+            locked: false,
+            contents_locked: false,
             subject: "Figure 3".into(),
             date: Some("2026-08-12 10:15".into()),
             rect: [1.0, 2.0, 3.0, 4.0],
@@ -2420,6 +2435,8 @@ mod tests {
             author,
             body,
             body_clipped,
+            locked,
+            contents_locked,
             subject,
             date,
             rect,
@@ -2461,6 +2478,8 @@ mod tests {
             reply_to.map(|id| id.to_string()).unwrap_or_default(),
             hidden.to_string(),
             body_clipped.to_string(),
+            locked.to_string(),
+            contents_locked.to_string(),
             // Three more numbers the document chose, and the same argument as
             // `quads` above: an `f32` that failed to parse never reaches here.
             format!("{color:?}"),

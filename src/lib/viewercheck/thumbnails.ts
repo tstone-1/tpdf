@@ -8,6 +8,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { frame } from "../checkreport";
 import type { DocumentInfo, PageSize } from "../ipc";
+import type { PageText } from "../text";
 import { Sidebar, SIDEBAR_CLASS } from "../sidebar";
 import { rowHeightFor, OVERSCAN, type Thumbnails } from "../thumbnails";
 import { Viewer, type ViewerStatus } from "../viewer";
@@ -19,6 +20,7 @@ import {
   key,
   pointer,
   settle,
+  textLayerMatchesTurn,
   SIDEBAR_TABS,
   skip,
 } from "./common";
@@ -386,6 +388,7 @@ export async function rotationChecks(
   doc: DocumentInfo,
   page: { width_pt: number; height_pt: number },
   seen: { status: ViewerStatus | null },
+  tilePage: number,
 ): Promise<void> {
   key(root, "Home");
   await settle(() => viewer.idle && (seen.status?.sharp ?? 0) >= 0.999);
@@ -459,7 +462,7 @@ export async function rotationChecks(
   await rotatedTextLayerCheck(viewer, doc);
   await rotatedDragCheck(root, viewer, before);
   rotatedStripCheck(sidebar, page);
-  await rotatedTileCheck(doc, page);
+  await rotatedTileCheck(doc, tilePage, viewer.pageSize(tilePage));
 
   // Four quarter turns are the identity, and the document's length coming back
   // is what says the geometry went round rather than accumulating.
@@ -656,7 +659,7 @@ async function rotatedTextLayerCheck(
 
   // From the backend, so the comparison is against the document rather than
   // against the same cache being checked.
-  const raw = await invoke<{ quarter_turns: number; width_pt: number }>(
+  const raw = await invoke<PageText>(
     "page_text",
     {
       doc: doc.id,
@@ -669,13 +672,9 @@ async function rotatedTextLayerCheck(
   }
 
   const wanted = (raw.quarter_turns + viewer.rotation) % 4;
-  const swapped = viewer.rotation % 2 === 1;
   check(
     name,
-    shown.quarter_turns === wanted &&
-      (swapped
-        ? shown.width_pt !== raw.width_pt
-        : shown.width_pt === raw.width_pt),
+    textLayerMatchesTurn(raw, shown, viewer.rotation),
     `page is /Rotate ${raw.quarter_turns * 90}, view turned ${viewer.rotation * 90}: ` +
       `the text layer reports /Rotate ${shown.quarter_turns * 90} ` +
       `(wanted ${wanted * 90}) on a ${shown.width_pt.toFixed(0)} pt wide page ` +

@@ -385,7 +385,7 @@ export of `textedit-producer-spacing.rtf` exercises the combined attributes;
 Below the structure root, an iterative walk admits Document, Part/Art/Sect/Div and
 neutral NonStruct containers, then P/H/H1-H6 blocks with the existing optional
 NonStruct or literal Span content leaves. Span leaves retain optional language
-tags, accept no layout attributes or semantic overrides, and cannot nest further.
+tags. A nested Span stays pinned. The PowerPoint rules below specify when a Span with ActualText can be edited.
 `textedit-producer-language.rtf` exports an unchanged LibreOffice language-span
 fixture for ordinary worker/native checks and independent structure readback.
 The tree allows at most eight container levels and 1,024
@@ -432,8 +432,8 @@ may own painted borders, but text must belong to a cell. Cell Table attributes
 admit integer RowSpan/ColSpan from 1 through 128, Headers and header-only Row/Column/Both Scope, in at
 most four dictionaries. IDs are bounded byte strings; the IDTree must enumerate
 exactly the visited identified headers. Data-cell links must be unique and point
-to headers in the same table. Header-to-header links, cell sizing,
-nested tables and table-role aliases remain refused. Cells may contain paragraph
+to headers in the same table. Header-to-header links, nested tables and table-role aliases remain refused.
+The Writer rules below describe the accepted cell Width and Height attributes. Cells may contain paragraph
 or heading blocks with the same optional Span/NonStruct leaf level; each content
 owner retains its explicit page and parent-tree mapping. Span attributes describe
 the existing structure; editing does not merge cells or change table geometry.

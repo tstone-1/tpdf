@@ -49,8 +49,78 @@ fn json(out: &str) -> serde_json::Value {
     serde_json::from_str(out).expect("exactly one JSON document")
 }
 
+/// A red square seen through a luminosity mask. The mask's image is either
+/// local to its group or supplied by the page, where no page operator names it.
+fn extract_soft_masks(report: &mut Report, dir: &Path) {
+    for local in [false, true] {
+        let source = dir.join(format!("mask-{local}.pdf"));
+        let output = dir.join(format!("extracted-mask-{local}.pdf"));
+        fixture(&source, &["", "unused"]);
+        let mut doc = Document::load(&source).unwrap();
+        let image = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => 1, "Height" => 1,
+                "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8
+            },
+            vec![255],
+        ));
+        let images = dictionary! { "Ink" => image };
+        let bounds = vec![0.into(), 0.into(), 100.into(), 100.into()];
+        let mut group = dictionary! {
+            "Type" => "XObject", "Subtype" => "Form", "BBox" => bounds.clone(),
+            "Group" => dictionary! { "S" => "Transparency", "CS" => "DeviceGray" }
+        };
+        if local {
+            group.set("Resources", dictionary! { "XObject" => images.clone() });
+        }
+        let mask = doc.add_object(Stream::new(
+            group,
+            b"q 100 0 0 100 0 0 cm /Ink Do Q".to_vec(),
+        ));
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            b"/Soft gs 1 0 0 rg 0 0 100 100 re f".to_vec(),
+        ));
+        let id = doc.get_pages()[&1];
+        let page = doc.get_dictionary_mut(id).unwrap();
+        page.set("MediaBox", bounds);
+        page.remove(b"CropBox");
+        page.set("Contents", content);
+        page.set(
+            "Resources",
+            dictionary! {
+                "XObject" => images,
+                "ExtGState" => dictionary! { "Soft" => dictionary! {
+                    "SMask" => dictionary! { "S" => "Luminosity", "G" => mask }
+                } }
+            },
+        );
+        doc.save(&source).unwrap();
+
+        let png = s(&dir.join("mask.png"));
+        let before = super::compress::drawn(&s(&source), &png);
+        let (code, _, error) = tool(
+            &["extract", &s(&source), "--pages", "1", "-o", &s(&output)],
+            &[],
+        );
+        report.check(
+            &format!(
+                "extraction preserves every red pixel of the soft mask (local resources: {local})"
+            ),
+            code == 0
+                && before.len() == 100 * 100 * 4
+                && before
+                    .chunks_exact(4)
+                    .all(|pixel| pixel == [255, 0, 0, 255])
+                && super::compress::drawn(&s(&output), &png) == before,
+            &error,
+        );
+    }
+}
+
 pub(super) fn operations(report: &mut Report) {
     let dir = scratch("pages");
+    extract_soft_masks(report, &dir);
     let source = dir.join("source.pdf");
     let extra = dir.join("extra.pdf");
     fixture(&source, &["Alpha", "Bravo", "Charlie"]);

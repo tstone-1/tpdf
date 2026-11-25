@@ -1033,8 +1033,8 @@ ROWS += [
         # starts a point higher, which on real text is most of the time.
         "links: order links by top-then-left with no line banding",
         "src/lib/links.ts",
-        "    if (!sameLine(a, b)) return a.rect[1] - b.rect[1];",
-        "    if (a.rect[1] !== b.rect[1]) return a.rect[1] - b.rect[1];",
+        "sameLine(anchor, byPosition[end]!)",
+        "anchor.rect[1] === byPosition[end]!.rect[1]",
         "orders across the page for two links on one line",
     ),
     Mutation(
@@ -1052,8 +1052,8 @@ ROWS += [
         # link is "next" depends on the sort's stability rather than on a rule.
         "links: leave the link order partial for identical rectangles",
         "src/lib/links.ts",
-        "    if (a.rect[0] !== b.rect[0]) return a.rect[0] - b.rect[0];\n    return a.id - b.id;",
-        "    return a.rect[0] - b.rect[0];",
+        "a.rect[0] - b.rect[0] || a.id - b.id;",
+        "a.rect[0] - b.rect[0];",
         "is a total order even for identical rectangles",
     ),
     Mutation(
@@ -1061,8 +1061,8 @@ ROWS += [
         # scan's order for hit-testing and the walk order separately.
         "links: sort the caller's array in place",
         "src/lib/links.ts",
-        "  return [...items].sort((a, b) => {",
-        "  return (items as Link[]).sort((a, b) => {",
+        "const byPosition = [...items].sort(",
+        "const byPosition = (items as Link[]).sort(",
         "does not modify the array it is given",
     ),
     Mutation(
@@ -1175,7 +1175,7 @@ ROWS += [
         # A reader on page 400 pressing "next link" is sent back to page 1.
         "links: start the link walk at the document rather than the viewport",
         "src/lib/links.ts",
-        "    return ordered.find((item) => isAfter(item, at)) ?? null;",
+        "    return ordered.find((item) => startsAtOrAfter(item, at)) ?? null;",
         "    return ordered[0] ?? null;",
         "starts from the viewport when nothing is focused",
     ),

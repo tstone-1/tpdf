@@ -533,6 +533,22 @@ describe("Tab in the form's controls", () => {
     layer.destroy();
   });
 
+  it("focuses the first surviving field even when it starts off-screen", () => {
+    const second: FormWidget = { ...text, object: [30, 0], widget: [30, 0] };
+    let scroll = 0;
+    const layer = new FormLayer(dom.root as unknown as HTMLElement, { widgets: [text, second] },
+      widget => widget === text ? null : { left: 10, right: 110, top: 1520 - scroll, bottom: 1540 - scroll },
+      async () => {}, widget => { if (widget === second) scroll = 1520; }, () => {});
+    const node = dom.root.children[0]!;
+    node.clientHeight = 700;
+    layer.layout();
+    expect(node.children.map(input => input.style.display)).toEqual(["none", "none"]);
+    layer.focus();
+    expect(node.children.map(input => input.style.display)).toEqual(["none", "block"]);
+    expect(node.children[1]!.focused).toBe(true);
+    layer.destroy();
+  });
+
   it("tabs to a moved field after scrolling its effective rectangle into view", () => {
     const second: FormWidget = { ...text, object: [30, 0], widget: [30, 0] };
     const state = { fields: [{ object: second.widget, page: 0, removed: false,

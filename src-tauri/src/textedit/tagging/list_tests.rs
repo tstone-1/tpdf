@@ -59,20 +59,13 @@ pub(super) fn change(doc: &Document) -> Change {
 }
 
 pub(super) fn refused(mut doc: Document) {
+    let (mut control, _, _, _) = list();
+    let edit = change(&control);
+    textedit::write(&mut control, std::slice::from_ref(&edit)).unwrap();
+
     let before = doc.objects.clone();
-    assert!(textedit::scan(&doc, 0).is_err());
-    assert!(textedit::write(
-        &mut doc,
-        &[Change {
-            layout: None,
-            page: 0,
-            revision: vec![],
-            operator: 0,
-            original: "FIRST".into(),
-            replacement: "IN".into()
-        }]
-    )
-    .is_err());
+    let reason = textedit::scan(&doc, 0).unwrap_err();
+    assert_eq!(textedit::write(&mut doc, &[edit]).unwrap_err(), reason);
     assert_eq!(doc.objects, before);
 }
 

@@ -5,11 +5,13 @@
  * which runs it; that file says what the check is and how it is run.
  */
 
+import type { PageText } from "../text";
 import { invoke } from "@tauri-apps/api/core";
 import { frame } from "../checkreport";
 import type { DocumentInfo } from "../ipc";
 import { Viewer, type ViewerStatus } from "../viewer";
 import {
+  textLayerMatchesTurn,
   check,
   eventually,
   key,
@@ -819,7 +821,7 @@ async function pageTurnTextChecks(
 
   // From the backend, so the comparison is against the document rather than
   // against the same cache being checked.
-  const raw = await invoke<{ quarter_turns: number; width_pt: number }>(
+  const raw = await invoke<PageText>(
     "page_text",
     { doc: doc.id, page: target },
   ).catch(() => null);
@@ -832,7 +834,7 @@ async function pageTurnTextChecks(
   const wanted = (raw.quarter_turns + viewer.pageExtraTurns(target)) % 4;
   check(
     turned,
-    shown.quarter_turns === wanted && shown.width_pt !== raw.width_pt,
+    textLayerMatchesTurn(raw, shown, viewer.pageExtraTurns(target)),
     `page is /Rotate ${raw.quarter_turns * 90}, turned ${viewer.pageExtraTurns(target) * 90}: ` +
       `the text layer reports /Rotate ${shown.quarter_turns * 90} ` +
       `(wanted ${wanted * 90}) on a ${shown.width_pt.toFixed(0)} pt wide page ` +

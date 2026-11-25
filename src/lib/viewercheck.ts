@@ -47,7 +47,7 @@ import {
 } from "./viewercheck/common";
 import { fitChecks, readingChecks, selectionChecks } from "./viewercheck/reading";
 import { spreadChecks } from "./viewercheck/spreads";
-import { mappingChecks, resultsChecks, searchChecks } from "./viewercheck/search";
+import { mappingChecks, resultsChecks, searchChecks, searchSample } from "./viewercheck/search";
 import { accessibilityChecks, crossPageChecks, scopedSearchChecks } from "./viewercheck/accessibility";
 import { appCommandChecks, paletteChecks } from "./viewercheck/commands";
 import {
@@ -412,8 +412,9 @@ async function run(path: string): Promise<void> {
   // one page to a row and fitted as it found it.
   await spreadChecks(viewer, doc, seen);
   await selectionChecks(root, viewer, doc);
-  await searchChecks(root, viewer, doc, seen);
-  await resultsChecks(viewer, sidebar, doc, seen);
+  const sample = await searchSample(doc);
+  await searchChecks(root, viewer, doc, seen, sample);
+  await resultsChecks(viewer, sidebar, doc, seen, sample);
   await mappingChecks(viewer, sidebar, doc, seen);
   await crossPageChecks(viewer, doc, seen);
   await scopedSearchChecks(root, viewer, seen);
@@ -441,7 +442,7 @@ async function run(path: string): Promise<void> {
   // the ordering constraint every check above it carries.
   await propertiesChecks(doc);
   await thumbnailChecks(root, viewer, sidebar, doc, page, drags, menus);
-  await rotationChecks(root, viewer, sidebar, doc, page, seen);
+  await rotationChecks(root, viewer, sidebar, doc, page, seen, sample.textPage ?? 0);
   await pageRotationChecks(root, viewer, doc, seen);
   await pageDeletionChecks(root, viewer, doc, seen);
   await pageMoveChecks(root, viewer, doc, seen);
@@ -462,7 +463,7 @@ async function run(path: string): Promise<void> {
   // while it is going. It leaves the open document as it found it.
   await markAgreementChecks(path, doc, viewer);
   await markCommandChecks(doc);
-  await cropCommandChecks(doc);
+  await cropCommandChecks(doc, sample.textPage ?? 0);
   await printChecks(path, doc);
   await validationDataChecks(path);
   await releaseChecks(path);

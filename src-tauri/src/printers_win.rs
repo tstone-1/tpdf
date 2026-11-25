@@ -114,9 +114,6 @@ pub struct Printer {
     mode: Vec<u64>,
 }
 
-// SAFETY: a name, a port and a byte record; no handle is held between calls.
-unsafe impl Send for Printer {}
-
 /// A printer opened for one call, closed when dropped.
 struct Opened(PRINTER_HANDLE);
 
@@ -480,6 +477,15 @@ mod tests {
     #[test]
     fn each_printer_describes_its_papers_and_keeps_a_choice() {
         let names = list().expect("the printers are listed");
+        const LOCAL_PDF: &str = "Microsoft Print to PDF";
+        if std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted") {
+            assert!(
+                names
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(LOCAL_PDF)),
+                "the Windows runner did not list {LOCAL_PDF}: {names:?}"
+            );
+        }
         if names.is_empty() {
             eprintln!("[SKIP] this machine has no printer");
             return;
@@ -488,11 +494,17 @@ mod tests {
             assert!(names.contains(&default), "{default:?} not in {names:?}");
         }
         for name in &names {
-            let Ok(mut printer) = Printer::open(name) else {
-                // A shared printer whose server is off is listed and cannot
-                // be opened; that is the network's state, not a defect.
-                eprintln!("[SKIP] {name} could not be opened");
-                continue;
+            let mut printer = match Printer::open(name) {
+                Ok(printer) => printer,
+                Err(error) if name.eq_ignore_ascii_case(LOCAL_PDF) => {
+                    panic!("could not open the installed local PDF printer: {error}")
+                }
+                Err(error) => {
+                    // A shared printer whose server is off is listed and cannot
+                    // be opened; that is the network's state, not a defect.
+                    eprintln!("[SKIP] {name} could not be opened: {error}");
+                    continue;
+                }
             };
             let device = printer.describe();
             assert!(!device.papers.is_empty(), "{name} offers no paper");

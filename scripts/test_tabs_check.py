@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import stray
 from run_on_mac import RECEIVE, REMOTE, VOICEOVER_DRIVER, remote_path
-from tabs_check import answer_rewrites  # noqa: E402
+from tabs_check import answer_rewrites, main  # noqa: E402
 
 PDF = b"%PDF-1.7\n1 0 obj\n<< >>\nendobj\ntrailer\n<< >>\n%%EOF\n"
 
@@ -48,6 +48,28 @@ with log.open("a", encoding="utf-8") as out:
 ask(2)
 sys.exit(code)
 """
+
+
+class SigningDeadline(unittest.TestCase):
+    def test_child_receives_default_and_overridden_signing_deadline(self):
+        room = tempfile.TemporaryDirectory()
+        self.addCleanup(room.cleanup)
+        fixture = Path(room.name) / "input.pdf"
+        fixture.write_bytes(PDF)
+        for extra, seconds in [([], 900), (["--timeout", "327.5"], 327.5)]:
+            with self.subTest(seconds=seconds), patch("sys.argv", [
+                "tabs_check.py", "test-viewer", str(fixture), "--phase", "sign",
+                "--identity", "test-certificate", *extra,
+            ]), patch("tabs_check.subprocess.Popen") as launch, patch(
+                "tabs_check.signed_files", return_value=True
+            ), patch("tabs_check.report", return_value=True), patch(
+                "tabs_check.check_worker_exit", return_value=True
+            ):
+                launch.return_value.wait.return_value = 0
+                self.assertEqual(main(), 0)
+                self.assertEqual(launch.call_args.kwargs["env"]["TPDF_OPENCHECK_TIMEOUT"],
+                                 "900" if not extra else "328")
+                launch.return_value.wait.assert_called_once_with(timeout=seconds)
 
 
 @unittest.skipUnless(sys.platform in {"darwin", "linux"}, "POSIX image lookup")

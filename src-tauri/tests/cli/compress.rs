@@ -90,7 +90,7 @@ fn size(path: &str) -> u64 {
 }
 
 /// The page as the tool draws it at one pixel a point.
-fn drawn(path: &str, into: &str) -> Vec<u8> {
+pub(super) fn drawn(path: &str, into: &str) -> Vec<u8> {
     let (code, _, stderr) = tool(&["render", path, "--dpi", "72", "-o", into, "--force"], &[]);
     assert_eq!(code, 0, "{path} renders: {stderr}");
     super::images::pixels(into).2

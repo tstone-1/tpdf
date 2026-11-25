@@ -4268,6 +4268,42 @@ fn an_edit_the_writer_would_leave_out_is_a_refusal_and_not_a_save_that_changed_n
     );
 }
 
+#[test]
+fn comment_locks_apply_to_each_write_operation_including_indirect_flags() {
+    for (flags, rewrite, delete) in [(128, true, false), (512, false, true)] {
+        let (source, id, mut plan) = a_comment_with_a_key_and_its_edit("F");
+        let mut doc = Document::load_mem(&source).unwrap();
+        let flag_id = doc.add_object(Object::Integer(flags));
+        doc.get_dictionary_mut(id).unwrap().set("F", flag_id);
+        let mut source = Vec::new();
+        doc.save_to(&mut source).unwrap();
+        let append = append_update(source.clone(), &plan, None).map(|_| ());
+        let whole = rewrite_update(&source, &plan, Job::Save, None).map(|_| ());
+        for result in [append, whole] {
+            if rewrite {
+                result.unwrap();
+            } else {
+                assert_eq!(
+                    result.unwrap_err().message,
+                    "The contents of this comment are locked"
+                );
+            }
+        }
+        plan.notes.clear();
+        plan.discards
+            .push(crate::edits::PlannedDiscard { object: id });
+        let result = rewrite_update(&source, &plan, Job::Save, None);
+        if delete {
+            result.unwrap();
+        } else {
+            assert_eq!(
+                result.unwrap_err().message,
+                "This comment is locked and cannot be deleted"
+            );
+        }
+    }
+}
+
 /// The premise of [`written_whole`], by experiment and not from reading:
 /// `lopdf` at this pin writes an update without the object, and says nothing.
 /// **When this fails the library has changed**: read its incremental writer

@@ -172,6 +172,20 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
   report.check("the original remains open and clean", host.path() === scan && !host.edits()?.dirty, host.path());
   const matches = await host.viewer()!.matchQuadsByPage();
   report.check("recognised matches have highlight rectangles", matches?.some(row => row.quads.length > 0) === true, String(matches?.length));
+  const oldDoc = host.edits()!.doc;
+  const scanTab = host.tabs().find(tab => tab.path === scan);
+  if (!scanTab) throw new Error("the scan has no open tab");
+  await host.close(scanTab.id);
+  await host.idle();
+  if (host.tabs().some(tab => tab.path === scan)) throw new Error("the scan did not close");
+  await host.open(scan); await host.idle(); await quiet();
+  if (host.path() !== scan || host.edits()!.doc === oldDoc) throw new Error("the scan did not reopen in a new document");
+  report.check("reopening never retains recognised text", (await found(WORD)) === 0, WORD);
+
+  // Establish a fresh hit before testing edit invalidation independently.
+  await run(message("recognisePage"));
+  if (!await settle(() => shown().includes(message("recognisedPage").split(".")[0]!), READ_MS) ||
+      (await found(WORD)) === 0) throw new Error("no recovered hit before the edit");
   await host.apply(edits => edits.rotate(0, 1));
   report.check("an edit discards temporary recognition", (await found(WORD)) === 0, WORD);
   await run(message("recognisePage"));
@@ -179,6 +193,5 @@ export async function recogniseCheck(host: OpenCheckHost, expected: string, repo
   const refusalBar = document.querySelector('[data-testid="problem"]');
   report.check("a refusal replaces green with the problem style", refusedRecovery && refusalBar !== null &&
     !refusalBar.classList.contains("success") && getComputedStyle(refusalBar).borderLeftColor !== "rgb(39, 131, 65)", shown());
-  await host.open(scan); await host.idle(); await quiet();
-  report.check("reopening never retains recognised text", (await found(WORD)) === 0, WORD);
+
 }
