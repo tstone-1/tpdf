@@ -176,6 +176,7 @@ export async function onDiskChange(host: DiskChangeHost): Promise<boolean> {
       dirty = true;
     }
     if (!host.current()) return false;
+    if (host.mode() !== mode) return false;
   }
   const next = afterDiskChange(mode, dirty, host.name());
   if (next === "reload") host.reload();

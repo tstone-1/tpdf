@@ -204,7 +204,7 @@ def blocks(lines: list[str]) -> list[tuple[int, int]]:
 
 
 def orphans(path: pathlib.Path) -> list[tuple[int, str]]:
-    """Doc blocks in `path` that are followed by another doc block."""
+    """Doc blocks followed by another doc block or the end of the script."""
     lines = path.read_text(encoding="utf-8").splitlines()
     out: list[tuple[int, str]] = []
     for start, end in blocks(lines):
@@ -216,7 +216,7 @@ def orphans(path: pathlib.Path) -> list[tuple[int, str]]:
         after = end + 1
         while after < len(lines) and lines[after].strip() == "":
             after += 1
-        if after < len(lines) and lines[after].strip().startswith("/**"):
+        if after == len(lines) or lines[after].strip().startswith(("/**", "</script>")):
             first = (
                 lines[start].strip()[3:].strip().removesuffix("*/").strip()
                 if start == end

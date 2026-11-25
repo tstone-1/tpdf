@@ -306,6 +306,16 @@ describe("onDiskChange", () => {
     expect(done).not.toContain("reload");
   });
 
+  it("honors Ignore selected while a reload is settling", async () => {
+    let ignore = false;
+    const { done, host: h } = host({
+      mode: () => ignore ? "ignore" : "reload",
+      settle: async () => { await Promise.resolve(); ignore = true; },
+    });
+    expect(await onDiskChange(h)).toBe(false);
+    expect(done).toEqual([]);
+  });
+
   it("reloads a document with nothing typed, after settling", async () => {
     // The control for the test above: the same route with no draft does reload.
     const { done, host: h } = host();

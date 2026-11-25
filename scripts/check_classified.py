@@ -31,7 +31,7 @@ manual-only harness is where a born-red check survives.
 The same set comparison, statically. The command ids are string literals in two
 files, so both sides can be read without running anything:
 
-- **Registered**: `id: "..."` in `appcommands.ts`, plus the four families built
+- **Registered**: `id: "..."` in `appcommands.ts`, plus the families built
   from a table with `` id: `edit.color.${...}` ``, which are covered by the
   family prefix rather than one id at a time --- the harness classifies them the
   same way, from the same tables.
@@ -98,17 +98,21 @@ def main() -> int:
     )
     unfamilied = sorted(reg_families - seen_families)
 
-    if missing or stale or unfamilied:
+    stale_families = sorted(seen_families - reg_families)
+
+    if missing or stale or unfamilied or stale_families:
         print(
             f"[FAIL] {len(missing)} registered command(s) the window harness does not "
             f"classify, {len(stale)} classification(s) naming nothing registered, "
-            f"{len(unfamilied)} command family built from a table and not classified.",
+            f"{len(unfamilied)} unclassified command families and {len(stale_families)} stale families.",
             file=sys.stderr,
         )
         for one in missing:
             print(f"       unclassified: {one}", file=sys.stderr)
         for one in stale:
             print(f"       stale: {one}", file=sys.stderr)
+        for one in stale_families:
+            print(f"       stale command family: {one}", file=sys.stderr)
         for one in unfamilied:
             print(f"       family absent from the harness: {one}", file=sys.stderr)
         print(

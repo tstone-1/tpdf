@@ -98,6 +98,48 @@ fn repeated_words_beside_a_blank_cover(dir: &Path, report: &mut Report) {
     }
 }
 
+fn explicit_flate_parameters(dir: &Path, report: &mut Report) {
+    let plain = dir.join("plain.pdf");
+    let other = dir.join("parameters.pdf");
+    document(&plain, &[&["Ordinary words"]]);
+    let mut doc = Document::load(&plain).unwrap();
+    let page = doc.get_pages()[&1];
+    let stream = doc.get_page_contents(page)[0];
+    let data = doc.get_object_mut(stream).unwrap().as_stream_mut().unwrap();
+    // Give the compressor enough repeated content to choose Flate.
+    data.content.extend([b' '; 1024]);
+    data.compress().unwrap();
+    assert_eq!(
+        data.dict.get(b"Filter").unwrap().as_name().unwrap(),
+        b"FlateDecode"
+    );
+    for (predictor, expected) in [(None, 0), (Some(1), 0), (Some(12), 3)] {
+        if let Some(value) = predictor {
+            doc.get_object_mut(stream)
+                .unwrap()
+                .as_stream_mut()
+                .unwrap()
+                .dict
+                .set("DecodeParms", dictionary! { "Predictor" => value });
+        }
+        doc.save(&other).unwrap();
+        let (code, out, err) = tool(
+            &[
+                "compare",
+                plain.to_str().unwrap(),
+                other.to_str().unwrap(),
+                "--json",
+            ],
+            &[],
+        );
+        report.check(
+            "compare handles only proven no-op Flate parameters",
+            code == expected,
+            &format!("{predictor:?}: {code} {out} {err}"),
+        );
+    }
+}
+
 fn nearby_changes_and_wordless_pages(dir: &Path, report: &mut Report) {
     let old = dir.join("nearby-old.pdf");
     let new = dir.join("nearby-new.pdf");
@@ -433,6 +475,7 @@ fn indirect_font_mapping(dir: &Path, fixture: &Path, report: &mut Report) {
 
 pub(super) fn finds_what_changed_in_the_words(report: &mut Report) {
     let dir = scratch("compare");
+    explicit_flate_parameters(&dir, report);
     nearby_changes_and_wordless_pages(&dir, report);
     repeated_words_beside_a_blank_cover(&dir, report);
     physical_rectangles(&dir, report);

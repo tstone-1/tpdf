@@ -106,13 +106,19 @@ export function keepSavedPlaces(tabs: readonly DocumentTab[], model: Edits): voi
  * The words and how they are matched stay.
  */
 export function repoint<D, E>(
-  twins: readonly ({ doc: D; edits: E } & Pick<DocumentTab, "searchScope" | "measures" | "place" | "covered">)[],
+  twins: readonly ({ doc: D; edits: E } & Pick<DocumentTab, "searchScope" | "measures" | "place" | "covered" |
+    "error" | "messageTone" | "offers" | "notice" | "redactedCopyPath">)[],
   doc: D,
   edits: E,
 ): void {
   for (const twin of twins) {
     twin.doc = doc;
     twin.edits = edits;
+    twin.error = null;
+    twin.messageTone = "problem";
+    twin.offers = [];
+    twin.notice = null;
+    twin.redactedCopyPath = null;
     twin.searchScope = null;
     twin.covered = new CoveredWords();
     twin.measures.clear();

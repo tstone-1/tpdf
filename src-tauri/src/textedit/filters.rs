@@ -2,7 +2,7 @@
 //! unsuitable here: accepting a decoded prefix can discard the rest on save.
 
 use crate::encoding::complete::{ascii85, flate};
-use lopdf::{Object, Stream};
+use lopdf::{Dictionary, Document, Object, Stream};
 
 // Bounds scanning as well as allocation, including ASCII85 whitespace. This
 // leaves room for the encoding overhead around a MAX_CONTENT-sized stream.
@@ -13,6 +13,51 @@ pub(crate) fn decode(stream: &Stream, limit: usize) -> Result<Vec<u8>, String> {
         return Err(said!(
             "external or parameterised content streams are not editable yet"
         ));
+    }
+    decode_unpredicted(stream, limit)
+}
+
+/// Whether a Flate dictionary explicitly leaves the decoded samples unchanged.
+pub(super) fn no_prediction(params: &Dictionary) -> bool {
+    params.iter().all(|(key, value)| match key.as_slice() {
+        b"Predictor" => value.as_i64().ok() == Some(1),
+        b"Colors" | b"Columns" | b"BitsPerComponent" => value.as_i64().is_ok(),
+        _ => false,
+    })
+}
+
+/// Complete decoding for read-only text mapping, including no-op filter parameters.
+pub(crate) fn mapping_stream(
+    doc: &Document,
+    stream: &Stream,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    if let Ok(params) = stream.dict.get(b"DecodeParms") {
+        use crate::encoding::resolve;
+        let plain = |filter: &Object, param: &Object| match resolve(doc, param) {
+            Object::Null => true,
+            Object::Dictionary(dict) if filter.as_name().ok() == Some(b"FlateDecode") => {
+                no_prediction(dict)
+            }
+            Object::Dictionary(dict) => dict.is_empty(),
+            _ => false,
+        };
+        let valid = match (stream.dict.get(b"Filter"), resolve(doc, params)) {
+            (_, Object::Null) => true,
+            (Ok(Object::Array(filters)), Object::Array(params)) => {
+                filters.len() <= 2
+                    && filters.len() == params.len()
+                    && filters
+                        .iter()
+                        .zip(params)
+                        .all(|(filter, param)| plain(filter, param))
+            }
+            (Ok(filter @ Object::Name(_)), param) => plain(filter, param),
+            _ => false,
+        };
+        if !valid {
+            return Err(said!("unsupported content stream filter"));
+        }
     }
     decode_unpredicted(stream, limit)
 }

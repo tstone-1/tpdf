@@ -24,7 +24,7 @@ struct Built {
     content: [ObjectId; 2],
     /// A form both pages draw, through resources each page states itself.
     shared: ObjectId,
-    /// The font in the resources both pages inherit from the tree's root.
+    /// The font in the root resources, shadowed by the original pages.
     inherited_font: ObjectId,
     /// A text field's dictionary; its widget is on the first page.
     field: ObjectId,
@@ -542,11 +542,6 @@ fn what_a_page_draws_replaced_beside_a_new_signature_field_is_not_a_listing() {
             1,
         ),
         ("a form both pages draw", built.shared, 2),
-        (
-            "a font the page inherits from the tree",
-            built.inherited_font,
-            2,
-        ),
     ] {
         let appendix = appended(&built, |before, new| {
             signs_the_first_page(&built, before, new);
@@ -772,6 +767,16 @@ fn an_object_freed_after_signing_touches_the_page_that_drew_it() {
     );
 }
 
+#[test]
+fn repeated_free_status_is_not_a_new_removal() {
+    let built = built();
+    let prefix = with_freed(&built.bytes, built.catalog, &[built.undrawn]);
+    let later = with_freed(&prefix, built.catalog, &[built.undrawn, built.content[0]]);
+    let appendix = read_appendix(&later, prefix.len(), None);
+    assert!(!appendix.unread);
+    assert_eq!((appendix.removed, appendix.pages_touched), (1, 1));
+}
+
 /// The same in a classic table. PDFium 8066 still draws the page then and
 /// poppler reports the object as not found, so which a recipient sees is
 /// their reader's choice and the report counts it.
@@ -870,7 +875,7 @@ fn a_freed_object_is_followed_over_the_signed_document() {
 }
 
 /// A page rewritten to list a signature field, in a document that then loses
-/// a font the page inherits: the page is not one whose rewrite "did one
+/// a form both pages draw: the page is not one whose rewrite "did one
 /// thing", whatever its own object says.
 #[test]
 fn a_page_that_lost_what_it_drew_is_not_reported_as_only_listing_a_field() {
@@ -882,10 +887,7 @@ fn a_page_that_lost_what_it_drew_is_not_reported_as_only_listing_a_field() {
     // The control is the listing itself, read from the same bytes.
     assert_eq!(read(&built, &signed).pages_listing.len(), 1);
 
-    let appendix = read(
-        &built,
-        &with_freed(&signed, built.catalog, &[built.inherited_font]),
-    );
+    let appendix = read(&built, &with_freed(&signed, built.catalog, &[built.shared]));
     assert_eq!(appendix.removed, 1, "{appendix:?}");
     assert_eq!(appendix.pages_listing, Vec::<PageListing>::new());
     assert_eq!(appendix.pages_touched, 2, "{appendix:?}");
@@ -984,19 +986,29 @@ fn a_page_that_links_to_a_rewritten_page_is_not_touched_by_that() {
     assert_eq!(appendix.pages_touched, 1, "{appendix:?}");
 }
 
-/// What a page takes from the tree above it is the page's too. The font is
-/// in resources neither page states: both inherit them from the root, two
-/// nodes up.
+/// Only the second page inherits the root's font. The first overrides the
+/// resource dictionary, while both inherit rotation.
 #[test]
-fn what_a_page_inherits_touches_every_page_below_it() {
-    let built = built();
+fn changed_inherited_resources_touch_only_the_page_that_uses_them() {
+    let mut built = built();
+    built.bytes = revised(&built, |before, new| {
+        let mut page = dict_of(before, built.page[1]);
+        page.remove(b"Resources");
+        new.set_object(built.page[1], page);
+    });
     let font = appended(&built, |_, new| {
         new.set_object(
             built.inherited_font,
             dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Courier" },
         );
     });
-    assert_eq!(font.pages_touched, 2, "{font:?}");
+    assert_eq!(font.pages_touched, 1, "{font:?}");
+    let resources = appended(&built, |before, new| {
+        let mut root = dict_of(before, built.pages);
+        root.set("Resources", dictionary! {});
+        new.set_object(built.pages, root);
+    });
+    assert_eq!(resources.pages_touched, 1, "{resources:?}");
     // And the node itself, written again with something a page inherits
     // stated directly in it.
     let node = appended(&built, |before, new| {
@@ -1431,7 +1443,7 @@ fn what_a_page_draws_replaced_beside_a_signed_place_is_a_rewritten_page() {
     let prepared = prepared(false);
     let built = &prepared.built;
     for (what, id, pages) in [
-        ("a font the page inherits", built.inherited_font, 2),
+        ("a graphics state", built.graphics_state, 1),
         ("a font two forms down", built.nested_font, 1),
         ("the text field's dictionary", built.field, 1),
         ("the other place's widget", prepared.split.1, 1),
@@ -2181,8 +2193,12 @@ fn a_layer_turned_off_in_an_object_of_its_own_touches_every_page() {
     });
     assert_eq!(appendix.pages_touched, 2, "{appendix:?}");
     assert_eq!(strict(appendix), After::Pages(2));
+    let freed = with_freed(&built.bytes, built.catalog, &[held]);
+    assert_eq!(strict(read(&built, &freed)), After::Pages(2));
     // The control: the same object rewritten when no catalog entry names it.
     let plain = self::built();
+    let freed = with_freed(&plain.bytes, plain.catalog, &[plain.undrawn]);
+    assert_eq!(strict(read(&plain, &freed)), After::Unchanged);
     let appendix = appended(&plain, |_, new| {
         new.set_object(plain.undrawn, dictionary! { "D" => dictionary! {} });
     });

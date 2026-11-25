@@ -79,7 +79,7 @@ fn inherited_value<'a>(
 }
 
 /// Keep the owning node so a writer need only copy values inherited from a parent.
-fn inherited_entry<'a>(
+pub(crate) fn inherited_entry<'a>(
     doc: &'a Document,
     page: ObjectId,
     key: &[u8],

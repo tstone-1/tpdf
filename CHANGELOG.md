@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- Reload clears redaction results attached to an earlier version in every view. Confirmed reload holds the target document while opening its replacement. Closing another tab leaves the current draft alone.
+- Automatic reload respects a message or preference that changes while drafts settle. CLI text comparison accepts Flate streams with explicit no-op parameters.
+- Signature verification accounts for removed layer settings, distinguishes repeated free entries from new removals, and follows each page's effective inherited resources.
+
 - Redacting consecutive text runs preserves the position of surviving text. Redaction leaves a capped rule intact and reports it when the cut would erase ink outside the selection.
 - Hidden-text reports distinguish equal-brightness colours and split passages at uncertain letters or digits. Compare stops when extraction drops part of a declared text replacement.
 - Split can publish new files on exFAT and still refuses occupied filenames. The structural redaction check follows font changes selected through extended graphics states.

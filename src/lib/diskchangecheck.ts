@@ -113,13 +113,16 @@ export async function diskChangeCheck(host: OpenCheckHost, expected: string, rep
 
   try {
     // 1. The control: nothing on screen, so the change is asked about.
-    report.check("the control starts with an empty bar", shown() === "", state());
+    const clear = shown() === "";
+    report.check("the control starts with an empty bar", clear, state());
+    if (!clear) return;
     await rewrite("control");
     const started = performance.now();
     const answered = await settle(asking, ANSWER_MS);
     const controlMs = performance.now() - started;
     report.check("with the bar empty, a change on disk is asked about at once", answered,
       `${Math.round(controlMs)} ms; ${state()}`);
+    if (!answered) return;
     const invited = doc();
     await host.apply((edits) => edits.rotate(edits.state.pages[0]!.id, 1));
     reloadOffer()?.click();

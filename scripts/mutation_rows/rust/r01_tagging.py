@@ -1691,7 +1691,7 @@ ROWS += [
     Mutation('image: accept any sample mapping', 'src/textedit/images.rs', 'if mapping != default {', 'if false {', 'textedit_images_accept_only_the_default_sample_mapping'),
     Mutation('image: map an indexed sample range to its palette', 'src/textedit/images.rs', 'vec![0., 255.]', 'vec![0., 1.]', 'textedit_images_accept_only_the_default_sample_mapping'),
     Mutation('image: accept any decode parameters', 'src/textedit/images.rs', '(b"DecodeParms", _) => parameters(doc, value)?,', '(b"DecodeParms", _) => {}', 'textedit_images_accept_decode_parameters_that_select_no_prediction'),
-    Mutation('image: accept any predictor', 'src/textedit/images.rs', 'b"Predictor" if value.as_i64().ok() == Some(1) => {}', 'b"Predictor" => {}', 'textedit_images_accept_decode_parameters_that_select_no_prediction'),
+    Mutation('image: accept any predictor', 'src/textedit/filters.rs', 'b"Predictor" => value.as_i64().ok() == Some(1),', 'b"Predictor" => true,', 'textedit_images_accept_decode_parameters_that_select_no_prediction'),
     Mutation('content: decode a parameterised stream', 'src/textedit/filters.rs', 'if stream.dict.has(b"DecodeParms") {', 'if false {', 'textedit_images_accept_decode_parameters_that_select_no_prediction'),
     Mutation('image: accept an untyped metadata packet', 'src/textedit/images.rs', 'if packet.dict.get(b"Type").and_then(Object::as_name).ok() != Some(b"Metadata") {', 'if false {', 'textedit_image_metadata_packets_are_kept_and_must_declare_their_type'),
     Mutation('image: accept metadata that is not a packet', 'src/textedit/images.rs', '(b"Metadata", _) => {', '(b"Metadata", _) => if false {', 'textedit_image_metadata_packets_are_kept_and_must_declare_their_type'),

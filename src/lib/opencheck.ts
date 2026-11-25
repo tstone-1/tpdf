@@ -371,7 +371,7 @@ async function checkReplyCut(host: OpenCheckHost): Promise<void> {
 async function checkSplitDrafts(host: OpenCheckHost, path: string): Promise<void> {
   await host.open(path);
   host.run("view.moveToOtherSide");
-  const { mountedAreas, settled, focusedSide, check } = sideProbe(host);
+  const { mountedAreas, settled, focusedSide, rows, frontOf, check } = sideProbe(host);
   await settled("two mounted panes", () => mountedAreas() === 2 && focusedSide() === "right");
   const editNote = async (words: string) => {
     await host.apply((edits) => edits.mark("textbox", edits.state.pages[0]!.id,
@@ -400,7 +400,16 @@ async function checkSplitDrafts(host: OpenCheckHost, path: string): Promise<void
   check("returning to the first pane cannot restore an active print job",
     !stop() && !document.querySelector(".document-name")?.textContent?.includes("Printing side"));
   const right = await editNote("Right α");
-  await otherSide("left");
+  const visible = frontOf("left");
+  const hidden = rows("left").find(id => id !== visible);
+  if (hidden === undefined) throw new Error("missing hidden tab beside the draft");
+  await host.close(hidden);
+  check("closing a clean hidden tab preserves the visible refused draft",
+    !host.tabs().some(tab => tab.id === hidden) && right.isConnected && right.value === "Right α" && !right.readOnly);
+  await host.close(visible);
+  check("closing the opposite visible tab mounts its neighbour beside an invalid draft",
+    mountedAreas() === 2 && frontOf("left") !== visible && right.isConnected && right.value === "Right α");
+  if (focusedSide() !== "left") await otherSide("left");
   await otherSide("right");
   check("the refused right-hand draft is still editable on return",
     host.viewer()?.markNoteField === right && right.isConnected && right.value === "Right α" && !right.readOnly);
@@ -440,7 +449,14 @@ async function checkSplitDrafts(host: OpenCheckHost, path: string): Promise<void
   await settled("the reload confirmation for a refused draft", () => !!confirm());
   check("asking to reload keeps the existing file and draft",
     host.edits()?.doc === saved && host.viewer()?.markNoteField.value === "Discard α");
+  const surface = host.viewer()!.markNoteField.closest(".surface");
   confirm()!.click();
+  await Promise.resolve();
+  check("only the confirmed document is held while its replacement opens",
+    host.edits()?.doc === saved && surface?.hasAttribute("inert") === true && !left.closest("[inert]"));
+  let editedAfterConfirmation = false;
+  await host.apply(edits => { editedAfterConfirmation = true; return edits.rotate(edits.state.pages[0]!.id, 1); });
+  check("confirmed discard rejects edits submitted during acquisition", !editedAfterConfirmation);
   await settled("the confirmed reload", () => host.edits()?.doc !== saved && !!host.viewer());
   check("confirmed reload reads the file again and discards only that document's edits",
     host.edits()?.dirty === false && host.edits()?.state.marks.length === 0 && host.viewer()?.markOpen === -1);
@@ -1534,8 +1550,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "tabs": {
       const check = (name: string, ok: boolean) => report.check(name, ok,
         `${host.tabs().length} tabs, active ${basename(host.path())}`);
-      const [first, second, alias] = expected.split("|");
-      if (!first || !second || !alias || first === second) throw new Error("two distinct fixtures and an alias required");
+      const [first, second, alias, extra, fourth] = expected.split("|");
+      if (!first || !second || !alias || !extra || !fourth || first === second) throw new Error("two distinct fixtures and an alias required");
       report.emit("[tabs] opening the first fixture");
       await host.open(first);
       const a = host.tabs()[0];
@@ -1687,6 +1703,9 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("opening after the last close still works", host.tabs().length === 1 && host.hasViewer());
       check("only one sidebar is mounted", sidebars() === 1);
       await checkReplyCut(host);
+      await host.open(extra);
+      await host.open(fourth);
+      await host.open(second);
       await checkSplitDrafts(host, first);
       break;
     }

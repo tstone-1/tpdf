@@ -775,7 +775,7 @@ ROWS += [
     Mutation(
         "appendix: count only the page objects an append wrote",
         "src/docinfo.rs",
-        "    let mut touched = pages_reaching(&whole, &changed, &apart_from_signing);",
+        "    let mut touched = pages_reaching(&whole, Some(&signed), &changed, &apart_from_signing);",
         "    let mut touched = std::collections::BTreeSet::new();",
         "a_content_stream_replaced_after_signing_touches_its_page_and_no_other",
     ),
@@ -804,16 +804,16 @@ ROWS += [
     Mutation(
         "appendix: ignore the resources a page inherits",
         "src/docinfo.rs",
-        "const HANDED_DOWN: [&[u8]; 5] = [b\"Parent\", b\"Resources\", b\"MediaBox\", b\"CropBox\", b\"Rotate\"];",
-        "const HANDED_DOWN: [&[u8]; 5] = [b\"Parent\", b\"Parent\", b\"MediaBox\", b\"CropBox\", b\"Rotate\"];",
-        "what_a_page_inherits_touches_every_page_below_it",
+        'const HANDED_DOWN: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];',
+        'const HANDED_DOWN: [&[u8]; 4] = [b"Unused", b"MediaBox", b"CropBox", b"Rotate"];',
+        "changed_inherited_resources_touch_only_the_page_that_uses_them",
     ),
     Mutation(
-        "appendix: look no further up the page tree than a page's own parent",
+        "appendix: count an overridden ancestor resource as used",
         "src/docinfo.rs",
-        "const HANDED_DOWN: [&[u8]; 5] = [b\"Parent\", b\"Resources\", b\"MediaBox\", b\"CropBox\", b\"Rotate\"];",
-        "const HANDED_DOWN: [&[u8]; 5] = [b\"Resources\", b\"Resources\", b\"MediaBox\", b\"CropBox\", b\"Rotate\"];",
-        "what_a_page_inherits_touches_every_page_below_it",
+        "if same_apart_from(old, new, &HANDED_DOWN) {",
+        "if false {",
+        "changed_inherited_resources_touch_only_the_page_that_uses_them",
     ),
     Mutation(
         "appendix: miss a page taken out of the document",

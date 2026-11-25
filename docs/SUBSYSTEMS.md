@@ -273,7 +273,7 @@ inherited answers and reset values. All renames in a save use the group's origin
 answers and its final set of button names.
 
 Document tabs retain backend handles and edit journals in `src/lib/documenttabs.ts`.
-Only the active tab mounts a Viewer and Sidebar; switching commits open note fields,
+Each visible pane mounts its own Viewer and Sidebar. Switching commits open note fields,
 drains pending edits, and keeps the reading position, search scope and sidebar choice.
 Save/reload replaces the handle in the same tab. Reload settles drafts in every
 view sharing that document. An unfinished draft in a different document stays in
@@ -281,6 +281,11 @@ its pane. File writes block tab transitions;
 tab closure releases its handle, and window closure checks all tabs for unsaved work.
 Foreground and background opens resolve file identity before allocating a journal.
 Reload checks the journal and live drafts again after acquiring the replacement.
+Once the user confirms discard, the target model's mounted surfaces reject new
+input until acquisition finishes. A failed open releases the hold. A successful
+replacement clears the old verification message, its actions and saved copy path in
+every view. Closing a tab settles its own model, including when its neighbour must
+mount and the opposite pane holds an invalid draft.
 Quit and update relaunch wait for pending reading positions, tabs and favourites.
 Session saves close the temporary file before replacing the previous record. Windows
 retries a briefly busy destination for up to 126 ms, then reports the error.

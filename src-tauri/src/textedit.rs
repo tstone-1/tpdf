@@ -13,7 +13,7 @@ mod centred;
 mod clipping;
 mod colors;
 mod filters;
-pub(crate) use filters::decode as decode_content_stream;
+pub(crate) use filters::{decode as decode_content_stream, mapping_stream};
 mod fonts;
 mod forms;
 mod graphics;
@@ -634,6 +634,18 @@ fn encode_text(text: &str) -> Result<Vec<u8>, String> {
 // every stream decoded completely or the page refused, where `lopdf`'s own
 // `get_page_content` falls back to the raw bytes of a stream it cannot decode.
 pub(crate) fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
+    page_content_with(doc, id, filters::decode)
+}
+
+pub(crate) fn mapping_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
+    page_content_with(doc, id, |stream, limit| mapping_stream(doc, stream, limit))
+}
+
+fn page_content_with(
+    doc: &Document,
+    id: ObjectId,
+    decode: impl Fn(&Stream, usize) -> Result<Vec<u8>, String>,
+) -> Result<Vec<u8>, String> {
     let page = doc.get_dictionary(id).map_err(|e| e.to_string())?;
     let contents = page.get(b"Contents").map_err(|e| e.to_string())?;
     let contents = crate::encoding::resolve(doc, contents);
@@ -655,7 +667,7 @@ pub(crate) fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, Stri
             }
             bytes.push(b'\n');
         }
-        bytes.extend(filters::decode(stream, MAX_CONTENT - bytes.len())?);
+        bytes.extend(decode(stream, MAX_CONTENT - bytes.len())?);
     }
     Ok(bytes)
 }

@@ -351,7 +351,7 @@ impl<'a> FontScan<'a> {
         let resources = crate::pagetree::resources(doc, page)
             .ok()?
             .unwrap_or(&empty);
-        let content = crate::textedit::page_content(doc, page).ok()?;
+        let content = crate::textedit::mapping_content(doc, page).ok()?;
         // Without a marked-content property list, a placed form or an
         // external font selection, ordinary simple-font text needs no walk.
         // BDC is an operator and always literal in the decoded stream. A
@@ -494,7 +494,8 @@ impl<'a> FontScan<'a> {
                         if obj.content.is_empty() && !obj.dict.has(b"F") {
                             continue;
                         }
-                        let data = crate::textedit::decode_content_stream(
+                        let data = crate::textedit::mapping_stream(
+                            doc,
                             obj,
                             self.bytes_left.min(1024 * 1024),
                         )

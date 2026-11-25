@@ -638,7 +638,7 @@
    * {@link refreshTabs}, which every change to the tabs already ends in.
    */
   let paneLayout = $state({
-    split: false, unused: [false, true], order: [0, 2], focused: 0, front: [-1, -1],
+    split: false, unused: [false, true], order: [0, 2], focused: 0, front: [NO_VIEW, NO_VIEW],
   });
   /**
    * Whether a document is mounted that the reader is not working in. The body
@@ -755,6 +755,7 @@
   });
   let opening = $state(false);
   let settlingOpen = $state(false);
+  let discardingModel = $state.raw<Edits | null>(null);
   let updateExitHeld = $state(false);
   let documentBusy = $state(false);
   const documentTasks = new DocumentTasks((busy) => {
@@ -922,7 +923,7 @@
     if (marked === false) throw new Error(TEXT().matchBatchFailed);
   }
 
-  async function settleDocument(only?: Edits): Promise<void> {
+  async function settleDocument(only?: Edits | null): Promise<void> {
     await settleDrafts(only);
     notePlace();
     places.flush();
@@ -1386,15 +1387,12 @@
       const tab = tabs.find(id);
       if (!tab) return;
       if (folderDestination !== undefined) {
-        try { await settleDocument(); } catch (e) { say(String(e)); return; }
+        try { await settleDocument(tab.edits); } catch (e) { say(String(e)); return; }
         if (openView !== folderDestination || tab.edits.state.dirty || twinsOf(tabs.all, tab).length) return;
       }
-      // The tab in front of the other side is closed as the document the
-      // reader is in, which it becomes first.
-      if (id !== openView && panes.front(panes.sideOf(id)) === id && !focusSide(panes.sideOf(id))) return;
       opening = true;
       try {
-        if (folderDestination === undefined) await settleDocument();
+        if (folderDestination === undefined) await settleDocument(tab.edits);
         // One of two views of a document closes without a question and without
         // releasing anything: the document, and its unsaved work, stay open in
         // the other.
@@ -1404,7 +1402,9 @@
           { title: TEXT().closeTab, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
         )) return;
         endComparison(id);
-        if (id === openView) clearActiveDocument();
+        // A visible tab can close in its own pane without committing a draft
+        // in the focused pane. A hidden tab has no surface to tear down.
+        asDocument(id, clearActiveDocument);
         panes.closed(id, tabs.all.map((entry) => entry.view));
         tabs.remove(id);
         if (lastView) closedTabs.closed(tab.path);
@@ -1493,7 +1493,7 @@
    * Whether nothing may be started on a document now (`documentsBusy`): what
    * the menu greys by, and the message bar's buttons and the tab row with it.
    */
-  const busyNow = $derived(documentsBusy({ opening, documentBusy, copyTaskBusy }));
+  const busyNow = $derived(discardingModel !== null || documentsBusy({ opening, documentBusy, copyTaskBusy }));
   let redactedCopyPath = $state<string | null>(null);
   let blockingTask = $state<string | null>(null);
   // Whether the blocking task is a text recognition, which is the one of them
@@ -3307,6 +3307,7 @@
     owner = asDocument(view, () => edits),
   ): Promise<EditState | null> {
     if (copyTaskBusy || (documentBusy && !committingPopup)) return Promise.resolve(null);
+    if (discardingModel && owner === discardingModel) return Promise.resolve(null);
     // Queued rather than started, so a reply can never be adopted after a
     // later one. See {@link editing}.
     //
@@ -5381,11 +5382,11 @@
       // Not now, rather than not at all: the watch reports again on its next
       // check. A save's own write is the case that matters --- it changes the
       // file and then reopens it, and must not be answered with a reload.
-      const current = () => doc === openDoc && !opening && !documentBusy;
+      const current = () => doc === openDoc && !opening && !documentBusy && promptUnaskedNow(error);
       // Nor while the bar holds a message: the prompt would replace it, and a
       // reload nobody is asked about clears it on the way in. A redaction's
       // verdict is the message this is for.
-      if (!current() || !promptUnaskedNow(error)) return false;
+      if (!current()) return false;
       // What happens, and the settling that comes before a reload nobody is
       // asked about, are `onDiskChange`'s.
       const model = edits;
@@ -5433,7 +5434,10 @@
     // pressed while a task the menu waits for is still running on the file.
     if (!path || busyNow) return;
     say(null);
-    void openPath(path, false, currentPlace(), false, discard ? edits : null);
+    if (discard) discardingModel = edits;
+    void openPath(path, false, currentPlace(), false, discardingModel).finally(() => {
+      if (discard) discardingModel = null;
+    });
   }
 
   /** Opens the sidebar if it is closed, on the tab asked for. */
@@ -7278,7 +7282,7 @@
       // The tab the reader is in when the file is shown in two.
       const replacing = override ? tabs.forPath(path, tabs.active) : undefined;
       if (discard) await editing.run(async () => {});
-      else await settleDocument((replacing ?? written)?.edits);
+      else await settleDocument((replacing ?? written)?.edits ?? (retained ? edits : undefined));
       keepActiveTab();
       if (replacing && !afterWrite && !discard) {
         // A slow open leaves the original controls live. Another draft may
@@ -7370,14 +7374,6 @@
     return failed;
   }
 
-  /**
-   * What the surface is doing, when it is not simply showing the document.
-   *
-   * The classification and the delay in front of it both live in
-   * `degraded.ts` --- docs/PLAN.md section 9 for why the state is owed at all,
-   * and that module's own comment for why it is not shown the instant it
-   * becomes true.
-   */
 </script>
 
 <svelte:window onkeydown={onWindowKey} onpaste={onPaste} onkeydowncapture={onKeyCapture} onpointerdown={closeZoomOutside} />
@@ -7701,7 +7697,8 @@
               {@render tabStrip(tabRows.filter((tab) => tab.slot === slot), paneLayout.front[slot] ?? -1,
                 paneLayout.order[slot] === 0 ? TEXT().leftDocuments : TEXT().rightDocuments)}
             {/if}
-            <div class="surface" inert={settlingOpen || updateExitHeld} bind:this={areaHosts[slot]}></div>
+            <div class="surface" inert={settlingOpen || updateExitHeld ||
+              (discardingModel !== null && tabs.find(paneLayout.front[slot] ?? NO_VIEW)?.edits === discardingModel)} bind:this={areaHosts[slot]}></div>
           </div>
         {/each}
         {#if paneLayout.split}

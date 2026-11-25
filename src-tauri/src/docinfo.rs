@@ -2905,7 +2905,7 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     // The pages written again, and the pages whose own object stands as it
     // was while something they draw from does not. A page that lists a new
     // field is one of them whichever object holds the list.
-    let mut touched = pages_reaching(&whole, &changed, &apart_from_signing);
+    let mut touched = pages_reaching(&whole, Some(&signed), &changed, &apart_from_signing);
     touched.extend(
         changed
             .iter()
@@ -2927,7 +2927,7 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
             .filter(|id| !apart_from_signing.contains_key(id))
             .copied()
             .collect();
-        let redrawn = pages_reaching(&whole, &besides, &apart_from_signing);
+        let redrawn = pages_reaching(&whole, Some(&signed), &besides, &apart_from_signing);
         listings.retain(|(page, _)| !redrawn.contains(page));
     }
     // And what the signed revision had that a reader of the document no
@@ -2938,12 +2938,19 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     // object the whole parse itself no longer has is counted the same way.
     // The pages that drew from one are found in the signed document, where
     // they still reach it; a page that was itself removed is one of them.
-    let removed: std::collections::BTreeSet<lopdf::ObjectId> = signed
+    let mut removed: std::collections::BTreeSet<lopdf::ObjectId> = signed
         .objects
         .keys()
         .filter(|id| freed.contains(&id.0) || !whole.objects.contains_key(id))
         .copied()
         .collect();
+    // lopdf can retain an object freed before signing in the prefix, too.
+    if !removed.is_empty() {
+        let Some(baseline) = freed::after(&bytes[..end], 0, signed.xref_start, MAX_DECODE) else {
+            return unread;
+        };
+        removed.retain(|id| !baseline.freed.contains(&id.0));
+    }
     out.removed = removed.len();
     if !removed.is_empty() {
         let lost = pages_drawing_from(&signed, &removed);
@@ -2954,7 +2961,15 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     }
     // Asked of the catalog, and answered for every page: a layer turned off there
     // changes what any page shows, and no page refers to what changed.
-    if catalog_redraws(&signed, &whole, &changed) {
+    // Resolve catalog containers against the live whole revision. A removed
+    // /Names or /AcroForm dictionary can otherwise still supply old values.
+    let mut whole = whole;
+    for id in &removed {
+        whole.objects.remove(id);
+    }
+    if catalog_redraws(&signed, &whole, &changed)
+        || (!removed.is_empty() && catalog_redraws(&signed, &signed, &removed))
+    {
         listings.clear();
         touched.extend(whole.get_pages().into_values());
     }
@@ -2997,7 +3012,7 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
 /// What a node of the page tree passes to the pages below it: the four
 /// entries a page inherits when it states none itself (PDF 32000-1 §7.7.3.4),
 /// and --- through its own parent --- whatever the nodes above it pass down.
-const HANDED_DOWN: [&[u8]; 5] = [b"Parent", b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
+const HANDED_DOWN: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
 
 /// Every object `object` refers to, however deep inside it the reference is.
 fn references_in(object: &Object, into: &mut Vec<lopdf::ObjectId>) {
@@ -3038,7 +3053,7 @@ fn pages_drawing_from(
     whole: &Document,
     changed: &std::collections::BTreeSet<lopdf::ObjectId>,
 ) -> std::collections::BTreeSet<lopdf::ObjectId> {
-    pages_reaching(whole, changed, &Referring::new())
+    pages_reaching(whole, None, changed, &Referring::new())
 }
 
 /// What some objects refer to, stated for them: the walk takes this in place
@@ -3053,12 +3068,16 @@ type Referring = std::collections::BTreeMap<lopdf::ObjectId, Vec<lopdf::ObjectId
 /// way --- named in its resources as well --- is reached.
 fn pages_reaching(
     whole: &Document,
+    before: Option<&Document>,
     changed: &std::collections::BTreeSet<lopdf::ObjectId>,
     stated: &Referring,
 ) -> std::collections::BTreeSet<lopdf::ObjectId> {
     use lopdf::ObjectId;
     use std::collections::{BTreeMap, BTreeSet};
 
+    if changed.is_empty() {
+        return BTreeSet::new();
+    }
     let pages: BTreeSet<ObjectId> = whole.get_pages().into_values().collect();
     let parent_of = |id: &ObjectId| {
         whole
@@ -3091,10 +3110,8 @@ fn pages_reaching(
         } else {
             match (tree.contains(id), object.as_dict()) {
                 (true, Ok(node)) => {
-                    for key in HANDED_DOWN {
-                        if let Ok(value) = node.get(key) {
-                            references_in(value, &mut named);
-                        }
+                    if let Ok(parent) = node.get(b"Parent") {
+                        references_in(parent, &mut named);
                     }
                 }
                 (true, Err(_)) => {}
@@ -3109,7 +3126,29 @@ fn pages_reaching(
     // A page is where a path ends: what refers to a page does not draw from
     // it.
     let mut reaching = changed.clone();
-    let mut pending: Vec<ObjectId> = changed
+    // Replacing only inherited entries at a node cannot affect pages that
+    // override them. Include the change for the actual owners below instead.
+    let mut attribute_changes = BTreeSet::new();
+    if let Some(before) = before {
+        for id in changed.intersection(&tree) {
+            if let (Ok(old), Ok(new)) = (before.get_dictionary(*id), whole.get_dictionary(*id)) {
+                if same_apart_from(old, new, &HANDED_DOWN) {
+                    reaching.remove(id);
+                    for key in HANDED_DOWN {
+                        let same = match (old.get(key), new.get(key)) {
+                            (Ok(a), Ok(b)) => same_object(a, b),
+                            (Err(_), Err(_)) => true,
+                            _ => false,
+                        };
+                        if !same {
+                            attribute_changes.insert((*id, key));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut pending: Vec<ObjectId> = reaching
         .iter()
         .filter(|id| !pages.contains(id))
         .copied()
@@ -3121,7 +3160,44 @@ fn pages_reaching(
             }
         }
     }
-    pages.intersection(&reaching).copied().collect()
+    // A page uses only the nearest definition of each inherited attribute.
+    // Resolve it per page, but inspect a shared direct dictionary just once.
+    let mut inherited_hits = BTreeMap::new();
+    pages
+        .into_iter()
+        .filter(|page| {
+            reaching.contains(page)
+                || HANDED_DOWN.iter().any(|key| {
+                    // A removed definition can be the old owner only.
+                    if let Some(prior) = before.filter(|_| !attribute_changes.is_empty()) {
+                        match crate::pagetree::inherited_entry(prior, *page, key) {
+                            Ok(Some((owner, _))) if attribute_changes.contains(&(owner, *key)) => {
+                                return true
+                            }
+                            Err(_) => return true,
+                            _ => {}
+                        }
+                    }
+                    match crate::pagetree::inherited_entry(whole, *page, key) {
+                        Ok(Some((owner, value))) if owner != *page => {
+                            attribute_changes.contains(&(owner, *key))
+                                || *inherited_hits.entry((owner, key)).or_insert_with(|| {
+                                    named.clear();
+                                    references_in(value, &mut named);
+                                    named.iter().any(|id| {
+                                        reaching
+                                            .range((id.0, 0)..=(id.0, u16::MAX))
+                                            .next()
+                                            .is_some()
+                                    })
+                                })
+                        }
+                        Err(_) => true,
+                        _ => false,
+                    }
+                })
+        })
+        .collect()
 }
 
 /// What a signer writes on the widget of a signature field the document

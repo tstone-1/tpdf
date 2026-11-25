@@ -127,7 +127,8 @@ that the message stays, that no Reload is offered and nothing is reloaded until 
 dismissed, in the mode that asks and in the one that reloads; with the bar empty the
 change is asked about at once, which is the control. The webview cannot write a file,
 so the app prints `[disk-change] rewrite N` and this script appends a PDF comment to the
-copy for each such line (`src/lib/diskchangecheck.ts`). Any PDF:
+copy for each such line (`src/lib/diskchangecheck.ts`). Use a PDF that opens without a
+message, so the empty-bar control can pass:
   uv run scripts/tabs_check.py <checks-binary> testdata/text-heavy.pdf --phase disk-change
 """
 
@@ -188,11 +189,15 @@ def main() -> int:
             subdir = room / "sub"
             subdir.mkdir()
             copies.append(subdir / ".." / first.name)
-        if args.phase in ("sides", "closing"):
+        if args.phase in ("tabs", "sides", "closing"):
             # A third tab, so that a side still has one when its front tab
             # moves, and so that a middle tab has one on each side.
             shutil.copyfile(args.pdf, room / "third.pdf")
             copies.append(room / "third.pdf")
+        if args.phase == "tabs":
+            fourth = room / "fourth.pdf"
+            shutil.copyfile(args.pdf, fourth)
+            copies.append(fourth)
         if args.phase == "compare":
             # A picture of the fixture's first page, with no text: the window
             # has to refuse to compare with it, as `tpdf compare` does.

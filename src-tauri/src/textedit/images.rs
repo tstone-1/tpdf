@@ -251,14 +251,8 @@ fn parameters(doc: &Document, value: &Object) -> Result<(), String> {
         Object::Array(values) if values.len() == 1 => crate::encoding::resolve(doc, &values[0]),
         value => value,
     };
-    for (key, value) in value.as_dict().map_err(|_| invalid())? {
-        match key.as_slice() {
-            b"Predictor" if value.as_i64().ok() == Some(1) => {}
-            b"Colors" | b"Columns" | b"BitsPerComponent" => {
-                value.as_i64().map_err(|_| invalid())?;
-            }
-            _ => return Err(invalid()),
-        }
+    if !filters::no_prediction(value.as_dict().map_err(|_| invalid())?) {
+        return Err(invalid());
     }
     Ok(())
 }

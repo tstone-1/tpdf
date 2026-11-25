@@ -100,8 +100,8 @@ ROWS += [
     Mutation(
         "appendix: let a catalog change redraw every page unnoticed",
         "src/docinfo.rs",
-        "    if catalog_redraws(&signed, &whole, &changed) {",
-        "    if false {",
+        "    if catalog_redraws(&signed, &whole, &changed)\n",
+        "    if false\n",
         "a_catalog_change_that_can_redraw_a_page_touches_every_page",
     ),
     Mutation(

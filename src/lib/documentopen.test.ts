@@ -67,7 +67,10 @@ it("uses the settled session on a fresh open and the same open path for closed t
   const open = functionIn(app, "async function openDocument(");
   expect(open).toMatch(/places\.flush\(\);[\s\S]*await places\.settled\(\);\s*remembered = \(await loadSession\(\)\)\.places;/);
   expect(open).toMatch(/await loadSession\(\)[\s\S]*settlingOpen = !discard;[\s\S]*await settleDocument\([\s\S]*keepActiveTab\(\);[\s\S]*unmountDocument\(\);/);
-  expect(app).toContain("inert={settlingOpen || updateExitHeld}");
+  expect(app).toContain("inert={settlingOpen || updateExitHeld ||");
+  expect(app).toContain("tabs.find(paneLayout.front[slot] ?? NO_VIEW)?.edits === discardingModel");
+  const reload = functionIn(app, "function reloadAnyway(");
+  expect(reload).toMatch(/if \(discard\) discardingModel = edits;[\s\S]*openPath\([\s\S]*\.finally\([\s\S]*discardingModel = null/);
   expect(functionIn(app, "async function reopenClosedTab(")).toContain("await closedTabs.reopen(isOpenTab, openPath)");
 });
 
@@ -78,7 +81,9 @@ it("applies an external location to the view found by the shared path lookup", (
 describe("the other views of a document that was saved", () => {
   it("are pointed at the new handle and the new model, every one of them", () => {
     const twin = () => ({ doc: "old", edits: 1, path: "/a.pdf", ...freshState(), place: null });
-    const twins = [twin(), twin()];
+    const twins = [twin(), twin()] as const;
+    Object.assign(twins[0], { error: "Redaction verified", messageTone: "success", notice: "Saved" });
+    Object.assign(twins[1], { error: "Recover copy", offers: ["saveCopy"], redactedCopyPath: "/old.pdf" });
     repoint(twins, "new", 2);
     expect(twins).toEqual([{ ...twin(), doc: "new", edits: 2 }, { ...twin(), doc: "new", edits: 2 }]);
   });
@@ -466,7 +471,7 @@ it("scopes both disk reload settlements to the model being replaced, including i
   expect(missingFrom(app, ["const model = edits; return onDiskChange({", "settle: () => settleDrafts(model),"])).toEqual([]);
   expect(missingFrom(functionIn(app, "async function openDocument("), [
     "const replacing = override ? tabs.forPath(path, tabs.active) : undefined;",
-    "else await settleDocument((replacing ?? written)?.edits);",
+    "else await settleDocument((replacing ?? written)?.edits ?? (retained ? edits : undefined));",
   ])).toEqual([]);
   expect(missingFrom(functionIn(app, "function settleDrafts("), [
     "return stage.settleDrafts(only, () => edits, settleView);",
@@ -503,7 +508,7 @@ describe("whether anything may be started on a document", () => {
 
   it("greys the menu, the message bar's buttons and refuses a reload by that one answer", () => {
     expect(missingFrom(app, [
-      "const busyNow = $derived(documentsBusy({ opening, documentBusy, copyTaskBusy }));",
+      "const busyNow = $derived(discardingModel !== null || documentsBusy({ opening, documentBusy, copyTaskBusy }));",
       "busyDocument: () => busyNow,",
     ])).toEqual([]);
     expect(missingFrom(functionIn(app, "function reloadAnyway("), ["if (!path || busyNow) return;"])).toEqual([]);

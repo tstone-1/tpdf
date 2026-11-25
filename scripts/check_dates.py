@@ -29,6 +29,7 @@ Exit codes: 0 clean, 1 a date lies ahead, 2 the check could not run.
 """
 
 import datetime
+import os
 import re
 import subprocess
 import sys
@@ -188,18 +189,11 @@ def latest_permitted(
 
 def tracked() -> "list[str]":
     out = subprocess.run(
-        ["git", "-C", str(ROOT), "ls-files"],
+        ["git", "-C", str(ROOT), "ls-files", "-z"],
         capture_output=True,
-        text=True,
-        # Decoded explicitly rather than by the locale codec: git prints a path
-        # outside ASCII verbatim when `core.quotePath` is off, and a cp1252
-        # console would then turn one such file into a UnicodeDecodeError with
-        # no listing at all.
-        encoding="utf-8",
-        errors="replace",
         check=True,
     )
-    return out.stdout.split()
+    return [os.fsdecode(name) for name in out.stdout.split(b"\0") if name]
 
 
 def main(
@@ -250,8 +244,9 @@ def main(
         path = ROOT / name
         try:
             raw = path.read_bytes()
-        except OSError:
-            continue
+        except OSError as why:
+            print(f"[FAIL] could not read tracked file {name}: {why}")
+            return 2
         # A NUL in the first block is git's own definition of binary, and a PDF
         # fixture is not a document anyone reads dates out of.
         if b"\0" in raw[:8000]:

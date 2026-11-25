@@ -1,5 +1,6 @@
 """Controls for the remote checkout and for observations used by platform checks."""
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import date, timedelta
 import io
 import json
 import os
@@ -12,6 +13,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import check_classified
+import check_dates
+import check_doc_comments
 import fetch_pdfium
 import installed_check
 import win_modules
@@ -22,6 +26,44 @@ import review_coverage
 import nvda_check
 import session_check
 import stray
+
+
+class SourceGates(unittest.TestCase):
+    def test_date_in_a_spaced_tracked_filename(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            subprocess.run(["git", "init", "-q", "-b", "main", temp], check=True)
+            name = "Release notes.txt"
+            path = root / name
+            today = date.today()
+            path.write_text((today + timedelta(days=1)).isoformat())
+            subprocess.run(["git", "-C", temp, "add", "--", name], check=True)
+            with patch.object(check_dates, "ROOT", root), patch.object(check_dates, "EXEMPT", {}), redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(check_dates.main(today, today), 1)
+                self.assertIn(name + ":1", output.getvalue())
+                path.write_text(today.isoformat())
+                self.assertEqual(check_dates.main(today, today), 0)
+                path.unlink()
+                self.assertEqual(check_dates.main(today, today), 2)
+
+    def test_command_families_must_match_in_both_directions(self):
+        family = 'id: `edit.sample.${sample}`'
+        single = 'id: "edit.one"'
+        for registered, probed, expected in [(True, True, 0), (True, False, 1), (False, True, 1)]:
+            registry = single + (family if registered else "")
+            harness = "const probes: Probe[] = [" + single + (family if probed else "") + "]; const registered = registry.all()"
+            with patch.object(check_classified, "read", side_effect=[registry, harness]), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(check_classified.main(), expected)
+
+    def test_an_unbound_final_comment_in_typescript_and_svelte(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for name, opening, closing in [("a.ts", "", ""), ("a.svelte", "<script>", "</script>")]:
+                path = Path(temp) / name
+                code = opening + "\n/** Bound */\nconst x = 1;\n"
+                path.write_text(code + closing)
+                self.assertEqual(check_doc_comments.orphans(path), [])
+                path.write_text(code + "/** Detached */\n" + closing)
+                self.assertEqual(check_doc_comments.orphans(path), [(4, "Detached")])
 
 
 class ReviewCoverage(unittest.TestCase):

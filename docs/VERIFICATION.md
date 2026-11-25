@@ -7417,3 +7417,21 @@ The native screen check enters presentation at 150%, brings forward a tab previo
 and remount. The picture check builds two PNGs with distinct physical extents and verifies both
 pages' sizes and order in the saved PDF. Rendering one page at different resolutions preserves
 its physical size when the PNGs carry their density.
+
+## Reload and signature revision checks, 2026-11-25
+
+The macOS tab check held a refused text draft in one pane while closing a
+hidden tab and then the visible tab opposite it. The neighbour mounted and
+the draft remained editable. After confirming Reload, the old document was
+still mounted when the check attempted an edit. Its surface was inert, the
+edit callback did not run and the unrelated pane kept its draft. The tab model
+test also exercises a stale redaction result and a recovery action in separate
+views of a replaced file.
+
+The signature appendix tests compare the states at the signed and current
+revisions. An already-free entry repeated after signing contributes zero new
+removals. Only the page inheriting the changed resource counts when another
+page overrides it. Removing a catalog layer configuration counts as affecting
+both fixture pages, while removing the same unreferenced object counts as
+affecting neither. The compressed cross-reference controls encode the same
+expected free-object numbers as plain Flate and as PNG Up rows.

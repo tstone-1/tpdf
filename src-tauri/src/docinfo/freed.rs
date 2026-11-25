@@ -613,19 +613,35 @@ mod tests {
         assert_eq!(freed(&bytes, 200, 600), Some(vec![6]));
     }
 
-    /// A compressed stream with a predictor, as real writers make them, reads
-    /// as the plain one does. Built through `lopdf`, which is what decodes it.
+    /// Plain Flate and PNG Up both yield the same known set of free objects.
     #[test]
     fn a_deflated_stream_is_decoded() {
+        for predict in [false, true] {
+            check_compressed_entries(predict);
+        }
+    }
+
+    fn check_compressed_entries(predict: bool) {
         // Every third object free, over enough entries that deflating them
         // is worth it to the writer.
         let entries: Vec<u8> = (0..300_u32).map(|at| u8::from(at % 3 != 0)).collect();
-        let mut packed = Stream::new(Dictionary::new(), entries);
+        let (params, encoded) = if predict {
+            let mut previous = 0;
+            let mut rows = Vec::new();
+            for entry in entries {
+                rows.extend([2, entry.wrapping_sub(previous)]);
+                previous = entry;
+            }
+            ("/DecodeParms << /Predictor 12 /Columns 1 >>", rows)
+        } else {
+            ("", entries)
+        };
+        let mut packed = Stream::new(Dictionary::new(), encoded);
         packed.compress().expect("deflates");
         assert!(packed.filters().is_ok_and(|filters| !filters.is_empty()));
         let mut text = format!(
             "999 0 obj\n<< /Type /XRef /Size 1000 /W [1 0 0] /Index [4 300] \
-             /Filter /FlateDecode /Length {} >>\nstream\n",
+             /Filter /FlateDecode {params} /Length {} >>\nstream\n",
             packed.content.len()
         )
         .into_bytes();

@@ -517,7 +517,7 @@ describe("App.svelte sends what arrives on its own through `whereUnasked`", () =
 
   it("holds the disk watch's prompt and its unasked reload back while a message is on screen", () => {
     expect(missingFrom(app, [
-      "if (!current() || !promptUnaskedNow(error)) return false;",
+      "const current = () => doc === openDoc && !opening && !documentBusy && promptUnaskedNow(error);",
     ])).toEqual([]);
   });
 
