@@ -104,6 +104,24 @@ pub(super) fn mark_sites(
     sheet: &[ObjectId],
     marks: &[PlannedMark],
 ) -> Result<Vec<MarkSite>, String> {
+    if marks.is_empty() {
+        return Ok(Vec::new());
+    }
+    // An optimizer can intern identical empty arrays across distinct pages.
+    // Only a list with a single owner is safe to extend in place.
+    let mut seen = std::collections::HashSet::new();
+    let mut shared = std::collections::HashSet::new();
+    for &page in sheet {
+        if let Ok((Some(id), _)) = read
+            .get_dictionary(page)
+            .and_then(|dict| dict.get(b"Annots"))
+            .and_then(|entry| read.dereference(entry))
+        {
+            if !seen.insert(id) {
+                shared.insert(id);
+            }
+        }
+    }
     let mut sites = Vec::with_capacity(marks.len());
     for mark in marks {
         let page = *sheet.get(mark.at as usize).ok_or_else(|| {
@@ -139,7 +157,22 @@ pub(super) fn mark_sites(
             .map_err(|e| said!("page {page:?} is not a dictionary: {e}"))?
             .get(b"Annots")
         {
-            Ok(Object::Reference(array)) => AnnotsSite::ArrayObject(*array),
+            Ok(entry @ Object::Reference(array)) => {
+                let (last, value) = read
+                    .dereference(entry)
+                    .map_err(|e| said!("this page's /Annots is not an array: {e}"))?;
+                let id = last.unwrap_or(*array);
+                if shared.contains(&id) {
+                    AnnotsSite::Inline(
+                        value
+                            .as_array()
+                            .map_err(|e| said!("this page's /Annots is not an array: {e}"))?
+                            .clone(),
+                    )
+                } else {
+                    AnnotsSite::ArrayObject(id)
+                }
+            }
             Ok(Object::Array(entries)) => AnnotsSite::Inline(entries.clone()),
             // Anything else is a page whose `/Annots` is not a list --- a
             // malformed document, and the same answer as having none: a list of
@@ -473,10 +506,8 @@ pub(super) fn bounds(quads: &[[f64; 4]]) -> [f64; 4] {
 /// a reader who highlights a document in order to print it would get a blank
 /// page back.
 ///
-/// `/NM` is the mark's own id. It has to be unique within the page and ours are
-/// unique within the document, which is the stronger property; it is written
-/// because a reader that reopens the file and edits it needs a name for the
-/// annotation that is not its position in an array.
+/// On reopening, the comment reader addresses this annotation by its indirect
+/// object reference in the page's annotation list.
 fn mark_dictionary(
     mark: &PlannedMark,
     page: ObjectId,
@@ -1170,9 +1201,9 @@ pub(super) fn numbers(values: [f64; 4]) -> Object {
 
 /// Writes each planned body over the annotation it names.
 ///
-/// **Every refusal here is about the plan disagreeing with the file**, which is
-/// the case a reader can act on: the document changed under them, or the comment
-/// they edited is gone. None of them is about the text, which is theirs.
+/// FreeText changes also replace the appearance that paints the body. If its
+/// formatting or the replacement characters cannot be drawn, preparation fails
+/// while the reader still has the original and the pending edits.
 ///
 /// The object is named rather than searched for, and that is the point of
 /// `annots::Comment::object` --- a scan-order id could not survive the round
@@ -1204,7 +1235,8 @@ pub(super) fn write_note_edits(
                     "the comment being edited is not in this document any more: {e}"
                 ))
             })?;
-        set_note(&mut incremental.new_document, note)?;
+        let appearance = edited_text_box(incremental.get_prev_documents(), note)?;
+        set_note(&mut incremental.new_document, note, appearance)?;
     }
     Ok(())
 }
@@ -1228,7 +1260,8 @@ pub(super) fn rewrite_note_edits(
     notes: &[crate::edits::PlannedNoteEdit],
 ) -> Result<(), Refusal> {
     for note in notes {
-        set_note(doc, note)?;
+        let appearance = edited_text_box(doc, note)?;
+        set_note(doc, note, appearance)?;
     }
     Ok(())
 }
@@ -1259,6 +1292,7 @@ pub(super) fn discard_notes(
     discards: &[crate::edits::PlannedDiscard],
 ) -> Result<usize, Refusal> {
     let mut doomed = std::collections::HashSet::new();
+    let mut owned_popups = Vec::new();
     for discard in discards {
         let id = (discard.object.0, discard.object.1);
         let dictionary = doc
@@ -1281,13 +1315,185 @@ pub(super) fn discard_notes(
             return Err(said!("that comment is not an annotation").into());
         }
         doomed.insert(id);
+        // A popup is also listed directly on the page. Follow only a mutual
+        // ownership link, so a mistaken /Popup cannot delete another note's window.
+        if let Ok(popup) = dictionary.get(b"Popup").and_then(Object::as_reference) {
+            if doc.get_dictionary(popup).is_ok_and(|window| {
+                window.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Popup")
+                    && window.get(b"Parent").and_then(Object::as_reference).ok() == Some(id)
+            }) {
+                owned_popups.push(popup);
+            }
+        }
     }
     if doomed.is_empty() {
         return Ok(0);
     }
     let taken = doomed.len();
+    doomed.extend(owned_popups);
     crate::pagetree::forget(doc, &doomed).map_err(Refusal::from)?;
     Ok(taken)
+}
+
+/// Ordinary note icons do not depict the body. A FreeText AP does, so prepare
+/// its replacement against the original graph on both save paths.
+fn edited_text_box(
+    doc: &Document,
+    note: &crate::edits::PlannedNoteEdit,
+) -> Result<Option<lopdf::Stream>, Refusal> {
+    let Ok(annot) = doc.get_dictionary(note.object) else {
+        return Ok(None);
+    };
+    if annot.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"FreeText") {
+        return Ok(None);
+    }
+    if !textbox::encodable(&note.body) {
+        return Err(said!(
+            "a text box is written in Helvetica, which cannot draw every character in that text"
+        )
+        .into());
+    }
+    replace_box_text(doc, annot, &note.body)
+        .map(Some)
+        .ok_or_else(|| {
+            said!("The formatting of this saved text box cannot be preserved when editing its text")
+                .into()
+        })
+}
+
+/// Recognize the actual layout this writer has emitted since before it could
+/// revise FreeText. Comparing its old drawing also protects foreign callouts,
+/// borders and styled text from silently becoming plain text boxes.
+fn replace_box_text(doc: &Document, annot: &Dictionary, body: &str) -> Option<lopdf::Stream> {
+    if [
+        b"RC".as_slice(),
+        b"DS",
+        b"RD",
+        b"CL",
+        b"Q",
+        b"Rotate",
+        b"IT",
+    ]
+    .iter()
+    .any(|key| annot.has(key))
+    {
+        return None;
+    }
+    let ap = annot.get_deref(b"AP", doc).ok()?.as_dict().ok()?;
+    if ap.len() != 1 {
+        return None;
+    }
+    let stream = ap.get_deref(b"N", doc).ok()?.as_stream().ok()?;
+    let resources = stream
+        .dict
+        .get_deref(b"Resources", doc)
+        .ok()?
+        .as_dict()
+        .ok()?;
+    let font = resources
+        .get_deref(b"Font", doc)
+        .ok()?
+        .as_dict()
+        .ok()?
+        .get_deref(TEXT_FONT.as_bytes(), doc)
+        .ok()?
+        .as_dict()
+        .ok()?;
+    if font.len() != 4
+        || font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
+        || font.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Type1")
+        || font.get(b"BaseFont").and_then(Object::as_name).ok() != Some(b"Helvetica")
+        || font.get(b"Encoding").and_then(Object::as_name).ok() != Some(b"WinAnsiEncoding")
+    {
+        return None;
+    }
+    let da = std::str::from_utf8(annot.get_deref(b"DA", doc).ok()?.as_str().ok()?).ok()?;
+    if da.len() > 256 {
+        return None;
+    }
+    let mut tokens = da.split_ascii_whitespace();
+    let [Some("/Helv"), Some(size), Some("Tf"), Some(r), Some(g), Some(b), Some("rg"), None] =
+        std::array::from_fn(|_| tokens.next())
+    else {
+        return None;
+    };
+    let size: f64 = size.parse().ok()?;
+    if !size.is_finite()
+        || size <= 0.0
+        || ![r, g, b]
+            .iter()
+            .all(|v| v.parse::<f32>().is_ok_and(|n| (0.0..=1.0).contains(&n)))
+    {
+        return None;
+    }
+    let prefix = format!("/GS0 gs {r} {g} {b} rg {r} {g} {b} RG {OUTLINE_WIDTH} w \n");
+    let decoded = crate::textedit::decode_content_stream(stream, 8 * 1024 * 1024).ok()?;
+    let drawing = std::str::from_utf8(&decoded).ok()?.strip_prefix(&prefix)?;
+    let coords = stream.dict.get(b"BBox").ok()?.as_array().ok()?;
+    let [x0, y0, x1, y1] = coords.as_slice() else {
+        return None;
+    };
+    let rect = [x0, y0, x1, y1].map(|v| v.as_float().map(f64::from));
+    let [Ok(x0), Ok(y0), Ok(x1), Ok(y1)] = rect else {
+        return None;
+    };
+    let rect = [x0, y0, x1, y1];
+    if !rect.iter().all(|v| v.is_finite()) || x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let old = annot.get_deref(b"Contents", doc).ok()?.as_str().ok()?;
+    if old.len() > 4 * textbox::MAX_NOTE_CHARS + 2 {
+        return None;
+    }
+    let old = crate::annots::decode_text_string(old);
+    // Try the page's current turn first for an empty box. A populated box
+    // carries its orientation in its text matrices, even after a page turn.
+    let page = annot.get(b"P").ok()?.as_reference().ok()?;
+    let current = displayed_page(doc, page).turns;
+    for offset in 0..4 {
+        let turns = (current + offset) % 4;
+        let mut expected = String::new();
+        draw_text(&mut expected, &[rect], &old, size, turns);
+        if same_box_layout(drawing, &expected, rect) {
+            let mut content = prefix;
+            draw_text(&mut content, &[rect], body, size, turns);
+            let mut copy = lopdf::Stream::new(stream.dict.clone(), Vec::new());
+            copy.set_plain_content(content.into_bytes());
+            return Some(copy);
+        }
+    }
+    None
+}
+
+/// The stream contains f64 positions, but /BBox stores each corner as f32.
+/// Recognize rounding in the two translation operands of Tm only. Font,
+/// orientation, text, line breaks and every other drawing operation must match.
+fn same_box_layout(drawing: &str, expected: &str, rect: [f64; 4]) -> bool {
+    let tolerance =
+        rect.iter().fold(1.0_f64, |scale, v| scale.max(v.abs())) * f64::from(f32::EPSILON);
+    let mut lines = drawing.lines();
+    for want in expected.lines() {
+        let Some(got) = lines.next() else {
+            return false;
+        };
+        if got == want {
+            continue;
+        }
+        let matrix = |line: &str| {
+            let mut parts = line.strip_suffix(" Tm")?.rsplitn(3, ' ');
+            let y = parts.next()?.parse::<f64>().ok()?;
+            let x = parts.next()?.parse::<f64>().ok()?;
+            Some((parts.next()?.to_owned(), x, y))
+        };
+        let (Some((axes, x, y)), Some((expected_axes, ex, ey))) = (matrix(got), matrix(want))
+        else {
+            return false;
+        };
+        if axes != expected_axes || !((x - ex).abs() <= tolerance && (y - ey).abs() <= tolerance) {
+            return false;
+        }
+    }
+    lines.next().is_none()
 }
 
 /// Writes one planned body over the annotation it names.
@@ -1299,7 +1505,13 @@ pub(super) fn discard_notes(
 /// arbitrary object would otherwise let a caller write `/Contents` onto a page,
 /// a font or the catalog, and `/Contents` means something else entirely on a
 /// page.
-fn set_note(doc: &mut Document, note: &crate::edits::PlannedNoteEdit) -> Result<(), Refusal> {
+fn set_note(
+    doc: &mut Document,
+    note: &crate::edits::PlannedNoteEdit,
+    appearance: Option<lopdf::Stream>,
+) -> Result<(), Refusal> {
+    // A fresh object keeps any other annotation sharing the old AP intact.
+    let replacement = appearance.map(|stream| doc.add_object(stream));
     let object = doc
         .get_object_mut((note.object.0, note.object.1))
         .map_err(|e| {
@@ -1318,6 +1530,9 @@ fn set_note(doc: &mut Document, note: &crate::edits::PlannedNoteEdit) -> Result<
         // Not "has the subtype we expect": any annotation has one, and the
         // check that matters is that this is an annotation at all.
         return Err(said!("that comment is not an annotation").into());
+    }
+    if let Some(stream) = replacement {
+        dictionary.set("AP", dictionary! { "N" => stream });
     }
     dictionary.set("Contents", text_string(&note.body));
     // `/RC` is the same body as rich text, and a viewer that has it shows it
@@ -1530,7 +1745,7 @@ fn appearance_stream(
     states.set("GS0", Object::Reference(state));
     let mut resources = Dictionary::new();
     resources.set("ExtGState", Object::Dictionary(states));
-    // A font, for the one style that draws words. **Only for that style**: a
+    // The text box and stamp both set words in Helvetica. A
     // `/Font` entry on a highlight's resources is dead weight in every saved
     // file, and one of the standard fourteen costs nothing to name but is still
     // a dictionary and a reference per mark.
@@ -1539,7 +1754,7 @@ fn appearance_stream(
     // `/FirstChar`: it is one of the fourteen every reader is required to have,
     // so there is no file to embed and nothing to subset -- which is what keeps
     // this clear of the two font traps this repository already records.
-    if style == Paint::Text {
+    if matches!(style, Paint::Text | Paint::Stamp) {
         let font = doc.add_object(dictionary! {
             "Type" => "Font",
             "Subtype" => "Type1",
@@ -1604,7 +1819,13 @@ fn appearance_stream(
         Paint::Wash => draw_wash(&mut content, quads),
         Paint::Line => draw_line(&mut content, quads, mark.kind, turns),
         Paint::Outline => draw_outline(&mut content, quads),
-        Paint::Text => draw_text(&mut content, quads, mark, turns),
+        Paint::Text => draw_text(
+            &mut content,
+            quads,
+            &mark.note,
+            mark.text_size.unwrap_or(textbox::SIZE),
+            turns,
+        ),
         Paint::Stamp => draw_stamp(&mut content, quads, mark.stamp, turns),
         Paint::Image => {
             if let Some(image) = &mark.image {
@@ -1694,14 +1915,13 @@ fn draw_outline(out: &mut String, quads: &[[f64; 4]]) {
 /// stream disagree with what the overlay shows. The rule is
 /// `viewer.ts`'s exactly --- a line is drawn while its baseline is still
 /// inside the box --- so the two renderers stop at the same line.
-fn draw_text(out: &mut String, quads: &[[f64; 4]], mark: &PlannedMark, turns: u8) {
-    let size = mark.text_size.unwrap_or(textbox::SIZE);
+fn draw_text(out: &mut String, quads: &[[f64; 4]], body: &str, size: f64, turns: u8) {
     let native_per_point = size / textbox::SIZE;
     let inset = textbox::INSET * native_per_point;
     for quad in quads {
         let seen = Upright::of(turns, *quad);
         let width = seen.width - inset * 2.0;
-        let lines = textbox::wrap(&mark.note, size, width.max(native_per_point));
+        let lines = textbox::wrap(body, size, width.max(native_per_point));
         if lines.is_empty() {
             continue;
         }
@@ -2062,9 +2282,8 @@ pub fn link_target(note: &str, pages: usize) -> Result<LinkTarget, String> {
 ///
 /// Three cases, and the middle one is why this is a function rather than three
 /// lines at the call site: the entry may be missing, an inline array, or a
-/// reference to an array object that other pages may also name. The reference is
-/// followed and the array it points at is extended, so the file's own structure
-/// is preserved rather than replaced with an inline copy.
+/// reference to an array object. A private array is extended in place. For a
+/// shared array, `mark_sites` supplies its entries for a page-local copy.
 ///
 /// # Errors
 ///

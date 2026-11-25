@@ -83,6 +83,56 @@ fn long_term(
     )
 }
 
+/// A flat signature form. Signing it adds one filled field, and archiving adds another.
+fn blank_signature_fields(count: usize) -> Vec<u8> {
+    use lopdf::{dictionary, Document, Object};
+    let mut doc = Document::load_mem(&plain_pdf()).expect("plain PDF");
+    let fields: Vec<Object> = (0..count)
+        .map(|i| {
+            doc.add_object(dictionary! {
+                "FT" => "Sig", "T" => Object::string_literal(format!("Vacant{i}")),
+            })
+            .into()
+        })
+        .collect();
+    doc.catalog_mut()
+        .expect("catalog")
+        .set("AcroForm", dictionary! { "Fields" => fields });
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("form");
+    bytes
+}
+
+/// At the reader's field limit, even --force must refuse before replacing the output.
+fn archive_field_limit(report: &mut Report, dir: &Path, pki: &Pki, url: &str, roots: &[Vec<u8>]) {
+    let plain = dir.join("signature-form.pdf");
+    let target = dir.join("archive-form.pdf");
+    for (blanks, fits) in [(31, false), (30, true)] {
+        std::fs::write(&plain, blank_signature_fields(blanks)).expect("form");
+        let signed = dir.join(format!("signed-form-{blanks}.pdf"));
+        let (code, stderr) = signed_by(pki, &plain, &signed, url);
+        report.check("the form has a valid signature", code == 0, &stderr);
+        let asked = pki.paths().len();
+        let prior = b"prior destination";
+        std::fs::write(&target, prior).expect("existing destination");
+        let (code, _, stderr) = long_term(&signed, &target, url, &["--force"], roots);
+        let written = std::fs::read(&target).expect("destination");
+        if fits {
+            report.check(
+                "one available signature field admits the archive",
+                code == 0 && written != prior,
+                &stderr,
+            );
+        } else {
+            report.check(
+                "a full signature form preserves the forced destination and asks nobody for revocation",
+                code == 3 && stderr.contains("32 signature fields") && written == prior && pki.paths().len() == asked,
+                &format!("exit {code}: {stderr}"),
+            );
+        }
+    }
+}
+
 pub(super) fn adds_to_a_signed_document(report: &mut Report) {
     let dir = scratch("long-term-existing");
     let plain = dir.join("plain.pdf");
@@ -173,6 +223,8 @@ pub(super) fn adds_to_a_signed_document(report: &mut Report) {
         pki.paths() == ["/ocsp/signer", "/ocsp/authority"],
         &format!("{:?}", pki.paths()),
     );
+
+    archive_field_limit(report, &dir, &pki, &url, &both);
 
     // Again, on its own result: a further archive, and the first one's
     // authority covered.

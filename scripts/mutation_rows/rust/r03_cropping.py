@@ -1659,7 +1659,7 @@ ROWS += [
         # says "the text box has one" passes equally if everything does.
         "save: put a font in every mark's appearance resources",
         "src/save/marks.rs",
-        "    if style == Paint::Text {",
+        "    if matches!(style, Paint::Text | Paint::Stamp) {",
         "    if true {",
         "a_text_box_draws_its_words_as_winansi_hex_rather_than_a_literal",
     ),

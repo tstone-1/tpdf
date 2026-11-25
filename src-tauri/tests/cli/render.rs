@@ -9,20 +9,27 @@ fn fixture(path: &Path) {
     let tree = doc.new_object_id();
     let stream = doc.add_object(Stream::new(
         dictionary! {},
-        b"1 0 0 rg 10 20 300 400 re f 0 1 0 rg 310 420 300 400 re f 0 0 1 rg 310 20 300 400 re f"
+        b"1 0 1 rg 0 0 650 10 re f 1 0 0 rg 10 20 300 400 re f 0 1 0 rg 310 420 300 400 re f 0 0 1 rg 310 20 300 400 re f"
             .to_vec(),
     ));
     let mut kids = Vec::new();
-    for rotation in [0, 90, 180, 270] {
-        kids.push(Object::Reference(doc.add_object(dictionary! {
+    let crop = vec![10.into(), 20.into(), 610.into(), 820.into()];
+    // Page 5 inherits the same off-origin crop that page 4 states locally.
+    // Both declare their own media box and paint magenta in the trimmed margin.
+    for (index, rotation) in [0, 90, 180, 270, 270].into_iter().enumerate() {
+        let mut page = dictionary! {
             "Type"=>"Page", "Parent"=>tree, "MediaBox"=>vec![0.into(),0.into(),650.into(),850.into()],
-            "CropBox"=>vec![10.into(),20.into(),610.into(),820.into()], "Rotate"=>rotation,
+            "Rotate"=>rotation,
             "Contents"=>stream, "Resources"=>dictionary! {},
-        })));
+        };
+        if index < 4 {
+            page.set("CropBox", Object::Array(crop.clone()));
+        }
+        kids.push(Object::Reference(doc.add_object(page)));
     }
     doc.objects.insert(
         tree,
-        dictionary! {"Type"=>"Pages", "Kids"=>kids, "Count"=>4}.into(),
+        dictionary! {"Type"=>"Pages", "Kids"=>kids, "Count"=>5, "CropBox"=>crop}.into(),
     );
     let catalog = doc.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>tree});
     doc.trailer.set("Root", catalog);
@@ -126,6 +133,21 @@ pub(super) fn renders(report: &mut Report) {
         }
     }
     let before = std::fs::read(&output).unwrap();
+    let (code, _, stderr) = run("5", "144", true);
+    report.check(
+        "an inherited crop on a page with local media matches the locally cropped PNG",
+        code == 0 && std::fs::read(&output).unwrap() == before,
+        &stderr,
+    );
+    if code == 0 {
+        let (width, height, rgba) = pixels(&output);
+        report.check(
+            "the inherited crop excludes the magenta margin",
+            (width, height) == (1600, 1200)
+                && !rgba.chunks_exact(4).any(|px| px == [255, 0, 255, 255]),
+            &format!("{width} x {height}"),
+        );
+    }
     let (code, _, stderr) = run("4", "144", true);
     report.check(
         "repeated rendering is byte-identical",

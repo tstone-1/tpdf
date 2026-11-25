@@ -123,7 +123,7 @@ ROWS += [
         # The OCSP response kept whatever it says: revoked, unknown, forged.
         "longterm: keep an OCSP response without judging it",
         "src/longterm.rs",
-        "            room(&gathered, answer.len())?;\n            judged(subject, &candidates, &material, &by, &host, now)?;\n            gathered.responses.push(answer);",
+        "            room(&gathered, answer.len())?;\n            judged(subject, &name, &candidates, &material, &by, &host, now)?;\n            gathered.responses.push(answer);",
         "            room(&gathered, answer.len())?;\n            gathered.responses.push(answer);",
         "a_revoked_signer_is_refused_and_no_list_is_shopped_for",
     ),
@@ -131,14 +131,14 @@ ROWS += [
         # Shopping: an answer that does not check out, and a list asked instead.
         "longterm: ask the list after an answer that does not check out",
         "src/longterm.rs",
-        "            room(&gathered, answer.len())?;\n            judged(subject, &candidates, &material, &by, &host, now)?;\n            gathered.responses.push(answer);",
-        "            room(&gathered, answer.len())?;\n            if judged(subject, &candidates, &material, &by, &host, now).is_err() {\n                continue;\n            }\n            gathered.responses.push(answer);",
+        "            room(&gathered, answer.len())?;\n            judged(subject, &name, &candidates, &material, &by, &host, now)?;\n            gathered.responses.push(answer);",
+        "            room(&gathered, answer.len())?;\n            if judged(subject, &name, &candidates, &material, &by, &host, now).is_err() {\n                continue;\n            }\n            gathered.responses.push(answer);",
         "an_answer_that_does_not_check_out_is_refused",
     ),
     Mutation(
         "longterm: keep a list without judging it",
         "src/longterm.rs",
-        "            room(&gathered, answer.len())?;\n            judged(subject, &candidates, &material, &by, &host, now)?;\n            gathered.lists.push(answer);",
+        "            room(&gathered, answer.len())?;\n            judged(subject, &name, &candidates, &material, &by, &host, now)?;\n            gathered.lists.push(answer);",
         "            room(&gathered, answer.len())?;\n            gathered.lists.push(answer);",
         # Re-aimed after its first run: for the signer and the authority the
         # worker's reading refuses a revoked list anyway (the named test went

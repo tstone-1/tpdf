@@ -1021,8 +1021,8 @@ MUTATIONS = [
         # the thing it is testing, arriving in the probe written to catch this.
         "crop: fall back to the displayed rectangle for a page with no crop box",
         "src-tauri/src/progressive.rs",
-        "        let Some(crop) = crop else { return media };",
-        "        let Some(crop) = crop else {\n            return [0.0, 0.0, self.width_pt(), self.height_pt()];\n        };",
+        "            return self.effective_box_pt().unwrap_or(media);",
+        "            return [0.0, 0.0, self.width_pt(), self.height_pt()];",
         "the page is the size the file says, read by another library",
         "crop-rotated",
     ),
@@ -1459,9 +1459,8 @@ RUNNERS = {
             "testdata/encodings.pdf",
         ],
     },
-    # The rotated fixture, because that is the page the crop trap needs: with no
-    # `/CropBox` of its own, PDFium answers `FPDFPage_GetCropBox` with the
-    # *displayed* size, and writing that back shrinks the page.
+    # With no /CropBox of its own, GetCropBox returns false. Substituting
+    # the displayed size writes a rotated rectangle back in page coordinates.
     "crop-rotated": {
         "build": [
             "cargo",

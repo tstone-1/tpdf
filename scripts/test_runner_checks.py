@@ -18,9 +18,47 @@ import win_modules
 import run_on_mac
 import run_on_windows as windows
 import mark_check
+import review_coverage
 import nvda_check
 import session_check
 import stray
+
+
+class ReviewCoverage(unittest.TestCase):
+    def test_overlapping_reviews_and_changes_since_a_full_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "src").mkdir()
+            files = {"src/read.ts", "src/edited.ts", "src/skim.ts", "src/new.ts"}
+            for name in files:
+                (root / name).touch()
+            reports = root / "docs" / "reviews"
+            reports.mkdir(parents=True)
+            report = (
+                "**Scope** Clean main at `1234abcd`.\n"
+                "<details><summary>Read in full (2)</summary>\n"
+                "- `src/read.ts`\n- `src/edited.ts`\n</details>\n"
+                "<details><summary>Skimmed or grepped only (1)</summary>\n"
+                "- `src/skim.ts`\n</details>\n"
+            )
+            for day in (21, 22):
+                (reports / f"2026-11-{day}_0900_codebase_deep.md").write_text(report)
+            with patch.object(review_coverage, "ROOT", root), patch.object(
+                review_coverage, "paths_from_git", side_effect=[files, {"src/edited.ts"}, {"src/edited.ts"}]
+            ), patch.object(sys, "argv", ["coverage", "--list", "revisit"]), redirect_stdout(io.StringIO()) as output:
+                review_coverage.main()
+            result = output.getvalue()
+            self.assertIn("Fully read at least once: 2/4 (50.0%)", result)
+            self.assertIn("Full read, matching current contents: 1/4 (25.0%)", result)
+            self.assertIn("Only skimmed or searched: 1/4 (25.0%)", result)
+            self.assertTrue(result.endswith("Application paths (revisit): 1\nsrc/edited.ts\n"))
+
+    def test_a_prior_clean_revision_does_not_certify_a_dirty_review(self):
+        scope = "**Scope** main at `1234abcd` with unstaged edits. The previous review was clean."
+        self.assertIsNone(review_coverage.clean_revision(scope))
+        self.assertIsNone(review_coverage.clean_revision("**Scope** main at `1234abcd`, not clean."))
+        with self.assertRaisesRegex(ValueError, "paths do not match"):
+            review_coverage.inventory("<summary>Read in full (2)</summary>\n- `src/one.ts`\n</details>")
 
 
 class Observations(unittest.TestCase):

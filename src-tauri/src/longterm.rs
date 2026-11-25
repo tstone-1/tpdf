@@ -969,6 +969,7 @@ fn gap_words(gap: Option<crate::revocation::Gap>) -> String {
 /// `now`: kept (`Ok`), or the refusal it is.
 fn judged(
     subject: &Subject,
+    name: &str,
     candidates: &[Certificate],
     material: &crate::revocation::Material,
     by: &str,
@@ -991,16 +992,16 @@ fn judged(
     match answer.standing {
         Status::Good => Ok(()),
         Status::Revoked => Err(Refusal::Revoked {
-            name: subject.name(),
+            name: name.to_owned(),
             at: answer.revoked,
             by: by.to_string(),
         }),
         Status::Unknown => Err(Refusal::Unknown {
-            name: subject.name(),
+            name: name.to_owned(),
             host: host.to_string(),
         }),
         Status::None | Status::Unchecked => Err(Refusal::DoesNotCheck {
-            name: subject.name(),
+            name: name.to_owned(),
             by: by.to_string(),
             why: gap_words(answer.why),
         }),
@@ -1033,6 +1034,23 @@ pub type Fetch<'a> = dyn FnMut(&url::Url, Option<(&str, Vec<u8>)>, &tsa::Limits)
 /// [`Refusal::Written`].
 pub fn gather(
     subjects: &[Subject],
+    certificates: Vec<Vec<u8>>,
+    now: u64,
+    total: Duration,
+    fetch: &mut Fetch<'_>,
+) -> Result<Gathered, Refusal> {
+    gather_named(
+        subjects.iter().map(|subject| (subject, subject.name())),
+        certificates,
+        now,
+        total,
+        fetch,
+    )
+}
+
+/// The existing-signature path includes the affected fields in each certificate's name.
+fn gather_named<'a>(
+    subjects: impl Iterator<Item = (&'a Subject, String)>,
     certificates: Vec<Vec<u8>>,
     now: u64,
     total: Duration,
@@ -1081,11 +1099,11 @@ pub fn gather(
     };
     room(&gathered, 0)?;
 
-    for subject in subjects {
+    for (subject, name) in subjects {
         let responders = responders(&subject.certificate);
         let lists = lists(&subject.certificate);
         if responders.is_empty() && lists.is_empty() {
-            return Err(Refusal::NotPublished(subject.name()));
+            return Err(Refusal::NotPublished(name));
         }
         let mut attempts = Vec::new();
         let mut done = false;
@@ -1128,7 +1146,7 @@ pub fn gather(
             material.response(&answer);
             let by = said!("the OCSP response from {host}");
             room(&gathered, answer.len())?;
-            judged(subject, &candidates, &material, &by, &host, now)?;
+            judged(subject, &name, &candidates, &material, &by, &host, now)?;
             gathered.responses.push(answer);
             done = true;
             break;
@@ -1151,16 +1169,13 @@ pub fn gather(
             let by = said!("the revocation list from {host}");
             // Measured before it is parsed: a list is the large half.
             room(&gathered, answer.len())?;
-            judged(subject, &candidates, &material, &by, &host, now)?;
+            judged(subject, &name, &candidates, &material, &by, &host, now)?;
             gathered.lists.push(answer);
             done = true;
             break;
         }
         if !done {
-            return Err(Refusal::Unanswered {
-                name: subject.name(),
-                attempts,
-            });
+            return Err(Refusal::Unanswered { name, attempts });
         }
     }
     Ok(gathered)

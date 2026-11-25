@@ -1177,6 +1177,22 @@ describe("Viewer geometry on a mixed-size document", () => {
     viewer.destroy();
   });
 
+  it("fits a facing page at the same zoom beside an inserted blank as on its own", () => {
+    const viewer = build3();
+    try {
+      const [first, second] = viewer.pageOrder;
+      viewer.setPages([first!]);
+      viewer.setFit("content");
+      const alone = viewer.currentZoom;
+      viewer.setPages([first!, { ...second!, source: { blank: { width: 2400, height: 800 } } }]);
+      viewer.setSpread({ columns: 2, coverAlone: false, rightToLeft: false, continuous: true });
+      viewer.setFit("content");
+      expect(viewer.currentZoom).toBeCloseTo(alone, 6);
+    } finally {
+      viewer.destroy();
+    }
+  });
+
   it("fits the retained sheet after its page order changes", () => {
     const viewer = new Viewer(dom.root as unknown as HTMLElement, {
       doc: 1, pageCount: 3, pages: [

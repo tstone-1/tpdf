@@ -11212,10 +11212,247 @@ fn a_text_box_draws_its_words_as_winansi_hex_rather_than_a_literal() {
     // that a text box *has* a font passes equally well if every kind does.
     let scratch = Scratch::new("annots-freetext-font-control");
     let (_, plain) = written_appearance(MarkKind::Highlight, &scratch);
-    assert!(
-        font_names(&plain).is_empty(),
-        "only a text box's appearance carries a font"
+    assert!(font_names(&plain).is_empty(), "a highlight needs no font");
+}
+
+#[test]
+fn the_font_selected_by_a_stamps_word_resolves_to_helvetica() {
+    let scratch = Scratch::new("stamp-font-resource");
+    let (doc, stream) = written_appearance(MarkKind::Stamp, &scratch);
+    let bytes = crate::textedit::decode_content_stream(&stream, 4096).expect("appearance bytes");
+    let drawing = lopdf::content::Content::decode(&bytes).expect("stamp drawing");
+    let tf = drawing
+        .operations
+        .iter()
+        .find(|op| op.operator == "Tf")
+        .expect("stamp font");
+    let name = tf.operands[0].as_name().unwrap();
+    let font = stream
+        .dict
+        .get_deref(b"Resources", &doc)
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get_deref(b"Font", &doc)
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get_deref(name, &doc)
+        .unwrap()
+        .as_dict()
+        .unwrap();
+    assert_eq!(
+        font.get(b"BaseFont").unwrap().as_name().unwrap(),
+        b"Helvetica"
     );
+}
+
+fn reopen_both_mark_saves(source: &[u8], plan: &Plan) -> [Document; 2] {
+    let mut appended = source.to_vec();
+    appended.extend(
+        append_update(source.to_vec(), plan, None)
+            .expect("append")
+            .update,
+    );
+    let rewritten = rewrite_update(source, plan, Job::Save, None).expect("rewrite");
+    [appended, rewritten].map(|bytes| Document::load_mem(&bytes).expect("reopen"))
+}
+
+#[test]
+fn a_mark_on_one_page_detaches_its_shared_annotation_array() {
+    let mut doc = Document::load_mem(&two_blank_pages()).unwrap();
+    let pages = ordered_pages(&doc);
+    let list = doc.add_object(Object::Array(Vec::new()));
+    for page in &pages {
+        doc.get_dictionary_mut(*page).unwrap().set("Annots", list);
+    }
+    let mut source = Vec::new();
+    doc.save_to(&mut source).unwrap();
+    let mut plan = plan_of(&[0, 0]);
+    plan.marks = plan_with_mark(one_quad()).marks;
+    for saved in reopen_both_mark_saves(&source, &plan) {
+        let annotations = |page| {
+            saved
+                .get_dictionary(page)
+                .unwrap()
+                .get_deref(b"Annots", &saved)
+                .unwrap()
+                .as_array()
+                .unwrap()
+        };
+        assert!(
+            annotations(pages[1]).is_empty(),
+            "the other page gained a mark"
+        );
+        assert_eq!(annotations(pages[0]).len(), 1);
+        let mark = annotations(pages[0])[0].as_reference().unwrap();
+        assert_eq!(
+            saved
+                .get_dictionary(mark)
+                .unwrap()
+                .get(b"P")
+                .unwrap()
+                .as_reference()
+                .unwrap(),
+            pages[0]
+        );
+    }
+}
+
+#[test]
+fn deleting_a_comment_removes_only_its_own_popup() {
+    let mut doc = Document::load_mem(&document_with_annots(AnnotShape::Absent)).unwrap();
+    let page = ordered_pages(&doc)[0];
+    let mut note_with_popup = || {
+        let note = doc.add_object(existing_note());
+        let popup =
+            doc.add_object(dictionary! { "Subtype" => "Popup", "Parent" => note, "Open" => true });
+        doc.get_dictionary_mut(note).unwrap().set("Popup", popup);
+        (note, popup)
+    };
+    let (remove, window) = note_with_popup();
+    let (keep, other) = note_with_popup();
+    doc.get_dictionary_mut(page).unwrap().set(
+        "Annots",
+        vec![remove.into(), window.into(), keep.into(), other.into()],
+    );
+    let mut source = Vec::new();
+    doc.save_to(&mut source).unwrap();
+    let mut plan = plan_of(&[0]);
+    plan.discards
+        .push(crate::edits::PlannedDiscard { object: remove });
+    let saved =
+        Document::load_mem(&rewrite_update(&source, &plan, Job::Save, None).unwrap()).unwrap();
+    assert!(saved.get_object(remove).is_err());
+    assert!(saved.get_object(window).is_err());
+    let listed = saved
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Annots")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(listed, &[Object::Reference(keep), Object::Reference(other)]);
+    assert_eq!(
+        saved
+            .get_dictionary(other)
+            .unwrap()
+            .get(b"Parent")
+            .unwrap()
+            .as_reference()
+            .unwrap(),
+        keep
+    );
+}
+
+#[test]
+fn editing_a_reopened_text_box_replaces_its_drawn_words_on_both_paths() {
+    let mut creation = plan_of_kind(MarkKind::TextBox, one_quad());
+    creation.marks[0].note = "Draft".into();
+    creation.marks[0].text_size = Some(9.5);
+    // Fractional mouse coordinates and a fractional crop origin exercise the
+    // f64 stream positions versus the serialized f32 /BBox, on a rotated page.
+    creation.marks[0].quads = vec![crate::docmodel::Quad {
+        left: 72.2345,
+        top: 80.3456,
+        right: 310.4567,
+        bottom: 140.5678,
+    }];
+    let mut original = Document::load_mem(&document_with_annots(AnnotShape::Absent)).unwrap();
+    let page = ordered_pages(&original)[0];
+    let props = original.get_dictionary_mut(page).unwrap();
+    props.set(
+        "CropBox",
+        vec![0.1234.into(), 0.2345.into(), 600.into(), 780.into()],
+    );
+    props.set("Rotate", 90);
+    let mut bytes = Vec::new();
+    original.save_to(&mut bytes).unwrap();
+    let written = rewrite_update(&bytes, &creation, Job::Save, None).unwrap();
+    let mut doc = Document::load_mem(&written).unwrap();
+    let id = doc
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Annots")
+        .unwrap()
+        .as_array()
+        .unwrap()[0]
+        .as_reference()
+        .unwrap();
+    let mut source = Vec::new();
+    doc.save_to(&mut source).unwrap();
+    let mut edit = plan_of(&[0]);
+    edit.notes.push(crate::edits::PlannedNoteEdit {
+        object: id,
+        body: "Final".into(),
+        made: String::new(),
+    });
+    for saved in reopen_both_mark_saves(&source, &edit) {
+        let box_ = saved.get_dictionary(id).unwrap();
+        assert_eq!(box_.get(b"Contents").unwrap().as_str().unwrap(), b"Final");
+        let stream = box_
+            .get_deref(b"AP", &saved)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get_deref(b"N", &saved)
+            .unwrap()
+            .as_stream()
+            .unwrap();
+        let drawing = lopdf::content::Content::decode(
+            &crate::textedit::decode_content_stream(stream, 4096).unwrap(),
+        )
+        .unwrap();
+        let shown: Vec<_> = drawing
+            .operations
+            .iter()
+            .filter(|op| op.operator == "Tj")
+            .map(|op| op.operands[0].as_str().unwrap())
+            .collect();
+        assert_eq!(shown, vec![b"Final".as_slice()]);
+        let matrix = drawing
+            .operations
+            .iter()
+            .find(|op| op.operator == "Tm")
+            .unwrap();
+        let axes: Vec<_> = matrix.operands[..4]
+            .iter()
+            .map(|v| v.as_float().unwrap())
+            .collect();
+        assert_eq!(axes, vec![0., 1., -1., 0.]);
+        let font = drawing
+            .operations
+            .iter()
+            .find(|op| op.operator == "Tf")
+            .unwrap();
+        assert_eq!(font.operands[1].as_float().unwrap(), 9.5);
+    }
+
+    // A custom appearance may draw additional text or graphics. A body edit
+    // cannot discard those or leave the old drawing beside the new body.
+    let ap = doc
+        .get_dictionary(id)
+        .unwrap()
+        .get(b"AP")
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"N")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = doc.get_object_mut(ap).unwrap().as_stream_mut().unwrap();
+    let mut bytes = crate::textedit::decode_content_stream(stream, 4096).unwrap();
+    bytes.extend_from_slice(b"0 0 5 5 re S\n");
+    stream.set_plain_content(bytes);
+    let mut foreign = Vec::new();
+    doc.save_to(&mut foreign).unwrap();
+    let error = append_update(foreign.clone(), &edit, None).expect_err("unsupported drawing");
+    assert!(error.message.contains("formatting"));
+    assert!(rewrite_update(&foreign, &edit, Job::Save, None)
+        .unwrap_err()
+        .message
+        .contains("formatting"));
 }
 
 /// The names in an appearance stream's `/Resources /Font`, if it has any.

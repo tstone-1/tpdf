@@ -11,6 +11,7 @@ const n = (count: string | undefined, one: string, many: string): string =>
   count === "1" ? one : many;
 
 export default {
+  "The formatting of this saved text box cannot be preserved when editing its text": "Die Formatierung dieses gespeicherten Textkastens kann bei einer Textänderung nicht beibehalten werden.",
   "Invalid text size in save plan": "Ungültige Schriftgröße im Speicherplan",
   "Cannot read the page attribute /{key}: {e}": "Das Seitenattribut /{key} kann nicht gelesen werden: {e}",
   "The page has no usable media box": "Die Seite hat keinen verwendbaren Medienrahmen",

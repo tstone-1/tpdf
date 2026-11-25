@@ -527,20 +527,8 @@ export class Scroller {
    * which carries the reasoning and the failure it was written for.
    */
   private readonly backoff = new Backoff();
-  /**
-   * Whether the document's file was truncated on disk under this scroller.
-   *
-   * A latch, and one that is never cleared: it is set from a 410, which the
-   * backend serves only after it has stopped being able to build a worker that
-   * could answer. Reopening the file is what recovers, and that builds a new
-   * scroller.
-   *
-   * It gates `send` rather than the frame loop, so what is already painted stays
-   * painted. That is not politeness --- those tiles are the last true picture of
-   * the document there will be, and clearing them would replace something
-   * correct with a blank page.
-   */
-  private gone = false;
+  /** Source handles that returned 410. Previously painted tiles remain usable. */
+  private readonly goneSources = new Set<number>();
   /**
    * Whether this scroller is still alive, for the tile arrivals to consult.
    *
@@ -1891,16 +1879,11 @@ export class Scroller {
    * Printed on the first failure only, because the reason does not change
    * between retries and the retries go on for as long as the document is open.
    */
-  private noteFailure(id: string, reason: unknown): void {
+  private noteFailure(id: string, doc: number, reason: unknown): void {
     this.stats.failed++;
-    // Not a tile that failed --- a document that is gone. Backing this one off
-    // would schedule a retry of something the backend has already established
-    // can never succeed, and every retry is another refusal. The latch stops
-    // this scroller asking again at all, and reports once: the condition is a
-    // property of the document, so N failing tiles are one piece of news.
     if (reason instanceof DocumentGone) {
-      if (!this.gone) {
-        this.gone = true;
+      if (!this.goneSources.has(doc)) {
+        this.goneSources.add(doc);
         this.opts.onGone?.(reason.message);
       }
       return;
@@ -1934,7 +1917,7 @@ export class Scroller {
    * is, and once the document's bytes are gone.
    */
   tileSource(slot: number): TileSource | undefined {
-    const source = this.gone ? undefined : this.addressOf(slot);
+    const source = this.addressOf(slot);
     if (source === undefined) return undefined;
     return {
       doc: source.doc,
@@ -1958,7 +1941,7 @@ export class Scroller {
   }
 
   /**
-   * Which document and page a slot draws.
+   * Which available document and page a slot draws. A source that returned 410 has no address.
    *
    * `undefined` for a slot that is not in the document **and for a page tpdf
    * made**, and nothing asks for a tile in either case. The second is the
@@ -1976,23 +1959,11 @@ export class Scroller {
    */
   private addressOf(slot: number): PageAddress | undefined {
     const view = this.order[slot];
-    return view === undefined ? undefined : addressOf(view, this.opts.doc);
+    const source = view && addressOf(view, this.opts.doc);
+    return source && !this.goneSources.has(source.doc) ? source : undefined;
   }
 
   private send(key: TileKey): void {
-    // The document's bytes are gone; there is nothing any tile request can do
-    // but be refused.
-    //
-    // Gated here *and* in `requestPlaceholder`, because there are two request
-    // paths and not one. This comment claimed there was only this one, the test
-    // counted three requests where it expected two, and the placeholder was the
-    // third --- a tier-1 render of every page the reader scrolls onto, each one
-    // a refusal. Gating a "single choke point" that is not the only choke point
-    // looks exactly like gating the real thing.
-    if (this.gone) return;
-    // A slot with no page behind it. Reachable while a state reply is in flight,
-    // and the honest answer is to render nothing rather than to guess a page
-    // number --- the next frame lays out the order that has arrived by then.
     const source = this.addressOf(key.page);
     if (source === undefined) return;
     const id = keyOf(key);
@@ -2059,7 +2030,7 @@ export class Scroller {
       )
       .catch((reason: unknown) => {
         this.inFlight.delete(id);
-        this.noteFailure(id, reason);
+        this.noteFailure(id, source.doc, reason);
       });
   }
 
@@ -2149,7 +2120,6 @@ export class Scroller {
    * alternative, blocking on it, would hide exactly that cost.
    */
   private requestPlaceholder(page: number, now: number): void {
-    if (this.gone) return;
     const source = this.addressOf(page);
     if (source === undefined) return;
     const id = `p${page}`;
@@ -2217,7 +2187,7 @@ export class Scroller {
       )
       .catch((reason: unknown) => {
         this.inFlight.delete(id);
-        this.noteFailure(id, reason);
+        this.noteFailure(id, source.doc, reason);
       });
   }
 

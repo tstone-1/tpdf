@@ -131,13 +131,21 @@ fn an_append_to_a_read_only_file_is_refused_before_the_close() {
     assert_eq!(mode_for_source(&plan, &path), Mode::Append, "the control");
     let before = std::fs::read(&path).expect("read");
 
-    let why = read_only(&path, || append_ready(&path, &plan)).expect_err("must refuse");
-
-    assert!(
-        why.message.contains("cannot save over"),
-        "the refusal names the file it cannot write: {}",
-        why.message
-    );
+    let (writable, result) = read_only(&path, || {
+        let writable = std::fs::OpenOptions::new().write(true).open(&path).is_ok();
+        (writable, append_ready(&path, &plan))
+    });
+    if writable {
+        // Privileged Unix processes can open the file despite its mode bits.
+        result.expect("a writable file passes preflight");
+    } else {
+        let why = result.expect_err("must refuse");
+        assert!(
+            why.message.contains("cannot save over"),
+            "the refusal names the file it cannot write: {}",
+            why.message
+        );
+    }
     assert_eq!(std::fs::read(&path).expect("read"), before);
 }
 

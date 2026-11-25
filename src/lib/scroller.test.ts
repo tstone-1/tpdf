@@ -1081,6 +1081,26 @@ describe("Scroller when the page order changes", () => {
     expect(asked).toContainEqual(expect.objectContaining({ doc: 1, page: 0 }));
   });
 
+  it("continues rendering imported pages after the primary file is lost", async () => {
+    tiles.fetchTile.mockImplementation(({ doc }) =>
+      doc === 1 ? Promise.reject(new DocumentGone("primary file changed")) : new Promise(() => {}),
+    );
+    scroller.frame(0, performance.now());
+    await settle();
+    expect(scroller.tileSource(0)).toBeUndefined();
+
+    scroller.setPages([
+      { id: pageId(4), source: { imported: { source: 1, page: 5 } }, turns: 0, from: 40 },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+    ]);
+    tiles.fetchTile.mockClear();
+    scroller.frame(0, performance.now());
+    const sources = tiles.fetchTile.mock.calls.map(([request]) => request.doc);
+    expect(sources).toEqual([40, 40]); // placeholder and full-resolution tile
+    expect(scroller.tileSource(0)).toMatchObject({ doc: 40, page: 5 });
+    expect(scroller.tileSource(1)).toBeUndefined();
+  });
+
   it("asks for nothing for an imported page nobody joined to its handle", () => {
     // `withSources` not having run is a defect upstream, and the answer to it
     // is no picture rather than page 0 of the opened file in its place.

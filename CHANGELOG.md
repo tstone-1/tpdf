@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.15] - Unreleased
 
+- The viewer honors inherited crops on pages that declare their own paper size. Fit Content skips inserted blank sheets, and imported pages remain available if the original file is truncated.
+- Editing a saved tpdf text box updates its visible words. Marks stay on the selected page when pages share an annotation list, stamps carry their font, and deleting a note also removes its popup.
+- Long-term archiving checks that there is room for the archive timestamp before contacting responders or replacing the output. Revocation lookup errors identify the affected signature fields.
+
 - Refreshing Windows certificate trust uses the same document bytes throughout. Signature properties distinguish unreadable key usage and invalid byte ranges, and report how many certificate chains still lack a trusted root.
 - Incomplete signature and attachment lists now explain their limits. Attachment export results stay with the originating pane. Properties keeps keyboard focus while open, and shortened page labels no longer produce exact-match hints.
 - Concurrent Linux certificate imports preserve both entries, and the command line explains when an imported certificate cannot sign.

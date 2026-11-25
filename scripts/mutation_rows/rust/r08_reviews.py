@@ -1404,8 +1404,8 @@ ROWS += [
     Mutation(
         "existing: ask about one certificate once for every signature that names it",
         "src/longterm/existing.rs",
-        "            if !subjects.iter().any(|s| der(&s.certificate) == this) {",
-        "            if true {",
+        "                .find(|s| s.subject.certificate == subject.certificate)",
+        "                .find(|_| false)",
         "every_signature_of_a_document_is_covered_and_each_certificate_asked_once",
     ),
     Mutation(

@@ -985,6 +985,16 @@ impl RawPage<'_> {
         (box_pt[0], box_pt[1])
     }
 
+    /// The media box declared directly on this page in page coordinates.
+    pub fn media_pt(&self) -> Option<[f32; 4]> {
+        let (mut l, mut b, mut r, mut t) = (0f32, 0f32, 0f32, 0f32);
+        let ok = unsafe {
+            self.bindings
+                .FPDFPage_GetMediaBox(self.handle, &mut l, &mut b, &mut r, &mut t)
+        };
+        normalised(ok != 0, [l, b, r, t])
+    }
+
     /// The page's visible box in the page's **own** space, y upwards.
     ///
     /// `/CropBox` intersected with `/MediaBox`, which is what §14.11.2 says a
@@ -995,9 +1005,10 @@ impl RawPage<'_> {
     ///
     /// **The fallback is the dangerous part of this function**, and it is the
     /// last resort rather than the common path for a reason worth stating.
-    /// `FPDFPage_GetCropBox` returns *false* for a page with no `/CropBox` ---
-    /// correctly; there is none to report --- and the version of this that fell
-    /// back to `[0, 0, width_pt(), height_pt()]` was handing back the page's
+    /// `FPDFPage_GetCropBox` reads only the page dictionary. When a local
+    /// crop is absent, the effective box can still include an inherited crop.
+    /// An earlier version fell
+    /// back to `[0, 0, width_pt(), height_pt()]` and handed back the page's
     /// **displayed** rectangle where a caller needed one in the page's own space.
     ///
     /// On an unrotated page those are the same four numbers, so thirteen of the
@@ -1013,15 +1024,6 @@ impl RawPage<'_> {
     /// corner is `(0, 0)` in both frames. A fallback is in the coordinate system
     /// of whoever wrote it, and the second consumer is where that stops being
     /// invisible.
-    pub fn media_pt(&self) -> Option<[f32; 4]> {
-        let (mut l, mut b, mut r, mut t) = (0f32, 0f32, 0f32, 0f32);
-        let ok = unsafe {
-            self.bindings
-                .FPDFPage_GetMediaBox(self.handle, &mut l, &mut b, &mut r, &mut t)
-        };
-        normalised(ok != 0, [l, b, r, t])
-    }
-
     pub fn crop_pt(&self) -> [f32; 4] {
         let (mut left, mut bottom, mut right, mut top) = (0f32, 0f32, 0f32, 0f32);
         // SAFETY: `self.handle` is non-null for the lifetime of `self`, and the
@@ -1042,7 +1044,11 @@ impl RawPage<'_> {
             // note above --- so it is the last resort rather than a fallback.
             return crop.unwrap_or([0.0, 0.0, self.width_pt(), self.height_pt()]);
         };
-        let Some(crop) = crop else { return media };
+        let Some(crop) = crop else {
+            // GetCropBox reads only the page dictionary. Its parent can supply
+            // a crop even when the page declares its own media box.
+            return self.effective_box_pt().unwrap_or(media);
+        };
         let shown = [
             crop[0].max(media[0]),
             crop[1].max(media[1]),
@@ -1059,6 +1065,24 @@ impl RawPage<'_> {
         } else {
             media
         }
+    }
+
+    /// PDFium's intersection of the effective media and crop boxes, in page
+    /// coordinates before rotation. Both boxes can come from a page-tree ancestor.
+    fn effective_box_pt(&self) -> Option<[f32; 4]> {
+        let mut rect = FS_RECTF {
+            left: 0.0,
+            bottom: 0.0,
+            right: 0.0,
+            top: 0.0,
+        };
+        // SAFETY: the page is live and the rectangle is writable for the call.
+        let ok = unsafe {
+            self.bindings
+                .FPDF_GetPageBoundingBox(self.handle, &mut rect)
+        };
+        let bounds = normalised(ok != 0, [rect.left, rect.bottom, rect.right, rect.top])?;
+        (bounds[2] > bounds[0] && bounds[3] > bounds[1]).then_some(bounds)
     }
 
     /// Replaces the page's `/CropBox` for as long as this page stays loaded.

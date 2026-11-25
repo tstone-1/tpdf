@@ -478,6 +478,37 @@ fn revocation_data_that_cannot_be_had_writes_nothing() {
     }
 }
 
+#[test]
+fn revocation_refusals_name_the_fields_that_use_the_certificate() {
+    let first = Pki::start(good());
+    let revoked = Pki::start(Plan {
+        signer_ocsp: Some(Serve::Revoked),
+        ..good()
+    });
+    // These certificates have the same common name but name different responders.
+    let key = Soft::p256(revoked.signer.seed);
+    let mut trusted = roots(&first);
+    trusted.extend(roots(&revoked));
+    for (original, fields) in [
+        (untimestamped(&first), "for signature field Signature2"),
+        (
+            untimestamped(&revoked),
+            "for signature fields Signature1, Signature2",
+        ),
+    ] {
+        let original = signed_again(original, &revoked.signer.certificate, &revoked.chain, &key);
+        let previous = revoked.paths().len();
+        let why =
+            added_by(&original, &trusted, &first.tsa, &crate::save::Here).expect_err("revoked");
+        let message = why.sentence();
+        assert!(
+            message.contains(fields) && message.contains("has been revoked"),
+            "{message}"
+        );
+        assert_eq!(&revoked.paths()[previous..], ["/ocsp/signer"]);
+    }
+}
+
 /// The archive timestamp must come from an authority this computer trusts
 /// for timestamping, or it would be sealed intact and attest nothing.
 #[test]

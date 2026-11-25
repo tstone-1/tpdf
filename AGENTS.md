@@ -304,6 +304,9 @@ no rule about how often to release: the maintainer decides
 one. `BUILD.md` names that one command and deliberately does not repeat the commands
 underneath it.
 
+After deep reviews, report `python3 scripts/review_coverage.py` full-read and current
+percentages. Its `--list remaining` and `--list revisit` identify the next files.
+
 `types` temporarily mutates the working tree. Run other compilers/tests, including
 `check_windows.py`, only after it finishes.
 

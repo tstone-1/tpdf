@@ -65,7 +65,7 @@ use der::{Decode as _, Encode as _};
 use x509_cert::Certificate;
 
 use super::{
-    archived, chains_good, gather, leaves_good, signed_data, signer_of, token_of, unvouched,
+    archived, chains_good, gather_named, leaves_good, signed_data, signer_of, token_of, unvouched,
     walked, Archive, Fetch, Leg, Subject, Vouched, Whose, MAX_SUBJECTS, TOTAL,
 };
 use crate::docinfo::Signature;
@@ -97,6 +97,8 @@ pub enum Refusal {
     /// Not every signature field, or not every signature's value, could be
     /// read.
     Incomplete,
+    /// The archive timestamp would exceed the number of signature fields tpdf reads.
+    NoArchiveField,
     /// The document is certified with no changes permitted: by the signature
     /// in this field, or --- for `None` --- by a certification that is no
     /// field of the form.
@@ -173,6 +175,11 @@ impl Refusal {
                      that the data would cover them all"
                 )
             }
+            Refusal::NoArchiveField => said!(
+                "this document already has {limit} signature fields, so tpdf could not read \
+                 back an added archive timestamp",
+                limit = crate::docinfo::MAX_SIGNATURES
+            ),
             Refusal::Certified(Some(field)) => said!(
                 "the signature {field} certifies this document with no changes permitted, and \
                  tpdf appends nothing to such a document: how readers judge validation data \
@@ -335,7 +342,7 @@ fn bounded(survey: &crate::sign_dss::Survey) -> Result<(), Refusal> {
 /// [`Refusal::Full`].
 fn room(
     survey: &crate::sign_dss::Survey,
-    subjects: &[Subject],
+    subjects: &[FieldSubject],
     carried: &[Vec<u8>],
 ) -> Result<(), Refusal> {
     let [certificates, responses, lists] = survey.held;
@@ -376,6 +383,9 @@ fn held(survey: &crate::sign_dss::Survey) -> Result<Vec<(&Signature, &[u8])>, Re
     }
     if signed.is_empty() {
         return Err(Refusal::Unsigned);
+    }
+    if survey.signatures.len() >= crate::docinfo::MAX_SIGNATURES {
+        return Err(Refusal::NoArchiveField);
     }
     // The catalog's own certification, which need not be one of the fields:
     // the level a further signature field is refused by when the document
@@ -565,6 +575,24 @@ fn plan_one(
     walked(&legs, &everyone).map_err(about)
 }
 
+struct FieldSubject {
+    subject: Subject,
+    fields: Vec<String>,
+}
+
+impl FieldSubject {
+    fn name(&self) -> String {
+        let certificate = self.subject.name();
+        match self.fields.as_slice() {
+            [field] => said!("{certificate} for signature field {field}"),
+            fields => said!(
+                "{certificate} for signature fields {fields}",
+                fields = fields.join(", ")
+            ),
+        }
+    }
+}
+
 /// What to ask about for every signature of the document, each certificate
 /// once, and every certificate to carry.
 ///
@@ -577,7 +605,7 @@ fn plan(
     store: &[Vec<u8>],
     now: u64,
     vouch: &VouchFor<'_>,
-) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
+) -> Result<(Vec<FieldSubject>, Vec<Vec<u8>>), Refusal> {
     plan_within(held, store, now, vouch, MAX_SUBJECTS)
 }
 
@@ -589,22 +617,28 @@ fn plan_within(
     now: u64,
     vouch: &VouchFor<'_>,
     most: usize,
-) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
-    let der = |certificate: &Certificate| certificate.to_der().unwrap_or_default();
+) -> Result<(Vec<FieldSubject>, Vec<Vec<u8>>), Refusal> {
     // The `/DSS`'s certificates, parsed once for every signature's walk.
     let store: Vec<(Vec<u8>, Certificate)> = store
         .iter()
         .filter_map(|der| Some((der.clone(), Certificate::from_der(der).ok()?)))
         .collect();
-    let mut subjects: Vec<Subject> = Vec::new();
+    let mut subjects: Vec<FieldSubject> = Vec::new();
     let mut carried: Vec<Vec<u8>> = Vec::new();
     for (signature, value) in held {
         let (asked, carry) =
             plan_one(&signature.field, &signature.kind, value, &store, now, vouch)?;
         for subject in asked {
-            let this = der(&subject.certificate);
-            if !subjects.iter().any(|s| der(&s.certificate) == this) {
-                subjects.push(subject);
+            if let Some(existing) = subjects
+                .iter_mut()
+                .find(|s| s.subject.certificate == subject.certificate)
+            {
+                existing.fields.push(signature.field.clone());
+            } else {
+                subjects.push(FieldSubject {
+                    subject,
+                    fields: vec![signature.field.clone()],
+                });
             }
         }
         for certificate in carry {
@@ -835,7 +869,14 @@ pub fn add(
     }
     let (subjects, certificates) = plan(&held, &survey.store, now, vouch)?;
     room(&survey, &subjects, &certificates)?;
-    let gathered = gather(&subjects, certificates, now, TOTAL, fetch).map_err(whole)?;
+    let gathered = gather_named(
+        subjects.iter().map(|s| (&s.subject, s.name())),
+        certificates,
+        now,
+        TOTAL,
+        fetch,
+    )
+    .map_err(whole)?;
     let extended = worker
         .validation(original, &gathered)
         .map_err(|why| whole(super::Refusal::Written(why)))?;

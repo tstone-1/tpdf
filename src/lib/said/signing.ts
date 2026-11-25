@@ -520,6 +520,10 @@ export default {
     "die Signaturen dieses Dokuments nennen mehr als {MAX_SUBJECTS} Zertifikate, nach denen zu fragen wäre, mehr als tpdf in einem Durchgang fragt",
   "this document already carries as much validation data as tpdf reads, so tpdf could not read back what it would add":
     "dieses Dokument enthält schon so viele Validierungsdaten, wie tpdf liest, daher könnte tpdf nicht zurücklesen, was es hinzufügen würde",
+  "this document already has {limit} signature fields, so tpdf could not read back an added archive timestamp":
+    "dieses Dokument hat bereits {limit} Signaturfelder, daher könnte tpdf einen hinzugefügten Archivzeitstempel nicht zurücklesen",
+  "{certificate} for signature field {field}": "{certificate} für das Signaturfeld {field}",
+  "{certificate} for signature fields {fields}": "{certificate} für die Signaturfelder {fields}",
   "for the signature {field}: {why}": "für die Signatur {field}: {why}",
   "tpdf's own check of the document with the data added did not pass: the signature {field} {what}":
     "tpdfs eigene Prüfung des Dokuments mit den hinzugefügten Daten ist fehlgeschlagen: Die Signatur {field} {what}",

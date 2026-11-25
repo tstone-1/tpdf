@@ -824,8 +824,8 @@ ROWS += [
         # has in mind leaves it alive.
         "save: prune the page's list instead of forgetting the object",
         "src/save/marks.rs",
-        "    let taken = doomed.len();\n    crate::pagetree::forget(doc, &doomed).map_err(Refusal::from)?;",
-        "    let taken = doomed.len();\n    for id in &doomed {\n        doc.objects.remove(id);\n    }",
+        "    let taken = doomed.len();\n    doomed.extend(owned_popups);\n    crate::pagetree::forget(doc, &doomed).map_err(Refusal::from)?;",
+        "    let taken = doomed.len();\n    doomed.extend(owned_popups);\n    for id in &doomed {\n        doc.objects.remove(id);\n    }",
         "a_deleted_comment_leaves_the_page_and_leaves_no_bytes_behind",
     ),
     Mutation(

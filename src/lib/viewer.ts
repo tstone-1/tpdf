@@ -3049,6 +3049,7 @@ export class Viewer {
    * change to inverting) is measured again and the old answer goes with it.
    */
   private inkOf(page: number): InkBox | null | undefined {
+    if (this.pages.madeSizeOf(page)) return null; // An inserted blank has no bitmap to wait for.
     const bitmap = this.scroller.placeholderFor(page);
     if (!bitmap) return undefined;
     if (this.inkCache.has(bitmap)) return this.inkCache.get(bitmap) ?? null;

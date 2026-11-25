@@ -11663,9 +11663,11 @@ rather than the call.
 Two further notes, because the first diagnosis of this was wrong and recorded as a trap
 before being checked:
 
-- **PDFium behaved correctly throughout.** `FPDFPage_GetCropBox` returns *false* for a page
-  with no `/CropBox` — there is none to report — and answers in page space when there is
-  one (`links-cropped.pdf`'s `[50 50 545 742]`). The first write-up of this entry blamed the
+- `FPDFPage_GetCropBox` returns *false* when the page dictionary has no local
+  `/CropBox`, even if its parent declares one. With a local media box, use
+  `FPDF_GetPageBoundingBox` for the effective crop. The CLI render fixture puts the
+  same off-origin crop on a page and its parent and compares their PNGs. A local
+  crop is returned in page coordinates (`links-cropped.pdf`'s `[50 50 545 742]`). The first write-up of this entry blamed the
   library for "answering with the displayed rectangle", which is what the *fallback* did.
   The evidence that settled it was reading `ok` separately from the box, on a page nothing
   had yet written to; every earlier reading had been taken through a code path that had
