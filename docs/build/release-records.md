@@ -2,7 +2,35 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
-**26.11.15 verification, 2026-11-25.** The macOS and Windows window suites each
+**26.11.15 verification and publication, 2026-11-26.** The stable tag points to
+`b61e295f`. All three CI jobs (45767493008) and Audit (45767493019) passed.
+The rehearsal (45767360422) and stable build (45771531686) each passed the
+packaged CLI and Python checks on macOS, Windows and Linux.
+
+All eight downloaded draft assets matched their SHA-256 digests. The signed
+updater packages verified against the release key, and all four platform
+entries in `latest.json` matched their signature files. The signed macOS app
+passed Gatekeeper and notarization checks. Its window opened, and OCR read
+the expected fixture text from the packaged renderer's output. Screen capture
+was unavailable for a visual check of that window. The timestamped Windows
+installer passed all 26 installation, launch and uninstall checks. After
+publication, all eight download URLs returned HTTP 200 without credentials,
+and the public updater manifest matched the draft byte for byte.
+
+On their first launch just after publication, 26.11.14 reported `current`
+on both macOS (107 ms) and Windows (209 ms). On their second launch both copies
+offered 26.11.15, installed it and reopened the original document. The macOS
+update passed 12/12 checks and the Windows update passed 18/18.
+The interrupted-download test passed 33/33 on Windows. It kept the edits and
+installed 26.11.15 on the second attempt. Its control detected both deliberately
+applied rotations, and all other checks passed.
+
+The online Homebrew audit detected the missing Ventura minimum in the cask.
+The corrected cask at `216ba9f` passed the online audit and livecheck reported
+26.11.15. All three WinGet manifests passed Windows validation and were
+submitted at `99417e37` in [pull request 489823](https://github.com/microsoft/winget-pkgs/pull/489823).
+
+Pre-release verification started on 2026-11-25. The macOS and Windows window suites each
 passed all 19 checks. Windows passed 3,774 library tests and 788 CLI checks, with 12 library
 tests ignored and four CLI checks skipped. The Windows cross-build passed.
 All 39 macOS gates passed. The macOS disk image and Windows installer each
@@ -19,6 +47,11 @@ the specific refusal for a page object. This caught a mutation that previously
 passed when the rewrite failed for a different reason. Both Rust lockfile audits
 passed with the documented exceptions. The npm production audit found no
 advisories, and the PDFium pin matched the stable branch.
+
+After publication the wider `--since v26.11.14 --resume` mutation runs started
+for Rust, the frontend and the viewer. The Rust run selected 2,994 mutations
+and the frontend run selected 1,511. Their final results were pending when
+this record was written.
 
 WebView2 denied a second synthetic clipboard write after the first copy passed.
 The crop check now saves a separate PNG, opens it and compares its dimensions
