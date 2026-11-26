@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.15] - 2026-11-25
+## [26.11.15] - 2026-11-26
 
 - Crop to content preserves the physical margin on scaled pages and asks you to save pending page artwork before measuring. Tall pages receive size-bounded previews.
 - Form placement and radio properties account for pending renames, removals and choices before saving.

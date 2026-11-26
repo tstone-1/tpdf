@@ -25,9 +25,11 @@ The crop check now saves a separate PNG, opens it and compares its dimensions
 with the tile requested under the page's exact crop. All three fixtures passed
 on macOS and Windows, including the last page of the 775-page fixture.
 
-The Windows page-copy fixture exported an enhanced metafile. The pre-tag check
-still requires pasting it into Windows PowerPoint, ungrouping it and verifying
-the seven shapes and three text strings after saving and reopening.
+On 2026-11-26, the Windows application from the 26.11.15 installer copied
+the test page to the clipboard and reported four pieces of text left out.
+PowerPoint pasted and ungrouped it into seven shapes. Saving and reopening
+preserved all seven shapes and exactly three text strings: `Visible note`,
+`Inside page clip` and `Struck words`. The checker now enforces both counts.
 
 The portable review history reproduced the same file lists in a checkout without
 local reports. Of 753 application and client files, 550 had a full read and 272

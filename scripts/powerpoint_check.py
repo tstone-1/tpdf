@@ -102,11 +102,13 @@ def main() -> int:
     texts = sorted(line[5:] for line in lines if line.startswith("TEXT "))
     again = sorted(line[11:] for line in lines if line.startswith("AGAIN TEXT "))
     count = next((int(line[6:]) for line in lines if line.startswith("COUNT ")), -1)
+    reopened_count = next((int(line[9:]) for line in lines if line.startswith("REOPENED ")), -1)
     expected = sorted(args.text)
     checks = [
         (texts == expected, f"the slide's text boxes are {expected}", f"{texts}"),
         (again == expected, "the same after saving and reopening", f"{again}"),
         (count == args.shapes, f"the slide holds {args.shapes} shapes", f"{count}"),
+        (reopened_count == args.shapes, f"the reopened slide holds {args.shapes} shapes", f"{reopened_count}"),
     ]
     for passed, what, seen in checks:
         print(f"[{'PASS' if passed else 'FAIL'}] {what}" + ("" if passed else f": {seen}"))
