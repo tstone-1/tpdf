@@ -53,7 +53,10 @@ export async function inkPreviewChecks(
   viewer: Viewer,
   inked: (l: number, t: number, r: number, b: number) => number | null,
 ): Promise<void> {
-  const names = [INK_CHECK.preview, INK_CHECK.second];
+  const names = [
+    INK_CHECK.preview, INK_CHECK.second, INK_CHECK.erased, INK_CHECK.spared,
+    INK_CHECK.taken, INK_CHECK.left, INK_CHECK.scrimOut, INK_CHECK.scrimIn,
+  ];
   // **Where page 1 is on screen, taken from a mark rather than from the
   // scroller.** `markAnchor` is the one thing here that answers in the root's
   // own coordinates, which is what `pointer` needs --- and it is what the phase

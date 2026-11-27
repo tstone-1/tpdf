@@ -367,6 +367,11 @@ describe("the page layouts", () => {
       registry({ viewer: () => ({ searchScoped: false, hasSelection: false, spread: { ...ONE_TO_A_ROW, continuous: false } }) }),
     );
     expect([paged["view.continuous"], paged["view.pageAtATime"]]).toEqual([true, false]);
+    expect(paged["view.wheelPages"]).toBe(true);
+    const wheel = menuEnablement(
+      registry({ viewer: () => ({ searchScoped: false, hasSelection: false, spread: { ...ONE_TO_A_ROW, continuous: false, wheelPages: true } }) }),
+    );
+    expect([wheel["view.continuous"], wheel["view.pageAtATime"], wheel["view.wheelPages"]]).toEqual([true, true, false]);
   });
 
   it("sets the layout chosen, keeping the reading direction", () => {

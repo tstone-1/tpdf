@@ -11,7 +11,7 @@
 //! **The PIN.** `C_Login` takes it from the caller, so tpdf asks for it
 //! ([`PinAsker`]): the application in a native GTK dialog, never the webview,
 //! and the command-line tool on the terminal with echo off. It is kept in a
-//! `SecretString`, which is zeroed when dropped, and passed to the module once.
+//! `SecretString`, which is zeroed when dropped after each login.
 //! A token with a PIN pad (`CKF_PROTECTED_AUTHENTICATION_PATH`) is logged in
 //! with no PIN, and the pad asks.
 //!
@@ -131,19 +131,29 @@ pub struct Found {
     id: Vec<u8>,
 }
 
+pub(crate) struct Module {
+    pub(crate) context: Pkcs11,
+    path: String,
+}
+
 /// The proxy module, loaded and initialised once per process.
 ///
 /// # Errors
 ///
 /// No proxy module at any of [`PROXY`], or one that refused to initialise.
-pub fn proxy() -> Result<&'static Pkcs11, String> {
-    static CONTEXT: OnceLock<Result<Pkcs11, String>> = OnceLock::new();
+pub(crate) fn proxy() -> Result<&'static Module, String> {
+    static CONTEXT: OnceLock<Result<Module, String>> = OnceLock::new();
     CONTEXT
         .get_or_init(|| {
             let mut tried = Vec::new();
             for path in PROXY {
                 match open(path) {
-                    Ok(context) => return Ok(context),
+                    Ok(context) => {
+                        return Ok(Module {
+                            context,
+                            path: path.into(),
+                        })
+                    }
                     Err(why) => tried.push(why),
                 }
             }
@@ -233,18 +243,20 @@ pub fn certificates(context: &Pkcs11) -> Result<Vec<Found>, String> {
 /// The session is closed when this returns. tpdf keeps no other session
 /// open, so that logs the token out and the next signature asks for the PIN
 /// again; while another session of this process is open, PKCS#11 keeps the
-/// token logged in and no PIN is asked.
+/// token logged in. Keys with CKA_ALWAYS_AUTHENTICATE still require a fresh
+/// login after each signature operation is initialized.
 ///
 /// # Errors
 ///
 /// No way to ask for a PIN, the reader cancelling, a wrong PIN, no key with
 /// the certificate's ID, or the token refusing to sign.
-pub fn sign(
-    context: &Pkcs11,
+pub(crate) fn sign(
+    module: &Module,
     found: &Found,
     kind: KeyKind,
     digest: &[u8; 32],
 ) -> Result<Vec<u8>, String> {
+    let context = &module.context;
     let session = context
         .open_ro_session(found.slot)
         .map_err(|e| said!("opening the token {token:?}: {e}", token = found.token))?;
@@ -260,15 +272,18 @@ pub fn sign(
             SessionState::RoUser | SessionState::RwUser
         )
     });
-    if info.login_required() && !logged_in {
+    let login = |user| {
         let pin = if info.protected_authentication_path() {
             None
         } else {
             Some(ask(Asked::Pin(&found.token))?.ok_or_else(|| said!("signing was cancelled"))?)
         };
         session
-            .login(UserType::User, pin.as_ref())
-            .map_err(|e| login_refused(&found.token, &e))?;
+            .login(user, pin.as_ref())
+            .map_err(|e| login_refused(&found.token, &e))
+    };
+    if info.login_required() && !logged_in {
+        login(UserType::User)?;
     }
     let keys = session
         .find_objects(&[
@@ -282,7 +297,59 @@ pub fn sign(
             token = found.token
         )
     })?;
-    sign_with(&session, key, kind, digest)
+    let attributes = session
+        .get_attributes(key, &[AttributeType::AlwaysAuthenticate])
+        .map_err(sign_refused)?;
+    if !attributes.contains(&Attribute::AlwaysAuthenticate(true)) {
+        return sign_with(&session, key, kind, digest);
+    }
+    // cryptoki's sign() would initialize a second time, invalidating the
+    // context login. Raw ECDSA and RSA-PKCS both require single-part C_Sign.
+    // p11-kit's proxy and the SoftHSM test module export this entry point.
+    // SAFETY: reopen the same loaded provider that owns the session and key.
+    let library = unsafe { libloading::Library::new(&module.path) }.map_err(|e| e.to_string())?;
+    // SAFETY: CK_C_Sign is the PKCS#11 ABI for the named symbol.
+    let sign = unsafe { library.get::<cryptoki_sys::CK_C_Sign>(b"C_Sign\0") }
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "token module has no C_Sign".to_string())?;
+    signature(kind, digest, |mechanism, data| {
+        session.sign_init(mechanism, key).map_err(sign_refused)?;
+        login(UserType::ContextSpecific)?;
+        let size = match kind {
+            KeyKind::Rsa(bits) => bits.div_ceil(8),
+            KeyKind::P256 => 64,
+            KeyKind::P384 => 96,
+        };
+        let mut bytes = vec![0; size];
+        let mut length = size as cryptoki_sys::CK_ULONG;
+        // C_Sign's input pointer is mutable in the C ABI. Give the provider
+        // owned writable bytes, although the input is semantically read-only.
+        let mut input = data.to_vec();
+        // SAFETY: both buffers live through the call. length gives the exact
+        // output capacity. The initialized session and library are still live.
+        let rv = unsafe {
+            sign(
+                session.handle(),
+                input.as_mut_ptr(),
+                input.len() as _,
+                bytes.as_mut_ptr(),
+                &raw mut length,
+            )
+        };
+        cryptoki::error::Rv::from(rv)
+            .into_result(cryptoki::context::Function::Sign)
+            .map_err(sign_refused)?;
+        if length as usize != size {
+            return Err(format!(
+                "token returned {length} signature bytes, expected {size}"
+            ));
+        }
+        Ok(bytes)
+    })
+}
+
+fn sign_refused(e: cryptoki::error::Error) -> String {
+    said!("the token did not sign: {e}")
 }
 
 /// One signature by `key` in `session`, in the form CMS wants.
@@ -300,20 +367,24 @@ pub fn sign_with(
     kind: KeyKind,
     digest: &[u8; 32],
 ) -> Result<Vec<u8>, String> {
-    let refused = |e: cryptoki::error::Error| said!("the token did not sign: {e}");
+    signature(kind, digest, |mechanism, data| {
+        session.sign(mechanism, key, data).map_err(sign_refused)
+    })
+}
+
+fn signature(
+    kind: KeyKind,
+    digest: &[u8; 32],
+    sign: impl FnOnce(&Mechanism<'_>, &[u8]) -> Result<Vec<u8>, String>,
+) -> Result<Vec<u8>, String> {
     match kind {
         KeyKind::Rsa(_) => {
             let mut data = SHA256_DIGEST_INFO.to_vec();
             data.extend_from_slice(digest);
-            session
-                .sign(&Mechanism::RsaPkcs, key, &data)
-                .map_err(refused)
+            sign(&Mechanism::RsaPkcs, &data)
         }
         KeyKind::P256 | KeyKind::P384 => {
-            let raw = session
-                .sign(&Mechanism::Ecdsa, key, digest)
-                .map_err(refused)?;
-            crate::sign_cms::ecdsa_der(&raw)
+            crate::sign_cms::ecdsa_der(&sign(&Mechanism::Ecdsa, digest)?)
         }
     }
 }

@@ -18,7 +18,7 @@ use crate::session;
 /// that the session check would read and overwrite whatever the person using
 /// this machine was last reading --- and a check that can destroy the state it
 /// is checking is not one that can be run twice.
-fn session_file(app: &tauri::AppHandle) -> PathBuf {
+pub(crate) fn session_file(app: &tauri::AppHandle) -> PathBuf {
     if let Some(override_path) = std::env::var_os("TPDF_SESSION_FILE") {
         return PathBuf::from(override_path);
     }

@@ -731,20 +731,7 @@ fn a_b_lt_document_pyhanko_wrote_reads_good_at_the_attested_time() {
 fn a_gen_time_with_fractional_seconds_is_read_to_the_second() {
     // RFC 3161 permits a fraction; `der`'s GeneralizedTime does not, and the
     // token was counted unreadable until 2026-09-28.
-    let tst_info = |time: &[u8]| {
-        let mut fields = Vec::new();
-        fields.extend([0x02, 0x01, 0x01]); // version
-        fields.extend([0x06, 0x03, 0x2a, 0x03, 0x04]); // policy
-        fields.extend([0x30, 0x00]); // imprint, opaque here
-        fields.extend([0x02, 0x01, 0x07]); // serial
-        fields.push(0x18);
-        fields.push(time.len() as u8);
-        fields.extend_from_slice(time);
-        let mut out = vec![0x30, fields.len() as u8];
-        out.extend(fields);
-        out
-    };
-    let at = |time: &[u8]| gen_time_of(&tst_info(time)).map(|t| t.unix_duration().as_secs());
+    let at = |time: &[u8]| generalized_time(time).map(|t| t.unix_duration().as_secs());
     assert_eq!(at(b"20260901000000Z"), Some(G));
     assert_eq!(at(b"20260901000000.638502Z"), Some(G));
     assert_eq!(at(b"20260901000000.5Z"), Some(G));

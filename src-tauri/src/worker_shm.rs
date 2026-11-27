@@ -30,6 +30,7 @@ pub struct Shm {
     file: std::fs::File,
     ptr: *mut libc::c_void,
     len: usize,
+    writable: bool,
 }
 
 /// A shared mapping backed by a **nameless** Windows section object.
@@ -62,6 +63,7 @@ pub struct Shm {
     mapping: windows_sys::Win32::Foundation::HANDLE,
     ptr: *mut std::ffi::c_void,
     len: usize,
+    writable: bool,
 }
 
 // The pointer is an ordinary mapping; moving it between threads is fine.
@@ -76,6 +78,21 @@ unsafe impl Send for Shm {}
 // nothing about the *other* process writing the same pages; that race is
 // disciplined by the protocol above and predates this impl.
 unsafe impl Sync for Shm {}
+
+impl Shm {
+    /// Borrows a writable mapping exclusively. For a buffer held by another
+    /// process, use [`Shm::fill_front`] instead.
+    ///
+    /// # Panics
+    ///
+    /// A document mapping is read-only.
+    #[must_use]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        assert!(self.writable, "document mapping is read-only");
+        // SAFETY: map granted write access for len bytes and self is exclusive.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.cast::<u8>(), self.len) }
+    }
+}
 
 #[cfg(unix)]
 impl Shm {
@@ -219,7 +236,12 @@ impl Shm {
                 std::io::Error::last_os_error()
             ));
         }
-        Ok(Self { file, ptr, len })
+        Ok(Self {
+            file,
+            ptr,
+            len,
+            writable,
+        })
     }
 
     /// How many bytes the mapping covers.
@@ -276,17 +298,6 @@ impl Shm {
         unsafe { std::slice::from_raw_parts(self.ptr.cast::<u8>(), self.len) }
     }
 
-    /// Writes the mapping.
-    ///
-    /// Only valid on a mapping created writable --- a document mapping is not,
-    /// and writing to one faults. Not for a mapping a worker also holds: see
-    /// [`Shm::fill_front`].
-    #[must_use]
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        // SAFETY: as above, and `&mut self` excludes concurrent readers here.
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.cast::<u8>(), self.len) }
-    }
-
     /// Copies the first `length` bytes out, through the file and not the mapping.
     ///
     /// **The parent's read of anything a worker wrote goes through here.** A
@@ -330,6 +341,9 @@ impl Shm {
     ///
     /// `bytes` longer than the mapping, or the write failing.
     pub fn fill_front(&mut self, bytes: &[u8]) -> Result<(), String> {
+        if !self.writable {
+            return Err("document mapping is read-only".into());
+        }
         use std::os::unix::fs::FileExt;
 
         if bytes.len() > self.len {
@@ -612,6 +626,7 @@ impl Shm {
             mapping,
             ptr: view.Value,
             len,
+            writable,
         })
     }
 
@@ -655,16 +670,6 @@ impl Shm {
         unsafe { std::slice::from_raw_parts(self.ptr.cast::<u8>(), self.len) }
     }
 
-    /// Writes the mapping.
-    ///
-    /// Only valid on a mapping created writable --- a document mapping is not,
-    /// and writing to one faults.
-    #[must_use]
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        // SAFETY: as above, and `&mut self` excludes concurrent readers here.
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.cast::<u8>(), self.len) }
-    }
-
     /// Copies the first `length` bytes out.
     ///
     /// The unix twin reads through the file because a worker can shorten it.
@@ -688,6 +693,9 @@ impl Shm {
     ///
     /// `bytes` longer than the mapping.
     pub fn fill_front(&mut self, bytes: &[u8]) -> Result<(), String> {
+        if !self.writable {
+            return Err("document mapping is read-only".into());
+        }
         let len = self.len;
         self.as_mut_slice()
             .get_mut(..bytes.len())
@@ -1034,6 +1042,19 @@ mod tests {
         // second process could open it by. What is left is the handle, which is
         // the whole reason a contained worker can reach it.
         assert!(shm.raw_handle() != 0);
+    }
+
+    #[test]
+    fn document_views_refuse_writes_before_granting_a_mutable_slice() {
+        let dir = crate::testutil::TempDir::new("read-only-view");
+        let path = dir.join("source.pdf");
+        std::fs::write(&path, b"source").unwrap();
+        let mut view = Shm::map_file(&path).unwrap();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = view.as_mut_slice();
+        }))
+        .is_err());
+        assert!(view.fill_front(b"x").is_err());
     }
 
     /// Zero is refused rather than passed to `CreateFileMapping`.

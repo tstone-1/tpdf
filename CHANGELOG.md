@@ -17,6 +17,14 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.11.16] - Unreleased
+
+- On macOS the main window reopens at its saved position and size and remembers when it was maximized.
+- The View menu can turn whole pages or facing pairs with the scroll wheel at any zoom. Each document remembers the choice.
+- Removing an annotation now requires a completed button activation and works from the keyboard. Finish becomes available when a polygon or polyline has enough corners.
+- Strict verification requires a readable, attested document timestamp. Linux smart-card signing supports per-signature PINs and the certificate chooser lists each certificate once.
+- Unix workers use aligned storage for document handover. Worker diagnostics preserve split Unicode characters and keep each log record within the file size limit.
+
 ## [26.11.15] - 2026-11-26
 
 - Crop to content preserves the physical margin on scaled pages and asks you to save pending page artwork before measuring. Tall pages receive size-bounded previews.

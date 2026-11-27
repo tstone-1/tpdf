@@ -293,6 +293,8 @@ export interface Spread {
    * the viewer keeps the scroll inside the row it is on.
    */
   continuous: boolean;
+  /** In a paged layout, a vertical wheel gesture advances one row. */
+  wheelPages?: boolean;
 }
 
 /** One page to a row: the layout every document had before 2026-10-15. */
@@ -1321,7 +1323,8 @@ export class Scroller {
       now.columns === spread.columns &&
       now.coverAlone === spread.coverAlone &&
       now.rightToLeft === spread.rightToLeft &&
-      now.continuous === spread.continuous
+      now.continuous === spread.continuous &&
+      !!now.wheelPages === !!spread.wheelPages
     ) {
       return false;
     }

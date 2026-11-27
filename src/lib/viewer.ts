@@ -874,6 +874,8 @@ const CORNER_REACH_PX = 4;
 const ROW_CHANGE_PX = 120;
 /** Shortest time between two row changes made by pushing past a row's end, in milliseconds. */
 const ROW_CHANGE_MS = 300;
+/** A pause between pixel-wheel events starts a new page-turn gesture. */
+const WHEEL_GESTURE_GAP_MS = 100;
 /**
  * A letter pressed with no modifier, by character or by position: with Caps
  * Lock on `j` arrives as `J` with no Shift, and on a Cyrillic layout as `о`.
@@ -1430,6 +1432,8 @@ export class Viewer {
    */
   private overscroll = 0;
   private lastRowChange = -Infinity;
+  private lastWheelTime = -Infinity;
+  private lastWheelDirection = 0;
   /** See {@link setPresenting}. */
   private presenting = false;
   private zoom = 1;
@@ -2898,6 +2902,7 @@ export class Viewer {
       status.spread.coverAlone,
       status.spread.rightToLeft,
       status.spread.continuous,
+      !!status.spread.wheelPages,
       Math.round(status.sharp * 100),
       Math.round(status.any * 100),
       status.pending > 0,
@@ -3455,6 +3460,7 @@ export class Viewer {
     const through = before > 0 ? (this.scrollTop - this.scroller.pageTopOf(page)) / before : 0;
     if (!this.scroller.setSpread(spread)) return;
     this.applyFit(false, page);
+    this.lastWheelTime = -Infinity;
     this.scrollTop = Math.max(
       0,
       Math.min(
@@ -3976,7 +3982,24 @@ export class Viewer {
     const turned = event.shiftKey && event.deltaX === 0;
     const across = turned ? event.deltaY : event.deltaX;
     if (across !== 0) this.panBy(across * unit(width));
-    if (!turned) this.scrollBy(event.deltaY * unit(height));
+    if (turned || !event.deltaY) return;
+    if (!this.scroller.spread.wheelPages) {
+      this.scrollBy(event.deltaY * unit(height));
+      return;
+    }
+    if (event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+    // Line/page deltas are discrete. Pixel events also carry trackpad momentum,
+    // so only the start of a burst (or a reversal) turns the page.
+    const now = performance.now();
+    const direction = Math.sign(event.deltaY);
+    const turn = event.deltaMode !== 0 || direction !== this.lastWheelDirection ||
+      now - this.lastWheelTime >= WHEEL_GESTURE_GAP_MS;
+    this.lastWheelDirection = direction;
+    this.lastWheelTime = now;
+    if (turn) {
+      if (direction > 0) this.nextPage();
+      else this.previousPage();
+    }
   };
 
   /** Moves the view sideways over the pages; nothing happens at fit width. */

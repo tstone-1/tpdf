@@ -517,7 +517,7 @@ pub fn granted(token: &[u8]) -> Vec<u8> {
 
 /// The `TSTInfo`, DER. Separate from the minting so the altered-content fault
 /// can make a second one that differs in `genTime` alone.
-fn tst_info(
+pub(crate) fn tst_info(
     hash: Imprint,
     imprint: &[u8],
     nonce: Option<&[u8]>,

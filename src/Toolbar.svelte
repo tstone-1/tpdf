@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { TOOL_ACTIONS, TOOL_GROUPS, popupShift, styleOptions, type ArmedTool, type ToolGroup, type ToolItem } from "./lib/toolbar";
+  import { leastCorners } from "./lib/markband";
   import { icon } from "./lib/icons";
   import { DEFAULT_SWATCH, swatch, swatchBackground } from "./lib/markcolors";
   import { catalog, message } from "./lib/i18n";
@@ -353,7 +354,7 @@
         <button onclick={cancel}>{drawing > 0 ? TEXT().discard : TEXT().cancel}</button>
       {:else}
         <span data-testid={erasing ? "erasing" : "armed"}>{erasing ? TEXT().erasing : active}{corners ? TEXT().corners(corners) : ""}</span>
-        {#if corners !== null}<button class="finish" disabled={corners === 0} onclick={finish}>{TEXT().finish}</button>{/if}
+        {#if corners !== null}<button class="finish" disabled={(armed !== "polygon" && armed !== "polyline") || corners < leastCorners(armed)} onclick={finish}>{TEXT().finish}</button>{/if}
         {#if armed === "measure"}<button class="finish" disabled={!(commandState["view.measureScale"]?.enabled ?? false)} onclick={() => run("view.measureScale")}>{TEXT().setScale}</button>{/if}
         <button onclick={cancel}>{erasing ? TEXT().stop : corners ? TEXT().discard : TEXT().cancel}</button>
       {/if}

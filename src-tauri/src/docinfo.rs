@@ -2548,13 +2548,7 @@ pub fn parse_timestamp_token(token: &[u8]) -> Option<Timestamp> {
 /// }
 /// ```
 ///
-/// The four ahead of it are skipped as opaque values rather than modelled,
-/// which is deliberate: modelling `MessageImprint` and the five optional
-/// trailing fields would be a page of types to reach one string, and every one
-/// of them is a place to be wrong about a document nobody here has seen. The
-/// fields are skipped **by position**, so a `TSTInfo` that is malformed enough
-/// to shift them reads as no time rather than as the wrong time --- the parse of
-/// the fifth value as a `GeneralizedTime` is what enforces that.
+/// The integrity reader validates the mandatory fields and returns the time.
 fn read_gen_time(tst_info: &[u8]) -> Option<String> {
     let at = gen_time_of(tst_info)?;
     Some(format!(
@@ -2593,21 +2587,7 @@ fn gen_time_seconds(token: &[u8]) -> Option<u64> {
 /// seconds are what every date here shows and every comparison uses, and a
 /// moment rounded down is never later than the one attested.
 fn gen_time_of(tst_info: &[u8]) -> Option<der::DateTime> {
-    use der::{Decode, Tagged as _};
-
-    let mut outer = der::SliceReader::new(tst_info).ok()?;
-    let sequence = der::asn1::AnyRef::decode(&mut outer).ok()?;
-    // Checked rather than trusted: reading the contents of something that is
-    // not a SEQUENCE would walk whatever bytes follow and could still land a
-    // plausible `GeneralizedTime`.
-    if sequence.tag() != der::Tag::Sequence {
-        return None;
-    }
-    let mut inner = der::SliceReader::new(sequence.value()).ok()?;
-    for _ in 0..4 {
-        der::asn1::AnyRef::decode(&mut inner).ok()?;
-    }
-    decode_gen_time(&mut inner)
+    crate::integrity::token::statement(tst_info).map(|(_, time)| time)
 }
 
 /// Reads the same DER time in both an incoming signing response and a saved token.
@@ -7501,13 +7481,15 @@ mod tests {
         // it either way --- so a mutation deleting the check survived that
         // version of this assertion. Same contents, different tag, and only the
         // check can tell them apart.
-        let body: &[u8] = &[
-            0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03, 0x02, 0x01, 0x04, 0x18, 0x0F,
-            b'2', b'0', b'2', b'6', b'0', b'8', b'2', b'1', b'1', b'2', b'0', b'0', b'0', b'0',
-            b'Z',
-        ];
-        let mut octet_string = vec![0x04, 0x1D];
-        octet_string.extend_from_slice(body);
+        let well_formed = crate::integrity::test_tsa::tst_info(
+            crate::integrity::test_tsa::Imprint::Sha256,
+            &[0; 32],
+            None,
+            1_787_313_600,
+            false,
+        );
+        let mut octet_string = well_formed.clone();
+        octet_string[0] = 0x04;
         assert!(
             read_gen_time(&octet_string).is_none(),
             "an OCTET STRING holding a well-formed body is still not a TSTInfo"
@@ -7520,15 +7502,8 @@ mod tests {
         // And the control, so the three refusals above are not three ways of
         // saying that this function never answers: the same shape with a real
         // GeneralizedTime fifth **does** read.
-        let well_formed = &[
-            0x30, 0x1D, // SEQUENCE, 29 bytes: 12 of integers, 2 of header, 15 of time
-            0x02, 0x01, 0x01, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03, 0x02, 0x01, 0x04, 0x18,
-            0x0F, // GeneralizedTime, 15 bytes
-            b'2', b'0', b'2', b'6', b'0', b'8', b'2', b'1', b'1', b'2', b'0', b'0', b'0', b'0',
-            b'Z',
-        ];
         assert_eq!(
-            read_gen_time(well_formed).as_deref(),
+            read_gen_time(&well_formed).as_deref(),
             Some("2026-08-21 12:00:00 UTC")
         );
     }

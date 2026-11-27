@@ -231,7 +231,14 @@ async function screenInvertCheck(
         `the page is already dark at ${(before * 100).toFixed(0)}% lightness`,
       );
     }
-    await invertReportedCheck(viewer, seen, reported);
+    const wasInverted = viewer.inverted;
+    viewer.setInverted(true);
+    try {
+      await invertReportedCheck(viewer, seen, reported);
+    } finally {
+      viewer.setInverted(wasInverted);
+      await settle(() => viewer.idle && seen.status?.invert === wasInverted);
+    }
     return;
   }
 
@@ -278,10 +285,10 @@ async function invertReportedCheck(
   seen: { status: ViewerStatus | null },
   name: string,
 ): Promise<void> {
-  await settle(() => seen.status?.invert === viewer.inverted);
+  await settle(() => viewer.inverted && seen.status?.invert === true);
   check(
     name,
-    seen.status?.invert === viewer.inverted,
+    viewer.inverted && seen.status?.invert === true,
     `viewer says ${viewer.inverted}, status says ${seen.status?.invert}`,
   );
 }

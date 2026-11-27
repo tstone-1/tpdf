@@ -162,6 +162,7 @@ const TEXT = catalog({
     fullScreen: "Full screen, or back to the window",
     presentation: "Present one page at a time, or stop presenting",
     continuous: "Pages: scroll continuously",
+    wheelPages: "Scroll wheel turns pages",
     pageAtATime: "Pages: one page or pair at a time",
     rightToLeft: "Facing pages: read right to left, or left to right again",
     rotatePageClockwise: "Rotate page clockwise",
@@ -391,6 +392,7 @@ const TEXT = catalog({
     fullScreen: "Vollbild oder zurück zum Fenster",
     presentation: "Seite für Seite präsentieren oder Präsentation beenden",
     continuous: "Seiten: fortlaufend scrollen",
+    wheelPages: "Mit dem Mausrad seitenweise blättern",
     pageAtATime: "Seiten: einzeln oder paarweise blättern",
     rightToLeft: "Doppelseiten: von rechts nach links lesen oder wieder von links nach rechts",
     rotatePageClockwise: "Seite im Uhrzeigersinn drehen",
@@ -1946,24 +1948,34 @@ export function registerAppCommands(
       enabled: withDocument,
       run: () => actions.togglePresentation(),
     },
-    // Continuous, or one page (or pair) at a time: SumatraPDF's continuous
-    // switch, as a pair of choices so that each says what it does.
     {
       id: "view.continuous",
       title: TEXT(locale).continuous,
       enabled: () => withDocument() && actions.viewer()?.spread.continuous === false,
       run: () => {
         const viewer = actions.viewer();
-        if (viewer) viewer.setSpread({ ...viewer.spread, continuous: true });
+        if (viewer) viewer.setSpread({ ...viewer.spread, continuous: true, wheelPages: false });
       },
     },
     {
       id: "view.pageAtATime",
       title: TEXT(locale).pageAtATime,
-      enabled: () => withDocument() && actions.viewer()?.spread.continuous === true,
+      enabled: () => {
+        const spread = actions.viewer()?.spread;
+        return withDocument() && !!(spread?.continuous || spread?.wheelPages);
+      },
       run: () => {
         const viewer = actions.viewer();
-        if (viewer) viewer.setSpread({ ...viewer.spread, continuous: false });
+        if (viewer) viewer.setSpread({ ...viewer.spread, continuous: false, wheelPages: false });
+      },
+    },
+    {
+      id: "view.wheelPages",
+      title: TEXT(locale).wheelPages,
+      enabled: () => withDocument() && !actions.viewer()?.spread.wheelPages,
+      run: () => {
+        const viewer = actions.viewer();
+        if (viewer) viewer.setSpread({ ...viewer.spread, continuous: false, wheelPages: true });
       },
     },
     {

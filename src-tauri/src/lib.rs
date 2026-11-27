@@ -173,6 +173,8 @@ pub mod textcache;
 /// The invisible text written over a scanned page.
 pub mod textlayer;
 pub mod trust;
+#[cfg(target_os = "macos")]
+mod window_placement;
 // Asking a timestamp authority for a token when signing: the application's
 // second network authority, in the app process only (`docs/THREAT-MODEL.md`).
 pub mod tsa;
@@ -1036,6 +1038,12 @@ pub fn run() {
             // is how the dark window gets looked at without changing a setting
             // on the machine that takes the pictures. Any other value is ignored.
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "macos")]
+                if mode == ShellMode::Config && std::env::var_os("TPDF_WINDOW_SIZE").is_none() {
+                    let mut path = commands::session::session_file(app.handle()).into_os_string();
+                    path.push(".window-state");
+                    window_placement::install(&window, path.into());
+                }
                 let theme = match std::env::var("TPDF_THEME").as_deref() {
                     Ok("dark") => Some(tauri::Theme::Dark),
                     Ok("light") => Some(tauri::Theme::Light),
@@ -1992,6 +2000,7 @@ mod tests {
             cover_alone: false,
             right_to_left: false,
             continuous: true,
+            wheel_pages: false,
             page_count: 12,
         }
     }

@@ -45,6 +45,7 @@ describe("A layout in the session", () => {
       { ...FACING, rightToLeft: true },
       { ...SINGLE, continuous: false },
       { ...FACING, continuous: false },
+      { ...FACING, continuous: false, wheelPages: true },
     ]) {
       expect(spreadOfPlace(placeOfSpread(spread))).toEqual(spread);
     }

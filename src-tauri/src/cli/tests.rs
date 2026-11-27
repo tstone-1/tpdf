@@ -1012,12 +1012,25 @@ fn a_line_break_in_a_name_prints_no_row_of_its_own() {
 /// so a document holding nothing else has no signature for `--strict` to pass on.
 #[test]
 fn strict_fails_a_document_with_only_a_document_timestamp() {
-    let trusted = |document_timestamp| report::Signature {
+    let trusted = |document_timestamp: bool| report::Signature {
         document_timestamp,
+        timestamp: document_timestamp.then(|| {
+            super::verify::timestamp_report(
+                &crate::docinfo::Timestamp {
+                    when: "2026-08-21 12:00:00 UTC".into(),
+                    attested: true,
+                    ..Default::default()
+                },
+                true,
+            )
+        }),
         ..signature(Verdict::Intact, Some(Standing::Trusted))
     };
     assert!(!verified(vec![file(vec![trusted(true)], None)]).strict_passed);
     assert!(verified(vec![file(vec![trusted(false), trusted(true)], None)]).strict_passed);
+    let mut unread = trusted(true);
+    unread.timestamp = None;
+    assert!(!verified(vec![file(vec![trusted(false), unread], None)]).strict_passed);
 }
 
 #[test]

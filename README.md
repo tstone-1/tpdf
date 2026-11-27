@@ -285,8 +285,9 @@ project conventions.
   each row round, for a document read from the right. Fit width and fit page fit the row of
   two, and each document remembers its layout. *Pages: one page or pair at a time* shows one
   page, or one pair, and nothing else: the wheel, Space and the arrows scroll inside it and
-  go on to the next at its end. *Pages: scroll continuously* goes back.
-  <!-- built: view.singlePage view.facing view.book view.rightToLeft view.continuous view.pageAtATime -->
+  go on to the next at its end. Choose *Scroll wheel turns pages* in the View menu
+  to jump straight to the next or previous page or pair at any zoom. *Pages: scroll continuously* goes back.
+  <!-- built: view.singlePage view.facing view.book view.rightToLeft view.continuous view.pageAtATime view.wheelPages -->
 - **Full screen and presentation.** *Full screen* (F11) shows the document and nothing else.
   *Present one page at a time* shows one page at a time on black, fitted to the screen; a
   click, Space or an arrow goes on, and `b` or `w` blacks or whites out the screen until the

@@ -95,8 +95,8 @@ describe("MarkPopup", () => {
     return field as { value: string };
   }
 
-  /** Presses the button whose label is `text`. */
-  function press(note: MarkPopup, text: string): void {
+  /** Dispatches one event to the button with this label. */
+  function buttonEvent(note: MarkPopup, text: string, event: string, button = 0): void {
     const rows = note.node as unknown as {
       children: {
         children: { textContent: string; dispatch: (t: string, e: object) => void }[];
@@ -105,7 +105,7 @@ describe("MarkPopup", () => {
     for (const row of rows.children) {
       for (const child of row.children ?? []) {
         if (child.textContent === text) {
-          child.dispatch("pointerdown", {});
+          child.dispatch(event, { button });
           return;
         }
       }
@@ -340,7 +340,12 @@ describe("MarkPopup", () => {
     const note = popup();
     note.show(mark({ id: 7 }), anchor(), false);
     box(note).value = "typed and then thrown away";
-    press(note, "Remove highlight");
+    for (const button of [0, 1, 2]) {
+      buttonEvent(note, "Remove highlight", "pointerdown", button);
+      expect(sent).toEqual([]);
+      expect(box(note).value).toBe("typed and then thrown away");
+    }
+    buttonEvent(note, "Remove highlight", "click");
 
     expect(sent).toEqual(["remove:7"]);
   });
@@ -560,7 +565,7 @@ describe("MarkPopup", () => {
     expect(closed).toBe(1);
     expect(note.openId).toBe(7);
 
-    press(note, "×");
+    buttonEvent(note, "×", "pointerdown");
     expect(closed).toBe(2);
   });
 });

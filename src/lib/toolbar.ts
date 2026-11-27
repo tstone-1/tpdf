@@ -438,7 +438,7 @@ export function windowMenu(locale: UiLocale = UI_LOCALE): MenuSection[] {
       label: text.pages,
       items: [
         "view.singlePage", "view.facing", "view.book", "view.rightToLeft",
-        "view.continuous", "view.pageAtATime", "view.fullScreen", "view.presentation",
+        "view.continuous", "view.pageAtATime", "view.wheelPages", "view.fullScreen", "view.presentation",
       ],
     },
     {

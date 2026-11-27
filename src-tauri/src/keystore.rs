@@ -436,7 +436,7 @@ mod platform {
     /// error only when there are no files either: a machine with no smart-card
     /// support can still sign from a file.
     pub fn identities() -> Result<Vec<Identity>, String> {
-        let tokens = pkcs11::proxy().and_then(pkcs11::certificates);
+        let tokens = pkcs11::proxy().and_then(|module| pkcs11::certificates(&module.context));
         let files: Vec<Identity> = certfiles::store()
             .map(|store| certfiles::read(&store))
             .unwrap_or_default()

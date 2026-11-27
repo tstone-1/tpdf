@@ -817,7 +817,7 @@ export async function appCommandChecks(
   const turn = () => String(viewer.rotation);
   const layout = () =>
     `${kindOf(viewer.spread)}${viewer.spread.rightToLeft ? " right to left" : ""}` +
-    `${viewer.spread.continuous ? "" : " one at a time"}`;
+    `${viewer.spread.wheelPages ? " wheel paging" : viewer.spread.continuous ? "" : " one at a time"}`;
   const facing = { columns: 2 as const, coverAlone: false, rightToLeft: false, continuous: true };
   const fit = () => viewer.fitMode;
   const selection = () => String(viewer.selectedText.length);
@@ -1044,6 +1044,12 @@ export async function appCommandChecks(
       from: () => viewer.setSpread(SINGLE),
       read: layout,
       moved: (b, a) => b === "single" && a === "single one at a time",
+    },
+    {
+      id: "view.wheelPages",
+      from: () => viewer.setSpread(SINGLE),
+      read: layout,
+      moved: (b, a) => b === "single" && a === "single wheel paging",
     },
     {
       id: "view.continuous",
@@ -1623,6 +1629,7 @@ export async function appCommandChecks(
     },
     {
       id: "edit.reversePages",
+      unless: () => doc.page_count > 1 ? null : "reversing the order needs at least two pages",
       ...shell("reversePages"),
       read: () => fired.join(","),
     },
@@ -2161,7 +2168,7 @@ export async function appCommandChecks(
   // check red on the way, which is the arrangement working: it needs a
   // selection, exactly as `find.inSelection` does, and a check that subtracted
   // a count would have absorbed it in silence.
-  const NEEDS_MORE_THAN_A_DOCUMENT = needsMoreThanADocument(isLinux(), !isMac() && !isLinux());
+  const NEEDS_MORE_THAN_A_DOCUMENT = needsMoreThanADocument(isLinux(), !isMac() && !isLinux(), doc.page_count);
   const NEEDS_NO_DOCUMENT = needsNoDocument(isLinux());
 
   // And the other direction, declared for the same reason. This list was the

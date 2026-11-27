@@ -18,6 +18,31 @@ const VALUE: &[u8] = b"the value octets of a SignerInfo.signature, standing in";
 /// 2026-08-21 12:00:00 UTC, the instant the fixture generator pins too.
 const AT: u64 = 1_787_313_600;
 
+#[test]
+fn the_timestamp_statement_requires_a_serial_and_generation_time() {
+    use der::{Decode as _, Reader as _};
+    let complete = crate::integrity::test_tsa::tst_info(Imprint::Sha256, &[0; 32], None, AT, true);
+    assert_eq!(
+        statement(&complete).unwrap().1.unix_duration().as_secs(),
+        AT
+    );
+    let seq = der::AnyRef::from_der(&complete).unwrap();
+    let mut reader = der::SliceReader::new(seq.value()).unwrap();
+    let mut fields = Vec::new();
+    while !reader.is_finished() {
+        fields.push(der::AnyRef::decode(&mut reader).unwrap().to_der().unwrap());
+    }
+    for missing in [3, 4] {
+        let mut required = fields.clone();
+        required.remove(missing);
+        let partial = der::Any::new(der::Tag::Sequence, required.concat())
+            .unwrap()
+            .to_der()
+            .unwrap();
+        assert!(statement(&partial).is_none());
+    }
+}
+
 fn tsa() -> TestTsa {
     TestTsa::new()
 }

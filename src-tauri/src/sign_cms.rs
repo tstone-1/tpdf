@@ -112,7 +112,11 @@ pub struct Choices {
 #[must_use]
 pub fn choices(found: &[(String, Vec<u8>)], now: u64) -> Choices {
     let mut out = Choices::default();
+    let mut seen = std::collections::HashSet::new();
     for (id, der) in found {
+        if !seen.insert(id) {
+            continue;
+        }
         match usable(der, now) {
             Ok(offer) => out.usable.push(Choice {
                 id: id.clone(),

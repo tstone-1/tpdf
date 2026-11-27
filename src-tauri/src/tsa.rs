@@ -476,7 +476,7 @@ fn accept_over(
     }
 
     let statement = tst_info(&token).ok_or(Refusal::Unreadable)?;
-    let imprint = token::imprint_of(&statement).ok_or(Refusal::Unreadable)?;
+    let (imprint, _) = token::statement(&statement).ok_or(Refusal::Unreadable)?;
     // The imprint's bytes, not its algorithm, are compared, and that is enough:
     // an `intact` verdict already says they are the digest of `value` under the
     // algorithm the token names, so equal to SHA-256 of it means that algorithm

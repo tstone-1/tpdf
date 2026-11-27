@@ -512,7 +512,7 @@ fn only_the_keys_tpdf_signs_with_are_offered() {
 
 #[test]
 fn the_chooser_lists_both_what_may_sign_and_what_may_not() {
-    let found = vec![
+    let mut found = vec![
         ("a".to_string(), own(&Soft::p256(31), "Usable")),
         (
             "b".to_string(),
@@ -526,6 +526,7 @@ fn the_chooser_lists_both_what_may_sign_and_what_may_not() {
         ),
         ("c".to_string(), b"garbage".to_vec()),
     ];
+    found.push(found[0].clone());
     let choices = choices(&found, NOW);
     assert_eq!(choices.usable.len(), 1);
     assert_eq!(choices.usable[0].id, "a");

@@ -405,23 +405,19 @@ ROWS += [
         "a_token_relabelled_as_something_else_is_not_read_as_a_timestamp",
     ),
     Mutation(
-        # Read the fourth field as genTime. Off by one in a positional skip,
-        # which is the failure the positional skip has to be bounded against.
+        # Skipping the serial read leaves the cursor at an INTEGER when the
+        # shared statement reader tries to decode the generation time.
         "docinfo: take the field before genTime as the attested time",
-        "src/docinfo.rs",
-        "    for _ in 0..4 {",
-        "    for _ in 0..3 {",
+        "src/integrity/token.rs",
+        "    let _serial = der::asn1::IntRef::decode(&mut inner).ok()?;",
+        "",
         "the_time_a_timestamp_authority_attested_is_read",
     ),
     Mutation(
-        # Drop the tag check, so a TSTInfo that is not a SEQUENCE has its value
-        # walked as if it were one.
         "docinfo: read a TSTInfo without checking it is a sequence",
-        "src/docinfo.rs",
-        """    if sequence.tag() != der::Tag::Sequence {
-        return None;
-    }""",
-        "",
+        "src/integrity/token.rs",
+        "    if sequence.tag() != der::Tag::Sequence || !outer.is_finished() {",
+        "    if !outer.is_finished() {",
         "a_tst_info_that_is_not_shaped_like_one_yields_no_time",
     ),
     Mutation(

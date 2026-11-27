@@ -276,8 +276,8 @@ ROWS += [
     Mutation(
         "worker: relay what a terminal would act on",
         "src/worker_handover.rs",
-        "        let _ = to.write_all(crate::cli::printable(&text).as_bytes());",
-        "        let _ = to.write_all(text.as_bytes());",
+        "            let _ = to.write_all(crate::cli::printable(valid).as_bytes());",
+        "            let _ = to.write_all(valid.as_bytes());",
         "what_a_worker_says_is_relayed_with_nothing_a_terminal_acts_on",
         only_on="macos",
     ),

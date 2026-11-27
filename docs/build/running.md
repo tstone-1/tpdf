@@ -3454,4 +3454,5 @@ registry key fragment in `explorer_check.py` look like variables and are not.
 | `TPDF_REVOCATION_OUT` | `src-tauri/src/revocation/tests.rs` | Where an ignored test writes documents with minted revocation data, for pyHanko | test |
 | `TPDF_REVOCATION_REAL` | `src-tauri/src/revocation/tests.rs` | A directory of revocation data fetched by hand from real authorities, for an ignored test to judge | test |
 | `TPDF_SIGNATURE_PROBE` | `src-tauri/src/save/tests.rs` | Where a save test writes its signature pictures, for `signature_pdf_check.py` | test |
+| `TPDF_TEST_SOFTHSM_MODULE` | `src-tauri/src/pkcs11/tests.rs` | SoftHSM shared library for the isolated signing test when installed outside the system paths | test |
 | `TPDF_TOKEN_DIR` | `src-tauri/src/integrity/token/tests.rs` | Where an ignored test writes minted timestamp tokens for `openssl ts -verify` | test |

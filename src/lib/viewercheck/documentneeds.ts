@@ -8,7 +8,7 @@
  */
 
 /** Registered commands withheld with one document open and nothing else: no selection, no search, no history, no attachment. In registry order. */
-export function needsMoreThanADocument(linux: boolean, windows: boolean): string[] {
+export function needsMoreThanADocument(linux: boolean, windows: boolean, pageCount: number): string[] {
   return [
     // One tab, so no other to close, and none closed earlier to reopen.
     "file.closeOtherTabs",
@@ -123,6 +123,7 @@ export function needsMoreThanADocument(linux: boolean, windows: boolean): string
     // `edit.insertPages` leaves behind. It shipped without its entry here and
     // the Windows run was the first to read the red, on both corpora.
     "edit.insertPages.range",
+    ...(pageCount < 2 ? ["edit.reversePages"] : []),
     // Guarded on the document being edited, which an untouched one is not. It
     // joined this list late: the guard landed with "Save over the file the
     // reader opened" and turned this check red, and the red went unread because

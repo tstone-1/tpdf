@@ -115,10 +115,32 @@ fn note_to(sink: Option<&Sink>, line: &str) {
 /// the error is dropped rather than panicked on, which `eprintln!` does. A GUI
 /// process whose stderr has been closed must not be taken down by a diagnostic.
 fn to_stderr(line: &str) {
-    let mut out = String::with_capacity(line.len() + 1);
-    out.push_str(line);
-    out.push('\n');
+    let mut out = String::new();
+    append_record(&mut out, line, MAX_BYTES);
     let _ = io::stderr().write_all(out.as_bytes());
+}
+
+/// Append one physical record, counting its prefix and newline in the byte cap.
+fn append_record(buffer: &mut String, line: &str, cap: u64) {
+    const MARKER: &str = " [truncated]";
+    let budget = usize::try_from(cap).unwrap_or(usize::MAX).saturating_sub(1);
+    for c in line.chars() {
+        if c.is_control() {
+            buffer.extend(c.escape_default());
+        } else {
+            buffer.push(c);
+        }
+        if buffer.len() > budget {
+            let mut keep = budget.saturating_sub(MARKER.len());
+            while !buffer.is_char_boundary(keep) {
+                keep -= 1;
+            }
+            buffer.truncate(keep);
+            buffer.push_str(&MARKER[..MARKER.len().min(budget)]);
+            break;
+        }
+    }
+    buffer.push('\n');
 }
 
 /// Lines the file did not take since the last one it did.
@@ -164,9 +186,8 @@ impl Sink {
 
     /// Appends one line, and swallows every reason it could not.
     fn append(&self, line: &str) {
-        let stamped = format!("{} {line}", stamp(SystemTime::now()));
         let mut state = self.state.lock();
-        if self.write(&state, &stamped).is_ok() {
+        if self.write(&state, line).is_ok() {
             state.dropped = 0;
         } else {
             state.dropped = state.dropped.saturating_add(1);
@@ -177,7 +198,7 @@ impl Sink {
     ///
     /// Both go into a single buffer and a single write, so a failure leaves the
     /// count standing rather than reporting a gap and then falling into it.
-    fn write(&self, state: &State, stamped: &str) -> io::Result<()> {
+    fn write(&self, state: &State, line: &str) -> io::Result<()> {
         let mut buffer = String::new();
         if state.dropped > 0 {
             buffer.push_str(&format!(
@@ -186,8 +207,9 @@ impl Sink {
                 state.dropped
             ));
         }
-        buffer.push_str(stamped);
-        buffer.push('\n');
+        buffer.push_str(&stamp(SystemTime::now()));
+        buffer.push(' ');
+        append_record(&mut buffer, line, self.cap);
 
         if let Some(dir) = self.path.parent() {
             if !dir.as_os_str().is_empty() {
@@ -343,6 +365,28 @@ mod tests {
     /// it silently --- `AGENTS.md` records that from the other end of a harness.
     fn payload(line: &str) -> &str {
         line.split_once(' ').expect("a stamp and a payload").1
+    }
+
+    #[test]
+    fn log_records_escape_controls_and_fit_after_rotation() {
+        let dir = TempDir::new("record-budget");
+        let mut sink = Sink::new(dir.file());
+        sink.cap = 128;
+        let long = format!("café\nname\r\t{}", "界".repeat(100));
+        sink.append(&long);
+        let first = read(&dir.file());
+        assert!(first.len() <= 128);
+        assert_eq!(first.lines().count(), 1);
+        assert!(first.contains("café\\nname\\r\\t"));
+        assert!(first.ends_with(" [truncated]\n"));
+        sink.state.lock().dropped = 2;
+        sink.append(&long);
+        let next = read(&dir.file());
+        assert_eq!(read(&previous(&dir.file())), first);
+        assert!(next.len() <= 128);
+        assert_eq!(next.lines().count(), 2);
+        assert!(next.contains("2 line(s) could not be written"));
+        assert!(next.ends_with(" [truncated]\n"));
     }
 
     /// Turns the test below into the child half of itself.

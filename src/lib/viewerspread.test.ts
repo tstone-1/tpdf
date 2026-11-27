@@ -198,14 +198,44 @@ describe("One page at a time in the viewer", () => {
   const ONE_AT_A_TIME: Spread = { columns: 1, coverAlone: false, rightToLeft: false, continuous: false };
 
   /** Sends a wheel notch of `deltaY` pixels at time `at`. */
-  function wheel(deltaY: number, at: number): void {
+  function wheel(deltaY: number, at: number, deltaMode = 0, modifiers: Partial<WheelEvent> = {}): void {
     vi.spyOn(performance, "now").mockReturnValue(at);
-    dom.root.dispatch("wheel", { deltaX: 0, deltaY, deltaMode: 0, shiftKey: false, ctrlKey: false, metaKey: false, target: dom.root, preventDefault: () => {} });
+    dom.root.dispatch("wheel", { deltaX: 0, deltaY, deltaMode, shiftKey: false, ctrlKey: false, metaKey: false, ...modifiers, target: dom.root, preventDefault: () => {} });
   }
 
   function press(key: string, shiftKey = false): void {
     dom.root.dispatch("keydown", { key, code: "", shiftKey, ctrlKey: false, metaKey: false, altKey: false, target: dom.root, preventDefault: () => {} });
   }
+
+  it("turns a tall page or pair directly, once per pixel gesture or discrete wheel event", () => {
+    const viewer = build();
+    viewer.setSpread({ ...FACING, continuous: false, wheelPages: true });
+    wheel(40, 1000);
+    expect(viewer.position.page).toBe(2);
+    for (const time of [1010, 1080, 1150]) wheel(5, time);
+    expect(viewer.position.page).toBe(2);
+    wheel(-10, 1160);
+    expect(viewer.position.page).toBe(0);
+    wheel(3, 1300, 1);
+    wheel(3, 1310, 1);
+    expect(viewer.position.page).toBe(4);
+    viewer.setSpread(ONE_AT_A_TIME);
+    wheel(10, 1600);
+    expect(viewer.position.page).toBe(4);
+  });
+
+  it("keeps sideways and modified wheel gestures available when paging", () => {
+    const viewer = build();
+    viewer.setSpread({ ...ONE_AT_A_TIME, wheelPages: true });
+    wheel(3, 1000, 1, { shiftKey: true });
+    wheel(3, 1100, 1, { deltaX: 20 });
+    const before = viewer.currentZoom;
+    wheel(-3, 1200, 1, { ctrlKey: true });
+    expect(viewer.currentZoom).toBeGreaterThan(before);
+    expect(viewer.position.page).toBe(0);
+    wheel(3, 1300, 1);
+    expect(viewer.position.page).toBe(1);
+  });
 
   it("keeps the wheel inside the page, and turns it only after a push past the end", () => {
     const viewer = build();

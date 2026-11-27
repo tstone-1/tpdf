@@ -2338,7 +2338,7 @@ ROWS += [
         "token: judge the imprint before the token's signature",
         "src/integrity/token.rs",
         "    let own = signer.judge(&[content.as_slice()], budget);",
-        "    if imprint_of(&content).is_some_and(|i| match target { Target::Signature(v) => Hash::from_oid(&i.hash_algorithm.oid.to_string()).is_some_and(|h| h.digest(&[v]) != i.hashed_message.as_bytes()), Target::Range(_) => false }) { return Integrity { verdict: Verdict::Altered, ..Integrity::default() }; }\n    let own = signer.judge(&[content.as_slice()], budget);",
+        "    if statement(&content).is_some_and(|(i, _)| match target { Target::Signature(v) => Hash::from_oid(&i.hash_algorithm.oid.to_string()).is_some_and(|h| h.digest(&[v]) != i.hashed_message.as_bytes()), Target::Range(_) => false }) { return Integrity { verdict: Verdict::Altered, ..Integrity::default() }; }\n    let own = signer.judge(&[content.as_slice()], budget);",
         "a_broken_token_is_broken_even_when_its_imprint_is_also_wrong",
     ),
     Mutation(

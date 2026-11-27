@@ -191,6 +191,17 @@ pub(crate) fn socket_pair() -> Result<(OwnedFd, OwnedFd), String> {
     unsafe { Ok((OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))) }
 }
 
+// The kernel lays a cmsghdr and its descriptor inside this buffer. The
+// zero-length field supplies the native alignment on each target.
+#[cfg(unix)]
+#[repr(C)]
+#[derive(Default)]
+struct ControlBuffer {
+    _alignment: [libc::cmsghdr; 0],
+    // SAFETY: CMSG_SPACE only computes the required size for the given payload.
+    bytes: [u8; unsafe { libc::CMSG_SPACE(size_of::<i32>() as u32) } as usize],
+}
+
 /// Sends a document mapping's descriptor, with its length as the payload.
 ///
 /// The length travels in the ordinary payload rather than in a second message
@@ -207,15 +218,15 @@ pub(crate) fn send_document(socket: i32, fd: i32, len: usize) -> Result<(), Stri
         iov_base: payload.as_mut_ptr().cast(),
         iov_len: payload.len(),
     };
-    let mut space = [0u8; 32];
+    let mut space = ControlBuffer::default();
     // SAFETY: the control buffer is sized by CMSG_SPACE for one descriptor, and
     // every pointer is into storage that outlives the call.
     unsafe {
         let mut msg: libc::msghdr = std::mem::zeroed();
         msg.msg_iov = &raw mut iov;
         msg.msg_iovlen = 1;
-        msg.msg_control = space.as_mut_ptr().cast();
-        msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32) as _;
+        msg.msg_control = space.bytes.as_mut_ptr().cast();
+        msg.msg_controllen = space.bytes.len() as _;
 
         let cmsg = libc::CMSG_FIRSTHDR(&msg);
         if cmsg.is_null() {
@@ -252,15 +263,15 @@ pub unsafe fn recv_document(socket: i32) -> Result<Option<(OwnedFd, usize)>, Str
         iov_base: payload.as_mut_ptr().cast(),
         iov_len: payload.len(),
     };
-    let mut space = [0u8; 32];
+    let mut space = ControlBuffer::default();
     // SAFETY: as `send_document`; the control header is only read once `recvmsg`
     // has reported success.
     unsafe {
         let mut msg: libc::msghdr = std::mem::zeroed();
         msg.msg_iov = &raw mut iov;
         msg.msg_iovlen = 1;
-        msg.msg_control = space.as_mut_ptr().cast();
-        msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32) as _;
+        msg.msg_control = space.bytes.as_mut_ptr().cast();
+        msg.msg_controllen = space.bytes.len() as _;
 
         let read = libc::recvmsg(socket, &raw mut msg, 0);
         if read < 0 {
@@ -333,12 +344,37 @@ pub(crate) fn relay_stderr(child: &mut std::process::Child) {
 #[cfg(unix)]
 fn relay(mut from: impl std::io::Read, to: &mut impl std::io::Write) {
     let mut piece = [0u8; 8192];
-    while let Ok(read) = from.read(&mut piece) {
-        if read == 0 {
-            break;
+    let mut pending = 0;
+    loop {
+        let read = match from.read(&mut piece[pending..]) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        let end = pending + read;
+        let mut consumed = 0;
+        for chunk in piece[..end].utf8_chunks() {
+            let valid = chunk.valid();
+            let _ = to.write_all(crate::cli::printable(valid).as_bytes());
+            consumed += valid.len();
+            let invalid = chunk.invalid();
+            if !invalid.is_empty() {
+                if consumed + invalid.len() == end
+                    && std::str::from_utf8(invalid).is_err_and(|e| e.error_len().is_none())
+                {
+                    break;
+                }
+                let _ = to.write_all("\u{fffd}".as_bytes());
+                consumed += invalid.len();
+            }
         }
-        let text = String::from_utf8_lossy(&piece[..read]);
-        let _ = to.write_all(crate::cli::printable(&text).as_bytes());
+        piece.copy_within(consumed..end, 0);
+        pending = end - consumed;
+        let _ = to.flush();
+    }
+    if pending > 0 {
+        let _ = to.write_all("\u{fffd}".as_bytes());
         let _ = to.flush();
     }
 }
@@ -522,6 +558,26 @@ mod tests {
             high.as_raw_fd()
         );
         drop(ends);
+    }
+
+    #[test]
+    fn split_unicode_and_partial_final_characters_are_relayed() {
+        use std::io::Read as _;
+        let input = b"caf\xc3".as_slice().chain(b"\xa9;\xff!\xc3".as_slice());
+        let mut out = Vec::new();
+        relay(input, &mut out);
+        assert_eq!(String::from_utf8(out).unwrap(), "café;\u{fffd}!\u{fffd}");
+    }
+
+    #[test]
+    fn descriptor_storage_satisfies_the_native_layout() {
+        let buffer = ControlBuffer::default();
+        assert!(align_of::<ControlBuffer>() >= align_of::<libc::cmsghdr>());
+        assert!(buffer.bytes.as_ptr().cast::<libc::cmsghdr>().is_aligned());
+        assert_eq!(
+            buffer.bytes.len(),
+            unsafe { libc::CMSG_SPACE(size_of::<i32>() as u32) } as usize
+        );
     }
 
     /// A worker's words reach the reader, and what a terminal would act on does not.

@@ -982,12 +982,13 @@ describe("the window check's lists, held here so vitest sees them", () => {
     canCloseTabs: () => false,
     canReopenClosedTab: () => false,
   };
-  it("withholds, with one document open, exactly what the window check expects", () => {
+  it.each([1, 3])("withholds exactly what the window check expects for %i pages", (pageCount) => {
     const { registry } = harness(
       true, { signable: 1 }, { undo: true, redo: true },
       false, false, false, {}, false, false, false, false, false, false, null, null, null,
       {
         ...theWindows,
+        pageCount: () => pageCount,
         viewer: () => ({
           canGoBack: false, canGoForward: false, searchScoped: false, hasSelection: false,
           spread: { columns: 1, coverAlone: false, rightToLeft: false, continuous: true },
@@ -996,7 +997,7 @@ describe("the window check's lists, held here so vitest sees them", () => {
     );
     const offered = new Set(registry.search("").map((ranked) => ranked.command.id));
     const withheld = registry.all().map((command) => command.id).filter((id) => !offered.has(id));
-    expect(withheld).toEqual(needsMoreThanADocument(false, true));
+    expect(withheld).toEqual(needsMoreThanADocument(false, true, pageCount));
   });
 
   it("offers, with no document, exactly what the window check expects", () => {

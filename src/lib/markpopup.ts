@@ -746,8 +746,7 @@ export class MarkPopup {
       "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
       "border-radius:5px;background:none;color:inherit;font:inherit;" +
       "padding:0.2rem 0.5rem;cursor:default;";
-    remove.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
+    remove.addEventListener("click", (event) => {
       event.stopPropagation();
       const id = this.shown;
       if (id === null) return;

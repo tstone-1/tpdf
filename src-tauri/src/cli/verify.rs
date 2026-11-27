@@ -430,6 +430,7 @@ pub fn timestamp_report(stamp: &docinfo::Timestamp, document: bool) -> report::T
 pub fn passes_strict(signature: &report::Signature) -> bool {
     use crate::trust::Standing;
     signature.integrity.verdict == crate::integrity::Verdict::Intact
+        && (!signature.document_timestamp || signature.timestamp.as_ref().is_some_and(|t| t.attested))
         && signature
             .trust
             .as_ref()

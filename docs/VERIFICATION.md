@@ -4,6 +4,46 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Wheel paging and macOS window placement (2026-11-27)
+
+The viewer tests turn facing pairs at fit width, reverse direction, and distinguish
+successive discrete wheel events from the tail of a trackpad gesture. The macOS
+window check ran the command through the palette. The session tests cover changing
+the wheel preference without moving the page and reading the layout back.
+
+A separate macOS check moved the actual window to (125, 141), resized it to
+780 x 560 points, closed it, and read its frame through Accessibility on relaunch.
+It then invoked the native Zoom action, closed again, and reopened maximized at
+1512 x 900. Unzooming restored all four original values. Comparing only the two
+maximized windows missed a displaced normal frame in the first implementation.
+An unreadable preference file opened at the default frame. A stored frame on a
+simulated disconnected display reopened on the available display.
+
+### Annotation activation, token signing and worker handover (2026-11-27)
+
+In Chromium, the annotation popup retained the mark and draft after a right click,
+middle click or canceled primary press. A completed primary click, Enter and Space
+each invoked removal once. The mounted toolbar enabled Finish at three polygon
+corners and two polyline corners.
+
+With a controlled viewer and worker replies, an interrupted save and a reopened
+copy with no measurable overlay both left zero temporary marks and no open copy.
+Making only the square gray failed the hue check. On an already-dark canvas a
+stuck status failed the inversion check, and the working status passed. An
+unavailable preview area produced eight distinct skip results. The one-page
+dense-vector fixture also exposed a palette assumption. Reverse page order is
+available only on multipage documents. The registry test now covers both sizes.
+On Linux under Xvfb the native viewer passed 307/307 applicable checks on
+`vector-heavy.pdf` and 429/429 on `links.pdf`.
+
+The Linux SoftHSM test verified the actual signatures from an ordinary key and a
+key with `CKA_ALWAYS_AUTHENTICATE`. The latter prompted once per signature even
+while logged in. Canceling that prompt aborted signing. The Unix handover and
+shared-memory tests ran on Linux and macOS. An isolated substitute for PowerShell
+refused the second Windows probe certificate. The setup and cleanup code removed
+the first certificate's handle after the failure. This check used a simulated
+store. The Windows implementation also passed cross-target Clippy.
+
 ### Content crop, form names and signing files (2026-11-25)
 
 The native crop worker retained all four edges of solid 3600 by 2406,

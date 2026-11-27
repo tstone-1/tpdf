@@ -8,7 +8,7 @@
  */
 
 import { catalog } from "./i18n";
-import { SINGLE, type Spread } from "./scroller";
+import type { Spread } from "./scroller";
 
 /** The layouts offered, in the order the menu lists them. */
 export const SPREAD_KINDS = ["single", "facing", "book"] as const;
@@ -49,10 +49,9 @@ export function kindOf(spread: Spread): SpreadKind {
  */
 export function withKind(spread: Spread, kind: SpreadKind): Spread {
   return {
+    ...spread,
     columns: kind === "single" ? 1 : 2,
     coverAlone: kind === "book",
-    rightToLeft: spread.rightToLeft,
-    continuous: spread.continuous,
   };
 }
 
@@ -62,6 +61,7 @@ export interface PlaceSpread {
   cover_alone?: boolean;
   right_to_left?: boolean;
   continuous?: boolean;
+  wheel_pages?: boolean;
 }
 
 /**
@@ -74,8 +74,13 @@ export function spreadOfPlace(place: PlaceSpread): Spread {
   // choice existed was read continuously.
   const continuous = place.continuous !== false;
   const rightToLeft = place.right_to_left === true;
-  if (place.columns !== 2) return { ...SINGLE, rightToLeft, continuous };
-  return { columns: 2, coverAlone: place.cover_alone === true, rightToLeft, continuous };
+  return {
+    columns: place.columns === 2 ? 2 : 1,
+    coverAlone: place.columns === 2 && place.cover_alone === true,
+    rightToLeft,
+    continuous,
+    ...(!continuous && place.wheel_pages ? { wheelPages: true } : {}),
+  };
 }
 
 /** The fields to write for `spread`. */
@@ -85,5 +90,6 @@ export function placeOfSpread(spread: Spread): Required<PlaceSpread> {
     cover_alone: spread.coverAlone,
     right_to_left: spread.rightToLeft,
     continuous: spread.continuous,
+    wheel_pages: !spread.continuous && !!spread.wheelPages,
   };
 }

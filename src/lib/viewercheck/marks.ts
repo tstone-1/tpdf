@@ -434,12 +434,14 @@ export async function markNoteChecks(
   const remove = [...viewer.markPopup.querySelectorAll("button")].find(
     (button) => button.textContent === "Remove highlight",
   );
-  remove?.dispatchEvent(
-    new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
-  );
+  for (const button of [0, 1, 2]) {
+    remove?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button }));
+  }
+  const draftKept = edits.length === 0 && box.value === "typed and then thrown away" && viewer.markOpen === mark.id;
+  remove?.click();
   check(
     MARK_NOTE_CHECKS[7] ?? "",
-    edits.join(",") === `remove:${mark.id}` && viewer.markOpen === -1,
+    draftKept && edits.join(",") === `remove:${mark.id}` && viewer.markOpen === -1,
     `sent [${edits.join(", ")}], open=${viewer.markOpen}, button ${remove ? "found" : "missing"}`,
   );
 

@@ -1196,6 +1196,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     cover_alone: true,
                     right_to_left: false,
                     continuous: false,
+                    wheel_pages: false,
                     page_count: 40,
                 }],
                 invert_pages: true,

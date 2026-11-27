@@ -42,10 +42,13 @@ fn pin(text: &str) -> AuthPin {
 /// A SoftHSM token in a folder of its own, with a signer's certificate
 /// and key under one ID and a certificate with no key under another.
 /// `None`, and a `[SKIP]`, where SoftHSM is not installed.
-fn token() -> Option<(Pkcs11, p256::ecdsa::VerifyingKey, Session)> {
-    let Some(module) = SOFTHSM
+fn token() -> Option<(Module, p256::ecdsa::VerifyingKey, Session)> {
+    let installed = SOFTHSM
         .iter()
-        .find(|path| std::path::Path::new(path).exists())
+        .find(|path| std::path::Path::new(path).exists());
+    let Some(module) = std::env::var("TPDF_TEST_SOFTHSM_MODULE")
+        .ok()
+        .or_else(|| installed.map(|path| (*path).to_owned()))
     else {
         println!("[SKIP] SoftHSM is not installed (the package softhsm2)");
         return None;
@@ -64,7 +67,7 @@ fn token() -> Option<(Pkcs11, p256::ecdsa::VerifyingKey, Session)> {
     .unwrap();
     // Read by SoftHSM in `C_Initialize`, below; nothing else here reads it.
     std::env::set_var("SOFTHSM2_CONF", &conf);
-    let context = open(module).unwrap();
+    let context = open(&module).unwrap();
     let slot = context.get_all_slots().unwrap()[0];
     context
         .init_token(slot, &pin("so-pin"), "tpdf test")
@@ -79,7 +82,11 @@ fn token() -> Option<(Pkcs11, p256::ecdsa::VerifyingKey, Session)> {
     let signer = ca.issue("tpdf token signer", 0x32, 7, None);
     let secret = p256::ecdsa::SigningKey::from_bytes(&[signer.seed; 32].into()).unwrap();
     let orphan = ca.issue("tpdf orphan", 0x33, 8, None);
-    for (certificate, id) in [(&signer.certificate, b"k1"), (&orphan.certificate, b"k2")] {
+    for (certificate, id) in [
+        (&signer.certificate, b"k1"),
+        (&orphan.certificate, b"k2"),
+        (&signer.certificate, b"k3"),
+    ] {
         session
             .create_object(&[
                 Attribute::Class(ObjectClass::CERTIFICATE),
@@ -92,24 +99,34 @@ fn token() -> Option<(Pkcs11, p256::ecdsa::VerifyingKey, Session)> {
             ])
             .unwrap();
     }
-    session
-        .create_object(&[
-            Attribute::Class(ObjectClass::PRIVATE_KEY),
-            Attribute::KeyType(KeyType::EC),
-            Attribute::EcParams(P256_PARAMS.to_vec()),
-            Attribute::Value(secret.to_bytes().to_vec()),
-            Attribute::Id(b"k1".to_vec()),
-            Attribute::Token(true),
-            Attribute::Private(true),
-            Attribute::Sign(true),
-        ])
-        .unwrap();
+    for (id, always_authenticate) in [(b"k1", false), (b"k3", true)] {
+        session
+            .create_object(&[
+                Attribute::AlwaysAuthenticate(always_authenticate),
+                Attribute::Class(ObjectClass::PRIVATE_KEY),
+                Attribute::KeyType(KeyType::EC),
+                Attribute::EcParams(P256_PARAMS.to_vec()),
+                Attribute::Value(secret.to_bytes().to_vec()),
+                Attribute::Id(id.to_vec()),
+                Attribute::Token(true),
+                Attribute::Private(true),
+                Attribute::Sign(true),
+            ])
+            .unwrap();
+    }
     session.logout().unwrap();
     set_pin_asker(Box::new(|_| {
         ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(ANSWER.lock().unwrap().map(pin))
     }));
-    Some((context, *secret.verifying_key(), session))
+    Some((
+        Module {
+            context,
+            path: module,
+        },
+        *secret.verifying_key(),
+        session,
+    ))
 }
 
 /// The whole path on one token, in one test: `C_Initialize` runs once per
@@ -123,11 +140,13 @@ fn a_token_lists_its_certificates_and_signs_after_its_pin() {
     let Some((context, verifying, setup)) = token() else {
         return;
     };
-    let found = certificates(&context).unwrap();
+    let found = certificates(&context.context).unwrap();
+    let mut found = found;
+    found.sort_by(|a, b| a.id.cmp(&b.id));
     let ids: Vec<&[u8]> = found.iter().map(|f| f.id.as_slice()).collect();
     assert_eq!(
         ids,
-        [b"k1".as_slice(), b"k2".as_slice()],
+        [b"k1".as_slice(), b"k2".as_slice(), b"k3".as_slice()],
         "both certificates, by ID"
     );
     assert!(
@@ -166,6 +185,22 @@ fn a_token_lists_its_certificates_and_signs_after_its_pin() {
     let again = sign(&context, signer, KeyKind::P256, &digest);
     assert!(again.is_ok(), "{again:?}");
     assert_eq!(asked(), before, "no PIN asked while logged in");
+
+    let always = &found[2];
+    answer(None);
+    assert_eq!(
+        sign(&context, always, KeyKind::P256, &digest),
+        Err("signing was cancelled".into())
+    );
+    answer(Some(USER_PIN));
+    for _ in 0..2 {
+        let before = asked();
+        let bytes = sign(&context, always, KeyKind::P256, &digest).unwrap();
+        verifying
+            .verify_prehash(&digest, &p256::ecdsa::Signature::from_der(&bytes).unwrap())
+            .unwrap();
+        assert_eq!(asked(), before + 1, "each signature needs its own login");
+    }
 
     let none = sign(&context, orphan, KeyKind::P256, &digest);
     assert!(

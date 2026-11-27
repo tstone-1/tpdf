@@ -101,6 +101,9 @@ pub struct Place {
     /// time. A place written before the choice existed was continuous.
     #[serde(default = "continuous")]
     pub continuous: bool,
+    /// Whether a vertical wheel gesture turns a whole row in the paged layout.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wheel_pages: bool,
     /// Pages the document had when this was written.
     ///
     /// Kept so a restore can tell "the file has been replaced by a shorter one"
@@ -612,6 +615,7 @@ mod tests {
             cover_alone: true,
             right_to_left: false,
             continuous: false,
+            wheel_pages: true,
             page_count: 10,
         }
     }

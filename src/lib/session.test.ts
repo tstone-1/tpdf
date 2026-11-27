@@ -58,6 +58,7 @@ describe("samePlace", () => {
   // One case per field, because a comparison that forgets one is a position
   // that silently stops being saved -- and only for that one way of moving.
   const moved: [string, Partial<Place>][] = [
+    ["wheel paging", { wheel_pages: true }],
     ["path", { path: "/tmp/b.pdf" }],
     ["page", { page: 5 }],
     ["top_pt", { top_pt: 121 }],

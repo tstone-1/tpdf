@@ -5812,6 +5812,7 @@ dependencies = [
  "core-foundation 0.10.1",
  "crypto-bigint",
  "cryptoki",
+ "cryptoki-sys",
  "der 0.7.10",
  "des",
  "ecdsa",

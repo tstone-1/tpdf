@@ -196,16 +196,16 @@ fn the_windows_store_signs_a_revision_that_the_verifier_calls_intact() {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
     let mut made = Vec::new();
-    for algorithm in ["RSA", "ECDSA_nistP256"] {
-        let thumbprint = powershell(&format!(
-            "(New-SelfSignedCertificate -Subject 'CN={subject}-{algorithm}' \
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        for algorithm in ["RSA", "ECDSA_nistP256"] {
+            let thumbprint = powershell(&format!(
+                "(New-SelfSignedCertificate -Subject 'CN={subject}-{algorithm}' \
              -CertStoreLocation Cert:\\CurrentUser\\My -KeyAlgorithm {algorithm} \
              -KeyUsage DigitalSignature -Provider 'Microsoft Software Key Storage Provider' \
              -NotAfter (Get-Date).AddDays(1)).Thumbprint"
-        ));
-        made.push(thumbprint);
-    }
-    let result = std::panic::catch_unwind(|| {
+            ));
+            made.push(thumbprint);
+        }
         let found = identities().expect("the store");
         for thumbprint in &made {
             use sha1::Digest as _;
@@ -232,7 +232,7 @@ fn the_windows_store_signs_a_revision_that_the_verifier_calls_intact() {
                 "{thumbprint}"
             );
         }
-    });
+    }));
     // **The path before `-DeleteKey`**: the switch is a dynamic parameter of the
     // certificate provider, and PowerShell 7 does not know it exists until the
     // path is bound. Written the other way round, the first run on Windows

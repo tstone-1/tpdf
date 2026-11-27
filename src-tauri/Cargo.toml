@@ -307,6 +307,7 @@ block2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
     # Gates the `NSWorkspace` methods that take a completion block.
     "block2",
+    "NSWindow",
     "NSPrintInfo",
     "NSPrintOperation",
     # `NSWorkspace openURL:`, the OS opener a confirmed web link is handed to.
@@ -523,6 +524,9 @@ libloading = "0.9"
 # backend. New packages: cryptoki and cryptoki-sys (Apache-2.0), secrecy
 # (Apache-2.0 OR MIT) and libloading 0.8 (ISC), a second version beside 0.9.
 cryptoki = "0.12"
+# ABI for single-part C_Sign after a per-operation login. cryptoki 0.12
+# exposes only a combined init/sign or the multipart update/final pair.
+cryptoki-sys = "0.5"
 # The PIN dialog (`pin_prompt.rs`). Already in the tree through Tauri, so no new
 # package.
 gtk = "0.18"

@@ -109,7 +109,7 @@ pub enum Target<'a> {
 ///
 /// Crate-visible because a request carries one too: `tsa.rs` writes the same
 /// structure into a `TimeStampReq` and reads the answer's back with
-/// [`imprint_of`], so what is asked and what is checked are one type.
+/// [`statement`], so what is asked and what is checked are one type.
 #[derive(Clone, Debug, der::Sequence)]
 pub(crate) struct MessageImprint {
     pub(crate) hash_algorithm: AlgorithmIdentifierOwned,
@@ -195,7 +195,7 @@ pub fn check(token: &[u8], target: Target<'_>, budget: &mut u64) -> Integrity {
     }
     let sha1_signed = own.verdict == Verdict::Weak;
 
-    let Some(imprint) = imprint_of(&content) else {
+    let Some((imprint, _)) = statement(&content) else {
         return Integrity::unchecked(Why::Unreadable);
     };
     let Some(hash) = Hash::from_oid(&imprint.hash_algorithm.oid.to_string()) else {
@@ -246,14 +246,9 @@ fn content_type(token: &[u8]) -> Option<String> {
     Some(signed.encap_content_info.econtent_type.to_string())
 }
 
-/// `messageImprint` out of a `TSTInfo`: its third field.
-///
-/// The two ahead of it --- `version` and `policy` --- are read as the types
-/// they must be rather than skipped as opaque values, so a `TSTInfo` shifted
-/// by a missing or extra field reads as unreadable rather than yielding some
-/// other `SEQUENCE` as an imprint. Trailing bytes after the `TSTInfo` refuse
-/// it for the same reason.
-pub(crate) fn imprint_of(tst_info: &[u8]) -> Option<MessageImprint> {
+/// Reads the mandatory TSTInfo fields together so the integrity verdict and
+/// the displayed time describe the same statement. Optional fields may follow.
+pub(crate) fn statement(tst_info: &[u8]) -> Option<(MessageImprint, der::DateTime)> {
     use der::{Reader as _, Tagged as _};
 
     let mut outer = der::SliceReader::new(tst_info).ok()?;
@@ -262,9 +257,14 @@ pub(crate) fn imprint_of(tst_info: &[u8]) -> Option<MessageImprint> {
         return None;
     }
     let mut inner = der::SliceReader::new(sequence.value()).ok()?;
-    let _version = der::asn1::Int::decode(&mut inner).ok()?;
+    if u8::decode(&mut inner).ok()? != 1 {
+        return None;
+    }
     let _policy = der::asn1::ObjectIdentifier::decode(&mut inner).ok()?;
-    MessageImprint::decode(&mut inner).ok()
+    let imprint = MessageImprint::decode(&mut inner).ok()?;
+    let _serial = der::asn1::IntRef::decode(&mut inner).ok()?;
+    let time = crate::docinfo::decode_gen_time(&mut inner)?;
+    Some((imprint, time))
 }
 
 /// Whether the token's signed attributes bind the certificate its `sid` names.

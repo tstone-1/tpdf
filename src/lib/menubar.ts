@@ -471,6 +471,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "view.rightToLeft",
       "view.continuous",
       "view.pageAtATime",
+      "view.wheelPages",
       SEPARATOR,
       "view.fullScreen",
       "view.presentation",
