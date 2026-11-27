@@ -310,3 +310,28 @@ fn the_nearest_list_that_names_a_picture_is_the_one_it_is_drawn_through() {
     assert!(named(&f.doc, f.picture));
     assert_eq!(draws_on(&f.doc, f.pages[1]), 1);
 }
+
+#[test]
+fn removing_a_page_picture_preserves_the_draw_in_a_form_using_its_list() {
+    let mut f = fixture(Kept::OwnObject, &[1]);
+    let page = f.pages[0];
+    let resources = f
+        .doc
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Resources")
+        .unwrap()
+        .clone();
+    let form = f.doc.add_object(Stream::new(
+        dictionary! {"Subtype" => "Form", "Resources" => resources},
+        b"/Im0 Do".to_vec(),
+    ));
+    add_name(&mut f.doc, page, "Fm", form);
+    f.doc
+        .change_page_content(page, b"/Im0 Do /Fm Do".to_vec())
+        .unwrap();
+    remove_images(&mut f.doc, page, &[0], 1).unwrap();
+    assert_eq!(draws_on(&f.doc, page), 1);
+    assert!(named(&f.doc, f.picture));
+    assert_eq!(super::form_id(&f.doc, page, "Im0").unwrap(), f.picture);
+}

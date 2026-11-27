@@ -677,7 +677,7 @@ pub(super) fn shared_form_pdf() -> Vec<u8> {
 /// survive. The region covers only the first widget and a printed label that
 /// gives the OCR gate a measurable font size. The field secret is never page
 /// text, so removing the label cannot supply the missing field-value needle.
-fn multi_widget_pdf(answer: &str) -> Vec<u8> {
+fn multi_widget_pdf(answer: &str, hide_second: bool) -> Vec<u8> {
     let mut doc = Document::with_version("1.7");
     let pages = doc.new_object_id();
     let field = doc.new_object_id();
@@ -700,7 +700,7 @@ fn multi_widget_pdf(answer: &str) -> Vec<u8> {
         ));
         let widget = doc.add_object(dictionary! {
             "Type" => "Annot", "Subtype" => "Widget", "Parent" => field, "P" => page,
-            "Rect" => vec![72.into(), 700.into(), 322.into(), 724.into()], "F" => 4,
+            "Rect" => vec![72.into(), 700.into(), 322.into(), 724.into()], "F" => if at == 1 && hide_second { 6 } else { 4 },
             "AP" => dictionary! { "N" => appearance },
         });
         kids.push(Object::Reference(widget));
@@ -767,7 +767,8 @@ pub(super) fn widgets_are_removed(report: &mut Report) {
     let input = dir.join("multi-widget.pdf");
     let output = dir.join("multi-widget-redacted.pdf");
     let regions = dir.join("regions.json");
-    std::fs::write(&input, multi_widget_pdf("WIDGET-SECRET-4827")).expect("multi-widget input");
+    std::fs::write(&input, multi_widget_pdf("WIDGET-SECRET-4827", false))
+        .expect("multi-widget input");
     std::fs::write(&regions, r#"[{"page":1,"rect":[72,50,250,44]}]"#).expect("regions");
     let before_fields = tool(&["fields", &s(&input), "--json"], &[]);
     let fields = parsed(&before_fields.1);
@@ -885,7 +886,15 @@ pub(super) fn widgets_are_removed(report: &mut Report) {
             &format!("cropped={cropped}: {result:?}"),
         );
     }
-    std::fs::write(&input, multi_widget_pdf("AB")).expect("short repeated field value");
+    std::fs::write(&input, multi_widget_pdf("WIDGET-SECRET-4827", true))
+        .expect("hidden second widget");
+    let hidden = raster(false, false);
+    report.check(
+        "a hidden second widget contributes no visible raster answer",
+        hidden.as_ref().is_ok_and(|r| r.verified),
+        &format!("{hidden:?}"),
+    );
+    std::fs::write(&input, multi_widget_pdf("AB", false)).expect("short repeated field value");
     let result = raster(false, true);
     report.check(
         "image-only verification finds a short widget answer outside a second page mark",
@@ -1400,21 +1409,22 @@ pub(super) fn pictures_in_blocks_are_removed(report: &mut Report) {
         &[],
     );
     report.check(
-        "plain preflight says a shared picture remains elsewhere",
+        "plain preflight explains which shared picture placements are preserved",
         dry_code == 0
-            && dry_text.contains("still in the file")
+            && dry_text.contains("Placements outside the marked regions remain")
             && dry_text.contains("Nothing was written"),
         &dry_text,
     );
     let notes = json["notes"].to_string();
     report.check(
-        "a picture another page draws too is taken off this page, and the report says it stays in the file",
+        "the export describes the shared picture and limits its note to unmarked placements",
         json["written"] == true
             && json["pages"][0]["image_removals"] == 1
-            && json["pages"][0]["left"].as_array().is_some_and(Vec::is_empty)
+            && json["pages"][0]["left"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
             && notes.contains("draws 2 time(s)")
-            && notes.contains("taken off this page")
-            && notes.contains("still in the file"),
+            && notes.contains("Placements outside the marked regions remain"),
         &format!("exit {code}: {stderr}; {json}"),
     );
     let block_draws = |path: &Path| {
@@ -1473,6 +1483,35 @@ pub(super) fn pictures_in_blocks_are_removed(report: &mut Report) {
             && json["notes"].as_array().is_some_and(Vec::is_empty)
             && !holds(&everywhere, "PICTURE-C-BYTES")
             && holds(&everywhere, "PICTURE-B-BYTES"),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    let simultaneous = dir.join("both-placements.pdf");
+    std::fs::write(
+        &regions,
+        r#"[{"page":1,"rect":[305,257,20,20]},{"page":2,"rect":[77,157,20,20]}]"#,
+    )
+    .expect("two regions");
+    let (code, json, stderr) = run(
+        &strings(&[
+            "redact",
+            &s(&input),
+            "-o",
+            &s(&simultaneous),
+            "--regions",
+            &s(&regions),
+            "--json",
+        ]),
+        &[],
+    );
+    let notes = json["notes"].to_string();
+    report.check(
+        "marking both placements removes the shared bytes in one export",
+        json["written"] == true
+            && !holds(&simultaneous, "PICTURE-C-BYTES")
+            && holds(&simultaneous, "PICTURE-B-BYTES")
+            && notes.contains("Placements outside the marked regions remain")
+            && !notes.contains("still in the file"),
         &format!("exit {code}: {stderr}; {json}"),
     );
 

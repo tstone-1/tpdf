@@ -753,12 +753,14 @@ fn planned(
         own: Whose::Signer,
         above: Whose::SignerIssuer,
         admitted: &above_signer,
+        ordered: false,
     };
     let authority = Leg {
         leaf: &authority,
         own: Whose::Authority,
         above: Whose::AuthorityIssuer,
         admitted: &above_authority,
+        ordered: vouched_chain.is_some(),
     };
     if with_signer {
         walked(&[signer, authority], &everyone)
@@ -774,6 +776,35 @@ struct Leg<'a> {
     own: Whose,
     above: Whose,
     admitted: &'a [Vec<u8>],
+    ordered: bool,
+}
+
+/// The trust provider returns an ordered path, leaf first and trust anchor
+/// last. A self-signed twin in the candidate pool cannot shorten that path.
+fn selected_walk(leaf: &Certificate, chain: &[Vec<u8>]) -> Option<crate::revocation::chain::Walk> {
+    use crate::revocation::chain::{no_check, Link, Walk, MAX_CHAIN};
+    let path = chain
+        .iter()
+        .map(|der| Certificate::from_der(der).ok())
+        .collect::<Option<Vec<_>>>()?;
+    if path.first()? != leaf {
+        return None;
+    }
+    let links = path
+        .windows(2)
+        .take(MAX_CHAIN)
+        .map(|pair| Link {
+            certificate: pair[0].clone(),
+            issuer: Some(pair[1].clone()),
+            no_check: no_check(&pair[0]),
+        })
+        .collect();
+    Some(Walk {
+        links,
+        anchor: path.last().cloned(),
+        end: End::Root,
+        dropped: path.len().saturating_sub(MAX_CHAIN + 1),
+    })
 }
 
 /// What to ask about on each of `legs`, and every certificate to carry, with
@@ -798,6 +829,7 @@ fn walked(
         own,
         above,
         admitted,
+        ordered,
     } in legs
     {
         // The walk is the reader's (`revocation::chain::walk`), so what is
@@ -815,25 +847,31 @@ fn walked(
         // the response unauthorised --- measured on DigiCert's and Sectigo's
         // real data (`docs/TRAPS.md`). The token still carries the
         // cross-certificate for whoever builds that path.
-        let walked = walk(leaf, everyone);
+        let discovered = walk(leaf, everyone);
+        // An alternative, unvouched issuer in the document is still a
+        // preflight refusal. Never follow its published addresses.
+        for pair in discovered.links.windows(2) {
+            let der = pair[1].certificate.to_der().unwrap_or_default();
+            if !admitted.contains(&der) {
+                let whose = if &pair[0].certificate == leaf {
+                    own
+                } else {
+                    above
+                };
+                return Err(Refusal::NoIssuer(named(&pair[0].certificate, whose)));
+            }
+        }
+        let walked = if ordered {
+            selected_walk(leaf, admitted).ok_or_else(|| Refusal::NoIssuer(named(leaf, own)))?
+        } else {
+            discovered
+        };
         if walked.links.is_empty() {
             return Err(Refusal::NotPublished(named(leaf, own)));
         }
         for (at, link) in walked.links.iter().enumerate() {
             let whose = if at == 0 { own } else { above };
-            // A certificate above the leaf that passes for an issuer by name
-            // and key, and is not on the chain this leaf may have: for the
-            // authority, one the token carries that the OS did not vouch for.
-            // Refused here, before anything is fetched or carried: its
-            // addresses were chosen by whoever made it, and the reader of
-            // the file would walk into it as this walk did. The certificate
-            // below it is the one whose issuer was not found.
             let der = link.certificate.to_der().unwrap_or_default();
-            if at > 0 && !admitted.contains(&der) {
-                let below = &walked.links[at - 1].certificate;
-                let whose = if at == 1 { own } else { above };
-                return Err(Refusal::NoIssuer(named(below, whose)));
-            }
             carry(&link.certificate);
             let Some(issuer) = &link.issuer else {
                 return Err(Refusal::NoIssuer(named(&link.certificate, whose)));
@@ -1357,6 +1395,11 @@ fn chains_good(chains: &[(Option<&crate::revocation::chain::Chain>, &str)]) -> R
                 "{} reads {}",
                 name(judged),
                 format!("{:?}", judged.revocation.standing).to_lowercase()
+            )));
+        }
+        if chain.end == End::Budget {
+            return Err(Refusal::Bound(said!(
+                "the certificate chain exceeded the hashing budget"
             )));
         }
         if chain.dropped > 0 {

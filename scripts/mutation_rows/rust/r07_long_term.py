@@ -658,7 +658,7 @@ ROWS += [
         # by name and key and is on no chain the store accepted.
         "longterm: take a link the authority was not vouched for by",
         "src/longterm.rs",
-        "            if at > 0 && !admitted.contains(&der) {",
+        "            if !admitted.contains(&der) {",
         "            if false {",
         "a_certificate_injected_into_the_token_is_never_asked_about",
     ),

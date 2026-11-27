@@ -98,6 +98,9 @@ pub struct Widget {
     pub multiline: bool,
     pub max_length: Option<usize>,
     pub reason: Option<String>,
+    /// The annotation flags suppress its on-screen appearance, independently of editability.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
     /// What a reader shows when the pointer rests on the field: the field's
     /// own `/TU`. Empty when it has none.
     #[serde(default)]
@@ -860,6 +863,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 multiline: text && flags & (1 << 12) != 0,
                 max_length: (text && max > 0).then_some(max as usize),
                 reason,
+                hidden: hidden(annotation_flags),
                 tooltip,
                 required: flags & (1 << 1) != 0,
                 read_only: flags & 1 != 0,
@@ -1801,6 +1805,7 @@ pub(crate) mod tests {
             multiline: false,
             max_length: None,
             reason: None,
+            hidden: false,
             tooltip: String::new(),
             required: false,
             read_only: false,

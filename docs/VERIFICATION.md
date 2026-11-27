@@ -4,6 +4,22 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Shared images, partial-line redaction and annotation-only pages (2026-11-27)
+
+On macOS, the CLI redacted a page image that a Form XObject also drew outside
+the mark. Rendering the output with Poppler showed black at the marked pixel
+and the original RGB value (200, 25, 50) at the second placement. The CLI
+reported that it could not verify the surviving image without OCR. On a
+two-page fixture, marking both placements in one export removed the shared
+image bytes while the unrelated image bytes survived.
+
+In a separate export, removing the digits from `London 123456` left the page
+text `London`, the bookmark of that name, its child and the separate form
+answer `London`. The CLI verified the output. It also removed a comment from
+a page with no content stream. For a Form containing two words that shared
+a text cursor, removing the first would have shifted the second by 61 points.
+The CLI refused that edit and produced no output file.
+
 ### Image-only redaction and certificate validation (2026-11-27)
 
 The image-only command was run on a two-page form with the same text answer

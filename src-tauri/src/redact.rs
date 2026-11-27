@@ -250,8 +250,7 @@ impl Unhandled {
     #[must_use]
     pub fn taken_here(&self) -> String {
         said!(
-            "object {at} is a picture this document draws {times} time(s). When it is taken off this page, every \
-             other placement remains and the picture is still in the file",
+            "object {at} is a picture this document draws {times} time(s). Placements outside the marked regions remain",
             at = self.at,
             times = self.drawn.unwrap_or(2)
         )
@@ -306,7 +305,7 @@ impl Unhandled {
                  file \u{2014} so it was left"
             ),
             None => {
-                said!("object {at} is {what} that overlaps the region; only text is removed here")
+                said!("object {at} is {what} that overlaps the region and was left in place")
             }
         }
     }
@@ -540,6 +539,9 @@ pub struct RegionPlan {
     /// bookmark that still spells them out among the words beside them.
     #[serde(default)]
     pub lines: String,
+    /// UTF-8 byte ranges in the touched text that remain on the page.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_spans: Vec<(usize, usize)>,
     /// What the region covers that this cannot remove, one sentence each.
     ///
     /// Non-empty means the region is **not** redactable, and the sentences are
@@ -2471,6 +2473,14 @@ pub fn remove_shows(
     // renumbers every one after it -- so a carrier cleared afterwards would be
     // found by walking indices that no longer mean what they meant. The same
     // renumbering `positions` is walked backwards to avoid, one level up.
+    if positions.is_empty() && doc.get_dictionary(page).is_ok_and(|p| !p.has(b"Contents")) {
+        return Ok(Removed {
+            shows_before: shows.len(),
+            removed,
+            carriers: 0,
+            struct_carriers: 0,
+        });
+    }
     let carriers = clear_shadow_text(doc, page, &mut content.operations, &positions)?;
 
     for at in positions.into_iter().rev() {
@@ -2616,6 +2626,21 @@ pub fn remove_form_shows(
     positions.sort_unstable();
     positions.dedup();
     let removed = positions.len();
+
+    // Form plans do not carry glyph advances. Refuse if a surviving show
+    // would inherit the removed advance (including a run of removed shows).
+    for (ordinal, &at) in shows.iter().enumerate() {
+        if positions.binary_search(&at).is_ok()
+            && glyph_cut::carries_on(&inside.operations, at)
+            && shows
+                .get(ordinal + 1)
+                .is_some_and(|next| positions.binary_search(next).is_err())
+        {
+            return Err(said!(
+                "removing this text inside a form would move the following text"
+            ));
+        }
+    }
 
     // The form's own spans, before the removal renumbers them, for
     // `remove_shows`' reason. The page's walk never sees these: it reads the
@@ -2968,8 +2993,12 @@ pub fn remove_images(
     // drew it is redacted the name goes then, and the bytes with it.
     names.sort();
     names.dedup();
+    let nested = nested_image_names(doc, page, &names)?;
     let mut unused: Vec<String> = Vec::new();
     for name in names {
+        if nested.contains(name.as_bytes()) {
+            continue;
+        }
         let still_here = content.operations.iter().any(|operation| {
             operation.operator == "Do"
                 && operation.operands.first().and_then(|o| o.as_name().ok())
@@ -2992,6 +3021,118 @@ pub fn remove_images(
         carriers: figure.keys,
         struct_carriers: figure_elements,
     })
+}
+
+/// Surviving Form draws that resolve a name through the very list we would edit.
+/// A Form may inherit its caller's list, including through another Form.
+fn nested_image_names(
+    doc: &Document,
+    page: ObjectId,
+    names: &[String],
+) -> Result<HashSet<Vec<u8>>, String> {
+    let list = |resources| xobject_list(doc, resources);
+    let target = nearest_resources(doc, page)
+        .and_then(|(h, _)| held(doc, h))
+        .and_then(list);
+    let mut used = HashSet::new();
+    let Some(target) = target else {
+        return Ok(used);
+    };
+    let wanted: HashSet<&[u8]> = names.iter().map(String::as_bytes).collect();
+    let mut pending = Vec::new();
+    let mut seen = HashSet::new();
+    // An explicit shared list can also belong to an annotation appearance.
+    // Forms without resources are resolved in the calling context below.
+    for (&id, object) in &doc.objects {
+        let Ok(stream) = object.as_stream() else {
+            continue;
+        };
+        if !stream
+            .dict
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .is_ok_and(|v| v == b"Form")
+        {
+            continue;
+        }
+        if let Ok(resources) = stream.dict.get(b"Resources") {
+            let own = doc
+                .dereference(resources)
+                .ok()
+                .and_then(|(_, v)| v.as_dict().ok())
+                .and_then(list);
+            if own.is_some_and(|v| std::ptr::eq(v, target)) {
+                pending.push(id);
+            }
+        }
+    }
+    // Any Form accessible through this list can inherit the list. Repeating
+    // this for nested Forms would see the same entries, so enqueue them once.
+    for (_, object) in target.iter() {
+        let Ok(id) = object.as_reference() else {
+            continue;
+        };
+        if let Ok(stream) = doc.get_object(id).and_then(Object::as_stream) {
+            if !stream.dict.has(b"Resources")
+                && stream
+                    .dict
+                    .get(b"Subtype")
+                    .and_then(Object::as_name)
+                    .is_ok_and(|v| v == b"Form")
+            {
+                pending.push(id);
+            }
+        }
+    }
+    let page_placements = std::cell::OnceCell::new();
+    let inherited_placements = std::cell::OnceCell::new();
+    let mut remaining = MAX_CONTENT_BYTES;
+    for id in pending {
+        if !seen.insert(id) {
+            continue;
+        }
+        let stream = doc
+            .get_object(id)
+            .and_then(Object::as_stream)
+            .map_err(|e| e.to_string())?;
+        let body = stream
+            .decompressed_content_with_limit(remaining)
+            .map_err(|e| e.to_string())?;
+        remaining = remaining
+            .checked_sub(body.len())
+            .ok_or_else(|| said!("the form's content stream is too large"))?;
+        let content = decode_whole(&body, &said!("the form's content stream"))?;
+        for operation in &content.operations {
+            if operation.operator == "Do" {
+                if let [Object::Name(name)] = operation.operands.as_slice() {
+                    if wanted.contains(name.as_slice()) {
+                        let drawn = if stream.dict.has(b"Resources") {
+                            page_placements.get_or_init(|| page_draw_counts(doc))
+                        } else {
+                            inherited_placements.get_or_init(|| {
+                                page_draw_counts_where(doc, |page| {
+                                    nearest_resources(doc, page)
+                                        .and_then(|(holder, _)| held(doc, holder))
+                                        .and_then(list)
+                                        .is_some_and(|resources| std::ptr::eq(resources, target))
+                                })
+                            })
+                        };
+                        if !drawn.contains_key(&id) {
+                            return Err(said!("the picture is referenced by a form whose placement could not be verified"));
+                        }
+                        used.insert(name.clone());
+                    }
+                }
+            }
+        }
+    }
+    Ok(used)
+}
+
+fn xobject_list<'a>(doc: &'a Document, resources: &'a Dictionary) -> Option<&'a Dictionary> {
+    let (_, value) = doc.dereference(resources.get(b"XObject").ok()?).ok()?;
+    value.as_dict().ok()
 }
 
 /// Deletes the numbered paths from a page's content stream.
@@ -3616,8 +3757,15 @@ impl PageDraws {
 /// Every page's `Do` operations, by the object each name resolves to on the
 /// page that draws it.
 fn page_draw_counts(doc: &Document) -> std::collections::HashMap<ObjectId, usize> {
+    page_draw_counts_where(doc, |_| true)
+}
+
+fn page_draw_counts_where(
+    doc: &Document,
+    include: impl Fn(ObjectId) -> bool,
+) -> std::collections::HashMap<ObjectId, usize> {
     let mut counts = std::collections::HashMap::new();
-    for page in doc.get_pages().into_values() {
+    for page in doc.get_pages().into_values().filter(|page| include(*page)) {
         let Some(content) = doc
             .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
             .ok()
@@ -3878,13 +4026,12 @@ const MIN_OUTLINE_TITLE: usize = 4;
 /// never compared; the caller then takes the outline whole, because an entry
 /// nobody read may name what went.
 #[must_use]
-pub fn covered_outline(doc: &Document, taken: &[String]) -> OutlineCover {
+pub fn covered_outline(doc: &Document, taken: &[CarrierLine]) -> OutlineCover {
     let mut cover = OutlineCover::default();
     let Some(first) = outline_first(doc) else {
         return cover;
     };
-    let folded: Vec<String> = taken.iter().map(|line| fold(line)).collect();
-    if folded.iter().all(|line| line.is_empty()) {
+    if taken.iter().all(|line| line.text.is_empty()) {
         return cover;
     }
 
@@ -3924,11 +4071,11 @@ pub fn covered_outline(doc: &Document, taken: &[String]) -> OutlineCover {
             .and_then(Object::as_str)
             .map(annots::decode_text_string)
             .unwrap_or_default();
-        let title = fold(&title);
-        if title.len() < MIN_OUTLINE_TITLE {
+        if !distinctive(&title, MIN_OUTLINE_TITLE) {
             continue;
         }
-        if folded.iter().any(|line| line.contains(&title)) {
+        let title = fold(&title);
+        if taken.iter().any(|line| line.matches(&title)) {
             doomed.push(id);
         }
     }
@@ -3967,6 +4114,18 @@ fn outline_first(doc: &Document) -> Option<ObjectId> {
         .ok()
 }
 
+/// Count characters before case folding (a single sharp s folds into two).
+fn distinctive(value: &str, minimum: usize) -> bool {
+    let mut length = 0;
+    for word in value.split_whitespace() {
+        length += usize::from(length > 0) + word.chars().count();
+        if length >= minimum {
+            return true;
+        }
+    }
+    false
+}
+
 /// Folds a title or a line for comparison.
 ///
 /// Whitespace collapses because a title is typed by a producer and the line is
@@ -3989,6 +4148,79 @@ fn fold(value: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+/// Folded text from a touched line and the byte intervals actually removed.
+/// A carrier can quote a whole line or part of it, including across a cut.
+pub struct CarrierLine {
+    text: String,
+    removed: Vec<std::ops::Range<usize>>,
+}
+
+impl CarrierLine {
+    pub fn new(raw: &str, kept: &[(usize, usize)]) -> Self {
+        if kept.is_empty() {
+            let text = fold(raw);
+            let removed = std::iter::once(0..text.len()).collect();
+            return Self { text, removed };
+        }
+        let mut text = String::new();
+        let mut removed: Vec<std::ops::Range<usize>> = Vec::new();
+        let mut spans = kept.iter().peekable();
+        let mut whitespace = None;
+        let mut append = |text: &mut String, ch: char, cut: bool| {
+            let start = text.len();
+            text.push(ch);
+            if cut {
+                if let Some(last) = removed.last_mut().filter(|r| r.end == start) {
+                    last.end = text.len();
+                } else {
+                    removed.push(start..text.len());
+                }
+            }
+        };
+        for (offset, ch) in raw.char_indices() {
+            while spans.peek().is_some_and(|span| span.1 <= offset) {
+                spans.next();
+            }
+            let cut = !spans.peek().is_some_and(|span| span.0 <= offset);
+            if ch.is_whitespace() {
+                if !text.is_empty() {
+                    whitespace = Some(whitespace.unwrap_or(false) || cut);
+                }
+                continue;
+            }
+            if let Some(cut_space) = whitespace.take() {
+                append(&mut text, ' ', cut_space);
+            }
+            for folded in caseless::default_case_fold_str(ch.encode_utf8(&mut [0; 4])).chars() {
+                append(&mut text, folded, cut);
+            }
+        }
+        Self { text, removed }
+    }
+
+    fn matches(&self, needle: &str) -> bool {
+        // Start the search close enough to each cut to include any overlapping
+        // occurrence, including repeated, overlapping strings such as "aaaa".
+        !needle.is_empty()
+            && self.removed.iter().any(|cut| {
+                let mut start = cut.start.saturating_sub(needle.len() - 1);
+                let mut end = cut
+                    .end
+                    .saturating_add(needle.len() - 1)
+                    .min(self.text.len());
+                while !self.text.is_char_boundary(start) {
+                    start += 1;
+                }
+                while !self.text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                self.text[start..end]
+                    .find(needle)
+                    .is_some_and(|offset| start + offset < cut.end)
+            })
+    }
 }
 
 /// The catalog's `/Outlines`, if the document has one.
@@ -4357,9 +4589,11 @@ pub fn has_xfa(doc: &Document) -> bool {
 /// looks exactly like a field that only ever had one; asking the document then
 /// was what made the first attempt at *any* in this rule a no-op.
 #[must_use]
-pub fn covered_fields(doc: &Document, taken: &[String], lost: &HashSet<ObjectId>) -> Vec<ObjectId> {
-    let folded: Vec<String> = taken.iter().map(|line| fold(line)).collect();
-
+pub fn covered_fields(
+    doc: &Document,
+    taken: &[CarrierLine],
+    lost: &HashSet<ObjectId>,
+) -> Vec<ObjectId> {
     // The traversal is `fields.rs`; the two rules below are what stays here.
     // **No depth bound, deliberately**, and that is the one place these bounds
     // differ from `docinfo::read_signatures`'s in a direction worth stating: a
@@ -4387,41 +4621,36 @@ pub fn covered_fields(doc: &Document, taken: &[String], lost: &HashSet<ObjectId>
         // 2026-11-19 such an entry ended the walk, so neither its value nor
         // any field under it was looked at.
         let Some(id) = node.id else {
-            if carries_taken(doc, field, &folded) {
-                doomed.extend(
-                    field
-                        .get(b"Kids")
-                        .and_then(|object| doc.dereference(object).map(|(_, object)| object))
-                        .and_then(Object::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|entry| entry.as_reference().ok()),
-                );
+            if carries_taken(doc, field, taken) {
+                if let Ok(kids) = field.get_deref(b"Kids", doc).and_then(Object::as_array) {
+                    fields::descend_entries(doc, kids, &bounds, |child| {
+                        if let Some(id) = child.id {
+                            doomed.push(id);
+                            fields::Flow::Leaf
+                        } else {
+                            fields::Flow::Descend
+                        }
+                    });
+                }
+                return fields::Flow::Leaf;
             }
             return fields::Flow::Descend;
         };
 
-        let kids: Vec<ObjectId> = field
+        let empty_kids = field
             .get(b"Kids")
-            .and_then(|object| doc.dereference(object).map(|(_, object)| object))
-            .and_then(Object::as_array)
-            .map(|array| {
-                array
-                    .iter()
-                    .filter_map(|entry| entry.as_reference().ok())
-                    .collect()
-            })
-            .unwrap_or_default();
-
+            .and_then(|object| doc.dereference(object))
+            .and_then(|(_, object)| object.as_array())
+            .is_ok_and(Vec::is_empty);
         // Rule one. `has(b"Kids")` rather than `!kids.is_empty()`: a field whose
         // array `forget` has emptied still has the key, and that emptiness is
         // precisely the signal. A merged field has no `/Kids` at all and was
         // removed as an annotation, so it must not fall in here. `lost` is the
         // *any*: a field that still has widgets but lost one to the region.
-        let orphaned = lost.contains(&id) || (field.has(b"Kids") && kids.is_empty());
+        let orphaned = lost.contains(&id) || empty_kids;
 
         // Rule two.
-        let carries = carries_taken(doc, field, &folded);
+        let carries = carries_taken(doc, field, taken);
 
         if orphaned || carries {
             doomed.push(id);
@@ -4439,7 +4668,7 @@ pub fn covered_fields(doc: &Document, taken: &[String], lost: &HashSet<ObjectId>
     for id in doomed {
         fields::descend(doc, &[id], &bounds, |node| {
             let Some(at) = node.id else {
-                return fields::Flow::Leaf;
+                return fields::Flow::Descend;
             };
             if all.contains(&at) {
                 return fields::Flow::Leaf;
@@ -4453,7 +4682,7 @@ pub fn covered_fields(doc: &Document, taken: &[String], lost: &HashSet<ObjectId>
 
 /// Whether a field's own `/V` or `/DV` is text the removal took: the second rule
 /// of [`covered_fields`]. `folded` is the taken lines, each through [`fold`].
-fn carries_taken(doc: &Document, field: &Dictionary, folded: &[String]) -> bool {
+fn carries_taken(doc: &Document, field: &Dictionary, folded: &[CarrierLine]) -> bool {
     [b"V".as_slice(), b"DV".as_slice()].into_iter().any(|key| {
         let Ok(value) = field
             .get(key)
@@ -4472,9 +4701,10 @@ fn carries_taken(doc: &Document, field: &Dictionary, folded: &[String]) -> bool 
 /// ([`carries_taken`]) and for one written out in place ([`prune_inline`]). A
 /// value shorter than [`MIN_FIELD_VALUE`] is not matched: it occurs inside
 /// unrelated words.
-fn holds_taken(bytes: &[u8], folded: &[String]) -> bool {
-    let text = fold(&annots::decode_text_string(bytes));
-    text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))
+fn holds_taken(bytes: &[u8], folded: &[CarrierLine]) -> bool {
+    let value = annots::decode_text_string(bytes);
+    let text = fold(&value);
+    distinctive(&value, MIN_FIELD_VALUE) && folded.iter().any(|line| line.matches(&text))
 }
 
 /// Removes the fields written out in place that [`covered_fields`]'s rules
@@ -4489,8 +4719,7 @@ fn holds_taken(bytes: &[u8], folded: &[String]) -> bool {
 ///
 /// Run after [`drop_fields`], for that reason. Bounded by the arrays the
 /// form's own objects hold and by [`MAX_FIELD_NODES`] entries in all.
-pub fn drop_inline_fields(doc: &mut Document, taken: &[String]) -> usize {
-    let folded: Vec<String> = taken.iter().map(|line| fold(line)).collect();
+pub fn drop_inline_fields(doc: &mut Document, taken: &[CarrierLine]) -> usize {
     let bounds = fields::Bounds {
         nodes: MAX_FIELD_NODES,
         depth: None,
@@ -4544,7 +4773,15 @@ pub fn drop_inline_fields(doc: &mut Document, taken: &[String]) -> usize {
     }
     for (at, key) in arrays {
         if let Some(array) = array_at(doc, at, key) {
-            gone += prune_inline(array, &folded, &mut budget);
+            // Detach just the array while resolving values against the live
+            // document. The original holder survives every child edit.
+            let mut entries = std::mem::take(array);
+            let mut active = HashSet::new();
+            if key.is_empty() {
+                active.extend(at);
+            }
+            gone += prune_inline(doc, &mut entries, taken, &mut budget, &mut active, 0);
+            *array_at(doc, at, key).expect("the field array's holder remains") = entries;
         }
     }
     if gone > 0 {
@@ -4577,9 +4814,14 @@ fn array_at<'a>(
 /// Takes out of `entries` every field written out in place that the rules of
 /// [`drop_inline_fields`] take, after doing the same inside each one kept.
 ///
-/// Reads the values as written: a `/V` held as an object of its own is not
-/// followed here, which [`covered_fields`] does for the widgets under it.
-fn prune_inline(entries: &mut Vec<Object>, folded: &[String], budget: &mut usize) -> usize {
+fn prune_inline(
+    doc: &mut Document,
+    entries: &mut Vec<Object>,
+    folded: &[CarrierLine],
+    budget: &mut usize,
+    active: &mut HashSet<ObjectId>,
+    depth: usize,
+) -> usize {
     let mut gone = 0;
     entries.retain_mut(|entry| {
         let Object::Dictionary(field) = entry else {
@@ -4589,24 +4831,40 @@ fn prune_inline(entries: &mut Vec<Object>, folded: &[String], budget: &mut usize
             return true;
         };
         *budget = left;
-        if let Ok(Object::Array(kids)) = field.get_mut(b"Kids") {
-            gone += prune_inline(kids, folded, budget);
-        }
-        let carries = [b"V".as_slice(), b"DV".as_slice()].into_iter().any(|key| {
-            field
-                .get(key)
-                .and_then(Object::as_str)
-                .is_ok_and(|bytes| holds_taken(bytes, folded))
-        });
-        let orphaned = field
-            .get(b"Kids")
-            .and_then(Object::as_array)
-            .is_ok_and(Vec::is_empty);
+        let carries = carries_taken(doc, field, folded);
+        let orphaned = match field.get_mut(b"Kids") {
+            Ok(Object::Array(kids)) => {
+                if depth < sweep::MAX_NESTING {
+                    gone += prune_inline(doc, kids, folded, budget, active, depth + 1);
+                }
+                kids.is_empty()
+            }
+            Ok(Object::Reference(id)) if depth < sweep::MAX_NESTING => {
+                let id = *id;
+                if active.insert(id) {
+                    let empty = if let Some(kids) = array_at(doc, Some(id), b"") {
+                        let mut kids = std::mem::take(kids);
+                        gone += prune_inline(doc, &mut kids, folded, budget, active, depth + 1);
+                        let empty = kids.is_empty();
+                        *array_at(doc, Some(id), b"").expect("the child array remains") = kids;
+                        empty
+                    } else {
+                        false
+                    };
+                    active.remove(&id);
+                    empty
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
         if carries || orphaned {
             gone += 1;
-            return false;
+            false
+        } else {
+            true
         }
-        true
     });
     gone
 }
@@ -4729,7 +4987,7 @@ pub fn covered_answers(
             continue;
         };
         let answer = answer.trim();
-        if fold(answer).len() >= MIN_FIELD_VALUE && !answers.iter().any(|seen| seen == answer) {
+        if distinctive(answer, MIN_FIELD_VALUE) && !answers.iter().any(|seen| seen == answer) {
             answers.push(answer.to_string());
         }
     }
@@ -4964,6 +5222,7 @@ pub fn aggregate(
     let mut taken: Vec<String> = Vec::new();
     // And the lines those came out of, in full, for the carriers of a line.
     let mut lines: Vec<String> = Vec::new();
+    let mut kept_spans = Vec::new();
     // The same two facts one level down: which text inside a form goes, and how
     // many text objects each form on the page holds. `form_text_objects` is a
     // property of the page like `text_objects` and is taken from the last plan
@@ -5020,6 +5279,19 @@ pub fn aggregate(
         areas.push(plan.area);
         let line = plan.lines.trim();
         if !line.is_empty() {
+            let trim = plan.lines.len() - plan.lines.trim_start().len();
+            let spans = plan
+                .kept_spans
+                .iter()
+                .filter_map(|&(a, b)| {
+                    let start = a.saturating_sub(trim).min(line.len());
+                    let end = b.saturating_sub(trim).min(line.len());
+                    (start < end).then_some((start, end))
+                })
+                .collect::<Vec<_>>();
+            if !spans.is_empty() {
+                kept_spans.push((lines.len(), spans));
+            }
             lines.push(line.to_string());
         }
         let taking = plan.taking.trim();
@@ -5086,6 +5358,7 @@ pub fn aggregate(
         text_objects,
         areas,
         taking: taken,
+        kept_spans,
         lines,
         form_shows,
         form_images,
@@ -5266,13 +5539,8 @@ pub fn short_needle_note(report: &verify::Report) -> Option<String> {
 /// says nothing and the reasons stay as the scan wrote them --- which is the
 /// same rule [`inserted_pages_note`] follows from the other side.
 ///
-/// **Two sentences, and the first is a failure.** A word still on a page the
-/// reader marked is a removal that did not take, and it is named as one. A word
-/// only on pages nobody marked is the case that was unreadable before this
-/// existed, and it is the only thing here that could be mistaken for
-/// reassurance --- so it says what was proved (the marked pages do not carry
-/// it) and nothing about the file, which still holds the word and is still
-/// reported *not verified* for it. `docs/PLAN.md` §6 forbids the other reading.
+/// A match identifies a page, not which copy of the word survived. Omitted
+/// locations prevent a negative conclusion even if every word was placed.
 #[must_use]
 pub fn marked_pages_note(report: &verify::Report, marked: &[u32]) -> Option<String> {
     if !report.placed() {
@@ -5289,23 +5557,27 @@ pub fn marked_pages_note(report: &verify::Report, marked: &[u32]) -> Option<Stri
         return None;
     }
     let marked: std::collections::BTreeSet<u32> = marked.iter().copied().collect();
-    let hit: std::collections::BTreeSet<u32> = report
-        .placed_pages()
-        .intersection(&marked)
-        .copied()
-        .collect();
+    let mut hit = std::collections::BTreeSet::new();
+    let mut complete = true;
+    for needle in &report.found {
+        let Some(verify::Located::Pages(placed)) = report.located.get(needle) else {
+            continue; // placed() above requires a page list for every finding.
+        };
+        let meaningful = needle.chars().count() > SHORT_NEEDLE;
+        complete &=
+            placed.more == 0 && (meaningful || placed.pages.iter().all(|p| !marked.contains(p)));
+        if meaningful {
+            hit.extend(placed.pages.iter().copied().filter(|p| marked.contains(p)));
+        }
+    }
     if !hit.is_empty() {
-        // **Worded so one page and several read the same**, because `hit` is a
-        // set and a reader can mark regions on any number of pages. The obvious
-        // phrasing puts the pages in the subject --- *"page 3 was marked for
-        // removal and still carries a word"* --- and then agrees with nothing
-        // when there are two of them. `Placed::sentence` answers *page 3* or
-        // *pages 3 and 5*, so every verb around it has to be neutral to which.
         return Some(said!(
-            "a word reported above is still on {pages}, where regions were marked for removal, so \
-             the removal did not take it there",
+            "a word reported above is still on {pages}, where regions were marked for removal",
             pages = verify::Placed::of(&hit).sentence()
         ));
+    }
+    if !complete {
+        return None;
     }
     Some(match marked.is_empty() {
         true => said!("every word reported above is on a page no region was marked on"),
@@ -5356,6 +5628,7 @@ mod tests {
             multiline: false,
             max_length: None,
             reason: None,
+            hidden: false,
             tooltip: String::new(),
             required: false,
             read_only: false,
@@ -5419,6 +5692,7 @@ mod tests {
     fn plan_of(shows: &[usize], taking: &str) -> super::RegionPlan {
         super::RegionPlan {
             lines: String::new(),
+            kept_spans: Vec::new(),
             show_cuts: Vec::new(),
             form_paths: Default::default(),
             shared: Vec::new(),
@@ -5993,8 +6267,11 @@ mod tests {
             "nothing the region covers is left on this page"
         );
         let said = plan.shared[0].taken_here();
-        assert!(said.contains("draws 22 time(s)") && said.contains("taken off this page"));
-        assert!(said.contains("still in the file"), "{said}");
+        assert!(
+            said.contains("draws 22 time(s)")
+                && said.contains("Placements outside the marked regions remain")
+        );
+        assert!(!said.contains("still in the file"), "{said}");
     }
 
     #[test]
@@ -6136,7 +6413,7 @@ mod tests {
         assert!(!ordinary.sentence().contains("copy"));
         assert_eq!(
             ordinary.sentence(),
-            "object 3 is a colour gradient that overlaps the region; only text is removed here"
+            "object 3 is a colour gradient that overlaps the region and was left in place"
         );
         // No kind is printed as the program spells it, a later one included.
         for (kind, what) in [
@@ -6151,7 +6428,7 @@ mod tests {
             };
             assert_eq!(
                 left.sentence(),
-                format!("object 0 is {what} that overlaps the region; only text is removed here")
+                format!("object 0 is {what} that overlaps the region and was left in place")
             );
             let repeated = Unhandled {
                 drawn: Some(2),
@@ -6438,6 +6715,21 @@ mod tests {
             covered(&objects, &forms, [500.0, 500.0, 600.0, 600.0]),
             Plan::default()
         );
+    }
+
+    #[test]
+    fn form_text_is_refused_only_if_a_surviving_show_uses_its_advance() {
+        let (mut doc, page, ids) = page_with_forms(1, 2);
+        doc.get_object_mut(ids[0])
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .set_plain_content(b"BT (FIRST) Tj (SECOND) Tj ET".to_vec());
+        let reason = remove_form_shows(&mut doc, page, &[(0, 2)], 0, &[0]).unwrap_err();
+        assert!(reason.contains("would move the following text"), "{reason}");
+        assert_eq!(form_says(&doc, ids[0]), ["FIRST", "SECOND"]);
+        remove_form_shows(&mut doc, page, &[(0, 2)], 0, &[0, 1]).unwrap();
+        assert!(form_says(&doc, ids[0]).is_empty());
     }
 
     #[test]
@@ -8451,23 +8743,26 @@ mod tests {
     /// not take, and a long one beside it still is.
     #[test]
     fn only_short_pieces_on_a_marked_page_are_not_called_a_failed_removal() {
-        let place = |report: &mut crate::verify::Report, needle: &str| {
+        let place = |report: &mut crate::verify::Report, needle: &str, page| {
             report.found.insert(needle.to_string());
             report.located.insert(
                 needle.to_string(),
                 crate::verify::Located::Pages(crate::verify::Placed {
-                    pages: vec![2],
+                    pages: vec![page],
                     more: 0,
                 }),
             );
         };
         let mut report = crate::verify::Report::default();
-        place(&mut report, "4");
-        place(&mut report, ",");
+        place(&mut report, "4", 2);
+        place(&mut report, ",", 2);
         assert_eq!(super::marked_pages_note(&report, &[2]), None);
-        place(&mut report, "4711-0815");
+        assert_eq!(super::marked_pages_note(&report, &[3]), None);
+        place(&mut report, "4711-0815", 3);
+        assert_eq!(super::marked_pages_note(&report, &[2]), None);
+        place(&mut report, "4711-0815", 2);
         let said = super::marked_pages_note(&report, &[2]).expect("a whole word is still there");
-        assert!(said.contains("did not take"), "{said:?}");
+        assert!(said.contains("where regions were marked"), "{said:?}");
     }
 
     /// A report whose findings the walk placed, read against the marked pages.
@@ -8492,19 +8787,18 @@ mod tests {
     /// marked* --- agrees with nothing in the plural. A test of one page only
     /// cannot see that.
     #[test]
-    fn a_word_still_on_a_marked_page_is_named_as_a_removal_that_did_not_take() {
+    fn a_surviving_word_is_located_only_to_the_marked_page() {
         let said = super::marked_pages_note(&placed_on(&[2]), &[2]).expect("placed and marked");
         assert_eq!(
             said,
-            "a word reported above is still on page 3, where regions were marked for removal, \
-             so the removal did not take it there"
+            "a word reported above is still on page 3, where regions were marked for removal"
         );
 
         let two = super::marked_pages_note(&placed_on(&[2, 4]), &[2, 4]).expect("both marked");
         assert_eq!(
             two,
             "a word reported above is still on pages 3 and 5, where regions were marked for \
-             removal, so the removal did not take it there"
+             removal"
         );
     }
 

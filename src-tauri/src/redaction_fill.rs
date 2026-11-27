@@ -83,6 +83,7 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
             if page.source == PageSource::Baseline(redaction.source) {
                 redactions.push(PlannedRedaction {
                     lines: Vec::new(),
+                    kept_spans: Vec::new(),
                     show_cuts: Vec::new(),
                     source: u32::try_from(slot).map_err(|_| {
                         Refusal::from(said!("Too many pages for the redaction fill"))
@@ -266,6 +267,7 @@ mod tests {
     fn region(source: u32, area: [f32; 4]) -> PlannedRedaction {
         PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             show_cuts: Vec::new(),
             form_paths: crate::redact::FormPathsPlanned {
                 whole: vec![(1, 0)],

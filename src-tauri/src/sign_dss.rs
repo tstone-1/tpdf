@@ -212,6 +212,11 @@ fn survey_within(signed: &[u8], pages: u32, bound: usize) -> Survey {
         Err(why) => return Survey::refusing(said!("this document could not be read: {why}")),
     };
     let values = crate::docinfo::signature_values(&document);
+    if !values.store_cut && found.limits.revocation_unread > 0 {
+        return Survey::refusing(said!(
+            "the document carries validation data that could not be decoded"
+        ));
+    }
     let survey = Survey {
         refused: None,
         signatures: found.signatures,
@@ -219,7 +224,7 @@ fn survey_within(signed: &[u8], pages: u32, bound: usize) -> Survey {
         store: values.store,
         complete: values.complete && found.limits.signatures_dropped == 0,
         held,
-        store_cut: values.store_cut,
+        store_cut: values.store_cut || found.limits.revocation_dropped > 0,
         certified: crate::sign_prepare::certification(&document),
     };
     if survey.bytes() > bound {

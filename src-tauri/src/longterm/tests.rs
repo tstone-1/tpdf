@@ -2053,3 +2053,45 @@ fn a_tests_own_roots_never_ask_the_os_to_fetch_one() {
         crate::trust::Anchors::Only(&[])
     ));
 }
+
+#[test]
+fn chain_budget_exhaustion_refuses_the_archive_preflight_even_without_dropped_issuers() {
+    let mut chain = crate::revocation::chain::Chain {
+        standing: Status::Unchecked,
+        end: End::Budget,
+        ..Default::default()
+    };
+    assert!(matches!(
+        chains_good(&[(Some(&chain), "the signer")]),
+        Err(Refusal::Bound(_))
+    ));
+    chain.end = End::Root;
+    chain.standing = Status::Good;
+    assert!(chains_good(&[(Some(&chain), "the signer")]).is_ok());
+}
+
+#[test]
+fn gathering_follows_the_cross_certificate_on_the_selected_path() {
+    use crate::integrity::test_tsa::TestCa;
+    let old = TestCa::new("test old CA", 0x25);
+    let new = TestCa::new("test new CA", 0x26);
+    let signer = new.issue("test signer", 0x27, 4, None);
+    let chain = vec![signer.certificate, old.cross(&new, 3), old.certificate];
+    let parsed: Vec<_> = chain
+        .iter()
+        .chain([&new.certificate])
+        .map(|der| Certificate::from_der(der).unwrap())
+        .collect();
+    let leg = Leg {
+        leaf: &parsed[0],
+        own: Whose::Signer,
+        above: Whose::SignerIssuer,
+        admitted: &chain,
+        ordered: true,
+    };
+    let (subjects, carried) = walked(&[leg], &parsed.iter().collect::<Vec<_>>()).unwrap();
+    assert_eq!(subjects.len(), 2);
+    assert_eq!(subjects[1].certificate, parsed[1]);
+    assert_eq!(subjects[1].issuer, parsed[2]);
+    assert_eq!(carried, chain);
+}

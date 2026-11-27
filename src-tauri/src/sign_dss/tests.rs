@@ -380,7 +380,7 @@ fn an_entry_the_dss_already_holds_is_not_written_again() {
         "the same data added twice is there once"
     );
     // Partly new, and one entry twice in what was gathered.
-    let fresh = vec![0x30, 3, 2, 1, 7];
+    let fresh = TestCa::new("tpdf test additional DSS authority", 0x43).certificate;
     let more = Gathered {
         certificates: vec![
             gathered.certificates[0].clone(),
@@ -453,13 +453,21 @@ fn a_dss_that_cannot_be_extended_or_read_whole_is_said_in_the_survey() {
     assert_eq!(why, "this document's /DSS /OCSPs is not an array");
 
     // More certificates than the reader takes: read, counted, and cut.
-    let certificates = |count: usize| {
+    let certificates = |count: usize, valid: bool| {
+        let issuer = TestCa::new("tpdf test survey issuer", 0x4a);
         let mut document = Document::load_mem(&plain_pdf()).expect("parses");
         let streams: Vec<Object> = (0..count)
             .map(|n| {
                 let n = u8::try_from(n).expect("small");
+                let der = if valid {
+                    issuer
+                        .issue("tpdf test survey signer", 0x42, n + 1, None)
+                        .certificate
+                } else {
+                    vec![0x30, 1, n]
+                };
                 document
-                    .add_object(Stream::new(Dictionary::new(), vec![0x30, 1, n]))
+                    .add_object(Stream::new(Dictionary::new(), der))
                     .into()
             })
             .collect();
@@ -477,12 +485,16 @@ fn a_dss_that_cannot_be_extended_or_read_whole_is_said_in_the_survey() {
         survey(&bytes, 1)
     };
     let most = crate::revocation::MAX_DSS_CERTIFICATES;
-    let whole = certificates(most);
+    assert_eq!(
+        certificates(1, false).refused.as_deref(),
+        Some("the document carries validation data that could not be decoded")
+    );
+    let whole = certificates(most, true);
     assert_eq!(
         (whole.refused, whole.held, whole.store_cut),
         (None, [most, 0, 0], false)
     );
-    let cut = certificates(most + 1);
+    let cut = certificates(most + 1, true);
     assert_eq!((cut.held, cut.store_cut), ([most + 1, 0, 0], true));
     // An entry that is no stream is one the reader could not read.
     let unread = survey(

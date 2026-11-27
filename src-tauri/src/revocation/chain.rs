@@ -449,7 +449,8 @@ pub fn along(
     let mut end = End::Root;
     let mut issuer_at = |at: usize| {
         // A chain of one is a trusted certificate that issued itself.
-        let issuer = carried(vouched.get(at + 1).unwrap_or(leaf), &everything);
+        let selected = vouched.get(at + 1).unwrap_or(leaf);
+        let issuer = carried(selected, &everything).map(|_| selected);
         if issuer.is_none() {
             end = End::NoIssuer;
         }

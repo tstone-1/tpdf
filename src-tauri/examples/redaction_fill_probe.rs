@@ -75,6 +75,7 @@ fn plan(turns: u8) -> Plan {
         new_fields: Vec::new(),
         redactions: vec![PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             form_paths: Default::default(),
             source: 0,
             shows: vec![0],

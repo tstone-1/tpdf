@@ -32,8 +32,8 @@ export default {
   "the document's page labels could not be remapped":
     "Die Seitenbezeichnungen des Dokuments konnten nicht neu zugeordnet werden",
   // redact.rs: what stays, and why.
-  "object {at} is a picture this document draws {times} time(s). When it is taken off this page, every other placement remains and the picture is still in the file":
-    "Objekt {at} ist ein Bild, das dieses Dokument {times}-mal zeichnet. Wird diese Platzierung entfernt, bleibt das Bild in der Datei und an allen anderen Stellen erhalten.",
+  "object {at} is a picture this document draws {times} time(s). Placements outside the marked regions remain":
+    "Objekt {at} ist ein Bild, das dieses Dokument {times}-mal zeichnet. Platzierungen außerhalb der markierten Bereiche bleiben erhalten.",
   "object {at} is a drawing that reaches beyond the region and is not a straight line or a rectangle that can be cut at its edge, so it was left":
     "Objekt {at} ist eine Zeichnung, die über den Bereich hinausreicht und weder eine gerade Linie noch ein Rechteck ist, das sich an seinem Rand abschneiden lässt, daher blieb sie stehen",
   "object {at} is a drawing that also clips what is drawn after it, so it was left":
@@ -44,8 +44,8 @@ export default {
     "Objekt {at} ist Text, dessen Breite nicht gemessen werden konnte, und der folgende Text in seiner Zeile beginnt dort, wo er endet. Ihn zu entfernen würde diesen Text verschieben, daher blieb er stehen",
   "object {at} is {what} drawn {times} time(s) in this document; removing it here would leave every other copy, and the object itself, in the file — so it was left":
     "Objekt {at} ({what}) wird in diesem Dokument {times}-mal gezeichnet; es hier zu entfernen würde jede andere Kopie und das Objekt selbst in der Datei lassen - daher blieb es stehen",
-  "object {at} is {what} that overlaps the region; only text is removed here":
-    "Objekt {at} ({what}) überlappt den Bereich; entfernt wird hier nur Text",
+  "object {at} is {what} that overlaps the region and was left in place":
+    "Objekt {at} ({what}) überlappt den Bereich und blieb erhalten",
   "a picture": "ein Bild",
   "a drawing": "eine Zeichnung",
   "a colour gradient": "ein Farbverlauf",
@@ -140,12 +140,19 @@ export default {
     "Die Prüfung liest die ganze Datei und konnte nicht für jedes oben genannte Wort sagen, auf welcher Seite es steht, und dieses Dokument enthält {inserted} aus einem anderen Dokument eingefügte Seite(n) - auf keiner davon wurde ein Bereich markiert, und beim Schreiben wurde keine davon verändert. Ein oben genanntes Wort kann also eine zweite Kopie auf einer dieser Seiten sein",
   "{words} is too short to be told apart from the rest of the file: the check reads the whole file, where one or two characters also occur in the page's own numbers and other text, so it cannot say whether the marked one was removed --- mark the whole word or number to get an answer":
     "{words} ist zu kurz, um es vom Rest der Datei zu unterscheiden: Die Prüfung liest die ganze Datei, in der ein oder zwei Zeichen auch in den Zahlen und im übrigen Text der Seite vorkommen, daher kann sie nicht sagen, ob das Markierte entfernt wurde - markiere das ganze Wort oder die ganze Zahl, um eine Antwort zu bekommen",
-  "a word reported above is still on {pages}, where regions were marked for removal, so the removal did not take it there":
-    "Ein oben genanntes Wort steht noch auf {pages}, wo Bereiche zum Entfernen markiert waren, das Entfernen hat es dort also nicht erfasst",
+  "a word reported above is still on {pages}, where regions were marked for removal":
+    "Ein oben genanntes Wort steht noch auf {pages}, wo Bereiche zum Entfernen markiert waren",
   "every word reported above is on a page no region was marked on":
     "Jedes oben genannte Wort steht auf einer Seite, auf der kein Bereich markiert war",
   "every word reported above is on a page no region was marked on --- {pages} carried the regions, and none of them carries any of those words":
     "Jedes oben genannte Wort steht auf einer Seite, auf der kein Bereich markiert war - die Bereiche lagen auf {pages}, und dort steht keines dieser Wörter",
+
+  "removing this text inside a form would move the following text": "Das Entfernen dieses Textes in einem Formularobjekt würde den nachfolgenden Text verschieben",
+  "the form's content stream is too large": "Der Inhaltsstrom des Formularobjekts ist zu groß",
+
+  "the picture is referenced by a form whose placement could not be verified": "Ein Formularobjekt verweist auf das Bild, seine Platzierung konnte jedoch nicht geprüft werden",
+
+  "the document carries validation data that could not be decoded": "Die Validierungsdaten im Dokument konnten nicht vollständig dekodiert werden",
 
   // redact/glyph_cut.rs
   "a line of text is not shaped the way it was when it was measured, so nothing was removed":

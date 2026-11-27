@@ -155,6 +155,7 @@ fn default_problem(field: &NewField, rect: [f64; 4], turns: u8, unit: f64) -> Op
         multiline: field.kind == Kind::Multiline,
         max_length: field.max_length.map(|most| most as usize),
         reason: None,
+        hidden: false,
         tooltip: String::new(),
         required: false,
         read_only: false,

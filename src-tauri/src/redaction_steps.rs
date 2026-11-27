@@ -804,7 +804,7 @@ impl RasterWidgets {
             .collect();
         for widget in form.into_iter().flat_map(|form| form.widgets) {
             let edit = edits.get(&widget.widget);
-            if edit.is_some_and(|edit| edit.remove) {
+            if widget.hidden || edit.is_some_and(|edit| edit.remove) {
                 continue;
             }
             let rect = edit

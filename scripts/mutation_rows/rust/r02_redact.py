@@ -579,7 +579,7 @@ ROWS += [
     Mutation(
         "redact: drop the line a cut came out of",
         "src/redact.rs",
-        "        if !line.is_empty() {\n            lines.push(line.to_string());\n        }",
+        "            lines.push(line.to_string());",
         "",
         "a_cut_is_counted_and_carries_its_line_beside_what_it_takes",
     ),
@@ -1019,8 +1019,8 @@ ROWS += [
         # what a page deletion correctly does and what this must not.
         "redact: take the whole outline rather than the entries that name it",
         "src/redact.rs",
-        "        if folded.iter().any(|line| line.contains(&title)) {",
-        "        if folded.iter().any(|line| !line.is_empty() || line.contains(&title)) {",
+        "        if taken.iter().any(|line| line.matches(&title)) {",
+        "        if taken.iter().any(|line| !line.text.is_empty() || line.matches(&title)) {",
         "an_outline_entry_naming_something_else_survives_a_redaction",
     ),
     Mutation(
@@ -1028,8 +1028,8 @@ ROWS += [
         # that leaves the words on screen in tpdf's own sidebar.
         "redact: leave every outline entry whatever it names",
         "src/redact.rs",
-        "        if folded.iter().any(|line| line.contains(&title)) {",
-        "        if folded.iter().any(|line| line.contains(&title) && line.is_empty()) {",
+        "        if taken.iter().any(|line| line.matches(&title)) {",
+        "        if taken.iter().any(|line| line.matches(&title) && line.text.is_empty()) {",
         "a_redaction_takes_the_outline_entry_naming_what_it_removed",
     ),
     Mutation(
@@ -1048,7 +1048,7 @@ ROWS += [
         # of a chapter number.
         "redact: match an outline title too short to be distinctive",
         "src/redact.rs",
-        "        if title.len() < MIN_OUTLINE_TITLE {",
+        "        if !distinctive(&title, MIN_OUTLINE_TITLE) {",
         "        if title.is_empty() {",
         "a_very_short_outline_title_is_not_matched",
     ),
@@ -1081,8 +1081,8 @@ ROWS += [
         # keeps /V, so nothing draws the value and every search finds it.
         "redact: keep a field whose widgets have all been removed",
         "src/redact.rs",
-        "        let orphaned = lost.contains(&id) || (field.has(b\"Kids\") && kids.is_empty());",
-        "        let orphaned = false && (lost.contains(&id) || (field.has(b\"Kids\") && kids.is_empty()));",
+        "        let orphaned = lost.contains(&id) || empty_kids;",
+        "        let orphaned = false && (lost.contains(&id) || empty_kids);",
         "a_field_whose_widgets_all_went_does_not_keep_its_value",
     ),
     Mutation(
@@ -1091,8 +1091,8 @@ ROWS += [
         # over-removal direction and empties the form.
         "redact: call a field with no kids at all an orphaned one",
         "src/redact.rs",
-        "        let orphaned = lost.contains(&id) || (field.has(b\"Kids\") && kids.is_empty());",
-        "        let orphaned = lost.contains(&id) || (!field.has(b\"Kids\") && kids.is_empty());",
+        "        let orphaned = lost.contains(&id) || empty_kids;",
+        "        let orphaned = lost.contains(&id) || (!field.has(b\"Kids\") || empty_kids);",
         "a_field_naming_nothing_that_went_survives_a_redaction",
     ),
     Mutation(
@@ -1103,8 +1103,8 @@ ROWS += [
         # decides alone -- its value is under the length guard.
         "redact: take a field only when every widget under it went",
         "src/redact.rs",
-        "        let orphaned = lost.contains(&id) || (field.has(b\"Kids\") && kids.is_empty());",
-        "        let orphaned = field.has(b\"Kids\") && kids.is_empty();",
+        "        let orphaned = lost.contains(&id) || empty_kids;",
+        "        let orphaned = empty_kids;",
         "a_field_with_one_widget_covered_and_one_elsewhere_loses_its_value",
     ),
     Mutation(
@@ -1144,8 +1144,8 @@ ROWS += [
         # outside the redacted rectangle" left open.
         "redact: leave a field holding what went when its widget is elsewhere",
         "src/redact.rs",
-        "    text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))\n}",
-        "    text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.is_empty())\n}",
+        "    distinctive(&value, MIN_FIELD_VALUE) && folded.iter().any(|line| line.matches(&text))\n}",
+        "    distinctive(&value, MIN_FIELD_VALUE) && folded.iter().any(|line| line.text.is_empty())\n}",
         "a_field_holding_what_went_goes_even_with_its_widget_elsewhere",
     ),
     Mutation(
@@ -1164,8 +1164,8 @@ ROWS += [
         # line.
         "redact: match a field value too short to be distinctive",
         "src/redact.rs",
-        "    text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))\n}",
-        "    folded.iter().any(|line| line.contains(&text))\n}",
+        "    distinctive(&value, MIN_FIELD_VALUE) && folded.iter().any(|line| line.matches(&text))\n}",
+        "    folded.iter().any(|line| line.matches(&text))\n}",
         "a_field_value_too_short_to_be_distinctive_is_not_matched",
     ),
     Mutation(
@@ -1176,8 +1176,8 @@ ROWS += [
         # row is the copy of the list that remains.
         "redact: read an inline field's value and not the default beside it",
         "src/redact.rs",
-        "        let carries = [b\"V\".as_slice(), b\"DV\".as_slice()].into_iter().any(|key| {",
-        "        let carries = [b\"V\".as_slice()].into_iter().any(|key| {",
+        "    [b\"V\".as_slice(), b\"DV\".as_slice()].into_iter().any(|key| {\n        let Ok(value) = field",
+        "    [b\"V\".as_slice()].into_iter().any(|key| {\n        let Ok(value) = field",
         "a_redaction_takes_an_inline_field_whose_default_holds_what_it_removed",
     ),
     Mutation(
@@ -1191,7 +1191,7 @@ ROWS += [
         "src/redact.rs",
         """        fields::descend(doc, &[id], &bounds, |node| {
             let Some(at) = node.id else {
-                return fields::Flow::Leaf;
+                return fields::Flow::Descend;
             };
             if all.contains(&at) {
                 return fields::Flow::Leaf;
@@ -1498,7 +1498,7 @@ ROWS += [
         "src/redact.rs",
         "    if !hit.is_empty() {",
         "    if false {",
-        "a_word_still_on_a_marked_page_is_named_as_a_removal_that_did_not_take",
+        "a_surviving_word_is_located_only_to_the_marked_page",
     ),
     Mutation(
         # Never collect, which is what the save path did until 2026-08-26.

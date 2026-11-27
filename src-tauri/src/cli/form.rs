@@ -583,6 +583,7 @@ mod tests {
             multiline: false,
             max_length: None,
             reason: None,
+            hidden: false,
             tooltip: String::new(),
             required: false,
             read_only: false,

@@ -1944,7 +1944,7 @@ ROWS += [
     Mutation(
         "existing: walk into a certificate the store did not vouch for",
         "src/longterm.rs",
-        "            if at > 0 && !admitted.contains(&der) {",
+        "            if !admitted.contains(&der) {",
         "            if false {",
         "a_look_alike_issuer_is_never_asked_about_wherever_the_document_offers_it",
     ),

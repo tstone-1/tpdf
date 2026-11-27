@@ -966,6 +966,7 @@ fn form_plan(
         marks: Vec::new(),
         redactions: vec![PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             form_paths: Default::default(),
             source: page,
             shows: plan.shows.clone(),
@@ -1042,6 +1043,7 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
         marks: Vec::new(),
         redactions: vec![PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             form_paths: Default::default(),
             source: 0,
             shows: region.shows.clone(),

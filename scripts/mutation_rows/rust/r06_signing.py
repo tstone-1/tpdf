@@ -2145,15 +2145,15 @@ ROWS += [
     Mutation(
         "revocation: none stands beside data that would not read",
         "src/revocation.rs",
-        "    if matches!(answer.standing, Status::Good | Status::None) {",
+        "    if matches!(answer.standing, Status::Good | Status::None) || answer.after_moment {",
         "    if matches!(answer.standing, Status::Good) {",
         "data_that_would_not_read_turns_none_into_not_checked",
     ),
     Mutation(
         "revocation: a good stands beside data dropped at a bound",
         "src/revocation.rs",
-        "        if dropped > 0 {\n            return Revocation::unchecked(moment, Gap::Bound);\n        }",
-        "",
+        "        let gap = if dropped > 0 {",
+        "        let gap = if false {",
         "data_left_unread_at_a_bound_turns_good_and_none_into_not_checked_and_leaves_revoked",
     ),
     Mutation(

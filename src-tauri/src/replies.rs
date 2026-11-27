@@ -409,6 +409,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             multiline: false,
             max_length: Some(20),
             reason: Some("Read-only".into()),
+            hidden: false,
             tooltip: "Your answer".into(),
             required: false,
             read_only: true,
@@ -773,6 +774,7 @@ fn samples() -> BTreeMap<&'static str, String> {
         "RegionPlan",
         &redact::RegionPlan {
             lines: String::new(),
+            kept_spans: Vec::new(),
             show_cuts: Vec::new(),
             form_paths: redact::FormPaths {
                 whole: vec![(4, 0)],

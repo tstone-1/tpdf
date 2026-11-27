@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- Redaction preserves unmarked image placements, bookmarks and form values when removing part of a line. It refuses a text edit inside a PDF Form when the following text would move. Comments can be redacted on pages without a content stream.
+- Redaction reports describe where surviving words were found and account for omitted page locations and hidden widgets. Certificate verification and long-term signing distinguish incomplete evidence from a checked result and respect the issuer selected by the trust store.
+
 - Image-only redaction checks repeated form answers on surviving pages, preserves password protection on AES-128 and AES-256 files, and refuses pages beyond the supported physical size.
 - Signature Properties reads standard embedded OCSP responses and reports incomplete revocation evidence. Historical checks distinguish temporary certificate holds from permanent revocation.
 - Long-term signing uses intermediate certificates already in the document, counts shared revocation data once and reserves room for the archive timestamp. Duplicating an open form field reserves its pending name and radio value.

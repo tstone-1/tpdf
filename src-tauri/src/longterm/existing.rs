@@ -571,6 +571,7 @@ fn plan_one(
         own,
         above,
         admitted: &own_chain,
+        ordered: true,
     }];
     if let Some((authority, chain, _)) = &token {
         legs.push(Leg {
@@ -578,6 +579,7 @@ fn plan_one(
             own: Whose::Authority,
             above: Whose::AuthorityIssuer,
             admitted: chain,
+            ordered: true,
         });
     }
     walked(&legs, &everyone).map_err(about)

@@ -338,7 +338,9 @@ pub fn chain_report(chain: &crate::revocation::chain::Chain, authority: bool) ->
 /// `integrity.ts`'s `chainRow` returns nothing on the same rule.
 #[must_use]
 pub fn chain_shown(chain: &ChainReport) -> bool {
-    chain.certificates.len() > 1 || chain.dropped > 0
+    chain.certificates.len() > 1
+        || chain.dropped > 0
+        || chain.end == crate::revocation::chain::End::Budget
 }
 
 /// One revocation answer, as the report shows it. `authority` says the

@@ -4709,16 +4709,26 @@ fn apply_redactions(
         // glyphs it took. A cut takes an account number out of a line; a
         // bookmark that repeats the line still spells the number out, and it
         // is not a substring of the number.
-        let taken: Vec<String> = redactions
-            .iter()
-            .flat_map(|redaction| {
-                if redaction.lines.is_empty() {
-                    redaction.taking.iter().cloned()
-                } else {
-                    redaction.lines.iter().cloned()
+        let mut taken = Vec::new();
+        for redaction in redactions {
+            if redaction.lines.is_empty() {
+                taken.extend(
+                    redaction
+                        .taking
+                        .iter()
+                        .map(|text| redact::CarrierLine::new(text, &[])),
+                );
+            } else {
+                for (i, line) in redaction.lines.iter().enumerate() {
+                    let kept = redaction
+                        .kept_spans
+                        .iter()
+                        .find(|(index, _)| *index == i)
+                        .map_or(&[][..], |(_, spans)| spans.as_slice());
+                    taken.push(redact::CarrierLine::new(line, kept));
                 }
-            })
-            .collect();
+            }
+        }
         let cover = redact::covered_outline(doc, &taken);
         if cover.cut {
             // **An outline too large to read through is taken whole.** The
@@ -4751,7 +4761,12 @@ fn apply_redactions(
         // an answer the reader covered survived unless the page also printed it.
         // The outline is still asked about the page text alone: a bookmark
         // titled with a form answer is not a shape anyone has measured.
-        let lines: Vec<String> = taken.iter().chain(&answers).cloned().collect();
+        let mut lines = taken;
+        lines.extend(
+            answers
+                .iter()
+                .map(|answer| redact::CarrierLine::new(answer, &[])),
+        );
         let fields = redact::covered_fields(doc, &lines, &lost);
         done.fields = redact::drop_fields(doc, &fields).map_err(Refusal::from)?;
         // A field written out in place has no object to forget, so it is taken

@@ -179,7 +179,15 @@ where
             }
         }
     };
-    run(doc, fields.iter().map(Entry::Inline), bounds, visit)
+    descend_entries(doc, fields, bounds, visit)
+}
+
+/// Walks field entries that can be inline dictionaries or object references.
+pub(crate) fn descend_entries<F>(doc: &Document, roots: &[Object], bounds: &Bounds, visit: F) -> Cut
+where
+    F: FnMut(Node<'_>) -> Flow,
+{
+    run(doc, roots.iter().map(Entry::Inline), bounds, visit)
 }
 
 /// Walks the subtrees under `roots`, calling `visit` for each node.

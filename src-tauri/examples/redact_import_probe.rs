@@ -203,6 +203,7 @@ fn run(
         marks: Vec::new(),
         redactions: vec![PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             form_paths: Default::default(),
             source: 0,
             shows: planned.shows.clone(),

@@ -87,6 +87,8 @@ export interface FormWidget {
   multiline: boolean;
   max_length: number | null;
   reason: string | null;
+  /** Whether the annotation flags suppress this widget on screen. */
+  hidden?: boolean;
   /** The field's `/TU`; empty for none. */
   tooltip?: string;
   required?: boolean;

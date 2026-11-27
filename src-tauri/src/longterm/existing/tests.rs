@@ -252,6 +252,20 @@ fn every_signature_of_a_document_is_covered_and_each_certificate_asked_once() {
 // ------------------------------------------------------------- the refusals
 
 #[test]
+fn an_undecodable_existing_crl_refuses_before_contacting_the_issuer() {
+    let pki = Pki::start(good());
+    let signed = untimestamped(&pki);
+    let bytes = crate::integrity::test_tsa::with_dss(&signed, &[], &[], &[vec![0x30, 0]]);
+    let why = added(&bytes, &pki).expect_err("unreadable CRL");
+    assert!(
+        why.sentence().contains("could not be decoded"),
+        "{}",
+        why.sentence()
+    );
+    assert!(pki.paths().is_empty());
+}
+
+#[test]
 fn a_document_with_no_signature_is_refused() {
     let pki = Pki::start(good());
     let why = added(&plain_pdf(), &pki).expect_err("refused");

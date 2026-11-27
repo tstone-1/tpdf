@@ -630,6 +630,13 @@ describe("chainRow", () => {
     expect(row?.warn).toBe(true);
   });
 
+  it("reports a budget stop beside a decisive leaf for signer and authority", () => {
+    for (const authority of [false, true]) {
+      const row = chainRow(chain([revocation("revoked")], 0, { end: "budget" }), authority);
+      expect(row?.value).toContain("the certificate chain could not be completed within the hashing budget");
+    }
+  });
+
   it("points back at the leaf's own row when the leaf decides", () => {
     const row = chainRow(chain([revocation("unknown"), revocation("good")], 0));
     expect(row?.value).toBe(

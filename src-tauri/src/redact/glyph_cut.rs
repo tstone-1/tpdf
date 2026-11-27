@@ -384,7 +384,7 @@ fn codes_in(operation: &Operation, length: usize) -> Option<usize> {
 /// `Td`, `TD`, `Tm` and `T*` place the next show from the start of the line,
 /// not from the pen, and so do `'` and `"`. Only a `Tj` or a `TJ` reached
 /// before any of them starts at the pen.
-fn carries_on(operations: &[Operation], at: usize) -> bool {
+pub(super) fn carries_on(operations: &[Operation], at: usize) -> bool {
     for operation in &operations[at + 1..] {
         match operation.operator.as_str() {
             "Tj" | "TJ" if makes_text_object(operation) => return true,

@@ -49,9 +49,13 @@ fn holds(doc: &mut Document, needle: &[u8]) -> bool {
 
 /// The two passes in the order the rewrite runs them.
 fn remove(doc: &mut Document, taken: &[String]) -> (Vec<ObjectId>, usize) {
-    let doomed = covered_fields(doc, taken, &HashSet::new());
+    let taken: Vec<_> = taken
+        .iter()
+        .map(|line| super::CarrierLine::new(line, &[]))
+        .collect();
+    let doomed = covered_fields(doc, &taken, &HashSet::new());
     drop_fields(doc, &doomed).expect("drop the fields");
-    let inline = drop_inline_fields(doc, taken);
+    let inline = drop_inline_fields(doc, &taken);
     (doomed, inline)
 }
 
@@ -112,6 +116,43 @@ fn an_inline_field_holding_taken_text_goes_with_its_widget() {
     assert!(holds(&mut doc, b"nothing taken here"));
 }
 
+#[test]
+fn a_widget_below_an_inline_child_of_a_matching_group_goes_with_it() {
+    let mut doc = form_of(Vec::new(), |doc| {
+        vec![widget(doc, "GROUP APPEARANCE").into()]
+    });
+    let page = doc.get_pages()[&1];
+    let widget = doc
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Annots")
+        .unwrap()
+        .as_array()
+        .unwrap()[0]
+        .as_reference()
+        .unwrap();
+    let form = doc
+        .catalog()
+        .unwrap()
+        .get(b"AcroForm")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let children = doc.add_object(Object::Array(vec![
+        dictionary! {"Kids" => vec![Object::Reference(widget)]}.into(),
+    ]));
+    let value = doc.add_object(Object::string_literal("MATCH THIS GROUP"));
+    doc.get_dictionary_mut(form).unwrap().set(
+        "Fields",
+        vec![Object::Dictionary(
+            dictionary! {"V" => value, "Kids" => children},
+        )],
+    );
+    let (doomed, _) = remove(&mut doc, &["MATCH THIS GROUP".into()]);
+    assert_eq!(doomed, vec![widget]);
+    assert!(!holds(&mut doc, b"GROUP APPEARANCE"));
+}
+
 /// A referenced field under an inline parent is reached and judged.
 ///
 /// The parent holds no value; the kid does. With the walk stopping at an
@@ -167,4 +208,47 @@ fn an_inline_field_holding_nothing_taken_stays() {
     assert!(doomed.is_empty());
     assert_eq!(inline, 0);
     assert!(holds(&mut doc, b"PUBLIC ANSWER"));
+}
+
+#[test]
+fn indirect_values_inside_inline_groups_are_removed_and_unrelated_groups_survive() {
+    let mut doc = form_of(Vec::new(), |_| Vec::new());
+    let form = doc
+        .catalog()
+        .unwrap()
+        .get(b"AcroForm")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let value = doc.add_object(Object::string_literal("REMOVE VALUE"));
+    let kids = doc.add_object(Object::Array(vec![
+        dictionary! {"FT" => "Tx", "DV" => value}.into(),
+    ]));
+    let kept = doc.add_object(dictionary! {"T" => Object::string_literal("KEPT GROUP"),
+        "Kids" => vec![Object::Dictionary(dictionary! {"FT" => "Tx", "V" => Object::string_literal("KEPT VALUE")})]});
+    doc.get_dictionary_mut(form).unwrap().set(
+        "Fields",
+        vec![
+            Object::Reference(kept),
+            Object::Dictionary(dictionary! {"Kids" => kids}),
+        ],
+    );
+    let (_, count) = remove(&mut doc, &["REMOVE VALUE".to_owned()]);
+    assert_eq!(count, 2);
+    assert!(!holds(&mut doc, b"REMOVE VALUE"));
+    assert!(holds(&mut doc, b"KEPT VALUE"));
+    assert!(holds(&mut doc, b"KEPT GROUP"));
+}
+
+#[test]
+fn a_carrier_must_overlap_removed_glyphs_even_when_a_word_is_repeated() {
+    let line = super::CarrierLine::new("London 123456", &[(0, 7)]);
+    assert!(!line.matches("london"));
+    assert!(line.matches("london 123456"));
+    assert!(line.matches("1234"));
+    let repeated = super::CarrierLine::new("aaaaa", &[(0, 4)]);
+    assert!(repeated.matches("aaaa"));
+    assert!(!super::distinctive("éé", 4));
+    assert!(!super::distinctive("ßß", 4));
+    assert!(super::distinctive("éééé", 4));
 }

@@ -918,7 +918,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       report.check("the surviving word is named with the page it is still on",
         marked.includes("KILO-2200 is still in the file, on page 1"), marked.slice(0, 300));
       report.check("and that page is named as one regions were marked on",
-        marked.includes("where regions were marked for removal, so the removal did not take it there"),
+        marked.includes("where regions were marked for removal"),
         marked.slice(0, 400));
       // The control for every assertion above, and the reason they are evidence
       // about this fixture rather than about redaction never removing anything.
@@ -949,7 +949,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       // earned the other branch from the same code on the same fixture, so a
       // note that always said this would have been red there.
       report.check("it does not claim the removal failed where regions were marked",
-        !unmarked.includes("so the removal did not take it there"), unmarked.slice(0, 400));
+        !unmarked.includes("where regions were marked for removal"), unmarked.slice(0, 400));
       report.check("and the word the removal took is named nowhere here either",
         !unmarked.includes("NOVEMBER-5500"), unmarked.slice(0, 300));
 
@@ -970,7 +970,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         carried.includes("so which page it is on could not be established"), carried.slice(0, 300));
       report.check("no note compares an unplaced finding against the marked pages",
         !carried.includes("every word reported above is on a page no region was marked on") &&
-        !carried.includes("so the removal did not take it there"), carried.slice(0, 400));
+        !carried.includes("where regions were marked for removal"), carried.slice(0, 400));
       report.check("and the word the removal took is named nowhere in this one",
         !carried.includes("NOVEMBER-5500"), carried.slice(0, 300));
 

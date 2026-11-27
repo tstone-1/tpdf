@@ -647,8 +647,8 @@ const TEXT = catalog({
       }
     },
     chainBudget: "not checked: the hashing budget ran out while verifying the certificate chain.",
-    chainSameAbove: (head: string, authority: boolean, atRoot: boolean, unjudged: string): string => {
-      const why = atRoot
+    chainSameAbove: (head: string, authority: boolean, end: ChainEnd, unjudged: string): string => {
+      const why = end === "budget" ? "the certificate chain could not be completed within the hashing budget" : end === "root"
         ? `no certificate stands between ${enLeaf(authority)} and a root`
         : `the certificate that issued ${enLeaf(authority)} is not in the document`;
       return `${head} — the same as the row above: ${why}.${unjudged}`;
@@ -1072,8 +1072,8 @@ const TEXT = catalog({
       }
     },
     chainBudget: "Nicht geprüft: Das Hash-Budget war bei der Prüfung der Zertifikatskette erschöpft.",
-    chainSameAbove: (head: string, authority: boolean, atRoot: boolean, unjudged: string): string => {
-      const why = atRoot
+    chainSameAbove: (head: string, authority: boolean, end: ChainEnd, unjudged: string): string => {
+      const why = end === "budget" ? "Das Hash-Budget reichte für die vollständige Prüfung der Zertifikatskette nicht aus" : end === "root"
         ? `Zwischen ${deLeafDat(authority)} und einem Stammzertifikat steht kein weiteres Zertifikat`
         : `Das Zertifikat, das ${deLeaf(authority)} ausgestellt hat, ist nicht im Dokument`;
       return `${head} — wie in der Zeile darüber: ${why}.${unjudged}`;
@@ -1472,7 +1472,7 @@ export function chainSentence(chain: Chain, authority = false): string {
   }
   const head = said.chainHead(chain.standing, chain.after_moment);
   if (decided === 0) {
-    if (above === 0) return said.chainSameAbove(head, authority, chain.end === "root", unjudged);
+    if (above === 0) return said.chainSameAbove(head, authority, chain.end, unjudged);
     return said.chainByLeaf(head, authority, above, unjudged);
   }
   const judged = chain.certificates[decided];

@@ -259,6 +259,15 @@ fn a_revocation_after_the_attested_moment_does_not_undo_the_signature() {
         attested(),
     );
     assert_eq!(standing(&answer), (Status::Revoked, None));
+    for (unread, dropped, why) in [(1, 0, Gap::Unreadable), (0, 1, Gap::Bound)] {
+        let mut material = responses(std::slice::from_ref(&response));
+        material.unread = unread;
+        material.dropped = dropped;
+        let incomplete = ask(&pki, &material, attested());
+        assert_eq!(standing(&incomplete), (Status::Unchecked, Some(why)));
+        assert_eq!(incomplete.revoked, answer.revoked);
+        assert!(!incomplete.after_moment);
+    }
     assert!(answer.after_moment, "{answer:?}");
     assert!(!answer.undoes());
     // The same revocation at the same moment on the signer's own word is
@@ -1505,4 +1514,40 @@ fn a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute() {
         cms::signed_data::SignerInfos(der::asn1::SetOfVec::try_from(infos).expect("a set"));
     let material = Material::of_cms(&rebuilt(&signed));
     assert_eq!((material.lists.len(), material.unread), (1, 0));
+}
+
+#[test]
+fn crl_permission_comes_from_the_selected_issuer_when_only_its_twin_is_carried() {
+    for permits in [false, true] {
+        let permissive = TestCa::new("test shared CA key", 0x6e);
+        let restricted = TestCa::without_list_signing("test shared CA key", 0x6e);
+        let (selected, other) = if permits {
+            (permissive, restricted)
+        } else {
+            (restricted, permissive)
+        };
+        let subject = selected.issue("test leaf", 0x62, 5, None).certificate;
+        let pki = Pki {
+            ca: selected,
+            subject,
+        };
+        let pool = Pool::new(&lists(&[crl(&pki, &[], &CrlFaults::default())]));
+        let (answer, _) = chain::along(
+            &[parsed(&pki.subject), parsed(&pki.ca.certificate)],
+            &[parsed(&other.certificate)],
+            &[&pool],
+            attested(),
+            NOW,
+            &mut crate::integrity::MAX_HASHED.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            standing(&answer),
+            if permits {
+                (Status::Good, None)
+            } else {
+                (Status::Unchecked, Some(Gap::Unauthorised))
+            }
+        );
+    }
 }

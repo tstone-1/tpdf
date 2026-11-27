@@ -560,6 +560,7 @@ fn run() -> Result<(), String> {
     plan.text_edits[0].change.replacement = replacement.into();
     plan.redactions.push(tpdf_lib::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         form_paths: Default::default(),
         source: 0,
         shows: vec![],

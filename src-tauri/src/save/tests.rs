@@ -8741,6 +8741,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
     assert!(plan.is_identity(), "the control: nothing is edited");
     plan.redactions = vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 0,
@@ -8785,6 +8786,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
     assert!(both.is_appendable(), "the control: a mark alone appends");
     both.redactions = vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 0,
@@ -8821,6 +8823,7 @@ fn a_page_named_twice_by_the_redaction_plan_is_refused() {
     let twice = vec![
         crate::edits::PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             show_cuts: Vec::new(),
             form_paths: Default::default(),
             source: 0,
@@ -8840,6 +8843,7 @@ fn a_page_named_twice_by_the_redaction_plan_is_refused() {
         },
         crate::edits::PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             show_cuts: Vec::new(),
             form_paths: Default::default(),
             source: 0,
@@ -8912,6 +8916,7 @@ fn an_annotation_over_a_redacted_region_is_removed_and_its_neighbour_is_not() {
         &[page],
         &[crate::edits::PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             show_cuts: Vec::new(),
             form_paths: Default::default(),
             source: 0,
@@ -9002,6 +9007,7 @@ fn a_redacted_annotation_loses_the_references_that_are_not_on_the_page() {
         &[page],
         &[crate::edits::PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             show_cuts: Vec::new(),
             form_paths: Default::default(),
             source: 0,
@@ -9669,6 +9675,7 @@ fn outlined_document() -> (Document, lopdf::ObjectId, Chain) {
 fn naming_the_secret(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
     vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 0,
@@ -9997,6 +10004,7 @@ fn a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file() {
     let mut plan = plan_of(&[0]);
     plan.redactions = vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 0,
@@ -10054,6 +10062,7 @@ fn a_rewrite_takes_a_planned_drawing_out_of_the_page() {
     let mut plan = plan_of(&[0]);
     plan.redactions = vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 0,
@@ -10114,6 +10123,7 @@ fn a_rewrite_cuts_a_planned_rule_at_the_region_s_edge() {
     let mut plan = plan_of(&[0]);
     plan.redactions = vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 0,
@@ -10563,6 +10573,7 @@ fn formed_document() -> (
 fn over_the_widget(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
     vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 0,
@@ -10627,6 +10638,7 @@ fn described_document() -> (Document, lopdf::ObjectId, lopdf::ObjectId, lopdf::O
 fn redaction_of(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
     vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 0,
@@ -10658,6 +10670,7 @@ fn redaction_of(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
 fn a_redaction_naming_a_page_that_is_not_kept_is_refused() {
     let past = vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 4,
@@ -12929,6 +12942,7 @@ fn a_planned_removal_takes_a_picture_out_of_a_block_and_its_bytes_out_of_the_fil
         let mut plan = plan_of(&[0]);
         plan.redactions = vec![crate::edits::PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             show_cuts: Vec::new(),
             form_paths: Default::default(),
             source: 0,
@@ -13015,6 +13029,7 @@ fn a_planned_removal_takes_and_cuts_drawings_in_each_block_it_names_and_in_no_ot
         let mut plan = plan_of(&[0]);
         plan.redactions = vec![crate::edits::PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             show_cuts: Vec::new(),
             form_paths,
             source: 0,
@@ -14282,6 +14297,7 @@ fn removing(
     let mut plan = plan_of(&[0]);
     plan.redactions = vec![crate::edits::PlannedRedaction {
         lines: Vec::new(),
+        kept_spans: Vec::new(),
         show_cuts: Vec::new(),
         form_paths: Default::default(),
         source: 0,

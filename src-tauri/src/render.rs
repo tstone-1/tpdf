@@ -2610,13 +2610,41 @@ pub fn redaction_plans_of(
                     })
                     .collect()
             };
-            let lines = touched
-                .iter()
-                .filter_map(|ordinal| objects.text.get(*ordinal))
-                .map(String::as_str)
-                .chain(in_forms(&plan))
-                .collect::<Vec<_>>()
-                .join(" ");
+            let mut lines = String::new();
+            let mut kept_spans: Vec<(usize, usize)> = Vec::new();
+            for ordinal in touched {
+                if !lines.is_empty() {
+                    lines.push(' ');
+                }
+                let partial = plan
+                    .show_cuts
+                    .iter()
+                    .find(|cut| cut.ordinal == ordinal && !cut.takes_all());
+                if let Some((cut, glyphs)) =
+                    partial.zip(objects.glyphs.get(ordinal).and_then(Option::as_ref))
+                {
+                    for (index, glyph) in glyphs.glyphs.iter().enumerate() {
+                        let start = lines.len();
+                        lines.push_str(&glyph.draws);
+                        if lines.len() > start && cut.take.binary_search(&index).is_err() {
+                            if let Some(last) = kept_spans.last_mut().filter(|span| span.1 == start)
+                            {
+                                last.1 = lines.len();
+                            } else {
+                                kept_spans.push((start, lines.len()));
+                            }
+                        }
+                    }
+                } else if let Some(text) = objects.text.get(ordinal) {
+                    lines.push_str(text);
+                }
+            }
+            for text in in_forms(&plan) {
+                if !lines.is_empty() {
+                    lines.push(' ');
+                }
+                lines.push_str(text);
+            }
             let mut own: Vec<(usize, &str)> = plan
                 .shows
                 .iter()
@@ -2686,6 +2714,7 @@ pub fn redaction_plans_of(
                     .collect::<Vec<_>>()
                     .join(" "),
                 lines,
+                kept_spans,
                 unhandled: plan.unhandled,
                 show_cuts: plan.show_cuts,
                 shows: plan.shows,

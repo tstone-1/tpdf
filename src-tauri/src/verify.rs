@@ -1051,19 +1051,6 @@ impl Report {
                 .iter()
                 .all(|needle| matches!(self.located.get(needle), Some(Located::Pages(_))))
     }
-
-    /// Every page a placed needle sits on, as slots in the file that was scanned.
-    #[must_use]
-    pub fn placed_pages(&self) -> BTreeSet<u32> {
-        self.located
-            .values()
-            .filter_map(|where_| match where_ {
-                Located::Pages(placed) => Some(placed.pages.iter().copied()),
-                Located::Shared(_) | Located::Unplaced => None,
-            })
-            .flatten()
-            .collect()
-    }
 }
 
 /// What is certainly wrong with a file this build just wrote.
@@ -3409,6 +3396,7 @@ mod tests {
             panic!("every page owns its own carrier, so this is placed: {report:?}");
         };
         assert_eq!(placed.pages.len(), super::MAX_LOCATED_PAGES);
+        assert!(crate::redact::marked_pages_note(&report, &[(pages.len() - 1) as u32]).is_none());
         assert_eq!(placed.more, EXTRA);
         assert!(
             placed.sentence().ends_with(", and 3 more"),

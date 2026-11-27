@@ -648,6 +648,7 @@ fn measure(
         }
         planned.push(PlannedRedaction {
             lines: Vec::new(),
+            kept_spans: Vec::new(),
             form_paths: Default::default(),
             source: page,
             shows,

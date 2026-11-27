@@ -3494,6 +3494,7 @@ fn a_form_is_counted_by_field_and_an_xfa_refusal_is_named() {
         multiline: false,
         max_length: None,
         reason: None,
+        hidden: false,
         tooltip: String::new(),
         required: false,
         read_only: false,
@@ -4991,4 +4992,18 @@ fn signing_preserves_a_destination_created_after_preflight_unless_forced() {
     sign::publish_signed(&source, &output, b"signed", true).unwrap();
     assert_eq!(std::fs::read(&output).unwrap(), b"signed");
     assert_eq!(std::fs::read(&source).unwrap(), b"source");
+}
+
+#[test]
+fn a_budget_stop_gets_a_chain_row_for_both_signer_and_authority() {
+    let chain = crate::revocation::chain::Chain {
+        standing: crate::revocation::Status::Unchecked,
+        end: crate::revocation::chain::End::Budget,
+        ..Default::default()
+    };
+    for authority in [false, true] {
+        let report = super::verify::chain_report(&chain, authority);
+        assert!(super::verify::chain_shown(&report));
+        assert!(report.sentence.contains("budget"));
+    }
 }

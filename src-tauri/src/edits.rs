@@ -3260,6 +3260,9 @@ pub struct PlannedRedaction {
     /// be cut, where [`taking`](Self::taking) is the same strings.
     #[serde(default)]
     pub lines: Vec<String>,
+    /// For partially removed lines, the index in `lines` and kept byte intervals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_spans: Vec<(usize, Vec<(usize, usize)>)>,
     /// Which of the page's images the removal deletes, ascending.
     ///
     /// `redact::RegionPlan::images`, merged across the page's regions the way

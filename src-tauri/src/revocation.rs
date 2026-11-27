@@ -756,13 +756,25 @@ pub(crate) fn judge_under(
     let answer = combine(subject, findings, moment, now);
     // An answer that reassures, or that says nothing was there, cannot stand
     // beside data that was there and not read: that data might have said
-    // revoked. A revocation found stands whatever else was missed.
-    if matches!(answer.standing, Status::Good | Status::None) {
-        if dropped > 0 {
-            return Revocation::unchecked(moment, Gap::Bound);
-        }
-        if unread > 0 {
-            return Revocation::unchecked(moment, Gap::Unreadable);
+    // revoked before the attested moment. A revocation at or before it stands.
+    if matches!(answer.standing, Status::Good | Status::None) || answer.after_moment {
+        let gap = if dropped > 0 {
+            Some(Gap::Bound)
+        } else if unread > 0 {
+            Some(Gap::Unreadable)
+        } else {
+            None
+        };
+        if let Some(why) = gap {
+            if !answer.after_moment {
+                return Revocation::unchecked(moment, why);
+            }
+            return Revocation {
+                standing: Status::Unchecked,
+                why: Some(why),
+                after_moment: false,
+                ..answer
+            };
         }
     }
     answer

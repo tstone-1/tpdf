@@ -20,8 +20,8 @@ ROWS += [
     Mutation("import: follow an action into the source's fields", "src/merge.rs", ".is_some_and(is_form_object)", ".is_some_and(|_| false)", "importing_one_page_of_a_form_does_not_bring_the_other_pages_answers"),
     Mutation("import: wall off the page's own merged field", "src/merge.rs", "                && !annotated.contains(&id)\n", "", "a_field_that_is_its_own_widget_comes_with_its_page"),
     # Form fields written out in place.
-    Mutation("fields: stop the walk at an inline field", "src/redact.rs", "            return fields::Flow::Descend;\n        };\n\n        let kids: Vec<ObjectId> = field", "            return fields::Flow::Leaf;\n        };\n\n        let kids: Vec<ObjectId> = field", "a_field_under_an_inline_parent_is_reached"),
-    Mutation("fields: leave an inline field in its array", "src/redact.rs", "            gone += prune_inline(array, &folded, &mut budget);", "            let _ = (array, &folded, &mut budget);", "an_inline_field_holding_taken_text_goes_with_its_widget"),
+    Mutation("fields: stop the walk at an inline field", "src/redact.rs", "            return fields::Flow::Descend;\n        };\n\n        let empty_kids = field", "            return fields::Flow::Leaf;\n        };\n\n        let empty_kids = field", "a_field_under_an_inline_parent_is_reached"),
+    Mutation("fields: leave an inline field in its array", "src/redact.rs", "            gone += prune_inline(doc, &mut entries, taken, &mut budget, &mut active, 0);", "            let _ = (&mut entries, taken, &mut budget, &mut active);", "an_inline_field_holding_taken_text_goes_with_its_widget"),
     Mutation("fields: the rewrite never asks about inline fields", "src/save.rs", "        done.fields += redact::drop_inline_fields(doc, &lines);\n", "", "a_redaction_takes_an_inline_field_holding_what_it_removed"),
     # Inline annotations that depend on a taken one.
     Mutation("annots: keep an inline reply to a taken note", "src/redact.rs", "                    && !names_taken(annot, b\"IRT\")\n", "", "an_inline_reply_to_a_taken_note_goes_with_it"),
