@@ -1445,7 +1445,7 @@ ROWS += [
         "src/lib/markband.ts",
         "  const clampX = (v: number): number => Math.max(0, Math.min(v, page.width));",
         "  const clampX = (v: number): number => v;",
-        "stays inside the page at every turn",
+        "clamps a drag that left the page, in both directions",
     ),
     Mutation(
         # Accept a rectangle of any size. A click then writes an annotation

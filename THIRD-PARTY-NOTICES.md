@@ -3088,7 +3088,7 @@ SOFTWARE.
 | alloc-no-stdlib | 3.0.0 | BSD-3-Clause |
 | alloc-stdlib | 0.2.4 | BSD-3-Clause |
 | alloc-stdlib | 0.3.0 | BSD-3-Clause |
-| anyhow | 1.0.104 | MIT OR Apache-2.0 |
+| anyhow | 1.0.105 | MIT OR Apache-2.0 |
 | async-broadcast | 0.7.2 | MIT OR Apache-2.0 |
 | async-channel | 2.5.0 | Apache-2.0 OR MIT |
 | async-executor | 1.14.1 | Apache-2.0 OR MIT |
@@ -3118,7 +3118,7 @@ SOFTWARE.
 | blocking | 1.7.0 | Apache-2.0 OR MIT |
 | brotli | 9.1.3 | BSD-3-Clause AND MIT |
 | brotli-decompressor | 5.0.3 | BSD-3-Clause/MIT |
-| brotli-decompressor | 6.3.2 | BSD-3-Clause/MIT |
+| brotli-decompressor | 6.4.0 | BSD-3-Clause/MIT |
 | bs58 | 0.5.1 | MIT/Apache-2.0 |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | byteorder | 1.5.0 | Unlicense OR MIT |
@@ -3155,7 +3155,7 @@ SOFTWARE.
 | cpubits | 0.1.1 | MIT OR Apache-2.0 |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 |
-| crc32fast | 1.5.5 | MIT OR Apache-2.0 |
+| crc32fast | 1.5.6 | MIT OR Apache-2.0 |
 | crossbeam-channel | 0.5.17 | MIT OR Apache-2.0 |
 | crossbeam-deque | 0.8.8 | MIT OR Apache-2.0 |
 | crossbeam-epoch | 0.9.21 | MIT OR Apache-2.0 |
@@ -3266,7 +3266,7 @@ SOFTWARE.
 | http-body-util | 0.1.5 | MIT |
 | httparse | 1.10.1 | MIT OR Apache-2.0 |
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 |
-| hyper | 1.12.0 | MIT |
+| hyper | 1.13.0 | MIT |
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT |
 | hyper-util | 0.1.21 | MIT |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 |
@@ -3293,9 +3293,9 @@ SOFTWARE.
 | javascriptcore-rs | 1.1.2 | MIT |
 | javascriptcore-rs-sys | 1.1.1 | MIT |
 | jiff | 0.2.46 | Unlicense OR MIT |
-| jiff | 1.0.2 | Unlicense OR MIT |
+| jiff | 1.0.3 | Unlicense OR MIT |
 | jiff-core | 0.1.8 | Unlicense OR MIT |
-| jiff-core | 1.0.1 | Unlicense OR MIT |
+| jiff-core | 1.0.2 | Unlicense OR MIT |
 | jiff-tzdb | 0.1.10 | Unlicense OR MIT |
 | jiff-tzdb | 1.0.0 | Unlicense OR MIT |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT |
@@ -3412,7 +3412,7 @@ SOFTWARE.
 | rand_chacha | 0.3.1 | MIT OR Apache-2.0 |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 |
 | rand_core | 0.6.4 | MIT OR Apache-2.0 |
-| rangemap | 1.8.0 | MIT/Apache-2.0 |
+| rangemap | 1.9.0 | MIT/Apache-2.0 |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
 | rayon | 1.12.0 | MIT OR Apache-2.0 |
 | rayon-core | 1.13.0 | MIT OR Apache-2.0 |
@@ -3603,7 +3603,7 @@ SOFTWARE.
 | zbus_macros | 5.19.0 | MIT |
 | zbus_names | 4.3.5 | MIT |
 | zcheapstr | 1.4.0 | MIT |
-| zerocopy | 0.8.64 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy | 0.8.65 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
 | zeroize | 1.9.2 | Apache-2.0 OR MIT |
@@ -3611,8 +3611,8 @@ SOFTWARE.
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.9 | Unicode-3.0 |
 | zerovec-derive | 0.11.7 | Unicode-3.0 |
-| zip | 9.8.1 | MIT |
-| zlib-rs | 0.6.8 | Zlib |
+| zip | 9.8.2 | MIT |
+| zlib-rs | 0.6.9 | Zlib |
 | zmij | 1.0.23 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
@@ -13466,11 +13466,11 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 | @tauri-apps/plugin-dialog | 2.8.4 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.4.0 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-updater | 2.14.1 | MIT OR Apache-2.0 |
-| svelte | 5.59.2 | MIT |
+| svelte | 5.59.1 | MIT |
 
 ### Copyright notices
 
-- Copyright (c) 2016-2026 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)
+- Copyright (c) 2016-2025 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)
 - Copyright (c) 2017 - Present Tauri Apps Contributors
 - copyright license to reproduce, prepare Derivative Works of,
 - copyright notice that is included in or attached to the work

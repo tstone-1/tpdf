@@ -10929,9 +10929,13 @@ fn a_made_page_of_a_size_no_reader_could_have_asked_for_is_refused() {
         (14_401.0, 400.0, "one point wider than PDF permits"),
         (200.0, 14_401.0, "one point taller than PDF permits"),
     ] {
+        let refusal = sized(width, height).expect_err(why);
         assert!(
-            sized(width, height).is_err(),
-            "{why}: {width} by {height} must be refused"
+            refusal
+                .message
+                .contains("which is not a page this can write"),
+            "{why}: {}",
+            refusal.message
         );
     }
 

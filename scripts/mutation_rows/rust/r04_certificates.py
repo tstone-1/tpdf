@@ -1113,6 +1113,14 @@ ROWS += [
         only_on="linux",
     ),
     Mutation(
+        "trust: append a directly trusted Linux signer a second time",
+        "src/trust.rs",
+        "                if chain.last() != Some(root) {",
+        "                {",
+        "one_signature_that_cannot_be_covered_means_nothing_is_written",
+        only_on="linux",
+    ),
+    Mutation(
         "token: ask for the PIN while the token is logged in",
         "src/pkcs11.rs",
         "    if info.login_required() && !logged_in {",

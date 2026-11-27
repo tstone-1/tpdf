@@ -18,7 +18,7 @@ ROWS += [
     Mutation("fill: stage beside the link the reader opened", "src/save.rs", "    let path = &resolved(path);\n    let mut plan = redaction_fill::output_plan(original_plan)?;", "    let mut plan = redaction_fill::output_plan(original_plan)?;", "the_redaction_fill_through_a_symlink_writes_the_document_the_link_names", only_on="macos"),
     # Importing pages: an action naming fields is a wall.
     Mutation("import: follow an action into the source's fields", "src/merge.rs", ".is_some_and(is_form_object)", ".is_some_and(|_| false)", "importing_one_page_of_a_form_does_not_bring_the_other_pages_answers"),
-    Mutation("import: wall off the page's own merged field", "src/merge.rs", "                && !annotated.contains(&id)\n", "", "a_field_that_is_its_own_widget_comes_with_its_page"),
+    Mutation("import: leave a merged field interactive on the imported page", "src/merge.rs", '        if annot\n            .get_deref(b"Subtype", from)', '        if annot.has(b"Parent") && annot\n            .get_deref(b"Subtype", from)', "a_field_that_is_its_own_widget_comes_with_its_page"),
     # Form fields written out in place.
     Mutation("fields: stop the walk at an inline field", "src/redact.rs", "            return fields::Flow::Descend;\n        };\n\n        let empty_kids = field", "            return fields::Flow::Leaf;\n        };\n\n        let empty_kids = field", "a_field_under_an_inline_parent_is_reached"),
     Mutation("fields: leave an inline field in its array", "src/redact.rs", "            gone += prune_inline(doc, &mut entries, taken, &mut budget, &mut active, 0);", "            let _ = (&mut entries, taken, &mut budget, &mut active);", "an_inline_field_holding_taken_text_goes_with_its_widget"),

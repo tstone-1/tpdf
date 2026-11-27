@@ -1197,9 +1197,9 @@ ROWS += [
         # either side of it and a screen reader announce a link with a stray word
         # at each end.
         "links: claim a character whose box merely overlaps the link",
-        "src/lib/text.ts",
-        "  return x >= left && x <= right && y >= top && y <= bottom;",
-        "  return true;",
+        "src/lib/links.ts",
+        "linkAt(candidates, first.page, centre.x, centre.y, 0)",
+        "linkAt(candidates, first.page, centre.x, centre.y, Math.abs(boxes[at * 4 + 2]! - boxes[at * 4]!) / 2)",
         "takes a character by its centre, not by its box overlapping",
     ),
     Mutation(
@@ -2334,7 +2334,7 @@ ROWS += [
         "src/lib/markband.ts",
         "      { x: quad.left, y: quad.bottom },\n      { x: quad.left, y: quad.top },\n    ],",
         "      { x: quad.left, y: quad.bottom },\n    ],",
-        "takes one the nib enters from outside it",
+        "takes one the nib travels into",
     ),
     Mutation(
         # A nib of no width. Every mark the sweep passes *near* survives, so the

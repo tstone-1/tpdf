@@ -269,6 +269,20 @@ describe("what the page draws while a note is typed", () => {
     expect(viewer.markOpen).toBe(-1);
   });
 
+  it("shows the model's final lines after saving a draft with its editor still open", async () => {
+    const viewer = build();
+    viewer.showMark(1);
+    type(viewer, "hello there");
+    asked[0]!.answer(["hello", "there"]);
+    const saving = viewer.saveOpenMarkDraft();
+    viewer.setMarks([{ ...BOX, note: "hello there", lines: ["hello there"] }, FIELD, HIGHLIGHT]);
+    expect(await painted()).toEqual(["hello", "there", "Name"]);
+    settleEdit();
+    await saving;
+    expect(viewer.markOpen).toBe(1);
+    expect(await painted()).toEqual(["hello there", "Name"]);
+  });
+
   it("shows what the model has when the edit settles without taking the note", async () => {
     const viewer = build();
     viewer.showMark(2);

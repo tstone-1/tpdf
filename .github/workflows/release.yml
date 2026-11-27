@@ -584,6 +584,13 @@ jobs:
           file was already sent, assume it can still hold what was redacted.
           Details: https://github.com/tstone-1/tpdf/blob/main/SECURITY.md#redactions-made-with-261111
 
+          **New in 26.11.16.** Comments and replies support bold, italic,
+          underline, strikethrough, subscript and superscript. The View menu
+          lets you turn whole pages with the scroll wheel at any zoom. On
+          macOS, tpdf remembers the window position, size and maximized state.
+          Switching tabs preserves unfinished drawings. This release also
+          improves text editing, redaction and signature verification.
+
           **New in 26.11.15.** Crop to content accounts for page scale and
           prompts you to save pending artwork. Form creation tracks pending
           field names and radio choices. Saving and reloading preserve comment

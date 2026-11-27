@@ -190,9 +190,18 @@ export class CommentFormatting {
       document.execCommand(cmd);
       selectionChanged();
     };
-    for (const event of ["focus", "keyup", "pointerup", "blur"]) {
+    for (const event of ["focus", "keyup", "pointerup"]) {
       field.addEventListener(event, selectionChanged);
     }
+    field.addEventListener("blur", () => {
+      selectionChanged();
+      // WebKit routes native Paste to the old editing selection even after
+      // the page takes focus. The toolbar can restore its saved range.
+      const selection = document.getSelection?.();
+      if (selection?.rangeCount && field.contains(selection.anchorNode) && field.contains(selection.focusNode)) {
+        selection.removeAllRanges();
+      }
+    });
     field.addEventListener("input", () => {
       const body = readComment(field);
       value = body.text;

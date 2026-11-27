@@ -42,13 +42,23 @@ export async function spreadChecks(
   const zoom = viewer.currentZoom;
   const page = viewer.position.page;
 
-  /** Mean lightness of a strip 4 px wide at `x`, down the middle third of the surface. */
-  const strip = (x: number): number | null => {
+  // On a short landscape spread, the middle of the window can show the
+  // next row, which may have only a left page. Sample the visible first row.
+  const strip = (x: number, facing = false): number | null => {
     const ctx = surface.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return null;
-    const h = Math.floor(surface.height / 3);
-    if (h < 1) return null;
-    return meanLightness(ctx.getImageData(Math.floor(x) - 2, h, 4, h).data);
+    if (!ctx || !surface.clientHeight) return null;
+    const scale = surface.height / surface.clientHeight;
+    const first = viewer.screenPoint(0, 0, 0).y;
+    const lastPage = facing ? 1 : 0;
+    const last = viewer.screenPoint(lastPage, 0, 0).y;
+    const top = Math.max(0, Math.ceil(Math.max(first, last) * scale));
+    const bottom = Math.min(surface.height, Math.floor(Math.min(
+      first + viewer.pageBoxCssOf(0).height,
+      last + viewer.pageBoxCssOf(lastPage).height,
+    ) * scale));
+    const h = Math.floor((bottom - top) / 3);
+    if (h < 1) throw new Error("The first spread has no visible row to sample");
+    return meanLightness(ctx.getImageData(Math.floor(x) - 2, top + h, 4, h).data);
   };
   const settled = () => settle(() => viewer.idle && (seen.status?.sharp ?? 0) >= 0.999);
 
@@ -61,6 +71,7 @@ export async function spreadChecks(
   const paperBefore = strip(middle);
 
   viewer.setSpread(FACING);
+  viewer.goToPage(0);
   await settled();
   const coverage = seen.status?.sharp ?? 0;
   check(
@@ -69,9 +80,9 @@ export async function spreadChecks(
     `sharp coverage ${(coverage * 100).toFixed(1)}% with pages 1 and 2 side by side`,
   );
 
-  const gapNow = strip(middle);
-  const left = strip(surface.width / 4);
-  const right = strip((surface.width * 3) / 4);
+  const gapNow = strip(middle, true);
+  const left = strip(surface.width / 4, true);
+  const right = strip((surface.width * 3) / 4, true);
   if (surround === null || paperBefore === null || gapNow === null || left === null || right === null) {
     skip(gap, "the surface could not be read back");
   } else if (Math.abs(paperBefore - surround) < 0.15) {
@@ -92,6 +103,7 @@ export async function spreadChecks(
   }
 
   viewer.setSpread(SINGLE);
+  viewer.goToPage(0);
   await settled();
   const paperAfter = strip(middle);
   if (paperAfter === null || surround === null || paperBefore === null) {

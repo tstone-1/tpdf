@@ -1225,12 +1225,15 @@ pub(crate) mod platform {
                     path.intermediate_certificates()
                         .map(|cert| cert.der().to_vec()),
                 );
-                let anchor = path.anchor();
-                if let Some((_, der)) = trusted.iter().find(|(candidate, _)| {
-                    candidate.subject == anchor.subject
-                        && candidate.subject_public_key_info == anchor.subject_public_key_info
-                }) {
-                    chain.push((*der).clone());
+                // webpki borrows the chosen anchor from this slice. A directly
+                // trusted signer is already the last certificate in the path.
+                let index = anchor_list
+                    .iter()
+                    .position(|candidate| std::ptr::eq(candidate, path.anchor()))
+                    .ok_or_else(|| "the verified trust anchor is unavailable".to_string())?;
+                let root = trusted[index].1;
+                if chain.last() != Some(root) {
+                    chain.push(root.clone());
                 }
                 Ok(Evaluation {
                     passed: true,

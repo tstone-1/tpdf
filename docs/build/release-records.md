@@ -2,6 +2,57 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
+**26.11.16 release preparation.** On macOS, pressing Cmd+V on the page after
+editing a comment sent the native paste to the old comment selection. This
+failed on all three mark fixtures. Clearing the editor's DOM selection on
+blur, after saving the range for the formatting toolbar, restored picture
+paste on the page. The packaged macOS viewer opened the document and started
+a worker. OCR read the expected words from the packaged renderer's output,
+and withholding its PDFium library prevented rendering.
+
+On the three-page inherited-rotation fixture, the first facing row ended at
+208 pixels in a 700-pixel window. The window check sampled the middle third
+of the window, entirely below that row, where the last page has no facing
+partner. It now samples inside the visible height shared by the first pair.
+
+The broader 26.11.15 run caught all 1,511 frontend mutations. Three Rust
+mutations survived. The save test now checks the specific invalid-size refusal.
+The signing mutation changes the width where page coordinates are converted
+to appearance dimensions. The merged-widget test checks that the import keeps
+the appearance as a static stamp. All three controls failed as intended on the
+changed behavior. A fourth control checks the final text layout when a comment
+draft is saved with its editor still open.
+
+On Linux the chain builder returned a directly trusted signer twice. The
+long-term signing check then requested verification data for the duplicate.
+Using the selected trust anchor once restored the field-specific refusal
+before any request, verified on the Linux fixture with two signatures.
+
+All 39 local gates passed. The Windows cross-check and native Linux Clippy
+passed. Window checks passed 19/19 on both macOS and Windows. VoiceOver and
+NVDA each passed 11/11. On Windows, 3,835 library tests passed with 12
+ignored, and 808 CLI checks passed with four skips.
+
+The full frontend run caught 2,340 of 2,343 mutations at the named test.
+Two eraser and drag checks still named earlier tests. The link check changed
+a general text predicate after link hit testing had moved to the link index.
+After correction, each of the three mutations failed its intended test.
+The Python table caught all 41 mutations. Linux caught both selected token
+mutations and the mutation that duplicates a directly trusted signer.
+
+The local Windows installer passed 26/26 checks. Its packaged Python client
+passed all 70 tests, as did the macOS package. The Windows print probe spooled
+three fixtures. The Windows redaction survey opened five documents, including
+three pages each from the scanned Apollo 11 press kit (NASA 19690022248) and
+mission report (NASA 19700008096). The planner accepted all 468 regions for full removal. OCR
+could not prove any of the 468 unreadable: 86 covered every word, 142 had
+only larger surviving words, 120 lacked a legible control scale, and 120
+failed to read the control. The survey reported zero clean verdicts.
+
+The tracked review ledger reproduced in a separate checkout. Of 757 application
+and client files, 710 (93.8%) had a full read and 322 (42.5%) still matched
+the contents reviewed. The remaining 47 had been skimmed.
+
 **26.11.15 verification and publication, 2026-11-26.** The stable tag points to
 `b61e295f`. All three CI jobs (45767493008) and Audit (45767493019) passed.
 The rehearsal (45767360422) and stable build (45771531686) each passed the

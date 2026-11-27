@@ -731,13 +731,10 @@ ROWS += [
         "a_reason_and_location_are_text_strings_inside_the_range",
     ),
     Mutation(
-        # The form drawn where the rectangle sits on the page: correct on the
-        # page, and a different stream from the preview's at every position
-        # but the origin.
-        "sign visible: draw the form at the rectangle's page position",
-        "src/sign_prepare/appearance.rs",
-        "    let local = [0.0, 0.0, rect[2] - rect[0], rect[3] - rect[1]];",
-        "    let local = rect;",
+        "sign visible: use the right page coordinate as the appearance width",
+        "src/sign_prepare.rs",
+        "                (rect[2] - rect[0]) * unit,",
+        "                rect[2] * unit,",
         "a_preview_draws_the_stream_the_signing_writes",
     ),
     Mutation(

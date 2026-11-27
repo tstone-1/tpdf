@@ -2339,7 +2339,7 @@ ROWS += [
     Mutation("draft on the page: draw the old words between the close and the model's answer", "src/lib/viewer.ts",
         '        this.drafts.committed(mark, note, submitted);\n',
         '',
-        "on Escape sends the note and keeps drawing it until the model has answered"),
+        "shows the model's final lines after saving a draft with its editor still open"),
     Mutation("draft on the page: a resized text box keeps the lines of its old width", "src/lib/viewer.ts",
         '    if (open) this.drafts.refit(open);\n',
         '',

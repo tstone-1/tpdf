@@ -17,9 +17,10 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.11.16] - Unreleased
+## [26.11.16] - 2026-11-28
 
 - Switching tabs keeps unfinished drawings and navigation history. Keyboard navigation stays within its split pane, and closing other documents leaves the current document's form draft alone.
+- On Linux, long-term signing recognizes a directly trusted signer and reports which signature lacks verification data before contacting a server.
 - Signing checks the intended field is readable before writing. Invisible signatures preserve a field's print setting, and the chooser identifies certificates by their issuer.
 - Text editing checks standard-font glyph overhangs, keeps visible trailing-space glyphs inside the text box, and preserves inserted nonbreaking spaces when using automatic font selection.
 

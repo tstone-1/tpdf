@@ -1783,8 +1783,13 @@ mod tests {
         from.trailer.set("Root", catalog);
         let mut into = flat("first");
 
-        import(&mut into, &from, &[0]).expect("the import");
-
+        let ids = import(&mut into, &from, &[0]).expect("the import");
+        let stamp = widget_on(&into, ids[0]);
+        assert_eq!(
+            stamp.get(b"Subtype").and_then(Object::as_name).unwrap(),
+            b"Stamp"
+        );
+        assert!(!stamp.has(b"FT") && !stamp.has(b"V"));
         assert!(holds(&mut into, b"BT (CHARLIE) Tj ET"));
     }
 
