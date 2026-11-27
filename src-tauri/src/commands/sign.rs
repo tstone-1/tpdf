@@ -1112,6 +1112,7 @@ mod tests {
         recorded(&tool, &out, &mut |asking| {
             let finished = crate::cli::sign::concluded(
                 &sign,
+                &[],
                 made(),
                 now(),
                 &Recording {

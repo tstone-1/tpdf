@@ -7689,3 +7689,23 @@ A paragraph wrap that would move a vertical gradient underline is refused with
 the PDF object graph intact. The solid underline control moves 14 points with
 its text. On pages with user units 1 and 2, both wings of a one-point arrow
 measure six physical points in the saved appearance stream.
+
+## CLI signing, annotation geometry and page copies, verified 2026-11-27
+
+Changing the anchor position during certificate selection now refuses signing
+before the key is used. On Linux, selecting a registered PKCS#12 file as the
+forced destination preserved its bytes. The same credential signed successfully
+to a distinct output. Redirected form definitions are checked by file identity.
+
+A 140 by 24 point text box on a page with user unit 2 uses a native font size
+of 5.5. Underline placement is checked against the selection at all four page
+turns. The saved bounds of a 5-point arrow with a 10-point nib include the
+round cap on each wing. Page numbering refuses a period placed beyond the
+visible ink boundary of a 100-point square page that already contains a period.
+
+On Windows the EMF read-back retained a table label inside a stroked border
+as editable text, kept condensed text as outlines, and recorded nested artwork
+as a single bitmap.
+The broader Windows CLI suite had three QR-redaction checks that also failed
+on the preceding commit. Windows OCR could not read the fixture’s 8.7-point
+control word, so the redaction verifier returned an unverified result.

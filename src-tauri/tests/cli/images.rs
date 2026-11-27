@@ -98,17 +98,15 @@ pub(super) fn makes_a_document_from_pictures(report: &mut Report) {
             &["render", &out, "--page", page, "--dpi", "72", "-o", &shown],
             &[],
         );
-        let (_, _, data) = if code == 0 {
-            pixels(&shown)
-        } else {
-            (0, 0, vec![0; 4])
-        };
-        (data[0], data[1])
+        (code == 0).then(|| {
+            let (_, _, data) = pixels(&shown);
+            (data[0], data[1])
+        })
     };
     let (upright, quarter) = (corner("2"), corner("3"));
     report.check(
         "a photograph is turned the way its EXIF orientation says",
-        upright.0 < 60 && upright.1 < 60 && quarter.0 < 60 && quarter.1 > 150,
+        matches!(upright, Some((0..60, 0..60))) && matches!(quarter, Some((0..60, 151..=255))),
         &format!("top-left red and green: {upright:?} upright, {quarter:?} turned"),
     );
 

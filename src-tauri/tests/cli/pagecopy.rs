@@ -21,6 +21,8 @@ struct Read {
     frame_size: (u32, u32),
     escapements: Vec<i32>,
     shapes: usize,
+    bitmaps: usize,
+    blue_pixels: usize,
     /// Every record, of any kind: a page without one of its texts must have as
     /// many as the same page drawn without that text at all.
     records: usize,
@@ -66,6 +68,21 @@ fn read(emf: &[u8]) -> Read {
                 seen.weights.push(u32_at(record, 28).unwrap_or(0) as i32);
                 seen.font_heights
                     .push(u32_at(record, 12).unwrap_or(0) as i32);
+            }
+            81 => {
+                // EMR_STRETCHDIBITS with a 32-bit BGRx source
+                seen.bitmaps += 1;
+                if let (Some(offset), Some(size)) = (u32_at(record, 56), u32_at(record, 60)) {
+                    if let Some(bits) = record
+                        .get(offset as usize..)
+                        .and_then(|bytes| bytes.get(..size as usize))
+                    {
+                        seen.blue_pixels += bits
+                            .chunks_exact(4)
+                            .filter(|p| p[0] > 200 && p[1] < 50 && p[2] < 50)
+                            .count();
+                    }
+                }
             }
             // Fills and strokes of paths, polygons and Béziers: the page's own
             // drawing. PDFium paints an upright filled rectangle as a brush
@@ -223,6 +240,10 @@ fn hidden_fixture(path: &Path) {
         "Properties",
         dictionary! {"Labels"=>layer, "Shown"=>visible_layer},
     );
+    let sample = doc.add_object(Stream::new(dictionary! {
+        "Type"=>"XObject", "Subtype"=>"Form", "BBox"=>vec![0.into(),0.into(),100.into(),50.into()],
+    }, b"0 0 1 rg 10 10 80 30 re f".to_vec()));
+    marked.set("XObject", dictionary! {"Sample" => sample});
     for body in [
         "q 0 0 m 400 400 l 0 400 l 400 0 l h W n BT /F1 12 Tf 65 200 Td (Crossing) Tj ET Q",
         "BT /F1 12 Tf 25 200 Td (Crop boundary) Tj ET",
@@ -231,6 +252,9 @@ fn hidden_fixture(path: &Path) {
         "/Span << /ActualText (Distance) >> BDC BT /F1 12 Tf 65 300 Td (D) Tj ET EMC",
         "q 40 40 400 400 re W n 50 50 300 300 re W n BT /F1 12 Tf 65 300 Td (Visible) Tj ET Q",
         "/OC /Shown BDC BT /F1 12 Tf 65 300 Td (Layer label) Tj ET EMC",
+        "BT /F1 12 Tf 65 300 Td (Cell label) Tj ET 50 280 150 50 re S",
+        "BT /F1 12 Tf .5 0 0 1 65 300 Tm (Narrow label) Tj ET",
+        "q 1 0 0 1 65 300 cm /Sample Do Q",
     ] {
         let stream = doc.add_object(Stream::new(dictionary! {}, body.as_bytes().to_vec()));
         kids.push(Object::Reference(doc.add_object(dictionary! {
@@ -313,6 +337,40 @@ fn keeps_hidden_words_hidden(report: &mut Report, dir: &Path) {
                 with.records, without.records
             ),
         );
+    }
+    let artwork = Worker::spawn(&source, &library_dir()).and_then(|mut worker| {
+        worker.call(&Request::Open {
+            lazy_geometry: false,
+        })?;
+        (15..18)
+            .map(|page| copy_counted(&mut worker, page))
+            .collect::<Result<Vec<_>, _>>()
+    });
+    match artwork {
+        Ok(pages) => {
+            let cell = read(&pages[0].0);
+            let narrow = read(&pages[1].0);
+            let nested = read(&pages[2].0);
+            report.check(
+                "a stroked cell keeps its editable label",
+                cell.words == ["Cell label"] && pages[0].1 == 0,
+                &format!("{cell:?}"),
+            );
+            report.check(
+                "a condensed label keeps its outlines",
+                narrow.words.is_empty() && narrow.shapes > 0 && pages[1].1 == 0,
+                &format!("{narrow:?}"),
+            );
+            report.check(
+                "a nested drawing is a single bitmap",
+                nested.bitmaps == 1
+                    && nested.blue_pixels > 100
+                    && nested.shapes == 0
+                    && nested.words.is_empty(),
+                &format!("{nested:?}"),
+            );
+        }
+        Err(why) => report.check("the worker draws the artwork controls", false, &why),
     }
     let extra = Worker::spawn(&source, &library_dir()).and_then(|mut worker| {
         let _ = worker.call(&Request::Open {

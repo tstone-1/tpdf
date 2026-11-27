@@ -48,6 +48,14 @@ pub struct Identity {
 }
 
 impl Identity {
+    pub(crate) fn key_file(&self) -> Option<&std::path::Path> {
+        #[cfg(target_os = "linux")]
+        if let platform::Handle::File(entry) = &self.handle {
+            return Some(&entry.path);
+        }
+        None
+    }
+
     /// A stable name for this identity: the SHA-256 of its certificate, hex.
     ///
     /// What the chooser sends back. Not a secret and not an index --- a list

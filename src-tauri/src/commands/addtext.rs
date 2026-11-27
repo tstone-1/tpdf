@@ -28,6 +28,7 @@ pub async fn add_text_copy(
     let mut plan = edits.plan(doc)?;
     let count = u32::try_from(plan.pages.len()).map_err(|e| e.to_string())?;
     let expected = addedtext::plan_lines(count, &added)?;
+    let compare_source_text = plan.is_identity();
     plan.added_text = added;
     let opened_with = password_for(&service, doc, "add_text_copy").await;
     let writing = outside_of(&app, service.backend());
@@ -44,11 +45,21 @@ pub async fn add_text_copy(
                     super::open_temporary(&service, staged, opened_with.clone(), "add_text_copy")
                         .map_err(|e| save::Refusal::from(e.reason))?;
                 let checked = if opened.page_count == count as usize {
-                    addedtext::verify_lines(&expected, |page| {
-                        answered("add_text_copy", |reply| {
-                            service.text(opened.id, page, None, reply)
-                        })
-                    })
+                    let read = |id, page| {
+                        answered("add_text_copy", |reply| service.text(id, page, None, reply))
+                    };
+                    // Pending edits can change the source text or page order.
+                    addedtext::verify_lines(
+                        &expected,
+                        |page| read(opened.id, page),
+                        |page| {
+                            if compare_source_text {
+                                read(doc, page).map(Some)
+                            } else {
+                                Ok(None)
+                            }
+                        },
+                    )
                 } else {
                     Err(said!("the staged copy has a different number of pages"))
                 };

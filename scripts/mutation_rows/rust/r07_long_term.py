@@ -1310,7 +1310,7 @@ ROWS += [
         # the draft takes.
         "edits: wrap a text box's own lines at its whole width",
         "src/edits.rs",
-        "                    textbox::box_lines(model.note_of(id), left, right)",
+        "                    textbox::box_lines(\n                        model.note_of(id),\n                        0.,\n                        ((right - left) as f64 * mark.text_unit) as f32,\n                    )",
         "                    textbox::wrap(model.note_of(id), textbox::SIZE, f64::from(right - left))",
         "a_draft_breaks_where_the_model_breaks_the_same_note",
     ),

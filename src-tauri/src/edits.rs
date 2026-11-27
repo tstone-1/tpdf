@@ -243,6 +243,9 @@ pub struct PictureSize {
 /// reason.
 #[derive(Clone, PartialEq, Debug, Serialize)]
 pub struct MarkView {
+    /// Physical points per native unit of a text box.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_unit: Option<f64>,
     /// The model's identity for this mark, sent back verbatim to remove it.
     pub id: u64,
     /// What kind of mark it is, so the reader can be told which one they are
@@ -1700,17 +1703,15 @@ impl Edits {
                 bottom: q[3],
             })
             .collect();
-        // **Ink's rectangle is derived, not sent**, for the reason `NewMark::quads`
-        // gives. `INK_WIDTH / 2.0` because a stroke straddles its path, so the
-        // rectangle the ink occupies is wider than the points it runs through ---
-        // and tight bounds would additionally refuse a straight vertical line as
-        // covering no area. See `Stroke::bounds`.
+        // Derive the annotation rectangle from the stroked path and its chosen nib.
         if !unit.is_finite() || unit <= 0.0 {
             return Err(said!("the page has an invalid user unit"));
         }
         let width = nib(want.width) / unit;
         if want.kind.has_strokes() {
-            quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width, unit))
+            quads = want
+                .kind
+                .stroke_bounds(&strokes, width, unit)
                 .into_iter()
                 .collect();
         }
@@ -1735,6 +1736,7 @@ impl Edits {
         model
             .annotate_in(
                 Mark {
+                    text_unit: unit,
                     kind: want.kind,
                     page: PageId::from_raw(want.page),
                     quads,
@@ -2822,7 +2824,8 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
             working.marks_on(id).iter().map(move |mark| {
                 let body = model.mark(*mark).expect("a live mark has a body");
                 PlannedMark {
-                    text_size: None,
+                    text_size: (body.kind == MarkKind::TextBox)
+                        .then_some(textbox::SIZE / body.text_unit),
                     kind: body.kind,
                     at,
                     // `snapshot`'s reason, and the consequence here is the
@@ -3963,6 +3966,8 @@ fn snapshot(model: &Doc) -> EditState {
                 // The day a `Rewidth` exists this becomes an accessor in the
                 // same breath, and that is what its doc comment is for.
                 width: mark.width,
+                text_unit: (mark.kind == MarkKind::TextBox && mark.text_unit != 1.0)
+                    .then_some(mark.text_unit),
                 note: model.note_of(id).to_string(),
                 styles: model
                     .note_body(id)
@@ -3979,7 +3984,11 @@ fn snapshot(model: &Doc) -> EditState {
                         .quads_of(id)
                         .first()
                         .map_or((0.0, 0.0), |q| (q.left, q.right));
-                    textbox::box_lines(model.note_of(id), left, right)
+                    textbox::box_lines(
+                        model.note_of(id),
+                        0.,
+                        ((right - left) as f64 * mark.text_unit) as f32,
+                    )
                 } else {
                     Vec::new()
                 },
@@ -8148,19 +8157,37 @@ mod tests {
             edits.annotate(7, want, stamped()).expect("a line");
         }
         let marks = edits.state(7).expect("state").marks;
-        let pad = |kind: MarkKind| kind.stroke_pad(INK_WIDTH, 1.);
+        let pad = INK_WIDTH as f32 / 2.;
         for mark in &marks {
-            let p = pad(mark.kind);
+            let spread = if mark.kind == MarkKind::Arrow {
+                crate::docmodel::arrow_head(INK_WIDTH, 1.) as f32 / 2.
+            } else {
+                0.
+            };
             assert_eq!(
                 mark.quads,
-                vec![100.0 - p, 200.0 - p, 300.0 + p, 200.0 + p],
-                "{:?}",
-                mark.kind
+                vec![
+                    100. - pad,
+                    200. - pad - spread,
+                    300. + pad,
+                    200. + pad + spread
+                ]
             );
         }
-        // The arrow's rectangle is wider than the line's, by its head.
-        assert!(pad(MarkKind::Arrow) > pad(MarkKind::Line));
         assert_eq!(marks.len(), 3);
+    }
+
+    #[test]
+    fn a_scaled_text_box_wraps_and_saves_at_the_same_physical_size() {
+        let edits = opened();
+        let page = edits.state(7).unwrap().pages[0].id;
+        let mut mark = of_kind(MarkKind::TextBox, page);
+        mark.quads = vec![10., 10., 80., 22.];
+        mark.note = "REVIEW DATE".into();
+        let state = edits.annotate_at_scale(7, mark, stamped(), 0, 2.).unwrap();
+        assert_eq!(state.marks[0].lines, ["REVIEW DATE"]);
+        assert_eq!(state.marks[0].text_unit, Some(2.));
+        assert_eq!(edits.plan(7).unwrap().marks[0].text_size, Some(5.5));
     }
 
     /// A note past the bound is refused at both doors it can arrive through.

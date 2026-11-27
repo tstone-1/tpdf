@@ -5415,7 +5415,7 @@ export class Viewer {
    * one is what `docs/TRAPS.md` records as two copies of a distinction drifting,
    * so both go through the same body.
    */
-  private viewQuadsOn(slot: number, mark: MarkView): Quad[] {
+  private viewQuadsOn(slot: number, mark: MarkView, lineBand = false): Quad[] {
     // Through {@link turnsOn}, which comments and links also place their
     // rectangles with. This held its own copy of the same two lines until
     // 2026-08-18, and a copy of a distinction is what lets one of them drift ---
@@ -5429,14 +5429,12 @@ export class Viewer {
     // from the other two once already.
     const quads: Quad[] = [];
     for (let at = 0; at + 3 < mark.quads.length; at += 4) {
-      quads.push(
-        this.viewRectOn(slot, [
-          mark.quads[at] ?? 0,
-          mark.quads[at + 1] ?? 0,
-          mark.quads[at + 2] ?? 0,
-          mark.quads[at + 3] ?? 0,
-        ]),
-      );
+      const quad = {
+        left: mark.quads[at] ?? 0, top: mark.quads[at + 1] ?? 0,
+        right: mark.quads[at + 2] ?? 0, bottom: mark.quads[at + 3] ?? 0,
+      };
+      const rect = lineBand ? markBand(mark.kind, quad) : quad;
+      quads.push(this.viewRectOn(slot, [rect.left, rect.top, rect.right, rect.bottom]));
     }
     return quads;
   }
@@ -8077,7 +8075,8 @@ export class Viewer {
     // the blend modes below assume; two marks on different pages cannot
     // overlap, so nothing depends on the order across them.
     for (const { slot, mark } of this.marksAcross(visible)) {
-      const placed = { slot, quads: this.viewQuadsOn(slot, mark) };
+      const line = mark.kind === "underline" || mark.kind === "strikeout";
+      const placed = { slot, quads: this.viewQuadsOn(slot, mark, line) };
       // **The preview is the absence**, which is what the stroke loop below
       // says for a drawing coming apart. A mark the sweep has taken whole is
       // simply not drawn, so the reader watches it go under the nib and there
@@ -8188,7 +8187,7 @@ export class Viewer {
         continue;
       }
       for (const quad of placed.quads) {
-        const band = markBand(mark.kind, quad);
+        const band = line ? quad : markBand(mark.kind, quad);
         const left = (origin.left + band.left * this.zoom) * dpr + ox;
         const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr + oy;
         const width = (band.right - band.left) * this.zoom * dpr + gx;
@@ -8250,10 +8249,10 @@ export class Viewer {
           // sink and cannot become one, which is what lets document-controlled
           // text be drawn here at all -- see `docs/THREAT-MODEL.md` T8.
           ctx.fillStyle = markInk(mark.color, false);
-          const size = TEXT_SIZE * this.zoom * dpr;
+          const size = TEXT_SIZE / (mark.text_unit ?? 1) * this.zoom * dpr;
           ctx.font = `${size}px Helvetica, Arial, sans-serif`;
           ctx.textBaseline = "alphabetic";
-          const inset = TEXT_INSET * this.zoom * dpr;
+          const inset = TEXT_INSET / (mark.text_unit ?? 1) * this.zoom * dpr;
           const leading = size * TEXT_LEADING;
           // What is being typed in the open box, when there is any: see
           // `markdraft.ts`. Those lines are the backend's as well.

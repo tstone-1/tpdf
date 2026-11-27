@@ -2149,8 +2149,8 @@ ROWS += [
     Mutation(
         "arrow: no room for the head",
         "src/docmodel.rs",
-        "        let head = if self == Self::Arrow {",
-        "        let head = if self == Self::Polygon {",
+        "        if self == Self::Arrow {",
+        "        if self == Self::Polygon {",
         "an_arrows_head_is_inside_its_rectangle",
     ),
     Mutation(

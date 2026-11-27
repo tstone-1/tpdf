@@ -184,6 +184,8 @@ pub struct Held {
     pub certificate: Vec<u8>,
     /// What the OS chain API returned above it, DER.
     pub chain: Vec<Vec<u8>>,
+    /// A registered file containing this key, when signing reads one.
+    pub key_file: Option<std::path::PathBuf>,
     /// Asks whoever holds the key to sign one digest.
     pub key: Box<dyn Key>,
 }
@@ -221,6 +223,7 @@ impl Store for OsStore {
             .map(|identity| Held {
                 certificate: identity.certificate.clone(),
                 chain: identity.chain.clone(),
+                key_file: identity.key_file().map(std::path::Path::to_owned),
                 key: Box::new(identity),
             })
             .collect())

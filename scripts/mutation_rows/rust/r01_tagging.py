@@ -1998,7 +1998,7 @@ ROWS += [
         # down a margin is answered with "that mark covers nothing".
         "edits: take ink's rectangle tight against the strokes",
         "src/edits.rs",
-        "            quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width, unit))",
+        "            quads = want\n                .kind\n                .stroke_bounds(&strokes, width, unit)",
         "            quads = Stroke::bounds(&strokes, 0.0)",
         # **Not the `docmodel` test that looks like the right one.** That one
         # builds its `Mark` by hand, so it exercises `Stroke::bounds` and says

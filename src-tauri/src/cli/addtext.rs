@@ -189,8 +189,7 @@ impl AddText {
         let inputs = std::slice::from_ref(&self.input);
         check_target(inputs, &self.output, self.force)?;
         let key = password(self.password_env.as_deref())?;
-        let (mut input, session) = read_input(env, &self.input, key.as_deref())?;
-        drop(session);
+        let (mut input, mut source_session) = read_input(env, &self.input, key.as_deref())?;
         if input.signed.is_some() && !self.invalidate {
             return Err(Failure::new(
                 Exit::Refused,
@@ -242,12 +241,17 @@ impl AddText {
                 if !same_sizes(&after.sizes, &input.sizes) {
                     return Err(unpublished("does not have the source's pages".into()));
                 }
-                addedtext::verify_lines(&expected, |page| {
-                    match session.ask(Request::Text { page, crop: None }) {
-                        Ok(Reply::Text(text)) => Ok(text),
-                        _ => Err(format!("page {} could not be read", page + 1)),
-                    }
-                })
+                let read_text = |session: &mut crate::save_outside::Session, page| match session
+                    .ask(Request::Text { page, crop: None })
+                {
+                    Ok(Reply::Text(text)) => Ok(text),
+                    _ => Err(format!("page {} could not be read", page + 1)),
+                };
+                addedtext::verify_lines(
+                    &expected,
+                    |page| read_text(&mut session, page),
+                    |page| read_text(&mut source_session, page).map(Some),
+                )
                 .map_err(unpublished)?;
                 Ok(())
             },

@@ -356,6 +356,7 @@ fn searchable_line(chars: impl Iterator<Item = char>) -> String {
 pub(crate) fn verify_lines(
     planned: &[(u32, usize, String)],
     mut read: impl FnMut(u32) -> Result<crate::text::PageText, String>,
+    mut original: impl FnMut(u32) -> Result<Option<crate::text::PageText>, String>,
 ) -> Result<(), String> {
     let mut per_page = std::collections::BTreeMap::<u32, Vec<&str>>::new();
     for (page, _, line) in planned {
@@ -364,8 +365,17 @@ pub(crate) fn verify_lines(
     for (page, lines) in per_page {
         let text = read(page)?;
         let actual = searchable_line(text.codes.into_iter().filter_map(char::from_u32));
+        let before = original(page)?
+            .map(|text| searchable_line(text.codes.into_iter().filter_map(char::from_u32)))
+            .unwrap_or_default();
+        let mut needed = std::collections::BTreeMap::new();
         for line in lines {
-            if !actual.contains(&searchable_line(line.chars())) {
+            *needed
+                .entry(searchable_line(line.chars()))
+                .or_insert(0usize) += 1;
+        }
+        for (line, count) in needed {
+            if actual.matches(&line).count() < before.matches(&line).count() + count {
                 return Err(said!(
                     "does not read {line:?} on page {page}",
                     page = page + 1
@@ -575,10 +585,27 @@ enum Face<'a> {
 }
 
 impl Face<'_> {
-    fn advance(&self, text: &str, size: f64) -> Result<f64, String> {
+    fn glyph_metrics(&self, text: &str) -> Result<Vec<crate::textedit::GlyphMetrics>, String> {
         match self {
-            Face::Helvetica => Ok(crate::textbox::advance(text, size)),
-            Face::Embedded(font) => font.advance(text, size),
+            Self::Embedded(font) => font.glyph_metrics(text),
+            Self::Helvetica => Ok(text
+                .chars()
+                .map(|ch| {
+                    let code = ch as usize;
+                    let index = if code < 127 {
+                        code - 32
+                    } else {
+                        code - 160 + 95
+                    };
+                    let bounds = crate::textedit::HELVETICA_INK[index];
+                    let ink = (bounds[0] < bounds[2] && bounds[1] < bounds[3])
+                        .then(|| bounds.map(|v| f64::from(v) / 1000.));
+                    (
+                        crate::textbox::advance(ch.encode_utf8(&mut [0; 4]), 1.),
+                        ink,
+                    )
+                })
+                .collect()),
         }
     }
 
@@ -652,7 +679,11 @@ fn show(
     let (width, height) = (f64::from(shown.width), f64::from(shown.height));
     let size = f64::from(line.size) / unit;
     let margin = f64::from(line.margin) / unit;
-    let advance = face.advance(text, size)?;
+    let glyphs = face.glyph_metrics(text)?;
+    let advance = glyphs
+        .iter()
+        .map(|(advance, _)| advance * size)
+        .sum::<f64>();
     let (cap_height, descent) = face.vertical_metrics(text)?;
 
     // The anchor, in the displayed page's space: points from its top-left
@@ -699,39 +730,33 @@ fn show(
 
     // The text's direction and its up, turned by the angle the reader sees.
     let (sin, cos) = f64::from(line.angle).to_radians().sin_cos();
-    // Test each word's box: a space can position the ink but cannot paint it.
-    let half_height = size * (cap_height + descent) / 2.0;
+    // Intersect the painted glyphs with the page in the line's rotated frame.
+    // A word advance includes side bearings and the font's cap height contains
+    // empty space above punctuation. Neither is evidence that a glyph is visible.
     let x = x + along + advance / 2.0;
     let y = y + below - size * cap_height / 2.0;
     let along = -advance / 2.0;
     let below = size * cap_height / 2.0;
-    let v = below - size * cap_height + half_height;
     let c = cos.abs();
     let s = sin.abs();
-    let intersects = |start: f64, word_width: f64| {
-        let half = word_width / 2.0;
-        let u = start + half;
+    let mut cursor = along;
+    let visible = glyphs.iter().any(|&(advance, ink)| {
+        let start = cursor;
+        cursor += size * advance;
+        let Some([left, bottom, right, top]) = ink else {
+            return false;
+        };
+        let half = size * (right - left) / 2.;
+        let half_height = size * (top - bottom) / 2.;
+        let u = start + size * (left + right) / 2.;
+        let v = below - size * (top + bottom) / 2.;
         let dx = x + u * cos + v * sin - width / 2.0;
         let dy = y - u * sin + v * cos - height / 2.0;
         dx.abs() < width / 2.0 + half * c + half_height * s
             && dy.abs() < height / 2.0 + half * s + half_height * c
             && (dx * cos - dy * sin).abs() < half + width / 2.0 * c + height / 2.0 * s
             && (dx * sin + dy * cos).abs() < half_height + width / 2.0 * s + height / 2.0 * c
-    };
-    let mut remaining = text;
-    let mut cursor = along;
-    let mut visible = false;
-    for word in text.split_whitespace() {
-        let trimmed = remaining.trim_start();
-        cursor += face.advance(&remaining[..remaining.len() - trimmed.len()], size)?;
-        let width = face.advance(word, size)?;
-        if intersects(cursor, width) {
-            visible = true;
-            break;
-        }
-        cursor += width;
-        remaining = &trimmed[word.len()..];
-    }
+    });
     if !visible {
         return Err(said!("the line lies entirely outside the visible page"));
     }
@@ -1212,16 +1237,50 @@ mod tests {
             codes: s.chars().map(u32::from).collect(),
             ..Default::default()
         };
-        verify_lines(&expected, |i| {
-            Ok(page(if i == 0 {
-                "final ſtamp 1"
-            } else {
-                "final ſtamp 2"
-            }))
-        })
+        verify_lines(
+            &expected,
+            |i| {
+                Ok(page(if i == 0 {
+                    "final ſtamp 1"
+                } else {
+                    "final ſtamp 2"
+                }))
+            },
+            |_| Ok(None),
+        )
         .unwrap();
-        let err = verify_lines(&expected, |_| Ok(page("final ſtamp 1"))).unwrap_err();
+        let err = verify_lines(&expected, |_| Ok(page("final ſtamp 1")), |_| Ok(None)).unwrap_err();
         assert!(err.contains("page 2"));
+        assert!(verify_lines(
+            &expected[..1],
+            |_| Ok(page("final ſtamp 1")),
+            |_| Ok(Some(page("final ſtamp 1")))
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn a_period_must_have_ink_inside_the_page() {
+        let make = || {
+            let mut doc = document(1, 0, b"BT (Invoice.) Tj ET");
+            let page = pagetree::ordered_pages(&doc)[0];
+            doc.get_dictionary_mut(page)
+                .unwrap()
+                .set("MediaBox", vec![0.into(), 0.into(), 100.into(), 100.into()]);
+            doc
+        };
+        let mut line = AddedText {
+            text: ".".into(),
+            position: Position::TopLeft,
+            margin: 99.,
+            size: 50.,
+            ..AddedText::page_numbers()
+        };
+        assert!(write(&mut make(), std::slice::from_ref(&line))
+            .unwrap_err()
+            .contains("visible page"));
+        line.margin = 35.;
+        write(&mut make(), &[line]).unwrap();
     }
 
     #[test]

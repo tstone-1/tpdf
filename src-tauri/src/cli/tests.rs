@@ -1466,6 +1466,7 @@ impl Store for Soft256 {
             .0
             .iter()
             .map(|(der, seed)| Held {
+                key_file: None,
                 certificate: der.clone(),
                 chain: Vec::new(),
                 key: Box::new(Soft::p256(*seed)),
@@ -5006,12 +5007,47 @@ fn signing_preserves_a_destination_created_after_preflight_unless_forced() {
     std::fs::write(&source, b"source").unwrap();
     assert!(!output.exists());
     std::fs::write(&output, b"other signer").unwrap();
-    assert!(sign::publish_signed(&source, None, &output, b"signed", false).is_err());
+    assert!(sign::publish_signed(&source, &[], &output, b"signed", false).is_err());
     assert_eq!(std::fs::read(&output).unwrap(), b"other signer");
-    assert!(sign::publish_signed(&source, Some(&output), &output, b"signed", true).is_err());
-    sign::publish_signed(&source, None, &output, b"signed", true).unwrap();
+    assert!(sign::publish_signed(
+        &source,
+        std::slice::from_ref(&output),
+        &output,
+        b"signed",
+        true
+    )
+    .is_err());
+    sign::publish_signed(&source, &[], &output, b"signed", true).unwrap();
     assert_eq!(std::fs::read(&output).unwrap(), b"signed");
     assert_eq!(std::fs::read(&source).unwrap(), b"source");
+}
+
+#[test]
+fn a_final_input_collision_preserves_the_previous_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("out.pdf");
+    std::fs::write(&output, b"original input").unwrap();
+    let checked = std::cell::Cell::new(false);
+    let result = pages::publish_copy_checked(
+        &[],
+        &[],
+        &output,
+        true,
+        |staged| {
+            std::fs::write(staged, b"new copy").unwrap();
+            Ok((false, ()))
+        },
+        |_, ()| {
+            checked.set(true);
+            Ok(())
+        },
+        || {
+            assert!(checked.get());
+            Err(Failure::new(Exit::Usage, "input collision"))
+        },
+    );
+    assert_eq!(result.unwrap_err().exit, Exit::Usage);
+    assert_eq!(std::fs::read(output).unwrap(), b"original input");
 }
 
 #[test]

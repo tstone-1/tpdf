@@ -323,6 +323,8 @@ project conventions.
   that can be moved off it and would show a clipped word whole, and the notice says how many
   pieces of text were left out. This includes words crossing the page crop and text on optional
   layers, even visible ones, because tpdf cannot verify their visibility for the slide.
+  On pages with nested artwork, the remaining graphics are copied as one bitmap.
+  Horizontally scaled or skewed words keep their drawn appearance.
   Invisible and fully transparent text is left out too, and a
   translucent word stays a drawing. On a small Windows display, drawings near the bottom
   or right of a large page can be missing from the pasted slide.

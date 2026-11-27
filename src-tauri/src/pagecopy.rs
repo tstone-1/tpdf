@@ -26,7 +26,7 @@
 //! everyone holding it and the viewer's pages are cached
 //! (*Two handles to one cached page are aliases*). Deactivated objects stay owned by the private page.
 //!
-//! Text inside a Form XObject is not moved: it is drawn as outlines.
+//! A page containing a Form XObject uses a single bitmap for its remaining artwork.
 
 /// One text object as it will be written back.
 #[cfg(windows)]
@@ -303,7 +303,7 @@ mod platform {
         let copy = document.graph().reopen(bindings)?;
         let pages = copy.page_count() as usize;
         let raw = copy.page_cropped(page, crop, &|index| document.graph().sheet(index, pages))?;
-        let (words, left_out) = take_words(bindings, &raw)?;
+        let (words, left_out, flatten) = take_words(bindings, &raw)?;
         let turns = turns % 4;
         let unit = f64::from(document.page_units(&[page])?[0]);
         let (mut width, mut height) = (
@@ -336,11 +336,15 @@ mod platform {
                 let dpi = f64::from(GetDeviceCaps(dc, LOGPIXELSX as _).max(1));
                 let px = gdi_length(width / 72.0 * dpi)?;
                 let py = gdi_length(height / 72.0 * dpi)?;
-                if print_mode(PRINTMODE_EMF) == 0 {
-                    return Err(said!("the PDF engine refused to draw a metafile"));
-                }
-                if render(dc, raw.handle(), 0, 0, px, py, c_int::from(turns), FLAGS) == 0 {
-                    return Err(said!("the PDF engine refused to draw a metafile"));
+                if flatten {
+                    draw_composite(bindings, raw.handle(), turns, dc, px, py)?;
+                } else {
+                    if print_mode(PRINTMODE_EMF) == 0 {
+                        return Err(said!("the PDF engine refused to draw a metafile"));
+                    }
+                    if render(dc, raw.handle(), 0, 0, px, py, c_int::from(turns), FLAGS) == 0 {
+                        return Err(said!("the PDF engine refused to draw a metafile"));
+                    }
                 }
                 // The words turn with the page's own `/Rotate` as well as the
                 // reader's; the drawing and `FPDF_PageToDevice` apply both.
@@ -381,6 +385,63 @@ mod platform {
         }
     }
 
+    /// Record the visible composite as one bitmap. Ungrouping cannot separate its layers.
+    unsafe fn draw_composite(
+        bindings: Bindings,
+        page: FPDF_PAGE,
+        turns: u8,
+        dc: HDC,
+        px: i32,
+        py: i32,
+    ) -> Result<(), String> {
+        use windows_sys::Win32::Graphics::Gdi::{
+            StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, SRCCOPY,
+        };
+        let (w, h) = crate::graphic::picture_size(px as u32, py as u32);
+        let len = u64::from(w) * u64::from(h) * 4;
+        if len >= LIMIT as u64 || w > (i32::MAX / 4) as u32 {
+            return Err(said!("the page is too detailed to copy as a picture"));
+        }
+        let (w, h) = (w as i32, h as i32);
+        let mut pixels = vec![255u8; len as usize];
+        // PDFium BGRx and the top-down 32-bit Windows DIB use the same layout.
+        let bitmap = bindings.FPDFBitmap_CreateEx(w, h, 3, pixels.as_mut_ptr().cast(), w * 4);
+        if bitmap.is_null() {
+            return Err(said!("the PDF engine refused to draw a metafile"));
+        }
+        bindings.FPDF_RenderPageBitmap(bitmap, page, 0, 0, w, h, i32::from(turns), FLAGS);
+        bindings.FPDFBitmap_Destroy(bitmap);
+        let mut info: BITMAPINFO = std::mem::zeroed();
+        info.bmiHeader = BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            ..Default::default()
+        };
+        if StretchDIBits(
+            dc,
+            0,
+            0,
+            px,
+            py,
+            0,
+            0,
+            w,
+            h,
+            pixels.as_ptr().cast(),
+            &info,
+            DIB_RGB_COLORS,
+            SRCCOPY,
+        ) <= 0
+        {
+            return Err(said!("Windows could not draw the page picture"));
+        }
+        Ok(())
+    }
+
     /// What one top-level object is to the copy.
     enum Seen {
         /// A visible text object: its words if they can be written back, and
@@ -391,7 +452,7 @@ mod platform {
             bounds: Option<Bounds>,
         },
         /// Anything else PDFium draws: it may hide text drawn before it.
-        Cover(Bounds),
+        Cover(Bounds, Option<Bounds>),
         /// Taken off and not drawn: invisible text.
         Nothing,
     }
@@ -424,12 +485,16 @@ mod platform {
     /// too: neither an upright clip rectangle nor the quarter-height cover
     /// rule tells "all hidden" from "partly", so the copy can lose letters the
     /// page showed, and the window says so.
-    fn take_words(bindings: Bindings, page: &RawPage<'_>) -> Result<(Vec<Words>, u32), String> {
+    fn take_words(
+        bindings: Bindings,
+        page: &RawPage<'_>,
+    ) -> Result<(Vec<Words>, u32, bool), String> {
         let handle = page.handle();
         let page_box = page.crop_pt().map(f64::from);
         let mut found = Vec::new();
         let mut taken = Vec::new();
         let mut left_out = 0u32;
+        let mut flatten = false;
         // SAFETY: the text page is closed before any object is removed, every
         // object handle is valid while the page is, and every annotation
         // handle is closed in the loop that opened it.
@@ -445,8 +510,15 @@ mod platform {
                     continue;
                 }
                 let bounds = bounds(bindings, object);
-                if bindings.FPDFPageObj_GetType(object) != PAGEOBJ_TEXT {
-                    seen.push(Seen::Cover(bounds.unwrap_or(EVERYWHERE)));
+                let kind = bindings.FPDFPageObj_GetType(object);
+                if kind != PAGEOBJ_TEXT {
+                    flatten |= kind == FPDF_PAGEOBJ_FORM as i32;
+                    let interior = if kind == FPDF_PAGEOBJ_PATH as i32 {
+                        crate::graphic::hollow_rect(bindings, object)
+                    } else {
+                        None
+                    };
+                    seen.push(Seen::Cover(bounds.unwrap_or(EVERYWHERE), interior));
                     continue;
                 }
                 let mode = bindings.FPDFTextObj_GetTextRenderMode(object);
@@ -482,14 +554,20 @@ mod platform {
             }
             bindings.FPDFText_ClosePage(text_page);
             // Annotations are drawn after all page content.
-            let mut covers = annotation_covers(bindings, handle);
+            let mut covers: Vec<_> = annotation_covers(bindings, handle)
+                .into_iter()
+                .map(|bounds| (bounds, None))
+                .collect();
+            let hides_text = |at, &(cover, interior): &(Bounds, Option<Bounds>)| {
+                hides(at, cover) && !interior.is_some_and(|empty| contains(empty, at))
+            };
             for item in seen.into_iter().rev() {
                 match item {
                     Seen::Text {
                         object,
                         words: Some(words),
                         bounds: Some(at),
-                    } if !covers.iter().any(|&cover| hides(at, cover)) => {
+                    } if !covers.iter().any(|cover| hides_text(at, cover)) => {
                         found.push(words);
                         taken.push(object);
                     }
@@ -501,12 +579,12 @@ mod platform {
                         object,
                         bounds: Some(at),
                         ..
-                    } if covers.iter().any(|&cover| hides(at, cover)) => {
+                    } if covers.iter().any(|cover| hides_text(at, cover)) => {
                         taken.push(object);
                         left_out += 1;
                     }
-                    Seen::Text { bounds, .. } => covers.push(bounds.unwrap_or(EVERYWHERE)),
-                    Seen::Cover(at) => covers.push(at),
+                    Seen::Text { bounds, .. } => covers.push((bounds.unwrap_or(EVERYWHERE), None)),
+                    Seen::Cover(at, interior) => covers.push((at, interior)),
                     Seen::Nothing => {}
                 }
             }
@@ -518,7 +596,7 @@ mod platform {
                 }
             }
         }
-        Ok((found, left_out))
+        Ok((found, left_out, flatten))
     }
 
     /// An object's bounds in page space, when PDFium reports finite ones.
@@ -661,7 +739,13 @@ mod platform {
         if ![a, b, c, d, e, f].iter().all(|v| v.is_finite()) {
             return None;
         }
+        // GDI can reproduce a uniform positive scale and rotation. Keep other
+        // affine transforms in the original artwork at their painted dimensions.
         let scale = c.hypot(d);
+        let tolerance = scale * 1e-6;
+        if scale == 0. || (a - d).abs() > tolerance || (b + c).abs() > tolerance {
+            return None;
+        }
         let (mut r, mut g, mut bl, mut alpha) = (0u32, 0u32, 0u32, 0u32);
         let stroked = mode == RENDER_STROKE || mode == RENDER_STROKE_CLIP;
         let coloured = if stroked {

@@ -2214,20 +2214,7 @@ fn arrow_wings(strokes: &[Vec<(f64, f64)>], head: f64) -> Option<[(f64, f64); 3]
     let [from, tip] = strokes.first()?.as_slice() else {
         return None;
     };
-    let (dx, dy) = (tip.0 - from.0, tip.1 - from.1);
-    let length = dx.hypot(dy);
-    if length == 0.0 {
-        return None;
-    }
-    let (ux, uy) = (dx / length, dy / length);
-    let (cos, sin) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
-    let wing = |side: f64| {
-        (
-            tip.0 - head * (ux * cos - side * uy * sin),
-            tip.1 - head * (uy * cos + side * ux * sin),
-        )
-    };
-    Some([wing(1.0), *tip, wing(-1.0)])
+    crate::docmodel::arrow_vertices(*from, *tip, head)
 }
 
 /// Where a link goes, read from its note.

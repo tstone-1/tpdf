@@ -562,7 +562,7 @@ export class Edits {
     return this.adopt(
       await call("annot_mark", {
         doc: this.doc,
-        ...((field || hasStrokes(kind)) && { unit: await this.pageUnit(page) }),
+        ...((field || kind === "textbox" || hasStrokes(kind)) && { unit: await this.pageUnit(page) }),
         ...(sweep ? { sweep } : {}),
         mark: {
           kind,

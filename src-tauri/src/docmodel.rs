@@ -940,18 +940,25 @@ impl MarkKind {
         }
     }
 
-    /// How far a mark's rectangle reaches past the points it runs through, for
-    /// a stroke `width` points wide: half the width, because a stroke straddles
-    /// its path, and for an arrow half its head as well, which spreads either
-    /// side of the line at its end.
-    #[must_use]
-    pub fn stroke_pad(self, width: f64, unit: f64) -> f32 {
-        let head = if self == Self::Arrow {
-            arrow_head(width, unit) / 2.0
-        } else {
-            0.0
-        };
-        (width / 2.0 + head) as f32
+    /// Bounds of the shaft and arrowhead, including their round caps.
+    pub fn stroke_bounds(self, strokes: &[Stroke], width: f64, unit: f64) -> Option<Quad> {
+        let pad = (width / 2.0) as f32;
+        let mut bounds = Stroke::bounds(strokes, pad)?;
+        if self == Self::Arrow {
+            let [from, tip] = strokes.first()?.points.as_slice() else {
+                return None;
+            };
+            let xy = |p: &Point| (f64::from(p.x), f64::from(p.y));
+            if let Some(wings) = arrow_vertices(xy(from), xy(tip), arrow_head(width, unit)) {
+                for (x, y) in wings {
+                    bounds.left = bounds.left.min(x as f32 - pad);
+                    bounds.right = bounds.right.max(x as f32 + pad);
+                    bounds.top = bounds.top.min(y as f32 - pad);
+                    bounds.bottom = bounds.bottom.max(y as f32 + pad);
+                }
+            }
+        }
+        Some(bounds)
     }
 }
 
@@ -965,6 +972,27 @@ pub const MAX_CORNERS: usize = 1000;
 #[must_use]
 pub fn arrow_head(width: f64, unit: f64) -> f64 {
     (width * 3.0).max(6.0 / unit)
+}
+
+pub(crate) fn arrow_vertices(
+    from: (f64, f64),
+    tip: (f64, f64),
+    head: f64,
+) -> Option<[(f64, f64); 3]> {
+    let (dx, dy) = (tip.0 - from.0, tip.1 - from.1);
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return None;
+    }
+    let (ux, uy) = (dx / length, dy / length);
+    let (cos, sin) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
+    let wing = |side: f64| {
+        (
+            tip.0 - head * (ux * cos - side * uy * sin),
+            tip.1 - head * (uy * cos + side * ux * sin),
+        )
+    };
+    Some([wing(1.0), tip, wing(-1.0)])
 }
 
 /// Which standard stamp a [`MarkKind::Stamp`] is.
@@ -1031,6 +1059,8 @@ impl StampName {
 /// [`Working`]. So the note lives there --- see [`NoteId`].
 #[derive(Clone, PartialEq, Debug)]
 pub struct Mark {
+    /// Physical points per native unit for text layout.
+    pub text_unit: f64,
     pub kind: MarkKind,
     /// The page the mark is on. Held here as well as in [`Working`] so that a
     /// writer holding only the table knows where each mark goes.
@@ -4635,6 +4665,7 @@ mod tests {
     /// A highlight over one ordinary-looking line, on `page`.
     fn mark_on(page: PageId) -> Mark {
         Mark {
+            text_unit: 1.0,
             kind: MarkKind::Highlight,
             stamp: None,
             field: None,
@@ -5216,6 +5247,7 @@ mod tests {
             points: vec![Point { x: 72.0, y: 90.0 }, Point { x: 300.0, y: 108.0 }],
         }];
         Mark {
+            text_unit: 1.0,
             kind: MarkKind::Ink,
             stamp: None,
             field: None,
@@ -5249,6 +5281,7 @@ mod tests {
             },
         ];
         Mark {
+            text_unit: 1.0,
             kind: MarkKind::Ink,
             stamp: None,
             field: None,
@@ -6765,6 +6798,7 @@ mod tests {
         let page = doc.working().order()[0];
         doc.annotate(
             Mark {
+                text_unit: 1.0,
                 kind: MarkKind::Note,
                 reply_to: Some(object(7)),
                 ..mark_on(page)
@@ -6802,6 +6836,7 @@ mod tests {
         let reply = doc
             .annotate(
                 Mark {
+                    text_unit: 1.0,
                     kind: MarkKind::Note,
                     reply_to: Some(object(7)),
                     ..mark_on(page)

@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- CLI signing checks that the PDF still matches the revision used to place the signature and protects the selected Linux key file. Form exports also protect JSON read from redirected standard input.
+- Pasted text boxes keep their physical font size, short thick arrows keep both ends of the head, and underlines turn with their pages. Page labels check the painted glyphs against the visible page.
+- On Windows, PowerPoint copies preserve labels inside stroked table borders and the width of condensed text. Nested artwork stays in one bitmap when the slide is ungrouped.
+
 - Extract and Split omit new answers when all widgets for a field were removed or left on other pages. CLI signing protects the selected signature image even with `--force`.
 - Text edits keep gradient underlines fixed and account for mitered corners on stroked letters. Invisible and stroke-only text remains editable when its unused fill is a gradient.
 - Fine arrowheads keep their physical size on scaled pages. Save shortcuts work with Caps Lock, and keyboard focus follows the next mark after removal. Redaction results group legible and unchecked pictures under a neutral heading.

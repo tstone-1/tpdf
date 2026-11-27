@@ -16,7 +16,7 @@ use serde::Deserialize;
 use super::args::{lexically_same, unknown, value};
 use super::fields::{ask_form, grouped, kind, value_json};
 use super::fill::{read_values, SignedState, Values};
-use super::pages::{check_target, copy_of, publish_copy, read_input, same_sizes};
+use super::pages::{check_target, copy_of, publish_copy_checked, read_input, same_sizes};
 use super::report::{self, AddedField, FieldKind, SCHEMA};
 use super::text::{password, variable};
 use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
@@ -394,6 +394,7 @@ impl Subcommand for AddFields {
         out: &mut dyn Write,
         _err: &mut dyn Write,
     ) -> Result<Exit, Failure> {
+        self.fields.protect_stdin(&self.output)?;
         let inputs = self.fields.inputs_with(&self.input);
         check_target(&inputs, &self.output, self.force)?;
         let shown = self.input.display().to_string();
@@ -420,7 +421,7 @@ impl Subcommand for AddFields {
                 format!("the staged file {what}; no output was published"),
             )
         };
-        let (form, added) = publish_copy(
+        let (form, added) = publish_copy_checked(
             &inputs,
             &[(self.input.as_path(), input.opened_as())],
             &self.output,
@@ -452,6 +453,7 @@ impl Subcommand for AddFields {
                 })?;
                 Ok((form, added))
             },
+            || self.fields.protect_stdin(&self.output),
         )?;
 
         let report = report::FormAdded {

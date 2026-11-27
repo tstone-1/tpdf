@@ -217,6 +217,7 @@ fn an_imported_page_turns_crops_moves_takes_a_mark_and_deletes() {
     let mark = doc
         .annotate(
             Mark {
+                text_unit: 1.0,
                 kind: MarkKind::Highlight,
                 stamp: None,
                 field: None,

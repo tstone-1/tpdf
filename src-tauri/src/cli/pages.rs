@@ -699,11 +699,26 @@ pub(super) fn publish_copy<W, T>(
     write: impl FnOnce(&Path) -> Result<(bool, W), Failure>,
     read_back: impl FnOnce(&Path, W) -> Result<T, Failure>,
 ) -> Result<T, Failure> {
+    publish_copy_checked(inputs, sources, output, force, write, read_back, || Ok(()))
+}
+
+/// Run the additional input identity check after the final source hash and
+/// immediately before publishing. A redirected input has no path in `inputs`.
+pub(super) fn publish_copy_checked<W, T>(
+    inputs: &[PathBuf],
+    sources: &[Source<'_>],
+    output: &Path,
+    force: bool,
+    write: impl FnOnce(&Path) -> Result<(bool, W), Failure>,
+    read_back: impl FnOnce(&Path, W) -> Result<T, Failure>,
+    check_input: impl FnOnce() -> Result<(), Failure>,
+) -> Result<T, Failure> {
     let staging = Temporary::beside(output)?;
     let staged = staging.0.join("output.pdf");
     let read = checked_copy(sources, &staged, write, |written| {
         read_back(&staged, written)
     })?;
+    check_input()?;
     Temporary::publish(inputs, &staged, output, force)?;
     Ok(read)
 }

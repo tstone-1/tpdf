@@ -24,6 +24,7 @@ mod ligatures;
 mod mapping;
 mod outlines;
 mod standard;
+pub(crate) use standard::HELVETICA_INK;
 mod type1;
 mod type3;
 mod unicode;

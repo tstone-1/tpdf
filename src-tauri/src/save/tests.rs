@@ -6883,12 +6883,16 @@ fn a_missing_number_on_the_staged_page_preserves_the_previous_copy() {
     let writer = FakeWriter::writing(Ok(b"staged output".to_vec()));
     let why = write_checked_copy(&source, &plan, &out, None, &writer, &|staged| {
         assert_eq!(std::fs::read(staged).unwrap(), b"staged output");
-        crate::addedtext::verify_lines(&expected, |_| {
-            Ok(crate::text::PageText {
-                codes: "Page 1 of 2".chars().map(u32::from).collect(),
-                ..Default::default()
-            })
-        })
+        crate::addedtext::verify_lines(
+            &expected,
+            |_| {
+                Ok(crate::text::PageText {
+                    codes: "Page 1 of 2".chars().map(u32::from).collect(),
+                    ..Default::default()
+                })
+            },
+            |_| Ok(None),
+        )
         .map_err(Refusal::from)
     })
     .unwrap_err();
@@ -14626,10 +14630,9 @@ fn plan_with_corners(kind: MarkKind, corners: &[(f32, f32)]) -> Plan {
             .map(|&(x, y)| crate::docmodel::Point { x, y })
             .collect(),
     }];
-    let pad = kind.stroke_pad(crate::docmodel::INK_WIDTH, 1.);
     let mut plan = plan_of_kind(
         kind,
-        crate::docmodel::Stroke::bounds(&strokes, pad)
+        kind.stroke_bounds(&strokes, crate::docmodel::INK_WIDTH, 1.)
             .into_iter()
             .collect(),
     );
@@ -14755,20 +14758,29 @@ fn an_arrows_head_is_inside_its_rectangle() {
     // The head spreads either side of the line at its end, past the stroke's
     // own bounds, and an appearance is clipped to `/BBox`, which is the mark's
     // rectangle: a head outside it would be cut off in every reader.
-    for (from, tip) in [
-        ((100.0, 200.0), (300.0, 200.0)),
-        ((150.0, 100.0), (150.0, 400.0)),
+    for (from, tip, width) in [
+        ((100.0, 200.0), (300.0, 200.0), crate::docmodel::INK_WIDTH),
+        ((150.0, 100.0), (150.0, 400.0), crate::docmodel::INK_WIDTH),
+        ((100.0, 100.0), (105.0, 100.0), 10.0),
     ] {
-        let width = crate::docmodel::INK_WIDTH;
         let strokes = vec![vec![from, tip]];
         let [one, _, other] = super::marks::arrow_wings_for_tests(&strokes, width).expect("a head");
-        let pad = f64::from(MarkKind::Arrow.stroke_pad(width, 1.));
-        let (left, right) = (from.0.min(tip.0) - pad, from.0.max(tip.0) + pad);
-        let (low, high) = (from.1.min(tip.1) - pad, from.1.max(tip.1) + pad);
+        let stroke = crate::docmodel::Stroke {
+            points: [from, tip]
+                .map(|(x, y)| crate::docmodel::Point {
+                    x: x as f32,
+                    y: y as f32,
+                })
+                .to_vec(),
+        };
+        let bounds = MarkKind::Arrow.stroke_bounds(&[stroke], width, 1.).unwrap();
         for (x, y) in [one, other] {
+            let cap = width / 2.;
             assert!(
-                (left..=right).contains(&x) && (low..=high).contains(&y),
-                "wing {x},{y} outside {left},{low} to {right},{high}"
+                x - cap >= f64::from(bounds.left) - 1e-5
+                    && x + cap <= f64::from(bounds.right) + 1e-5
+                    && y - cap >= f64::from(bounds.top) - 1e-5
+                    && y + cap <= f64::from(bounds.bottom) + 1e-5
             );
         }
         // The control: without the head's share of the pad, the wings are outside.

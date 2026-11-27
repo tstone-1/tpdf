@@ -30,6 +30,7 @@ impl Key for Counted {
 
 /// A store that counts, holding `saved` as the reader's saved image.
 pub(super) struct Counting {
+    pub(super) key_file: Option<std::path::PathBuf>,
     pub(super) certificate: Vec<u8>,
     pub(super) saved: Option<Image>,
     pub(super) asked: Rc<Asked>,
@@ -39,6 +40,7 @@ impl Store for Counting {
     fn identities(&self) -> Result<Vec<Held>, String> {
         self.asked.identities.set(self.asked.identities.get() + 1);
         Ok(vec![Held {
+            key_file: self.key_file.clone(),
             certificate: self.certificate.clone(),
             chain: Vec::new(),
             key: Box::new(Counted(key(), self.asked.clone())),
@@ -139,6 +141,7 @@ pub fn draws_the_file(report: &mut Report) {
     let stamp_file = dir.join("stamp.png");
     png_file(&stamp_file, &stamp);
     let store = |saved: Option<&Image>| Counting {
+        key_file: None,
         certificate: certificate(now),
         saved: saved.cloned(),
         asked: Rc::default(),
@@ -158,6 +161,19 @@ pub fn draws_the_file(report: &mut Report) {
         args.extend(extra.iter().map(|a| (*a).to_string()));
         args
     };
+
+    let credential = dir.join("fixture.p12");
+    std::fs::write(&credential, b"synthetic key file").unwrap();
+    let mut held = store(None);
+    held.key_file = Some(credential.clone());
+    let (code, _, stderr) = signs(&line(&credential, &["--no-image", "--force"]), &held, now);
+    report.check(
+        "the file behind the selected identity survives a forced output",
+        code == 2
+            && held.asked.signed.get() == 0
+            && std::fs::read(credential).unwrap() == b"synthetic key file",
+        &stderr,
+    );
 
     let image_before = std::fs::read(&stamp_file).unwrap();
     let alias = dir.join(".").join("stamp.png");

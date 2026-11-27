@@ -154,8 +154,8 @@ MUTATIONS = [
         # invisible to `annot-probe` and to every gate.
         "viewer: draw every mark across its whole quad, as the overlay used to",
         "src/lib/viewer.ts",
-        "        const band = markBand(mark.kind, quad);",
-        "        const band = quad;",
+        "      const rect = lineBand ? markBand(mark.kind, quad) : quad;",
+        "      const rect = quad;",
         "an underline leaves the middle of its quad clear",
         runner="viewer",
     ),

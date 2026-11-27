@@ -441,7 +441,7 @@ describe("Enter with a note open", () => {
 
 describe("the mark index the frame path draws from", () => {
   /** A canvas context that records only what a test asks about. */
-  function recorder(): { ctx: unknown; bands: number } {
+  function recorder() {
     const state = { bands: 0 };
     const ctx = {
       fillStyle: "",
@@ -473,6 +473,24 @@ describe("the mark index the frame path draws from", () => {
   interface Painting {
     paintMarks(ctx: unknown, dpr: number, visible: readonly number[]): void;
   }
+
+  it.each([0, 1, 2, 3])("paints the underline along the turned text at %i quarter turns", (turns) => {
+    const viewer = build([mark(1, 1, 100), { ...mark(2, 1, 100), kind: "underline" }], [
+      { id: pageId(1), source: { baseline: 0 }, turns },
+    ]);
+    try {
+      const fillRect = vi.fn();
+      (viewer as unknown as Painting).paintMarks({ ...recorder().ctx, fillRect }, 1, [0]);
+      expect(fillRect).toHaveBeenCalledTimes(2);
+      const [x, y, w, h] = fillRect.mock.calls[0]!;
+      const [left, top, width, height] = fillRect.mock.calls[1]!;
+      expect(turns % 2 ? height / width : width / height).toBeGreaterThan(100);
+      expect(left).toBeCloseTo(turns === 3 ? x + w - width : x);
+      expect(top).toBeCloseTo(turns === 0 ? y + h - height : y);
+    } finally {
+      viewer.destroy();
+    }
+  });
 
   it("places only the marks on the slots the frame says are on screen", () => {
     // The whole point of the index. Every mark used to be placed --- which is a

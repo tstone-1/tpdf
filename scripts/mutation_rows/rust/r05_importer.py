@@ -760,8 +760,8 @@ ROWS += [
         # a rendering fault rather than as a wrong number.
         "edits: report the default nib to the overlay",
         "src/edits.rs",
-        "                width: mark.width,\n                note: model.note_of(id).to_string(),",
-        "                width: INK_WIDTH,\n                note: model.note_of(id).to_string(),",
+        "                width: mark.width,\n                text_unit:",
+        "                width: INK_WIDTH,\n                text_unit:",
         "the_reply_and_the_plan_both_carry_the_nib",
     ),
     Mutation(

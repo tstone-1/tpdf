@@ -440,6 +440,7 @@ pub(crate) fn long_term_failure(why: &crate::longterm::Refusal) -> Failure {
 /// The sentence and the exit code for each way the signing stopped.
 pub(crate) fn concluded(
     sign: &Sign,
+    protected: &[PathBuf],
     made: sign_cms::Made,
     now: u64,
     worker: &dyn save::Verifier,
@@ -457,15 +458,7 @@ pub(crate) fn concluded(
         now,
         worker,
         asking,
-        &|bytes| {
-            publish_signed(
-                &sign.input,
-                sign.image_path(),
-                &sign.output,
-                bytes,
-                sign.force,
-            )
-        },
+        &|bytes| publish_signed(&sign.input, protected, &sign.output, bytes, sign.force),
     )
     .map_err(|stopped| match stopped {
         Stopped::Unstamped { why, .. } => {
@@ -1005,7 +998,7 @@ impl Sign {
 
 pub(super) fn publish_signed(
     input: &std::path::Path,
-    image: Option<&PathBuf>,
+    protected: &[PathBuf],
     output: &std::path::Path,
     bytes: &[u8],
     force: bool,
@@ -1018,7 +1011,7 @@ pub(super) fn publish_signed(
     let staged = temporary.0.join("signed.pdf");
     save::write_signed(input, &staged, bytes).map_err(|e| e.message)?;
     let inputs: Vec<_> = std::iter::once(input.to_owned())
-        .chain(image.cloned())
+        .chain(protected.iter().cloned())
         .collect();
     Temporary::publish(&inputs, &staged, output, force).map_err(|e| e.message)
 }
@@ -1045,6 +1038,9 @@ fn run_sign(
     )?;
     let (file, len) = opened(&sign.input).map_err(|why| Failure::new(Exit::Refused, why))?;
     sign_cms::refuse_too_large(len as u64).map_err(|why| Failure::new(Exit::Refused, why))?;
+
+    let opened_as = crate::fingerprint::Fingerprint::of_open(&file, &sign.input)
+        .map_err(|why| Failure::new(Exit::Refused, why))?;
 
     // The image file, before the store is asked for anything: a file that is
     // missing or is not an image ends the run with no certificate listed, no
@@ -1099,15 +1095,17 @@ fn run_sign(
     let listed = listing(&found, env.now);
     let at = resolve(&sign.identity, &listed).map_err(|why| Failure::new(Exit::Refused, why))?;
     let chosen = &held[at];
+    let protected: Vec<_> = sign
+        .image_path()
+        .into_iter()
+        .chain(chosen.key_file.as_ref())
+        .cloned()
+        .collect();
+    super::pages::check_target(&protected, &sign.output, sign.force)?;
     let offer = listed[at]
         .0
         .offer
         .clone()
-        .map_err(|why| Failure::new(Exit::Refused, why))?;
-
-    // What the file looks like now: the fingerprint `read_to_sign` holds the
-    // signed bytes to, as the application records one when it opens a file.
-    let opened_as = crate::fingerprint::Fingerprint::of_open(&file, &sign.input)
         .map_err(|why| Failure::new(Exit::Refused, why))?;
 
     let visible = match placement {
@@ -1181,7 +1179,7 @@ fn run_sign(
         read_back,
         ours,
     } = asking_the_world(env.anchors, |asking| {
-        concluded(sign, made, env.now, &worker, asking)
+        concluded(sign, &protected, made, env.now, &worker, asking)
     })?;
     // The signed fields, each with whether it is the one just made: by what
     // was written (`sign_cms::ours`), since a name can be an older field's too.

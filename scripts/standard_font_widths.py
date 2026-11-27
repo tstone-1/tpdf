@@ -152,6 +152,17 @@ def render():
             lines.append(f"        {chunk},")
         lines.append(f"    ], [{', '.join(str(v) for v in box(font))}]),")
     lines.append("];")
+    # Ink extents of each printable WinAnsi glyph used by page labels.
+    afm_boxes = {}
+    for row in (AFM / "Helvetica.afm").read_text(encoding="latin-1").splitlines():
+        if row.startswith("C "):
+            fields = dict(part.strip().split(" ", 1) for part in row.split(";") if part.strip())
+            afm_boxes[fields["N"]] = [int(v) for v in fields["B"].split()]
+    lines.append("pub(crate) const HELVETICA_INK: [[i16; 4]; 191] = [")
+    for code in CODES:
+        name = _fontdata.encodings["WinAnsiEncoding"][code]
+        lines.append(f"    {afm_boxes[name]},")
+    lines.append("];")
     source = "\n".join(lines) + "\n"
     formatted = subprocess.run(
         ["rustfmt", "--edition", "2021", "--emit", "stdout"],

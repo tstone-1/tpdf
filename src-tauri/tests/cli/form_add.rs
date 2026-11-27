@@ -69,6 +69,16 @@ pub(super) fn adds_fields_that_can_be_filled(report: &mut Report) {
 
     // A document with no form gets one.
     let made = at("made.pdf");
+    let redirected = std::process::Command::new(env!("CARGO_BIN_EXE_tpdf-cli"))
+        .args(["form", &plain, "-o", &list, "--fields", "-", "--force"])
+        .stdin(std::fs::File::open(&list).unwrap())
+        .output()
+        .unwrap();
+    report.check(
+        "forced output preserves the redirected field definitions",
+        redirected.status.code() == Some(2) && std::fs::read(&list).unwrap() == LIST.as_bytes(),
+        &String::from_utf8_lossy(&redirected.stderr),
+    );
     let (code, json, stderr) = tool(
         &["form", &plain, "-o", &made, "--fields", &list, "--json"],
         &[],

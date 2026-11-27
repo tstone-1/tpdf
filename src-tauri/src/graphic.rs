@@ -415,7 +415,7 @@ pub struct GraphicRequest {
 
 pub use engine::export;
 #[cfg(windows)]
-pub(crate) use engine::{may_be_layered, rectangular_path};
+pub(crate) use engine::{hollow_rect, may_be_layered, rectangular_path};
 
 mod engine {
     use std::ffi::c_void;
@@ -924,12 +924,65 @@ mod engine {
         path: c_int,
     ) -> Result<Bounds, ()> {
         let count = bindings.FPDFClipPath_CountPathSegments(clip, path);
+        segment_rectangle(bindings, count, |i| {
+            bindings.FPDFClipPath_GetPathSegment(clip, path, i)
+        })
+    }
+
+    // Only an axis-aligned stroked rectangle has a rectangular empty interior.
+    #[cfg(windows)]
+    pub(crate) unsafe fn hollow_rect(
+        bindings: Bindings,
+        object: FPDF_PAGEOBJECT,
+    ) -> Option<Bounds> {
+        let (mut fill, mut stroke, mut width) = (0, 0, 0.);
+        let mut matrix = FS_MATRIX {
+            a: 0.,
+            b: 0.,
+            c: 0.,
+            d: 0.,
+            e: 0.,
+            f: 0.,
+        };
+        if bindings.FPDFPath_GetDrawMode(object, &mut fill, &mut stroke) == 0
+            || fill != 0
+            || stroke == 0
+            || bindings.FPDFPageObj_GetStrokeWidth(object, &mut width) == 0
+            || width <= 0.
+            || bindings.FPDFPageObj_GetMatrix(object, &mut matrix) == 0
+            || matrix.b != 0.
+            || matrix.c != 0.
+        {
+            return None;
+        }
+        let [l, b, r, t] =
+            segment_rectangle(bindings, bindings.FPDFPath_CountSegments(object), |i| {
+                bindings.FPDFPath_GetPathSegment(object, i)
+            })
+            .ok()?;
+        let x = |v| v * f64::from(matrix.a) + f64::from(matrix.e);
+        let y = |v| v * f64::from(matrix.d) + f64::from(matrix.f);
+        let dx = f64::from(width) * f64::from(matrix.a).abs() / 2.;
+        let dy = f64::from(width) * f64::from(matrix.d).abs() / 2.;
+        Some([
+            x(l).min(x(r)) + dx,
+            y(b).min(y(t)) + dy,
+            x(r).max(x(l)) - dx,
+            y(t).max(y(b)) - dy,
+        ])
+    }
+
+    unsafe fn segment_rectangle(
+        bindings: Bindings,
+        count: c_int,
+        segment: impl Fn(c_int) -> FPDF_PATHSEGMENT,
+    ) -> Result<Bounds, ()> {
         if !matches!(count, 4 | 5) {
             return Err(());
         }
         let mut points = [(0.0, 0.0); 5];
         for i in 0..count {
-            let seg = bindings.FPDFClipPath_GetPathSegment(clip, path, i);
+            let seg = segment(i);
             let (mut x, mut y) = (0.0, 0.0);
             if seg.is_null()
                 || bindings.FPDFPathSegment_GetType(seg)

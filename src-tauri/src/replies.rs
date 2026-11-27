@@ -496,6 +496,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             can_redo: false,
             marks: vec![
                 edits::MarkView {
+                    text_unit: None,
                     styles: vec![],
                     is_reply: false,
                     id: 3,
@@ -513,6 +514,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     lines: vec!["the line under it".into()],
                 },
                 edits::MarkView {
+                    text_unit: None,
                     styles: vec![],
                     is_reply: false,
                     id: 4,
@@ -530,6 +532,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     lines: Vec::new(),
                 },
                 edits::MarkView {
+                    text_unit: None,
                     styles: vec![],
                     is_reply: false,
                     id: 6,
@@ -551,6 +554,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     lines: Vec::new(),
                 },
                 edits::MarkView {
+                    text_unit: None,
                     styles: vec![],
                     is_reply: false,
                     id: 7,

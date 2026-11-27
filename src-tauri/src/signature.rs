@@ -176,6 +176,7 @@ mod tests {
             rgba: vec![10, 20, 30, 255, 40, 50, 60, 0],
         });
         let mark = Mark {
+            text_unit: 1.0,
             kind: MarkKind::Signature,
             page,
             quads: vec![Quad {
@@ -230,6 +231,7 @@ mod tests {
             rgba: vec![255; 512 * 256 * 4],
         });
         let mark = Mark {
+            text_unit: 1.0,
             kind: MarkKind::Signature,
             page: doc.working().order()[0],
             quads: vec![Quad {
@@ -261,6 +263,7 @@ mod tests {
 
     fn picture(page: crate::docmodel::PageId, image: Arc<Image>) -> Mark {
         Mark {
+            text_unit: 1.0,
             kind: MarkKind::Picture,
             page,
             quads: vec![Quad {

@@ -176,7 +176,7 @@ export class MarkDrafts {
     const asked = ++this.questions;
     draft.asked = asked;
     ({ left: draft.left, right: draft.right } = edges(mark));
-    const reply = this.deps.wrap(draft.text, draft.left, draft.right);
+    const reply = this.deps.wrap(draft.text, draft.left * (mark.text_unit ?? 1), draft.right * (mark.text_unit ?? 1));
     if (!reply) return;
     reply.then(
       (lines) => {

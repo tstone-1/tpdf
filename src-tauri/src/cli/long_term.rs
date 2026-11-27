@@ -171,7 +171,7 @@ impl Subcommand for LongTerm {
                 &worker,
                 asking,
                 &|bytes| {
-                    super::sign::publish_signed(&self.input, None, &self.output, bytes, self.force)
+                    super::sign::publish_signed(&self.input, &[], &self.output, bytes, self.force)
                 },
             )
         })

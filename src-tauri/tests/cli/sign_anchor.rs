@@ -55,6 +55,7 @@ pub fn places_beside_text(report: &mut Report) {
     let worded = dir.join("worded.pdf");
     std::fs::write(&worded, worded_pdf(12.0)).expect("input");
     let store = || Counting {
+        key_file: None,
         certificate: certificate(now),
         saved: None,
         asked: Rc::default(),
@@ -85,6 +86,34 @@ pub fn places_beside_text(report: &mut Report) {
     // The text's top is its baseline less the font's height above it: within
     // the 12 points above the baseline, whatever box the engine reports.
     let top_of = |baseline: f64, y: f64| y < baseline && y > baseline - 12.5;
+
+    struct MoveOnListing<'a>(&'a Path, Counting);
+    impl tpdf_lib::cli::Store for MoveOnListing<'_> {
+        fn identities(&self) -> Result<Vec<tpdf_lib::cli::Held>, String> {
+            let mut bytes = std::fs::read(self.0).unwrap();
+            let at = bytes.windows(9).position(|s| s == b"60 200 Td").unwrap();
+            bytes[at..at + 2].copy_from_slice(b"90");
+            std::fs::write(self.0, bytes).unwrap();
+            self.1.identities()
+        }
+        fn saved_image(&self) -> Result<Option<tpdf_lib::signature::Image>, String> {
+            Ok(None)
+        }
+    }
+    let original = std::fs::read(&worded).unwrap();
+    let destination = dir.join("changed-anchor.pdf");
+    let moving = MoveOnListing(&worded, store());
+    let (code, _, error) = signs(
+        &line(&destination, &["--anchor", "Signature:"]),
+        &moving,
+        now,
+    );
+    report.check(
+        "a changed anchor revision is refused before signing",
+        code == 3 && moving.1.asked.signed.get() == 0 && !destination.exists(),
+        &error,
+    );
+    std::fs::write(&worded, original).unwrap();
 
     // One match, found whatever its case, and moved by the offset.
     let out = dir.join("unique.pdf");

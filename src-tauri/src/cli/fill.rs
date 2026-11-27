@@ -33,7 +33,7 @@ use super::args::{lexically_same, unknown, value};
 use super::fields::{
     ask_form, grouped, kind, multiple, options, radio_export, value_json, Grouped,
 };
-use super::pages::{check_target, publish_copy, refused};
+use super::pages::{check_target, publish_copy_checked, refused};
 use super::report::{self, FieldKind, Problem, ProblemKind, SCHEMA};
 use super::text::{declined, password, variable};
 use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
@@ -67,6 +67,53 @@ pub enum Values {
 }
 
 impl Values {
+    /// An input redirected from a regular file has a file identity even without a path.
+    pub(super) fn protect_stdin(&self, target: &Path) -> Result<(), Failure> {
+        use crate::fingerprint::FileId;
+        if *self != Self::Stdin || !target.is_file() {
+            return Ok(());
+        }
+        let stdin = std::io::stdin();
+        #[cfg(unix)]
+        let handle = std::os::fd::AsFd::as_fd(&stdin).try_clone_to_owned();
+        #[cfg(windows)]
+        let handle = std::os::windows::io::AsHandle::as_handle(&stdin).try_clone_to_owned();
+        let file =
+            std::fs::File::from(handle.map_err(|e| Failure::new(Exit::Refused, e.to_string()))?);
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_DISK};
+            // Windows cannot return regular file metadata for a pipe.
+            if unsafe { GetFileType(file.as_raw_handle()) } != FILE_TYPE_DISK {
+                return Ok(());
+            }
+        }
+        // Pipes and terminals do not name an output file.
+        if file
+            .metadata()
+            .map_err(|e| Failure::new(Exit::Refused, e.to_string()))?
+            .is_file()
+        {
+            let id = FileId::of(&file).ok_or_else(|| {
+                Failure::new(Exit::Refused, "could not identify redirected input")
+            })?;
+            let output_id = FileId::at(target).ok_or_else(|| {
+                Failure::new(
+                    Exit::Refused,
+                    "could not compare the output with redirected input",
+                )
+            })?;
+            if id == output_id {
+                return Err(Failure::new(
+                    Exit::Usage,
+                    "the output names the file supplied on standard input",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Files a form command must protect both before staging and when publishing.
     pub(super) fn inputs_with(&self, pdf: &Path) -> Vec<PathBuf> {
         let mut inputs = vec![pdf.to_owned()];
@@ -827,7 +874,7 @@ pub(super) fn publish_filled(
     program: &str,
 ) -> Result<Form, Failure> {
     let written = fill.output.display().to_string();
-    publish_copy(
+    publish_copy_checked(
         &fill.values.inputs_with(&fill.input),
         &[(fill.input.as_path(), opened_as)],
         &fill.output,
@@ -857,6 +904,7 @@ pub(super) fn publish_filled(
             }
             Ok(after)
         },
+        || fill.values.protect_stdin(&fill.output),
     )
 }
 
@@ -866,6 +914,7 @@ fn run_fill(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<Exit, Failure> {
+    fill.values.protect_stdin(&fill.output)?;
     // What can be refused without a worker, first, in `sign`'s order.
     if crate::save::same_file(&fill.input, &fill.output) {
         return Err(Failure::new(

@@ -1368,6 +1368,7 @@ struct PkiStore {
 impl Store for PkiStore {
     fn identities(&self) -> Result<Vec<Held>, String> {
         Ok(vec![Held {
+            key_file: None,
             certificate: self.certificate.clone(),
             chain: self.chain.clone(),
             key: os_key::p256(self.seed, self.calls.clone())?,
@@ -1833,6 +1834,7 @@ impl Store for TestStore {
             Box::new(Soft(key()))
         };
         Ok(vec![Held {
+            key_file: None,
             certificate: self.certificate.clone(),
             chain: Vec::new(),
             key,

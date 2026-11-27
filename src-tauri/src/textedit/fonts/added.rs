@@ -55,7 +55,36 @@ fn font_for(faces: &[Face<'_>; 2], ch: char) -> Option<usize> {
     faces.iter().position(|face| has(face, ch))
 }
 
+/// Horizontal advance and painted bounds in ems, measured from the baseline.
+pub(crate) type GlyphMetrics = (f64, Option<[f64; 4]>);
+
 impl AddedFont {
+    /// Each glyph's advance and ink bounds relative to its baseline, in ems.
+    pub(crate) fn glyph_metrics(&self, text: &str) -> Result<Vec<GlyphMetrics>, String> {
+        let faces = faces()?;
+        text.chars()
+            .map(|ch| {
+                let at =
+                    font_for(&faces, ch).ok_or_else(|| said!("a character no bundled font has"))?;
+                let face = &faces[at];
+                let glyph = face
+                    .glyph_index(ch)
+                    .ok_or_else(|| said!("a character no bundled font has"))?;
+                let em = f64::from(face.units_per_em());
+                let bounds = face
+                    .glyph_bounding_box(glyph)
+                    .map(|b| [b.x_min, b.y_min, b.x_max, b.y_max].map(|v| f64::from(v) / em));
+                let (_, metrics) = self.parts[at].as_ref().ok_or_else(|| {
+                    said!("a line's character is in no subset made for the write")
+                })?;
+                let advance = metrics
+                    .spaced_layout(ch.encode_utf8(&mut [0; 4]), 1., 0., 0.)?
+                    .0;
+                Ok((advance, bounds))
+            })
+            .collect()
+    }
+
     /// The subsets holding every character of `texts`.
     ///
     /// # Errors
@@ -117,6 +146,7 @@ impl AddedFont {
     /// # Errors
     ///
     /// A character the subsets were not made with.
+    #[cfg(test)]
     pub(crate) fn advance(&self, text: &str, size: f64) -> Result<f64, String> {
         let faces = faces()?;
         let mut width = 0.0;
