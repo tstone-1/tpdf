@@ -84,6 +84,11 @@ export class FakeElement {
     this.tagName = tagName;
   }
 
+  get childNodes() { return this.children; }
+  get nodeType() { return this.tagName === "" ? 3 : 1; }
+  get firstChild(): FakeElement | null { return this.children[0] ?? null; }
+  get lastChild(): FakeElement | null { return this.children.at(-1) ?? null; }
+
   get childElementCount(): number {
     return this.children.length;
   }
@@ -126,9 +131,9 @@ export class FakeElement {
     this.parent?.removeChild(this);
   }
 
-  replaceChildren(...children: FakeElement[]): void {
+  replaceChildren(...children: (FakeElement | string)[]): void {
     for (const child of [...this.children]) this.removeChild(child);
-    for (const child of children) this.appendChild(child);
+    this.append(...children);
   }
 
   setAttribute(name: string, value: string): void {

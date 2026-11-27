@@ -45,6 +45,7 @@
  * hands both to one `textContent` rather than treating one as trusted.
  */
 
+import { paintComment } from "./commentformat";
 import { placeholder } from "./panelrow";
 import { cssColor } from "./markcolors";
 import { nameOf, removeLabel } from "./markpopup";
@@ -345,6 +346,7 @@ export class MarkList {
     // stylesheet of their own --- can ask the question without parsing CSS.
     note.dataset.own = line.own ? "yes" : "no";
     note.textContent = line.text;
+    if (line.own && mark.styles?.length) paintComment(note, mark.note, mark.styles);
     note.style.cssText =
       "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" +
       (line.own ? "" : "opacity:0.6;font-style:italic;");

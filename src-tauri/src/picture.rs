@@ -23,9 +23,10 @@ use crate::docmodel::MarkKind;
 use crate::edits::NewMark;
 use crate::signature;
 
-/// JSON can use six bytes per note character (an escaped control). Reserve
-/// another 4 KiB for the picture's bounded placement fields and author.
-pub const HEADER_MAX: usize = 6 * crate::textbox::MAX_NOTE_CHARS + 4096;
+/// Per character, allow six JSON bytes for the text and nineteen for one
+/// style run with two six-digit UTF-16 offsets, e.g. `[131070,131072,47],`.
+/// Reserve another 4 KiB for the placement fields and author.
+pub const HEADER_MAX: usize = 25 * crate::textbox::MAX_NOTE_CHARS + 4096;
 
 /// What the JSON part says.
 #[derive(Deserialize)]
@@ -120,8 +121,18 @@ mod tests {
             let note = ch.to_string().repeat(crate::textbox::MAX_NOTE_CHARS);
             mark["mark"]["note"] = note.clone().into();
             let upload = parse(&body(&mark.to_string(), &[0, 0, 0, 255])).unwrap();
-            assert_eq!(upload.mark.note, note);
+            assert_eq!(upload.mark.note, note.into());
         }
+        let count = crate::textbox::MAX_NOTE_CHARS;
+        let note = crate::comment_text::Body::Formatted {
+            text: "𐐷".repeat(count),
+            styles: (0..count)
+                .map(|i| crate::comment_text::Style(2 * i, 2 * i + 2, 46 + (i % 2) as u8))
+                .collect(),
+        };
+        mark["mark"]["note"] = serde_json::to_value(&note).unwrap();
+        let upload = parse(&body(&mark.to_string(), &[0, 0, 0, 255])).unwrap();
+        assert_eq!(upload.mark.note, note);
     }
 
     #[test]

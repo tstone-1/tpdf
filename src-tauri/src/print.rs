@@ -818,7 +818,7 @@ mod tests {
                     color: [1.0, 0.9, 0.2],
                     width: crate::docmodel::INK_WIDTH,
                     author: String::new(),
-                    note: String::new(),
+                    note: Default::default(),
                 },
                 "D:20260822T120000Z".to_string(),
             )

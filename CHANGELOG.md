@@ -19,6 +19,7 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- Comments and replies support bold, italic, underline, strikethrough, subscript and superscript. Formatting survives saving and reopening the PDF.
 - On macOS the main window reopens at its saved position and size and remembers when it was maximized.
 - The View menu can turn whole pages or facing pairs with the scroll wheel at any zoom. Each document remembers the choice.
 - Removing an annotation now requires a completed button activation and works from the keyboard. Finish becomes available when a polygon or polyline has enough corners.

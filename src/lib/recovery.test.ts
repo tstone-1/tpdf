@@ -534,10 +534,10 @@ describe("App.svelte sends the edits that lost something when refused through `r
       "const state = await ranOr((edit) => applyEdit(edit, view), write, () => { asDocument(view, () => say(typedNotTaken(words))); });",
     ])).toEqual([]);
     expect(missingFrom(app, [
-      "if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, note), note);",
+      "if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, commentBody(note, styles)), note);",
       "return to ? typedEdit((e) => e.refield([to]), note) : undefined;",
-      "return to ? typedEdit((e) => e.rewrite(to.object, to.page, body), body) : typedNotTaken(body);",
-      "return to ? typedEdit((e) => e.reply(to.page, to.object, comment.rect, body), body) : typedNotTaken(body);",
+      "return to ? typedEdit((e) => e.rewrite(to.object, to.page, commentBody(body, styles)), body) : typedNotTaken(body);",
+      "return to ? typedEdit((e) => e.reply(to.page, to.object, comment.rect, commentBody(body, styles)), body) : typedNotTaken(body);",
     ])).toEqual([]);
   });
 

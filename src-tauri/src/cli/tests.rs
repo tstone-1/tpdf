@@ -2915,6 +2915,7 @@ fn samples() -> Vec<(&'static str, String)> {
                 input: "edited.pdf".into(),
                 complete: false,
                 comments: vec![crate::annots::Comment {
+                    styles: vec![],
                     id: 0,
                     page: 1,
                     kind: crate::annots::Kind::Text,

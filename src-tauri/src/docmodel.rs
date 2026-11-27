@@ -541,7 +541,7 @@ pub struct RewriteId(u32);
 #[derive(Clone, PartialEq, Debug)]
 pub struct NoteEdit {
     /// What the comment now says. Replaces `/Contents` whole.
-    pub body: String,
+    pub body: crate::comment_text::Body,
     /// When it was typed, in PDF date form. Replaces `/M`.
     pub made: String,
 }
@@ -2699,7 +2699,7 @@ pub struct Doc {
     /// keyed by the *version* rather than by the mark. Which version is current
     /// is [`Working`]'s answer, and that is the whole of what makes a note
     /// undoable.
-    notes: HashMap<NoteId, String>,
+    notes: HashMap<NoteId, crate::comment_text::Body>,
     /// The next note id to issue. Only ever counts up, as [`next_mark`](Doc::next_mark) does.
     next_note: u32,
     /// What each version of each drawing is made of, keyed by the id its command
@@ -3447,7 +3447,7 @@ impl Doc {
     /// deleted. **The id is issued after those checks**, so a refused mark spends
     /// nothing; a document where every attempt failed has issued no ids at all.
     pub fn annotate(&mut self, mark: Mark, note: String) -> Result<MarkId, Refusal> {
-        self.annotate_in(mark, note, None)
+        self.annotate_in(mark, note.into(), None)
     }
 
     /// [`annotate`](Self::annotate) as part of a gesture: several marks made
@@ -3460,7 +3460,7 @@ impl Doc {
     pub fn annotate_in(
         &mut self,
         mark: Mark,
-        note: String,
+        note: crate::comment_text::Body,
         sweep: Option<SweepId>,
     ) -> Result<MarkId, Refusal> {
         // The biconditional [`Mark::strokes`] states, and the reason it is
@@ -3575,7 +3575,7 @@ impl Doc {
     /// [`Refusal::MarkRemoved`] for a mark that was taken off the page ---
     /// including one that went with a deleted page. Checked before the id is
     /// issued, so a refused note spends nothing.
-    pub fn renote(&mut self, mark: MarkId, note: String) -> Result<(), Refusal> {
+    pub fn renote(&mut self, mark: MarkId, note: crate::comment_text::Body) -> Result<(), Refusal> {
         self.now.live_mark(mark)?;
         let note = self.issue_note(note);
         self.apply(Command::Renote { mark, note })
@@ -3603,7 +3603,7 @@ impl Doc {
         &mut self,
         object: ObjectId,
         page: PageId,
-        body: String,
+        body: crate::comment_text::Body,
         made: String,
     ) -> Result<(), Refusal> {
         // The page **before** the id is issued, which is `renote`'s arrangement
@@ -4063,7 +4063,7 @@ impl Doc {
     }
 
     /// Records a note's text and returns the id that names it.
-    fn issue_note(&mut self, note: String) -> NoteId {
+    fn issue_note(&mut self, note: crate::comment_text::Body) -> NoteId {
         let id = NoteId(self.next_note);
         self.notes.insert(id, note);
         self.next_note += 1;
@@ -4078,10 +4078,11 @@ impl Doc {
     /// this is writing a mark out or drawing it, and a mark that is not there
     /// has no note to show either way.
     pub fn note_of(&self, mark: MarkId) -> &str {
-        self.now
-            .note_of(mark)
-            .and_then(|note| self.notes.get(&note))
-            .map_or("", String::as_str)
+        self.note_body(mark).map_or("", |b| b)
+    }
+
+    pub fn note_body(&self, mark: MarkId) -> Option<&crate::comment_text::Body> {
+        self.now.note_of(mark).and_then(|id| self.notes.get(&id))
     }
 
     /// How many note versions are held.
@@ -6185,10 +6186,9 @@ mod tests {
             .expect("annotate");
         assert_eq!(doc.note_of(id), "", "a fresh mark said something");
 
-        doc.renote(id, "check this".to_string()).expect("note it");
+        doc.renote(id, "check this".into()).expect("note it");
         assert_eq!(doc.note_of(id), "check this");
-        doc.renote(id, "checked".to_string())
-            .expect("note it again");
+        doc.renote(id, "checked".into()).expect("note it again");
         assert_eq!(doc.note_of(id), "checked");
     }
 
@@ -6203,8 +6203,8 @@ mod tests {
         let id = doc
             .annotate(mark_on(page), String::new())
             .expect("annotate");
-        doc.renote(id, "first".to_string()).expect("first");
-        doc.renote(id, "second".to_string()).expect("second");
+        doc.renote(id, "first".into()).expect("first");
+        doc.renote(id, "second".into()).expect("second");
 
         assert!(doc.undo());
         assert_eq!(doc.note_of(id), "first");
@@ -6228,13 +6228,13 @@ mod tests {
             .expect("annotate");
         let never = MarkId::from_raw(4242);
         assert_eq!(
-            doc.renote(never, "hello".to_string()),
+            doc.renote(never, "hello".into()),
             Err(Refusal::NoSuchMark(never))
         );
 
         doc.apply(Command::Unannotate { mark: id }).expect("remove");
         assert_eq!(
-            doc.renote(id, "hello".to_string()),
+            doc.renote(id, "hello".into()),
             Err(Refusal::MarkRemoved(id)),
             "a removed mark answered as one that never existed"
         );
@@ -6244,7 +6244,7 @@ mod tests {
         let on_other = doc.annotate(mark_on(other), String::new()).expect("second");
         doc.apply(Command::Delete { page: other }).expect("delete");
         assert_eq!(
-            doc.renote(on_other, "hello".to_string()),
+            doc.renote(on_other, "hello".into()),
             Err(Refusal::MarkRemoved(on_other))
         );
     }
@@ -6265,7 +6265,7 @@ mod tests {
         let id = doc
             .annotate(mark_on(page), String::new())
             .expect("annotate");
-        doc.renote(id, "for now".to_string()).expect("note it");
+        doc.renote(id, "for now".into()).expect("note it");
 
         doc.apply(Command::Unannotate { mark: id })
             .expect("remove it");
@@ -6289,7 +6289,7 @@ mod tests {
             .expect("annotate");
         let (before, held) = (doc.depth(), doc.note_bodies());
 
-        assert!(doc.renote(MarkId::from_raw(99), "x".to_string()).is_err());
+        assert!(doc.renote(MarkId::from_raw(99), "x".into()).is_err());
 
         assert_eq!(doc.depth(), before, "a refused note reached the journal");
         assert_eq!(doc.note_bodies(), held, "a refused note kept its text");
@@ -6332,8 +6332,8 @@ mod tests {
         let id = doc
             .annotate(mark_on(page), String::new())
             .expect("annotate");
-        doc.renote(id, "kept".to_string()).expect("kept");
-        doc.renote(id, "discarded".to_string()).expect("discarded");
+        doc.renote(id, "kept".into()).expect("kept");
+        doc.renote(id, "discarded".into()).expect("discarded");
         assert_eq!(doc.note_bodies(), 3, "the empty note counts too");
 
         assert!(doc.undo());
@@ -6351,7 +6351,7 @@ mod tests {
         let id = doc
             .annotate(mark_on(page), String::new())
             .expect("annotate");
-        doc.renote(id, "still here".to_string()).expect("note it");
+        doc.renote(id, "still here".into()).expect("note it");
 
         doc.apply(Command::Delete { page })
             .expect("delete the page");

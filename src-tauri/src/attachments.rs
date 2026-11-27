@@ -104,7 +104,11 @@ fn embedded_stream<'a>(
     }
 }
 
-fn decode(document: &Document, stream: &lopdf::Stream, limit: usize) -> Result<Vec<u8>, String> {
+pub(crate) fn decode(
+    document: &Document,
+    stream: &lopdf::Stream,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
     use std::borrow::Cow;
 
     let direct = |value| {

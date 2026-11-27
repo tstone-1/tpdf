@@ -26,6 +26,7 @@
  * plausibly placed and wrong.
  */
 
+import type { CommentStyle } from "./commentformat";
 import { catalog } from "./i18n";
 import { quarterTurns } from "./pages";
 import { coveredText } from "./reading";
@@ -73,6 +74,7 @@ export interface Comment {
   kind: CommentKind;
   author: string;
   body: string;
+  styles?: CommentStyle[];
   body_clipped?: boolean;
   locked?: boolean;
   contents_locked?: boolean;

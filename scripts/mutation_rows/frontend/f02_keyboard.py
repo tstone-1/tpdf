@@ -894,7 +894,7 @@ ROWS += [
         # steps over an edit nobody made, twice for every note they looked at.
         "marks: commit a note that nobody changed",
         "src/lib/markpopup.ts",
-        "    const now = this.input.value;\n    if (now === this.was) return;",
+        "    const now = this.input.value;\n    if (!this.hasDraft) return;",
         "    const now = this.input.value;",
         "sends nothing for a note that was opened and not typed in",
     ),
@@ -926,8 +926,8 @@ ROWS += [
         # in --- typing anything then replaces what was there without warning.
         "marks: show the box empty rather than what the mark says",
         "src/lib/markpopup.ts",
-        "    this.input.value = mark.note;",
-        '    this.field.value = "";',
+        "        this.formatting.load(rich ? mark.note : \"\", rich ? mark.styles : []);",
+        '        this.formatting.load("", rich ? mark.styles : []);',
         "shows what the mark says",
     ),
     Mutation(
@@ -936,8 +936,8 @@ ROWS += [
         # no box, and the Edit menu offers to remove it.
         "marks: close the note from inside rather than asking",
         "src/lib/markpopup.ts",
-        "      this.opts.onClose();\n    });\n\n    this.input = document.createElement",
-        "      this.hide();\n    });\n\n    this.input = document.createElement",
+        "      this.opts.onClose();\n    });\n\n    this.plain = document.createElement",
+        "      this.hide();\n    });\n\n    this.plain = document.createElement",
         "asks to be closed rather than closing itself",
     ),
     # --- links.ts -----------------------------------------------------------

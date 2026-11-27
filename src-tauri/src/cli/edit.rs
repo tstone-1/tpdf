@@ -498,7 +498,7 @@ fn apply(
                             color: *color,
                             width: *width,
                             author: author.clone(),
-                            note: text.clone(),
+                            note: text.clone().into(),
                         },
                         made.clone(),
                         0,
@@ -618,7 +618,7 @@ fn apply(
                         return Err("comment object is not on the selected page".into());
                     }
                     if let Operation::RewriteComment { text, .. } = op {
-                        model.rewrite(1, *object, id, text.clone(), made.clone())?;
+                        model.rewrite(1, *object, id, text.clone().into(), made.clone())?;
                     } else {
                         model.discard(1, *object, id)?;
                     }

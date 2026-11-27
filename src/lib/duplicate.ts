@@ -16,6 +16,7 @@
  * them; this decides what each copy is.
  */
 
+import type { CommentStyle } from "./commentformat";
 import type { EditState } from "./edits";
 import { placing } from "./fieldnames";
 import { catalog } from "./i18n";
@@ -31,6 +32,7 @@ export interface Copy {
   page: PageId;
   quads: number[];
   note: string;
+  styles?: CommentStyle[];
   color: [number, number, number];
   width: number;
   field?: PlacedField;
@@ -124,7 +126,7 @@ export function copyOf(
   const mark = state.marks.find((one) => one.id === id);
   if (!mark) return TEXT().markGone;
   const copied = { ...base, page: mark.page, color: mark.color, width: mark.width };
-  if (mark.kind === "square" || mark.kind === "ellipse") return { ...copied, kind: mark.kind, note: mark.note };
+  if (mark.kind === "square" || mark.kind === "ellipse") return { ...copied, kind: mark.kind, note: mark.note, ...(mark.styles?.length ? { styles: mark.styles } : {}) };
   if (mark.kind !== "field" || !mark.field) return TEXT().onlyThese;
   const made = placing(
     { kind: mark.field.kind, options: mark.field.kind === "dropdown" ? mark.field.options ?? [] : [], group: mark.note },

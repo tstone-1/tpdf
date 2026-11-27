@@ -13,6 +13,7 @@
  * `App.svelte` makes the marks; this decides what can be copied and holds it.
  */
 
+import type { CommentStyle } from "./commentformat";
 import { catalog } from "./i18n";
 import type { MarkKind, MarkView, PageId, StampName } from "./pages";
 import { hasStrokes } from "./markband";
@@ -47,6 +48,7 @@ export interface CopiedMark {
   quads: number[];
   strokes: number[][];
   note: string;
+  styles?: CommentStyle[];
   color: [number, number, number];
   width: number;
   stamp: StampName | null;
@@ -114,7 +116,7 @@ export function describe(mark: MarkView, pixels?: PicturePixels): CopiedMark | s
     kind: mark.kind,
     quads: [...mark.quads],
     strokes: mark.strokes.map((stroke) => [...stroke]),
-    note: mark.note,
+    note: mark.note, ...(mark.styles?.length ? { styles: mark.styles } : {}),
     color: [...mark.color],
     width: mark.width,
     stamp: mark.stamp,

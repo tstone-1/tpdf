@@ -431,7 +431,7 @@ fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
             color: [1.0, 0.9, 0.2],
             width: tpdf_lib::docmodel::INK_WIDTH,
             author: "password-probe".to_string(),
-            note: String::new(),
+            note: Default::default(),
             made: "D:20260823120000Z".to_string(),
         }],
     })

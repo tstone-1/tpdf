@@ -1,3 +1,4 @@
+import type { CommentField, CommentStyle } from "./commentformat";
 import { SearchRecovery } from "./searchrecovery";
 import { call, physicalPageUnit } from "./ipc";
 import { catalog } from "./i18n";
@@ -567,7 +568,7 @@ export interface ViewerOptions {
    * settled after its marks reached {@link Viewer.setMarks}. Returning nothing
    * lets the old words be drawn for the time between. See `markdraft.ts`.
    */
-  onMarkNote?: (mark: number, note: string) => unknown;
+  onMarkNote?: (mark: number, note: string, styles?: CommentStyle[]) => unknown;
   /**
    * Called for the lines a text box would draw words in that are still being
    * typed, for a box running from `left` to `right`.
@@ -594,7 +595,7 @@ export interface ViewerOptions {
    * behind it still shows comments, and the Edit button simply does not appear
    * to save anything.
    */
-  onCommentEdit?: (comment: Comment, body: string) => unknown;
+  onCommentEdit?: (comment: Comment, body: string, styles?: CommentStyle[]) => unknown;
   /**
    * Called when the reader typed a reply to a comment and the editor closed.
    *
@@ -605,7 +606,7 @@ export interface ViewerOptions {
    * Optional for {@link onMarkNote}'s reason: a viewer with no model behind it
    * still shows comments, and the Reply button simply does not save anything.
    */
-  onCommentReply?: (comment: Comment, body: string) => unknown;
+  onCommentReply?: (comment: Comment, body: string, styles?: CommentStyle[]) => unknown;
   /**
    * The reader deleted a comment the file came with.
    *
@@ -1977,16 +1978,16 @@ export class Viewer {
     // to either.
     this.popup = new CommentPopup(root, {
       onClose: (restoreFocus) => this.closeComment(restoreFocus),
-      onRewrite: (comment, body) => this.opts.onCommentEdit?.(comment, body),
-      onReply: (comment, body) => this.opts.onCommentReply?.(comment, body),
+      onRewrite: (comment, body, ...style) => this.opts.onCommentEdit?.(comment, body, ...style),
+      onReply: (comment, body, ...style) => this.opts.onCommentReply?.(comment, body, ...style),
       onDiscard: (comment) => this.opts.onCommentDelete?.(comment),
     });
 
     // The reader's own marks get their own box, for the reason `markpopup.ts`
     // gives. Hosted by the root and built once, exactly as above.
     this.markNote = new MarkPopup(root, {
-      onNote: (mark, note) => {
-        const submitted = this.opts.onMarkNote?.(mark, note);
+      onNote: (mark, note, ...style) => {
+        const submitted = this.opts.onMarkNote?.(mark, note, ...style);
         this.drafts.committed(mark, note, submitted);
         return submitted;
       },
@@ -6452,7 +6453,7 @@ export class Viewer {
   }
 
   /** The note editor's text field, so a harness can ask what has the keyboard. */
-  get markNoteField(): HTMLTextAreaElement {
+  get markNoteField(): CommentField {
     return this.markNote.field;
   }
 

@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarkPopup, TOGETHER } from "./markpopup";
 import { DEFAULT_SWATCH, PALETTE } from "./markcolors";
 import { pageId, type MarkView } from "./pages";
 import type { Anchor } from "./popup";
-import { installFakeDom, type FakeDom } from "./testdom";
+import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 import { INK_WIDTH } from "./markband";
 
 /** One of the reader's own marks, with the fields a test is not about filled in. */
@@ -66,6 +66,20 @@ describe("MarkPopup", () => {
       onDraft: (id, note) => drafts.push(`${id}:${note}`),
     });
   }
+
+  it("commits a formatting-only edit and accepts it as the new baseline", async () => {
+    const written = vi.fn();
+    const note = popup(written);
+    note.show(mark({ id: 3, note: "Read this" }), anchor(), true);
+    const bold = document.createElement("b");
+    bold.append("this");
+    note.field.replaceChildren("Read ", bold);
+    (note.field as unknown as FakeElement).dispatch("input", {});
+    expect(note.hasDraft).toBe(true);
+    await note.saveDraft();
+    expect(written).toHaveBeenCalledWith(3, "Read this", [[5, 9, 1]]);
+    expect(note.hasDraft).toBe(false);
+  });
 
   it("keeps a refused clipboard draft open for retry", async () => {
     let answer: string | undefined = "note refused";
@@ -228,7 +242,8 @@ describe("MarkPopup", () => {
     expect([input.placeholder, input.rows, input.value]).toEqual(["Field name", 1, "Text 1"]);
     // And goes back to a note when another kind takes the box.
     note.show(mark({ id: 8, kind: "highlight" }), anchor(), false);
-    expect([input.placeholder, input.rows]).toEqual(["Note", 3]);
+    expect(note.field.getAttribute("role")).toBe("textbox");
+    expect(note.field.getAttribute("aria-label")).toBe("Note");
   });
 
   it("relabels itself when a mark of another kind takes the box", () => {

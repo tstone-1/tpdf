@@ -680,7 +680,7 @@ fn mark_and_save(args: &Args, document: &OpenDocument) -> Result<(PathBuf, Vec<Q
                 color: args.color.unwrap_or_else(|| color_for(args.kind)),
                 width: INK_WIDTH,
                 author: "annot-probe".to_string(),
-                note: String::new(),
+                note: Default::default(),
             },
             save::pdf_date(std::time::SystemTime::now()),
         )
@@ -697,7 +697,7 @@ fn mark_and_save(args: &Args, document: &OpenDocument) -> Result<(PathBuf, Vec<Q
         .ok_or("the state carried no mark to note")?
         .id;
     edits
-        .renote(DOC, mark, NOTE.to_string())
+        .renote(DOC, mark, NOTE.into())
         .map_err(|e| format!("the model refused the note: {e}"))?;
 
     let plan = edits.plan(DOC).map_err(|e| format!("no plan: {e}"))?;
@@ -3074,7 +3074,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
             color: YELLOW,
             width: INK_WIDTH,
             author: String::new(),
-            note: String::new(),
+            note: Default::default(),
         },
         save::pdf_date(std::time::SystemTime::now()),
     );
@@ -3097,7 +3097,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
             color: YELLOW,
             width: INK_WIDTH,
             author: String::new(),
-            note: String::new(),
+            note: Default::default(),
         },
         save::pdf_date(std::time::SystemTime::now()),
     );
@@ -3124,7 +3124,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
             color: YELLOW,
             width: INK_WIDTH,
             author: String::new(),
-            note: String::new(),
+            note: Default::default(),
         },
         save::pdf_date(std::time::SystemTime::now()),
     );
@@ -3147,7 +3147,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
             color: RULE_RED,
             width: INK_WIDTH,
             author: String::new(),
-            note: String::new(),
+            note: Default::default(),
         },
         save::pdf_date(std::time::SystemTime::now()),
     );
@@ -3176,7 +3176,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
             color: RULE_RED,
             width: INK_WIDTH,
             author: String::new(),
-            note: String::new(),
+            note: Default::default(),
         },
         save::pdf_date(std::time::SystemTime::now()),
     );
@@ -3199,7 +3199,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
             color: RULE_RED,
             width: INK_WIDTH,
             author: String::new(),
-            note: String::new(),
+            note: Default::default(),
         },
         save::pdf_date(std::time::SystemTime::now()),
     );
@@ -3230,7 +3230,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
             color: YELLOW,
             width: INK_WIDTH,
             author: String::new(),
-            note: String::new(),
+            note: Default::default(),
         },
         save::pdf_date(std::time::SystemTime::now()),
     );

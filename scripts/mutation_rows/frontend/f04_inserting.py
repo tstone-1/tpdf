@@ -8,6 +8,16 @@ from .base import Mutation
 
 ROWS: list[Mutation] = []
 
+ROWS += [
+    Mutation(
+        "comment formatting: drop the final empty line",
+        "src/lib/commentformat.ts",
+        "(block || previousBlock) && node !== parent.firstChild",
+        "(block || previousBlock) && !!text && !text.endsWith('\\n') && node !== parent.firstChild",
+        "reads blank lines and the final editable line after Enter",
+    ),
+]
+
 # Pages of another file: where each one is drawn, read, searched and linked
 # from. Every one of these fails the same way to the eye --- a correct-looking
 # picture, text or match taken from the wrong document --- so each is aimed at
@@ -2339,8 +2349,8 @@ ROWS += [
         'call("annot_draft_lines", { note, left: right, right: left }),',
         "asks the command that wraps as the model does, with the box's edges"),
     Mutation("draft wiring: do not say when a mark's note has been answered", "src/App.svelte",
-        '        if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, note), note);',
-        '          if (!isSaved(mark)) return void typedEdit((e) => e.renote(mark, note), note);',
+        '        if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, commentBody(note, styles)), note);',
+        '          if (!isSaved(mark)) return void typedEdit((e) => e.renote(mark, commentBody(note, styles)), note);',
         "hands the edit's promise back for a note, so a draft is held until the model answers"),
     Mutation("draft wiring: do not say when a saved field's name has been answered", "src/App.svelte",
         '        return to ? typedEdit((e) => e.refield([to]), note) : undefined;',

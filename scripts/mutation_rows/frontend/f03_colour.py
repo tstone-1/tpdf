@@ -2285,8 +2285,8 @@ ROWS += [
         # the file that gets saved says the same thing.
         "comments: keep the file's date when the body is rewritten",
         "src/lib/pages.ts",
-        "        ? { ...comment, page: slot, body: edit.body, date: edit.shown }",
-        "        ? { ...comment, page: slot, body: edit.body }",
+        "        ? { ...comment, page: slot, body: edit.body, styles: edit.styles ?? [], date: edit.shown }",
+        "        ? { ...comment, page: slot, body: edit.body, styles: edit.styles ?? [] }",
         "writes a reader's rewrite over the comment it names, and no other",
     ),
     Mutation(
@@ -2310,7 +2310,7 @@ ROWS += [
         # nothing, and the document is reported dirty.
         "comments: send the body even when the reader changed nothing",
         "src/lib/commentpopup.ts",
-        "    if (now === this.was) return;",
+        "    if (now === this.was && !this.formatting?.changed) return;",
         "    if (false) return;",
         "sends nothing when the editor closes with the text it opened with",
     ),
@@ -2365,8 +2365,8 @@ ROWS += [
         # overwritten, which is the worst outcome this feature can produce.
         "comments: send a reply as an edit to the comment it answers",
         "src/lib/commentpopup.ts",
-        "    this.opts.onReply(comment, now);",
-        "    this.opts.onRewrite(comment, now);",
+        "    this.opts.onReply(comment, now, ...style);",
+        "    this.opts.onRewrite(comment, now, ...style);",
         "arms an empty editor for a reply and sends it under the comment it answers",
     ),
     Mutation(
@@ -2394,8 +2394,8 @@ ROWS += [
         # deletes a comment's text has asked for an empty comment.
         "comments: refuse to clear a body because a reply may not be blank",
         "src/lib/commentpopup.ts",
-        '    if (mode === "body") {\n      this.opts.onRewrite(comment, now);\n      return;\n    }',
-        '    if (mode === "body") {\n      if (now.trim()) this.opts.onRewrite(comment, now);\n      return;\n    }',
+        '    if (mode === "body") {\n      this.opts.onRewrite(comment, now, ...style);\n      return;\n    }',
+        '    if (mode === "body") {\n      if (now.trim()) this.opts.onRewrite(comment, now, ...style);\n      return;\n    }',
         "clears a body of the same shape, because an empty rewrite is a real edit",
     ),
     Mutation(

@@ -794,6 +794,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   mark whose note you have opened can be removed from the note box instead, which is how
   you take off the one you have named rather than the ones you cross.
   <!-- built: edit.erase edit.removeMark -->
+- **Format comment text.** Choose Bold, Italic or Underline as you type in a comment or reply, or select words to format them. Cmd+B/I/U on macOS and Ctrl+B/I/U on Windows and Linux apply those three styles. Open **More formatting** (…) for strikethrough, subscript, or superscript.
 - **Edit a comment somebody else wrote.** Open it and press Edit — or ask for it by name
   from the palette — and the note becomes a box you can type in. What you write replaces
   the comment's text and its date, so the next reader is not shown your words over

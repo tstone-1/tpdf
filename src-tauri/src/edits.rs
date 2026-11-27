@@ -307,6 +307,8 @@ pub struct MarkView {
     /// treated exactly as `annots.rs` treats a body: it reaches the DOM as text
     /// and nothing here may carry a URL. See `docs/THREAT-MODEL.md` T8.
     pub note: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<crate::comment_text::Style>,
     /// The note broken into the lines a text box will be drawn in, empty for
     /// every other kind.
     ///
@@ -376,6 +378,8 @@ pub struct NoteEditView {
     pub page: u64,
     /// What the comment now says.
     pub body: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<crate::comment_text::Style>,
     /// When the reader typed it, in PDF date form.
     ///
     /// The writer's form, which no panel should show. `shown` beside it is the
@@ -557,7 +561,7 @@ pub struct NewMark {
     #[serde(default = "default_nib")]
     pub width: f64,
     pub author: String,
-    pub note: String,
+    pub note: crate::comment_text::Body,
 }
 
 /// [`INK_WIDTH`], for serde's `default` on [`NewMark::width`].
@@ -1635,6 +1639,7 @@ impl Edits {
             }
         }
         too_long(&want.note)?;
+        want.note.validate()?;
         if want.kind == MarkKind::TextBox {
             textbox::check_body(&want.note)?;
         }
@@ -1905,12 +1910,18 @@ impl Edits {
     /// already been removed; the note is longer than
     /// [`crate::textbox::MAX_NOTE_CHARS`]; the mark is a text box and the note
     /// holds a character `/WinAnsiEncoding` has no byte for.
-    pub fn renote(&self, doc: u32, mark: u64, note: String) -> Result<EditState, String> {
+    pub fn renote(
+        &self,
+        doc: u32,
+        mark: u64,
+        note: crate::comment_text::Body,
+    ) -> Result<EditState, String> {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         // Before the lock, because it needs nothing from the model and the lock
         // is what a long note makes expensive to hold.
         too_long(&note)?;
+        note.validate()?;
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
@@ -1966,7 +1977,7 @@ impl Edits {
         doc: u32,
         object: (u32, u16),
         page: u64,
-        body: String,
+        body: crate::comment_text::Body,
         made: String,
     ) -> Result<EditState, String> {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
@@ -1976,6 +1987,7 @@ impl Edits {
         }
         // Before the lock, for `renote`'s reason.
         too_long(&body)?;
+        body.validate()?;
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
@@ -2797,7 +2809,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     color: model.color_of(*mark),
                     width: body.width,
                     author: body.author.clone(),
-                    note: model.note_of(*mark).to_string(),
+                    note: model.note_body(*mark).cloned().unwrap_or_default(),
                     made: body.made.clone(),
                 }
             })
@@ -3148,7 +3160,7 @@ pub struct PlannedNoteEdit {
     /// The annotation object, as `[number, generation]`.
     pub object: (u32, u16),
     /// The text to write into `/Contents`.
-    pub body: String,
+    pub body: crate::comment_text::Body,
     /// The modification date, as a PDF date string, for `/M`.
     ///
     /// Carried in the plan rather than read from a clock in the worker, exactly
@@ -3381,7 +3393,7 @@ pub struct PlannedMark {
     #[serde(default = "default_nib")]
     pub width: f64,
     pub author: String,
-    pub note: String,
+    pub note: crate::comment_text::Body,
     pub made: String,
 }
 
@@ -3919,6 +3931,9 @@ fn snapshot(model: &Doc) -> EditState {
                 // same breath, and that is what its doc comment is for.
                 width: mark.width,
                 note: model.note_of(id).to_string(),
+                styles: model
+                    .note_body(id)
+                    .map_or_else(Vec::new, |b| b.styles().to_vec()),
                 // Wrapped to the mark's own rectangle, so the overlay's line
                 // breaks are the file's. Empty for every kind that is not a text
                 // box --- there is nothing to lay out, and sending the note
@@ -3976,7 +3991,8 @@ fn snapshot(model: &Doc) -> EditState {
             NoteEditView {
                 object: (object.number(), object.generation()),
                 page: page.get(),
-                body: edit.body.clone(),
+                body: edit.body.to_string(),
+                styles: edit.body.styles().to_vec(),
                 shown: annots::parse_date(edit.made.as_bytes()),
                 made: edit.made.clone(),
             }
@@ -4137,7 +4153,7 @@ mod tests {
                         reply_to: None,
                         color: [1.0, 1.0, 0.0],
                         author: String::new(),
-                        note: String::new(),
+                        note: Default::default(),
                         width: 1.0,
                     },
                     String::new(),
@@ -4147,9 +4163,9 @@ mod tests {
             ("redact", |e| drop(e.redact(1, 1, [0.0, 0.0, 1.0, 1.0]))),
             ("unredact", |e| drop(e.unredact(1, 1))),
             ("erase", |e| drop(e.erase(1, 1, Vec::new(), 0))),
-            ("renote", |e| drop(e.renote(1, 1, String::new()))),
+            ("renote", |e| drop(e.renote(1, 1, Default::default()))),
             ("rewrite", |e| {
-                drop(e.rewrite(1, (1, 0), 1, String::new(), String::new()))
+                drop(e.rewrite(1, (1, 0), 1, Default::default(), String::new()))
             }),
             ("discard", |e| drop(e.discard(1, (1, 0), 1))),
             ("recolor", |e| drop(e.recolor(1, 1, [0.0, 0.0, 0.0]))),
@@ -5817,7 +5833,7 @@ mod tests {
             color: [1.0, 0.9, 0.2],
             width: INK_WIDTH,
             author: "a reader".to_string(),
-            note: String::new(),
+            note: Default::default(),
         }
     }
 
@@ -6056,7 +6072,7 @@ mod tests {
     fn a_field(page: u64, name: &str, kind: crate::formfields::Kind) -> NewMark {
         NewMark {
             field: Some(kind.into()),
-            note: name.to_string(),
+            note: name.into(),
             ..of_kind(MarkKind::Field, page)
         }
     }
@@ -6132,11 +6148,11 @@ mod tests {
         assert_eq!(state.marks.len(), 1);
         assert_eq!(state.marks[0].kind, MarkKind::Field);
         assert_eq!(state.marks[0].field, Some(Kind::Checkbox.into()));
-        assert_eq!(state.marks[0].note, "Agree");
+        assert_eq!(state.marks[0].note.as_str(), "Agree");
 
         let plan = edits.plan(7).expect("a plan");
         assert_eq!(plan.marks[0].field, Some(Kind::Checkbox.into()));
-        assert_eq!(plan.marks[0].note, "Agree");
+        assert_eq!(plan.marks[0].note.as_str(), "Agree");
         // The control for the line below: a highlight alone is an append.
         let other = opened();
         let first = other.state(7).expect("open").pages[0].id;
@@ -7169,7 +7185,7 @@ mod tests {
         let group: Vec<&str> = plan
             .marks
             .iter()
-            .filter(|m| m.note == "Pay")
+            .filter(|m| m.note.as_str() == "Pay")
             .map(|m| m.field.as_ref().expect("a field").options[0].as_str())
             .collect();
         assert_eq!(group, ["Visa", "Cheque", "Card"]);
@@ -7284,7 +7300,7 @@ mod tests {
             color: [0.85, 0.15, 0.15],
             width: INK_WIDTH,
             author: "a reader".to_string(),
-            note: String::new(),
+            note: Default::default(),
         }
     }
 
@@ -7650,6 +7666,30 @@ mod tests {
     }
 
     #[test]
+    fn comment_formatting_is_journalled_with_its_text() {
+        use crate::comment_text::{Body, Style};
+        let edits = opened();
+        let page = edits.state(7).unwrap().pages[0].id;
+        let mark = edits.annotate(7, a_mark(page), stamped()).unwrap().marks[0].id;
+        let styled = Body::Formatted {
+            text: "plain words".into(),
+            styles: vec![Style(0, 5, 1)],
+        };
+        edits.renote(7, mark, "plain words".into()).unwrap();
+        let state = edits.renote(7, mark, styled.clone()).unwrap();
+        assert_eq!(state.marks[0].styles, styled.styles());
+        assert!(edits.undo(7).unwrap().marks[0].styles.is_empty());
+        assert_eq!(edits.redo(7).unwrap().marks[0].styles, styled.styles());
+        let plan = edits.plan(7).unwrap();
+        assert_eq!(plan.marks[0].note, styled);
+        let reply = edits
+            .rewrite(7, (12, 0), page, styled.clone(), stamped())
+            .unwrap();
+        assert_eq!(reply.notes[0].styles, styled.styles());
+        assert_eq!(edits.plan(7).unwrap().notes[0].body, styled);
+    }
+
+    #[test]
     fn a_rewritten_comment_reaches_the_reply_and_the_plan_by_the_files_own_name() {
         // Both directions in one test for the crop test's reason below: a reply
         // that carried the new body and a plan that did not would show an
@@ -7664,7 +7704,7 @@ mod tests {
         assert_eq!(state.notes.len(), 1);
         assert_eq!(state.notes[0].object, (12, 0));
         assert_eq!(state.notes[0].page, id);
-        assert_eq!(state.notes[0].body, "what I think");
+        assert_eq!(state.notes[0].body.as_str(), "what I think");
         assert_eq!(state.notes[0].made, stamped());
         // A journalled command, so the document differs from the file --- which
         // is what puts the save in front of the reader at all.
@@ -7678,7 +7718,7 @@ mod tests {
         // thing the file itself named, and it is what survives the round trip
         // through the frontend that `annots::Comment::id` cannot.
         assert_eq!(plan.notes[0].object, (12, 0));
-        assert_eq!(plan.notes[0].body, "what I think");
+        assert_eq!(plan.notes[0].body.as_str(), "what I think");
         assert_eq!(plan.notes[0].made, stamped());
         // The control: a plan that only rewrites a comment adds no mark, so a
         // writer cannot mistake one for the other.
@@ -7742,7 +7782,9 @@ mod tests {
         let edits = opened();
         let id = edits.state(7).expect("state").pages[0].id;
         let too_much = "x".repeat(crate::textbox::MAX_NOTE_CHARS + 1);
-        assert!(edits.rewrite(7, (12, 0), id, too_much, stamped()).is_err());
+        assert!(edits
+            .rewrite(7, (12, 0), id, too_much.into(), stamped())
+            .is_err());
         assert!(edits.state(7).expect("state").notes.is_empty());
     }
 
@@ -7989,7 +8031,7 @@ mod tests {
         let bound = crate::textbox::MAX_NOTE_CHARS;
 
         let mut want = a_mark(page);
-        want.note = "a".repeat(bound + 1);
+        want.note = "a".repeat(bound + 1).into();
         let refused = edits.annotate(7, want, stamped());
         assert!(refused.is_err(), "annotate took it: {refused:?}");
         assert!(
@@ -7999,13 +8041,13 @@ mod tests {
 
         // The control for that half, and the mark the second half needs.
         let mut want = a_mark(page);
-        want.note = "a".repeat(bound);
+        want.note = "a".repeat(bound).into();
         edits
             .annotate(7, want, stamped())
             .expect("a note exactly at the bound is a note");
         let mark = edits.state(7).expect("state").marks[0].id;
 
-        let refused = edits.renote(7, mark, "b".repeat(bound + 1));
+        let refused = edits.renote(7, mark, "b".repeat(bound + 1).into());
         assert!(refused.is_err(), "renote took it: {refused:?}");
         assert_eq!(
             edits.state(7).expect("state").marks[0].note.chars().count(),
@@ -8015,9 +8057,12 @@ mod tests {
 
         // The control for the second half.
         edits
-            .renote(7, mark, "b".repeat(16))
+            .renote(7, mark, "b".repeat(16).into())
             .expect("an ordinary note");
-        assert_eq!(edits.state(7).expect("state").marks[0].note, "b".repeat(16));
+        assert_eq!(
+            edits.state(7).expect("state").marks[0].note.as_str(),
+            "b".repeat(16)
+        );
     }
 
     /// A draft is wrapped as the model wraps the note it becomes.
@@ -8034,7 +8079,7 @@ mod tests {
         let page = edits.state(7).expect("state").pages[1].id;
         let note = "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn nnnn and more words after it";
         let mut want = of_kind(MarkKind::TextBox, page);
-        want.note = note.to_string();
+        want.note = note.into();
         let state = edits.annotate(7, want, stamped()).expect("placed");
         let mark = &state.marks[0];
         assert!(mark.lines.len() > 1, "the note wraps: {:?}", mark.lines);
@@ -8186,13 +8231,16 @@ mod tests {
         let edits = opened();
         let id = edits.state(7).expect("state").pages[1].id;
         let made = edits.annotate(7, a_mark(id), stamped()).expect("annotate");
-        assert_eq!(made.marks[0].note, "");
+        assert_eq!(made.marks[0].note.as_str(), "");
 
         let state = edits
-            .renote(7, made.marks[0].id, "ask about this".to_string())
+            .renote(7, made.marks[0].id, "ask about this".into())
             .expect("note it");
-        assert_eq!(state.marks[0].note, "ask about this");
-        assert_eq!(edits.plan(7).expect("plan").marks[0].note, "ask about this");
+        assert_eq!(state.marks[0].note.as_str(), "ask about this");
+        assert_eq!(
+            edits.plan(7).expect("plan").marks[0].note.as_str(),
+            "ask about this"
+        );
     }
 
     #[test]
@@ -8203,13 +8251,13 @@ mod tests {
         let mark = made.marks[0].id;
 
         let why = edits
-            .renote(7, mark + 1000, "hello".to_string())
+            .renote(7, mark + 1000, "hello".into())
             .expect_err("no such mark");
         assert!(why.contains("no such mark"), "{why}");
 
         edits.unannotate(7, mark, 0).expect("remove it");
         let why = edits
-            .renote(7, mark, "hello".to_string())
+            .renote(7, mark, "hello".into())
             .expect_err("already removed");
         assert!(why.contains("already been removed"), "{why}");
     }
@@ -8227,11 +8275,11 @@ mod tests {
 
         edits.redo(7).expect("redo it");
         let state = edits
-            .renote(7, made.marks[0].id, "typed".to_string())
+            .renote(7, made.marks[0].id, "typed".into())
             .expect("note it");
         assert!(state.dirty);
         let back = edits.undo(7).expect("undo the note");
-        assert_eq!(back.marks[0].note, "", "undo left the note behind");
+        assert_eq!(back.marks[0].note.as_str(), "", "undo left the note behind");
         assert!(back.dirty, "the highlight is still an edit");
     }
 

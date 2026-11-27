@@ -55,6 +55,7 @@
  * recolouring this one.
  */
 
+import { CommentFormatting, type CommentField, type CommentStyle } from "./commentformat";
 import type { MarkKind, MarkView } from "./pages";
 import { catalog, message } from "./i18n";
 import { PointerDrag, type DragPoint } from "./drag";
@@ -72,7 +73,7 @@ export interface MarkPopupOptions {
   /** Change a signature's size while keeping its proportions. */
   onSignatureSize?: (mark: number, width: number) => void;
   /** The note was changed and the popup is closing. Only ever with new text. */
-  onNote: (mark: number, note: string) => unknown;
+  onNote: (mark: number, note: string, styles?: CommentStyle[]) => unknown;
   /**
    * What the box holds changed while it is open on this mark.
    *
@@ -288,7 +289,9 @@ export class MarkPopup {
   private signatureWidth = 0;
   private readonly host: HTMLElement;
   private readonly element: HTMLElement;
-  private readonly input: HTMLTextAreaElement;
+  private readonly formatting: CommentFormatting;
+  private input: CommentField;
+  private readonly plain: HTMLTextAreaElement;
   private readonly opts: MarkPopupOptions;
   private shown: number | null = null;
   /**
@@ -348,7 +351,7 @@ export class MarkPopup {
     this.element.tabIndex = -1;
     this.element.style.cssText =
       "position:absolute;display:none;z-index:5;box-sizing:border-box;" +
-      `width:${POPUP_WIDTH}px;` +
+      `width:${POPUP_WIDTH}px;max-height:85%;overflow-y:auto;` +
       "padding:0.6rem 0.7rem;border-radius:8px;" +
       "background:Canvas;color:CanvasText;" +
       "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
@@ -367,18 +370,19 @@ export class MarkPopup {
       this.opts.onClose();
     });
 
-    this.input = document.createElement("textarea");
-    this.input.setAttribute("aria-label", TEXT().note_);
-    this.input.placeholder = TEXT().note_;
-    this.input.rows = 3;
-    this.input.style.cssText =
+    this.plain = document.createElement("textarea");
+    this.plain.style.cssText =
       "box-sizing:border-box;width:100%;resize:vertical;" +
       "background:transparent;color:inherit;font:inherit;" +
       "border:1px solid color-mix(in srgb, currentColor 25%, transparent);" +
       "border-radius:5px;padding:0.3rem 0.4rem;";
-    this.input.addEventListener("input", () => {
+    this.formatting = new CommentFormatting();
+    this.input = this.formatting.field;
+    const draft = () => {
       if (this.shown !== null) this.opts.onDraft(this.shown, this.input.value);
-    });
+    };
+    this.input.addEventListener("input", draft);
+    this.plain.addEventListener("input", draft);
 
     this.signatureSize.textContent = TEXT().size;
     for (const [label, factor] of [[TEXT().smaller, 0.8], [TEXT().larger, 1.25]] as const) {
@@ -392,7 +396,7 @@ export class MarkPopup {
     this.together.textContent = TOGETHER;
     this.together.hidden = true;
     this.together.style.cssText = "margin-top:0.35rem;opacity:0.6;font-size:12px;";
-    this.element.append(this.header(), this.colors(), this.signatureSize, this.input, this.together, this.actions());
+    this.element.append(this.header(), this.colors(), this.signatureSize, this.formatting.element, this.input, this.together, this.actions());
     host.appendChild(this.element);
   }
 
@@ -402,7 +406,7 @@ export class MarkPopup {
   }
 
   get hasDraft(): boolean {
-    return this.shown !== null && this.input.value !== this.was;
+    return this.shown !== null && (this.input.value !== this.was || this.formatting.changed);
   }
 
   /** The popup element. For the check harness. */
@@ -419,7 +423,7 @@ export class MarkPopup {
    * fake DOM records `focus()` on the element instead. A getter answering one of
    * those would leave the other unable to see the keyboard at all.
    */
-  get field(): HTMLTextAreaElement {
+  get field(): CommentField {
     return this.input;
   }
 
@@ -456,15 +460,26 @@ export class MarkPopup {
     const label = mark.kind === "field"
       ? TEXT().fieldName
       : mark.kind === "link" ? TEXT().goesTo : TEXT().note_;
+    const rich = !["field", "link", "textbox"].includes(mark.kind);
+    const field = rich ? this.formatting.field : this.plain;
+    if (this.input !== field) {
+      this.element.insertBefore(field, this.input);
+      this.input.remove();
+      this.input = field;
+    }
+    this.formatting.element.hidden = !rich;
     this.input.setAttribute("aria-label", label);
-    this.input.placeholder = label;
-    this.input.rows = mark.kind === "field" || mark.kind === "link" ? 1 : 3;
+    this.plain.placeholder = label;
+    this.plain.rows = mark.kind === "field" || mark.kind === "link" ? 1 : 3;
     // Picking the already selected sidebar row only refocuses its editor.
     // A pristine editor can still follow undo or a change in the other view.
     if (was !== mark.id || (!this.hasDraft && !this.input.readOnly)) {
       const refilled = was === mark.id && this.input.value !== mark.note;
       this.was = mark.note;
-      this.input.value = mark.note;
+      if (was !== mark.id || refilled || JSON.stringify(mark.styles ?? []) !== JSON.stringify(this.formatting.styles)) {
+        this.formatting.load(rich ? mark.note : "", rich ? mark.styles : []);
+        if (!rich) this.input.value = mark.note;
+      }
       if (refilled) this.opts.onDraft(mark.id, mark.note);
     }
     this.showColor(mark.color);
@@ -554,12 +569,15 @@ export class MarkPopup {
     if (mark === null) return;
     const words = this.input.value;
     const before = this.was;
-    if (words !== before) {
+    const previousStyles = this.formatting.baseline;
+    if (this.hasDraft) {
+      this.formatting.baseline = this.formatting.styles;
       // A click-away during the write must not submit the same edit twice.
       this.was = words;
-      await submitPopup(this.input, () => this.opts.onNote(mark, words), () => {
+      await submitPopup(this.input, () => this.opts.onNote(mark, words, ...this.formatting.args), () => {
         if (this.shown === mark) {
           this.was = before;
+          this.formatting.baseline = previousStyles;
           this.opts.onDraft(mark, this.input.value);
         }
       });
@@ -675,9 +693,10 @@ export class MarkPopup {
     const id = this.shown;
     if (id === null) return;
     const now = this.input.value;
-    if (now === this.was) return;
+    if (!this.hasDraft) return;
+    this.formatting.baseline = this.formatting.styles;
     this.was = now;
-    this.opts.onNote(id, now);
+    this.opts.onNote(id, now, ...this.formatting.args);
   }
 
   /** The kind, and a close affordance for a reader who will not guess Escape. */

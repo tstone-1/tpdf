@@ -352,6 +352,19 @@ async function checkReplyCut(host: OpenCheckHost): Promise<void> {
   const mark = host.edits()!.state.marks.find(item => item.note === "Thread reply");
   if (!mark) throw new Error("new reply is missing");
   host.viewer()!.showMark(mark.id);
+  const field = host.viewer()!.markNoteField;
+  field.focus();
+  const words = field.firstChild!;
+  const range = document.createRange();
+  range.setStart(words, 7);
+  range.setEnd(words, 12);
+  document.getSelection()!.removeAllRanges();
+  document.getSelection()!.addRange(range);
+  field.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true, bubbles: true, cancelable: true }));
+  const toolbar = field.closest('[role="dialog"]')!.querySelector(".comment-formatting")!;
+  toolbar.querySelector<HTMLButtonElement>('[aria-label="More formatting"]')!.click();
+  toolbar.querySelector<HTMLButtonElement>('[aria-label="Strikethrough"]')!.click();
+  toolbar.querySelector<HTMLButtonElement>('[aria-label="Superscript"]')!.click();
   host.run("edit.cutMark");
   await host.idle();
   const retained = host.edits()!.state.marks.some(item => item.id === mark.id && item.is_reply);
@@ -363,6 +376,8 @@ async function checkReplyCut(host: OpenCheckHost): Promise<void> {
   const { items } = await scan();
   const savedParent = items.find(item => item.body === "Thread parent");
   const savedReply = items.find(item => item.body === "Thread reply");
+  report.check("the reopened reply keeps bold, strikethrough and superscript on the selected word",
+    JSON.stringify(savedReply?.styles) === "[[7,12,41]]", JSON.stringify(savedReply?.styles) ?? "missing");
   report.check("the saved and reopened reply still belongs to its parent comment",
     !!savedParent && savedReply?.reply_to === savedParent.id, `reply to ${savedReply?.reply_to}, parent ${savedParent?.id}`);
 }
@@ -1565,7 +1580,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       document.querySelector(".surface")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
       if (!await settle(() => (host.viewer()?.markOpen ?? -1) >= 0, SETTLE_MS))
         throw new Error("note did not open");
-      const note = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Note"]')!;
+      const note = host.viewer()!.markNoteField;
       note.value = "Synthetic tab note";
       note.dispatchEvent(new Event("input", { bubbles: true }));
       report.emit("[tabs] opening the second fixture");

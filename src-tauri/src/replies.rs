@@ -49,6 +49,7 @@ fn dir() -> PathBuf {
 /// A comment, with every optional field carrying a value.
 fn comment_full() -> annots::Comment {
     annots::Comment {
+        styles: vec![],
         id: 12,
         page: 0,
         kind: annots::Kind::Text,
@@ -71,6 +72,7 @@ fn comment_full() -> annots::Comment {
 /// The same shape with every optional field empty, so both spellings are pinned.
 fn comment_bare() -> annots::Comment {
     annots::Comment {
+        styles: vec![],
         id: 13,
         page: 1,
         kind: annots::Kind::Highlight,
@@ -493,6 +495,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             can_redo: false,
             marks: vec![
                 edits::MarkView {
+                    styles: vec![],
                     is_reply: false,
                     id: 3,
                     kind: docmodel::MarkKind::Highlight,
@@ -509,6 +512,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     lines: vec!["the line under it".into()],
                 },
                 edits::MarkView {
+                    styles: vec![],
                     is_reply: false,
                     id: 4,
                     kind: docmodel::MarkKind::Stamp,
@@ -525,6 +529,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     lines: Vec::new(),
                 },
                 edits::MarkView {
+                    styles: vec![],
                     is_reply: false,
                     id: 6,
                     kind: docmodel::MarkKind::Signature,
@@ -545,6 +550,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     lines: Vec::new(),
                 },
                 edits::MarkView {
+                    styles: vec![],
                     is_reply: false,
                     id: 7,
                     kind: docmodel::MarkKind::Picture,
@@ -570,6 +576,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 area: [1.0, 2.0, 3.0, 4.0],
             }],
             notes: vec![edits::NoteEditView {
+                styles: vec![],
                 object: (9, 0),
                 page: 1,
                 body: "the rewritten body".into(),

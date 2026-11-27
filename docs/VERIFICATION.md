@@ -4,6 +4,20 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Formatting selected comment text (2026-11-27)
+
+Chromium and WebKit exercised the inline editor in new marks, saved comments
+and replies. Both checked formatting selected text and typing with a style
+active, switching a subscript to superscript, removing strikethrough while
+keeping underline, undo, blank lines and pasting literal angle brackets.
+
+The PDF tests save an edited comment and its reply by incremental save and
+full rewrite, then read back the plain text and combined styles. A separate
+round trip preserves all 4,000 style runs in a fully formatted Unicode comment.
+On macOS the `tabs_check.py --phase tabs` window check applied bold,
+strikethrough and superscript to the word "reply", saved the PDF, and read
+back the three styles on that word and the reply's link to its parent.
+
 ### Wheel paging and macOS window placement (2026-11-27)
 
 The viewer tests turn facing pairs at fit width, reverse direction, and distinguish

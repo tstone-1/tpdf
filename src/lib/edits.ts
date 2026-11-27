@@ -14,6 +14,7 @@
  * is to have skipped a reply.
  */
 
+import type { CommentBody } from "./commentformat";
 import { areasFrom, incompleteMatch, type TextRedactionGroup } from "./selection";
 import { coversPoint } from "./text";
 import { call, type NewMark, physicalPageUnit, physicalPageUnits } from "./ipc";
@@ -544,7 +545,7 @@ export class Edits {
     page: PageId,
     quads: number[],
     strokes: number[][] = [],
-    note = "",
+    note: CommentBody = "",
     chosen: MarkColor | null = null,
     stamp: StampName | null = null,
     replyTo: readonly [number, number] | null = null,
@@ -611,7 +612,7 @@ export class Edits {
     page: PageId,
     quads: number[],
     pixels: import("./picture").PicturePixels,
-    note = "",
+    note: CommentBody = "",
     sweep = 0,
   ): Promise<EditState> {
     if (!this.current.pages.some((view) => view.id === page)) return this.current;
@@ -693,7 +694,7 @@ export class Edits {
     page: PageId,
     parent: readonly [number, number],
     at: readonly [number, number, number, number],
-    body: string,
+    body: CommentBody,
   ): Promise<EditState> {
     return this.mark("note", page, [...at], [], body, null, null, parent);
   }
@@ -707,7 +708,7 @@ export class Edits {
    * that must not send an unchanged note, and `markpopup.ts` is where that
    * comparison lives, next to the box it compares.
    */
-  async renote(mark: number, note: string): Promise<EditState> {
+  async renote(mark: number, note: CommentBody): Promise<EditState> {
     return this.adopt(
       await call("annot_note", { doc: this.doc, mark, note }),
     );
@@ -733,7 +734,7 @@ export class Edits {
   async rewrite(
     object: readonly [number, number],
     page: PageId,
-    body: string,
+    body: CommentBody,
   ): Promise<EditState> {
     return this.adopt(
       await call("annot_rewrite", {

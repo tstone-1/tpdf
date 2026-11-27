@@ -33,6 +33,7 @@
  * first.
  */
 
+import { paintComment } from "./commentformat";
 import { placeholder } from "./panelrow";
 import {
   bylineOf,
@@ -291,6 +292,7 @@ export class CommentList {
     const line = summaryOf(comment, covered);
     body.dataset.own = line.own ? "yes" : "no";
     body.textContent = line.text;
+    if (line.own && comment.styles?.length) paintComment(body, comment.body, comment.styles);
     body.style.cssText =
       "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" +
       (line.own ? "" : "opacity:0.6;font-style:italic;");

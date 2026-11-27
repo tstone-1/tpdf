@@ -33,6 +33,7 @@ pub mod codes;
 /// touches. The registry below stays here; the bodies do not.
 mod commands;
 /// What changed between two documents' words: *Compare with* and `tpdf compare`.
+pub mod comment_text;
 pub mod compare;
 pub mod compress;
 pub mod content;

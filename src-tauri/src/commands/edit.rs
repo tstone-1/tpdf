@@ -199,7 +199,7 @@ pub async fn annot_note(
     edits: tauri::State<'_, edits::Edits>,
     doc: u32,
     mark: u64,
-    note: String,
+    note: crate::comment_text::Body,
 ) -> Result<edits::EditState, String> {
     edits.renote(doc, mark, note)
 }
@@ -238,7 +238,7 @@ pub async fn annot_rewrite(
     doc: u32,
     object: (u32, u16),
     page: u64,
-    body: String,
+    body: crate::comment_text::Body,
 ) -> Result<edits::EditState, String> {
     edits.rewrite(
         doc,

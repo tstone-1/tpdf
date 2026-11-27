@@ -226,8 +226,8 @@ describe("CommentPopup", () => {
 
   /** The popup's editor, or `null` while the body is text. */
   function editorOf(note: CommentPopup) {
-    const found = (note.node as unknown as { children: { tagName: string }[] }).children.find(
-      (child) => child.tagName === "textarea",
+    const found = (note.node as unknown as { children: HTMLElement[] }).children.find(
+      (child) => child.tagName === "textarea" || child.getAttribute("role") === "textbox",
     );
     return (found ?? null) as unknown as { value: string; focused: boolean } | null;
   }

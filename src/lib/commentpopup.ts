@@ -49,6 +49,7 @@
  * other way.
  */
 
+import { CommentFormatting, paintComment, type CommentField, type CommentStyle } from "./commentformat";
 import { bylineOf, labelFor, noCommentLabel, type Comment } from "./comments";
 import { catalog } from "./i18n";
 import { matches } from "./keys";
@@ -93,7 +94,7 @@ export interface CommentPopupOptions {
    * bare numbers and a slot and an id are both `number` --- the mistake this
    * repository has already paid for once. The caller translates.
    */
-  onRewrite: (comment: Comment, body: string) => unknown;
+  onRewrite: (comment: Comment, body: string, styles?: CommentStyle[]) => unknown;
   /**
    * A reply was typed and the editor is closing. Only ever with text in it.
    *
@@ -107,7 +108,7 @@ export interface CommentPopupOptions {
    * boolean deciding which would put the distinction in the caller, where a
    * wrong value silently edits somebody else's comment instead of answering it.
    */
-  onReply: (comment: Comment, body: string) => unknown;
+  onReply: (comment: Comment, body: string, styles?: CommentStyle[]) => unknown;
   /**
    * The reader deleted the comment on show.
    *
@@ -145,9 +146,10 @@ export class CommentPopup {
    */
   private mode: "body" | "reply" | null = null;
   /** The editor, present only while a comment is armed. */
-  private editor: HTMLTextAreaElement | null = null;
+  private editor: CommentField | null = null;
   /** What the body said when the editor opened, so an unchanged one sends nothing. */
   private was = "";
+  private formatting: CommentFormatting | null = null;
 
   constructor(host: HTMLElement, opts: CommentPopupOptions) {
     this.host = host;
@@ -232,7 +234,7 @@ export class CommentPopup {
 
   get hasDraft(): boolean {
     const text = this.editor?.value;
-    return text !== undefined && text !== this.was && (this.mode === "body" || text.trim() !== "");
+    return text !== undefined && (text !== this.was || !!this.formatting?.changed) && (this.mode === "body" || text.trim() !== "");
   }
 
   /** Whether the editor is open, so a second arming is not a reset. */
@@ -325,11 +327,13 @@ export class CommentPopup {
     // --- which is what makes an editor closed untouched send nothing.
     this.was = mode === "body" ? comment.body : "";
     this.mode = mode;
-    const box = document.createElement("textarea");
-    box.value = this.was;
+    this.formatting = mode === "reply" || comment.kind !== "freetext" ? new CommentFormatting() : null;
+    const box = this.formatting?.field ?? document.createElement("textarea");
+    if (this.formatting) this.formatting.load(this.was, mode === "body" ? comment.styles : []);
+    else box.value = this.was;
     box.setAttribute("aria-label", mode === "body" ? TEXT().commentText : TEXT().yourReply);
-    box.rows = 4;
-    box.style.cssText =
+    if (!this.formatting) (box as HTMLTextAreaElement).rows = 4;
+    if (!this.formatting) box.style.cssText =
       "width:100%;box-sizing:border-box;resize:vertical;font:inherit;" +
       "color:inherit;background:Field;margin:0.1rem 0 0.2rem;" +
       "border:1px solid color-mix(in srgb, currentColor 35%, transparent);" +
@@ -370,12 +374,15 @@ export class CommentPopup {
     const field = this.editor;
     const mode = this.mode;
     const before = this.was;
-    if (field && mode && field.value !== before && (mode === "body" || field.value.trim())) {
+    const format = this.formatting;
+    if (field && mode && this.hasDraft) {
+      const previousStyles = format?.baseline ?? [];
+      if (format) format.baseline = format.styles;
       const words = field.value;
       this.was = words;
       const write = mode === "body" ? this.opts.onRewrite : this.opts.onReply;
-      await submitPopup(field, () => write(comment, words), () => {
-        if (this.editor === field) this.was = before;
+      await submitPopup(field, () => write(comment, words, ...(format?.args ?? [])), () => {
+        if (this.editor === field) { this.was = before; if (format) format.baseline = previousStyles; }
       });
     }
     if (this.subject === comment && this.editor === field) this.opts.onClose(restoreFocus);
@@ -392,10 +399,11 @@ export class CommentPopup {
     // committed twice would journal the same text twice.
     this.editor = null;
     this.mode = null;
-    if (now === this.was) return;
+    if (now === this.was && !this.formatting?.changed) return;
+    const style = this.formatting?.args ?? [];
     this.was = now;
     if (mode === "body") {
-      this.opts.onRewrite(comment, now);
+      this.opts.onRewrite(comment, now, ...style);
       return;
     }
     // **An empty reply is not a reply, where an empty rewrite is a legitimate
@@ -407,7 +415,7 @@ export class CommentPopup {
     // the untouched case is already caught above; this is the touched-then-
     // emptied one.
     if (!now.trim()) return;
-    this.opts.onReply(comment, now);
+    this.opts.onReply(comment, now, ...style);
   }
 
   /**
@@ -425,6 +433,7 @@ export class CommentPopup {
       this.closeButton(),
       header(comment),
       ...(comment.subject.trim() ? [subject(comment)] : []),
+      ...(box && this.formatting ? [this.formatting.element] : []),
       box ?? body(comment),
       // Absent rather than disabled for a comment the file wrote as a direct
       // dictionary --- see the module note. Gone while the editor is open,
@@ -564,6 +573,7 @@ function body(comment: Comment): HTMLElement {
   element.textContent = comment.body_clipped
     ? [text, TEXT().previewOnly].filter(Boolean).join("\n\n")
     : text || noCommentLabel(comment.kind);
+  if (comment.styles?.length && !comment.body_clipped) paintComment(element, comment.body, comment.styles);
   element.style.cssText =
     "white-space:pre-wrap;overflow-wrap:anywhere;" +
     (text ? "" : "opacity:0.6;font-style:italic;");
@@ -583,6 +593,7 @@ function replyBlock(reply: Comment): HTMLElement {
 
   const said = document.createElement("div");
   said.textContent = reply.body;
+  if (reply.styles?.length) paintComment(said, reply.body, reply.styles);
   said.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;";
 
   element.append(who, said);

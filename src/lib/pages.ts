@@ -21,6 +21,7 @@
  * next state would be a second implementation of the journal.
  */
 
+import type { CommentStyle } from "./commentformat";
 import type { Comment } from "./comments";
 import type { Link } from "./links";
 import type { OutlineItem, Target } from "./outline";
@@ -249,6 +250,7 @@ export interface NoteEdited {
   page: PageId;
   /** What the comment now says. Replaces `Comment.body` whole. */
   body: string;
+  styles?: CommentStyle[];
   /**
    * When the reader typed it, in PDF date form.
    *
@@ -447,6 +449,7 @@ export interface MarkView {
    * here may carry a URL. See `docs/THREAT-MODEL.md` T8.
    */
   note: string;
+  styles?: CommentStyle[];
   /**
    * The note broken into the lines a text box is drawn in, empty otherwise.
    *
@@ -1134,7 +1137,7 @@ export function commentsIn(
       : undefined;
     mapped.push(
       edit
-        ? { ...comment, page: slot, body: edit.body, date: edit.shown }
+        ? { ...comment, page: slot, body: edit.body, styles: edit.styles ?? [], date: edit.shown }
         : { ...comment, page: slot },
     );
   }

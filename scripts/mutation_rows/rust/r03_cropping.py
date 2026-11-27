@@ -309,16 +309,16 @@ ROWS += [
         # copied from --- so the two must be broken separately to prove each.
         "annots: report pages lopdf could not read as nothing missing",
         "src/annots.rs",
-        "    limits.pages_missed = page_count.saturating_sub(pages.len());",
-        "    limits.pages_missed = 0;",
+        "    scan.report.pages_missed = page_count.saturating_sub(pages.len());",
+        "    scan.report.pages_missed = 0;",
         "a_page_lopdf_cannot_account_for_is_reported",
     ),
     Mutation(
         # And its control, in the other direction.
         "annots: charge a page deficit even when the parsers agree",
         "src/annots.rs",
-        "    limits.pages_missed = page_count.saturating_sub(pages.len());",
-        "    limits.pages_missed = page_count.saturating_sub(pages.len()) + 1;",
+        "    scan.report.pages_missed = page_count.saturating_sub(pages.len());",
+        "    scan.report.pages_missed = page_count.saturating_sub(pages.len()) + 1;",
         "a_document_both_parsers_agree_about_reports_nothing_missing",
     ),
     Mutation(
@@ -689,8 +689,8 @@ ROWS += [
         # what they typed -- so nothing is wrong until the file is reopened.
         "edits: write the note a mark was made with rather than what it says",
         "src/edits.rs",
-        "                    note: model.note_of(*mark).to_string(),",
-        "                    note: String::new(),",
+        "                    note: model.note_body(*mark).cloned().unwrap_or_default(),",
+        "                    note: Default::default(),",
         "a_note_reaches_the_reader_and_the_writer_as_the_same_words",
     ),
     Mutation(

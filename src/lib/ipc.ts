@@ -42,6 +42,7 @@
 
 import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 
+import type { CommentBody } from "./commentformat";
 import type { ToolState } from "./clitoolstate";
 import type { ExplorerState } from "./explorerstate";
 import type { Comments } from "./comments";
@@ -248,7 +249,7 @@ export interface NewMark {
   /** The nib, in points. Read by the ink arm and sent by all of them. */
   width: number;
   author: string;
-  note: string;
+  note: CommentBody;
 }
 
 /** Four numbers, in whichever space the command taking them names. */
@@ -382,7 +383,7 @@ export interface Commands {
     reply: EditState;
   };
   annot_note: {
-    args: { doc: DocHandle; mark: number; note: string };
+    args: { doc: DocHandle; mark: number; note: CommentBody };
     reply: EditState;
   };
   /**
@@ -401,7 +402,7 @@ export interface Commands {
       doc: DocHandle;
       object: readonly [number, number];
       page: PageId;
-      body: string;
+      body: CommentBody;
     };
     reply: EditState;
   };

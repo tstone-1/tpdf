@@ -367,8 +367,8 @@ export async function markNoteChecks(
   // Found once and reused below: the popup builds its box in its constructor and
   // reuses it, so this is the same element every time it opens. Looking it up
   // again per check would read as though it might be a different one.
-  const box = viewer.markPopup.querySelector("textarea");
-  if (!box) {
+  const box = viewer.markNoteField;
+  if (!viewer.markPopup.contains(box)) {
     for (const name of MARK_NOTE_CHECKS.slice(3)) {
       skip(name, "the note has no box to type in");
     }

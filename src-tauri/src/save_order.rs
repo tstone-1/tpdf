@@ -412,7 +412,7 @@ mod tests {
                 color: [1.0, 0.9, 0.2],
                 width: 1.0,
                 author: "tpdf".to_string(),
-                note: String::new(),
+                note: Default::default(),
                 made: "D:20260831000000Z".to_string(),
             }],
         }

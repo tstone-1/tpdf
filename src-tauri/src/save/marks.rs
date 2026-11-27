@@ -683,6 +683,9 @@ fn mark_dictionary(
     // the byte-order mark the specification asks for.
     dictionary.set("T", text_string(&mark.author));
     dictionary.set("Contents", text_string(&mark.note));
+    if let Some(xml) = mark.note.xhtml() {
+        dictionary.set("RC", text_string(&xml));
+    }
     dictionary.set("M", text_string(&mark.made));
     dictionary
 }
@@ -1539,11 +1542,11 @@ fn set_note(
         dictionary.set("AP", dictionary! { "N" => stream });
     }
     dictionary.set("Contents", text_string(&note.body));
-    // `/RC` is the same body as rich text, and a viewer that has it shows it
-    // in place of `/Contents`: left behind, the reader's old words are what
-    // the next reader sees. tpdf writes no rich text, so the plain body is the
-    // whole of the note now.
-    dictionary.remove(b"RC");
+    if let Some(xml) = note.body.xhtml() {
+        dictionary.set("RC", text_string(&xml));
+    } else {
+        dictionary.remove(b"RC");
+    }
     dictionary.set("M", text_string(&note.made));
     Ok(())
 }

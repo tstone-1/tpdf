@@ -579,6 +579,7 @@
     type Place,
     type Session,
   } from "./lib/session";
+  import { commentBody } from "./lib/commentformat";
   import { placeOfSpread, spreadOfPlace } from "./lib/spreads";
   import { ScreenMode, type Screen } from "./lib/fullscreen";
   import { ClosedTabs, needsDiscardApproval, tabsToClose, type CloseWhich } from "./lib/tabclose";
@@ -834,7 +835,7 @@
       border: () => border,
       make: async (copy, sweep) => (await markMade(
         (run) => applyEdit(run, view, model),
-        (e) => e.mark(copy.kind, copy.page, copy.quads, [], copy.note, copy.color, null, null, copy.width, undefined, copy.field, sweep),
+        (e) => e.mark(copy.kind, copy.page, copy.quads, [], commentBody(copy.note, copy.styles), copy.color, null, null, copy.width, undefined, copy.field, sweep),
       ))?.id,
       pick: (ids) => asDocument(view, () => { if (edits === model && viewer === source) source.pick(ids); }),
       say: (message) => asDocument(view, () => say(message)),
@@ -2893,8 +2894,8 @@
       const shape = shapeOf({ ...mark, quads: placed.quads, strokes: placed.strokes });
       const picture = mark.picture;
       await applyEdit((e) => picture
-        ? e.placePicture(landed.page, shape.quads, picture, mark.note, landed.sweep)
-        : e.mark(mark.kind, landed.page, shape.quads, shape.strokes, mark.note, mark.color, mark.stamp, null,
+        ? e.placePicture(landed.page, shape.quads, picture, commentBody(mark.note, mark.styles), landed.sweep)
+        : e.mark(mark.kind, landed.page, shape.quads, shape.strokes, commentBody(mark.note, mark.styles), mark.color, mark.stamp, null,
           mark.width, mark.image, undefined, landed.sweep), view);
     }
     asDocument(view, () =>
@@ -6731,8 +6732,8 @@
       // The edit's promise is handed back, in both branches: the page keeps
       // drawing what was typed until it settles, which is after `setMarks`
       // has the model's answer. See `markdraft.ts`.
-      onMarkNote: (mark, note) => {
-        if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, note), note);
+      onMarkNote: (mark, note, styles) => {
+        if (!isSaved(mark)) return typedEdit((e) => e.renote(mark, commentBody(note, styles)), note);
         const to = scannedForm && edits ? fieldRenamed(scannedForm, edits.state, mark, note) : null;
         if (typeof to === "string") { say(to); return to; }
         return to ? typedEdit((e) => e.refield([to]), note) : undefined;
@@ -6750,9 +6751,9 @@
       // the model no longer has translates to nothing and is dropped: it is
       // the same guard `Edits.mark` states, and the reader cannot have got
       // here anyway --- `setComments` closes a popup whose comment has gone.
-      onCommentEdit: (comment, body) => {
+      onCommentEdit: (comment, body, styles) => {
         const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
-        return to ? typedEdit((e) => e.rewrite(to.object, to.page, body), body) : typedNotTaken(body);
+        return to ? typedEdit((e) => e.rewrite(to.object, to.page, commentBody(body, styles)), body) : typedNotTaken(body);
       },
       // The same two lookups as the rewrite above and for its reasons: a
       // comment the file wrote as a direct dictionary has no object to name,
@@ -6770,9 +6771,9 @@
       // identity the model addresses --- the translation that exists because
       // an id and a slot are both `number`, which this repository has paid
       // for once.
-      onCommentReply: (comment, body) => {
+      onCommentReply: (comment, body, styles) => {
         const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
-        return to ? typedEdit((e) => e.reply(to.page, to.object, comment.rect, body), body) : typedNotTaken(body);
+        return to ? typedEdit((e) => e.reply(to.page, to.object, comment.rect, commentBody(body, styles)), body) : typedNotTaken(body);
       },
       onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),
       // A colour picked in the swatch row, or by a `Colour:` command with a

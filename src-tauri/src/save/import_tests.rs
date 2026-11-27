@@ -168,7 +168,7 @@ fn highlight(at: u32) -> PlannedMark {
         color: [1.0, 0.9, 0.2],
         width: crate::docmodel::INK_WIDTH,
         author: "Reader".into(),
-        note: String::new(),
+        note: Default::default(),
         made: "D:20260919120000Z".into(),
     }
 }

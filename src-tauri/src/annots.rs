@@ -226,6 +226,8 @@ pub struct Comment {
     /// somebody made without typing anything, which is reported rather than
     /// dropped --- the mark is on the page either way.
     pub body: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<crate::comment_text::Style>,
     /// The displayed body is incomplete and cannot safely seed a replacement.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub body_clipped: bool,
@@ -396,7 +398,10 @@ pub fn scan(bytes: &[u8], page_count: usize, password: Option<&str>) -> Result<C
 pub fn scan_from(document: &Document, page_count: usize) -> Result<Comments, String> {
     let started = std::time::Instant::now();
 
-    let mut limits = Limits::default();
+    let mut scan = ScanLimits {
+        report: Limits::default(),
+        rich_bytes: 16 * 1024 * 1024,
+    };
     let mut items: Vec<Comment> = Vec::new();
     // Where each annotation object ended up, so `/IRT` can name it.
     let mut ids: HashMap<ObjectId, u32> = HashMap::new();
@@ -405,11 +410,11 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Comments, Str
     let pages = document.get_pages();
     // What PDFium can see and this cannot, counted before the walk --- whose own
     // emptiness is exactly what it cannot distinguish. See `Limits`.
-    limits.pages_missed = page_count.saturating_sub(pages.len());
+    scan.report.pages_missed = page_count.saturating_sub(pages.len());
 
     for (index, page) in pages.values().take(page_count).enumerate() {
         if items.len() >= MAX_TOTAL {
-            limits.over_budget = true;
+            scan.report.over_budget = true;
             break;
         }
         read_page(
@@ -419,10 +424,11 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Comments, Str
             &mut items,
             &mut ids,
             &mut parents,
-            &mut limits,
+            &mut scan,
         );
     }
 
+    let mut limits = scan.report;
     resolve_replies(&mut items, &ids, &parents, &mut limits);
 
     Ok(Comments {
@@ -430,6 +436,11 @@ pub fn scan_from(document: &Document, page_count: usize) -> Result<Comments, Str
         limits,
         scan_ms: started.elapsed().as_secs_f64() * 1000.0,
     })
+}
+
+struct ScanLimits {
+    report: Limits,
+    rich_bytes: usize,
 }
 
 /// Reads one page's `/Annots`, appending what it finds.
@@ -440,10 +451,10 @@ fn read_page(
     items: &mut Vec<Comment>,
     ids: &mut HashMap<ObjectId, u32>,
     parents: &mut Vec<Option<ObjectId>>,
-    limits: &mut Limits,
+    scan: &mut ScanLimits,
 ) {
     let Ok(dict) = document.get_dictionary(page) else {
-        limits.unreadable += 1;
+        scan.report.unreadable += 1;
         return;
     };
     let Ok(annots) = dict.get(b"Annots") else {
@@ -453,7 +464,7 @@ fn read_page(
     // is indirect decides how large an annotation *edit* is --- and a scan that
     // did not resolve it would report a page of comments as having none.
     let Object::Array(entries) = resolve(document, annots) else {
-        limits.unreadable += 1;
+        scan.report.unreadable += 1;
         return;
     };
 
@@ -462,11 +473,11 @@ fn read_page(
 
     for entry in entries {
         if items.len() >= MAX_TOTAL {
-            limits.over_budget = true;
+            scan.report.over_budget = true;
             return;
         }
         if on_this_page >= MAX_PER_PAGE {
-            limits.crowded_pages += 1;
+            scan.report.crowded_pages += 1;
             return;
         }
 
@@ -474,26 +485,26 @@ fn read_page(
             Object::Reference(id) => match document.get_object(*id) {
                 Ok(object) => object,
                 Err(_) => {
-                    limits.unreadable += 1;
+                    scan.report.unreadable += 1;
                     continue;
                 }
             },
             other => other,
         };
         let Ok(annot) = object.as_dict() else {
-            limits.unreadable += 1;
+            scan.report.unreadable += 1;
             continue;
         };
 
         let Ok(subtype) = annot.get(b"Subtype").and_then(Object::as_name) else {
             // No subtype at all. Unreadable rather than unknown: there is
             // nothing to have failed to recognise.
-            limits.unreadable += 1;
+            scan.report.unreadable += 1;
             continue;
         };
         let Some(kind) = Kind::of(subtype) else {
             if !Kind::is_not_a_comment(subtype) {
-                limits.unknown_kinds += 1;
+                scan.report.unknown_kinds += 1;
             }
             continue;
         };
@@ -520,7 +531,7 @@ fn read_page(
                 turns,
                 origin: (ox, oy),
             },
-            limits,
+            scan,
         );
         built.object = own;
         items.push(built);
@@ -535,6 +546,41 @@ fn read_page(
     }
 }
 
+/// Bound both compressed input and decoded XML across all annotations,
+/// including repeated references to the same rich-text stream.
+fn comment_styles(
+    document: &Document,
+    object: &Object,
+    plain: &str,
+    remaining: &mut usize,
+) -> Option<Vec<crate::comment_text::Style>> {
+    // A full 4,000-character preview with nested decorations can exceed
+    // one MiB when the PDF text string is encoded in UTF-16.
+    let limit = (*remaining).min(2 * 1024 * 1024);
+    let xml = match object {
+        Object::String(raw, _) if raw.len() <= limit => {
+            *remaining -= raw.len();
+            decode_text_string(raw)
+        }
+        Object::Stream(stream) if !stream.content.is_empty() && stream.content.len() <= limit => {
+            *remaining -= stream.content.len();
+            let output_limit = (*remaining).min(limit);
+            let bytes = crate::attachments::decode(document, stream, output_limit)
+                .map_err(|_| {
+                    *remaining -= output_limit;
+                })
+                .ok()?;
+            *remaining -= bytes.len();
+            match std::str::from_utf8(&bytes) {
+                Ok(s) => s.trim_start_matches('\u{feff}').to_owned(),
+                Err(_) => decode_text_string(&bytes),
+            }
+        }
+        _ => return None,
+    };
+    crate::comment_text::read_styles(&xml, plain)
+}
+
 /// Builds one comment from its annotation dictionary.
 fn comment(
     annot: &Dictionary,
@@ -543,11 +589,11 @@ fn comment(
     page: u32,
     kind: Kind,
     frame: Frame,
-    limits: &mut Limits,
+    scan: &mut ScanLimits,
 ) -> Comment {
     let (body, clipped) = text_field(annot, document, b"Contents", MAX_BODY_CHARS, true);
     if clipped {
-        limits.bodies_clipped += 1;
+        scan.report.bodies_clipped += 1;
     }
     let (author, _) = text_field(annot, document, b"T", MAX_LINE_CHARS, false);
     let (subject, _) = text_field(annot, document, b"Subj", MAX_LINE_CHARS, false);
@@ -558,6 +604,22 @@ fn comment(
         page,
         kind,
         author,
+        styles: if clipped || body.is_empty() {
+            Vec::new()
+        } else {
+            annot
+                .get(b"RC")
+                .ok()
+                .and_then(|obj| {
+                    comment_styles(
+                        document,
+                        resolve(document, obj),
+                        &body,
+                        &mut scan.rich_bytes,
+                    )
+                })
+                .unwrap_or_default()
+        },
         body,
         body_clipped: clipped,
         subject,
@@ -2415,6 +2477,7 @@ mod tests {
             kind: Kind::Text,
             author: "Jane Example".into(),
             body: "Have a look at https://example.invalid/ when you can.".into(),
+            styles: vec![],
             body_clipped: false,
             locked: false,
             contents_locked: false,
@@ -2434,6 +2497,7 @@ mod tests {
             kind,
             author,
             body,
+            styles,
             body_clipped,
             locked,
             contents_locked,
@@ -2477,6 +2541,7 @@ mod tests {
             format!("{quads:?}"),
             reply_to.map(|id| id.to_string()).unwrap_or_default(),
             hidden.to_string(),
+            format!("{styles:?}"),
             body_clipped.to_string(),
             locked.to_string(),
             contents_locked.to_string(),

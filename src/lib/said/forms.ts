@@ -300,6 +300,10 @@ export default {
   "that region covers nothing": "Dieser Bereich umfasst nichts",
   "that note is {chars} characters, and a note holds at most {most}":
     "Diese Notiz hat {chars} Zeichen, und eine Notiz hat höchstens {most}",
+  "this comment contains a character that cannot be formatted":
+    "Dieser Kommentar enthält ein Zeichen, das sich nicht formatieren lässt",
+  "the formatting selection is outside the comment or invalid":
+    "Die Textauswahl für die Formatierung ist ungültig oder liegt außerhalb des Kommentars",
   "no open document {doc}": "Kein geöffnetes Dokument {doc}",
 
   // commands/edit.rs, taborder.rs

@@ -351,7 +351,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
                 color: mark.color,
                 width: mark.width,
                 author: mark.author,
-                note: mark.note,
+                note: mark.note.into(),
                 made: mark.made,
             })
             .collect(),
@@ -391,7 +391,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
             .into_iter()
             .map(|note| PlannedNoteEdit {
                 object: note.object,
-                body: note.body,
+                body: note.body.into(),
                 made: note.made,
             })
             .collect(),

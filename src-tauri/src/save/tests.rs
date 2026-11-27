@@ -4010,7 +4010,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
             color: [1.0, 0.9, 0.2],
             width: crate::docmodel::INK_WIDTH,
             author: "a reader".to_string(),
-            note: "a note".to_string(),
+            note: "a note".into(),
             made: "D:20260818120000Z".to_string(),
         }],
     }
@@ -4141,6 +4141,62 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
 }
 
 #[test]
+fn comment_formatting_survives_an_append_and_a_rewrite() {
+    use crate::comment_text::{Body, Style};
+    let (original, parent, mut plan) = a_comment_with_a_key_and_its_edit("RC");
+    let body = Body::Formatted {
+        text: "A & B\n𐐷!".into(),
+        styles: vec![Style(2, 5, 3 | 8 | 16), Style(6, 8, 4 | 8 | 32)],
+    };
+    plan.notes[0].body = body.clone();
+    plan.marks = plan_of_kind(MarkKind::Note, one_quad()).marks;
+    plan.marks[0].reply_to = Some(parent);
+    plan.marks[0].note = body.clone();
+    let appended = append_update(original.clone(), &plan, None).unwrap();
+    let mut whole = original.clone();
+    whole.extend(appended.update);
+    for bytes in [
+        whole,
+        rewrite_update(&original, &plan, Job::Save, None).unwrap(),
+    ] {
+        let doc = Document::load_mem(&bytes).unwrap();
+        let comments = crate::annots::scan_from(&doc, 1).unwrap();
+        assert_eq!(comments.items.len(), 2);
+        assert!(comments.items.iter().any(|c| c.reply_to.is_some()));
+        for c in comments.items {
+            assert_eq!(c.body, body.as_str());
+            assert_eq!(c.styles, body.styles());
+            let annot = doc.get_dictionary(c.object.unwrap()).unwrap();
+            let xml =
+                crate::annots::decode_text_string(annot.get(b"RC").unwrap().as_str().unwrap());
+            assert!(xml.contains("font-weight:bold;font-style:italic;"));
+            assert!(xml.contains("vertical-align:-3pt;"));
+            assert!(xml.contains("vertical-align:4pt;"));
+            assert!(xml.contains("text-decoration:line-through;"));
+            assert!(xml.contains("text-decoration:underline;"));
+            assert!(xml.contains("&amp;"));
+        }
+    }
+}
+
+#[test]
+fn dense_comment_formatting_survives_at_the_preview_limit() {
+    use crate::comment_text::{Body, Style};
+    let (original, _, mut plan) = a_comment_with_a_key_and_its_edit("RC");
+    let count = 4_000;
+    let body = Body::Formatted {
+        text: "Ä".repeat(count),
+        styles: (0..count)
+            .map(|i| Style(i, i + 1, if i % 2 == 0 { 31 } else { 47 }))
+            .collect(),
+    };
+    plan.notes[0].body = body.clone();
+    let saved = rewrite_update(&original, &plan, Job::Save, None).unwrap();
+    let comments = crate::annots::scan(&saved, 1, None).unwrap();
+    assert_eq!(comments.items[0].styles, body.styles());
+}
+
+#[test]
 fn an_edited_comment_keeps_no_rich_text_copy_of_its_old_body() {
     let (original, annot, plan) = a_comment_with_a_key_and_its_edit("RC");
     let rc_of = |bytes: &[u8]| {
@@ -4161,6 +4217,31 @@ fn an_edited_comment_keeps_no_rich_text_copy_of_its_old_body() {
     );
     let rewritten = rewrite_update(&original, &plan, Job::Save, None).expect("the rewrite");
     assert!(!rc_of(&rewritten), "and neither has the rewritten one");
+}
+
+#[test]
+fn comment_formatting_is_read_from_a_compressed_rich_text_stream() {
+    let (original, annot, _) = a_comment_with_a_key_and_its_edit("RC");
+    let mut doc = Document::load_mem(&original).unwrap();
+    let xml = "<body><p><b>be</b>fore</p></body>";
+    use std::io::Write as _;
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(xml.as_bytes()).unwrap();
+    let encoded = encoder.finish().unwrap();
+    let stream = doc.add_object(lopdf::Stream::new(
+        dictionary! { "Filter" => "FlateDecode" },
+        encoded,
+    ));
+    doc.get_object_mut(annot)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("RC", stream);
+    let comments = crate::annots::scan_from(&doc, 1).unwrap();
+    assert_eq!(
+        comments.items[0].styles,
+        vec![crate::comment_text::Style(0, 2, 1)]
+    );
 }
 
 /// A rich-text body held as a stream of its own is named by nothing once the
@@ -5075,7 +5156,7 @@ fn a_mark_on_a_page_tpdf_made_is_written_onto_that_page() {
         color: [1.0, 0.9, 0.2],
         width: crate::docmodel::INK_WIDTH,
         author: "Reader".into(),
-        note: String::new(),
+        note: Default::default(),
         made: "D:20260830120000Z".into(),
     }];
     assert!(
@@ -5512,7 +5593,7 @@ fn appendable_with(
         color: [1.0, 0.9, 0.2],
         width: crate::docmodel::INK_WIDTH,
         author: "a reader".to_string(),
-        note: "a note".to_string(),
+        note: "a note".into(),
         made: "D:20260822120000Z".to_string(),
     }];
     Some((at, plan))
@@ -8430,7 +8511,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
             color: [1.0, 0.9, 0.2],
             width: crate::docmodel::INK_WIDTH,
             author: String::new(),
-            note: String::new(),
+            note: Default::default(),
             made: "D:20260818120000Z".to_string(),
         }],
     };
@@ -8497,7 +8578,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
             color: [1.0, 0.9, 0.2],
             width: crate::docmodel::INK_WIDTH,
             author: String::new(),
-            note: String::new(),
+            note: Default::default(),
             made: "D:20260818120000Z".to_string(),
         }],
     };
@@ -11261,7 +11342,7 @@ fn a_text_box_draws_its_words_as_winansi_hex_rather_than_a_literal() {
     // question, and removes the escaping question with it.
     let scratch = Scratch::new("annots-freetext-hex");
     let mut plan = plan_of_kind(MarkKind::TextBox, one_quad());
-    "Grüße".clone_into(&mut plan.marks[0].note);
+    plan.marks[0].note = "Grüße".into();
     let content = appearance_of_plan(&plan, &scratch);
 
     assert!(
@@ -11617,7 +11698,7 @@ fn one_mark_over(pages: usize, kind: MarkKind, quad: crate::docmodel::Quad) -> P
         color: [1.0, 0.9, 0.2],
         width: crate::docmodel::INK_WIDTH,
         author: "a reader".to_string(),
-        note: "the reader typed this".to_string(),
+        note: "the reader typed this".into(),
         made: "D:20260824120000Z".to_string(),
     });
     plan
@@ -13214,7 +13295,7 @@ fn field_plan(name: &str, kind: crate::formfields::Kind, quad: crate::docmodel::
     let mut plan = plan_of(&[0, 0]);
     let mut mark = plan_of_kind(MarkKind::Field, vec![quad]).marks.remove(0);
     mark.field = Some(kind.into());
-    mark.note = name.to_string();
+    mark.note = name.into();
     plan.marks.push(mark);
     plan
 }
@@ -14615,7 +14696,7 @@ fn a_link_is_written_with_no_border_and_its_target() {
     let scratch = Scratch::new("annots-link");
     let page_target = {
         let mut plan = plan_of_kind(MarkKind::Link, one_quad());
-        plan.marks[0].note = "1".to_string();
+        plan.marks[0].note = "1".into();
         let (doc, _) = written_link(&plan, &scratch);
         let annotation = written_annotation(&doc);
         assert_eq!(
@@ -14650,7 +14731,7 @@ fn a_link_is_written_with_no_border_and_its_target() {
     assert_eq!(page_target.len(), 2);
 
     let mut plan = plan_of_kind(MarkKind::Link, one_quad());
-    plan.marks[0].note = "https://example.com/".to_string();
+    plan.marks[0].note = "https://example.com/".into();
     let (doc, _) = written_link(&plan, &scratch);
     let action = written_annotation(&doc)
         .get(b"A")
@@ -14672,7 +14753,7 @@ fn a_link_that_goes_nowhere_is_refused_rather_than_written() {
     let scratch = Scratch::new("annots-link-refused");
     for note in ["", "javascript:alert(1)", "2"] {
         let mut plan = plan_of_kind(MarkKind::Link, one_quad());
-        plan.marks[0].note = note.to_string();
+        plan.marks[0].note = note.into();
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");
@@ -14698,7 +14779,7 @@ fn a_saved_link_is_read_back_as_a_link_by_the_scan_the_viewer_uses() {
     let scratch = Scratch::new("annots-link-scan");
     for (note, web) in [("1", false), ("https://example.com/path", true)] {
         let mut plan = plan_of_kind(MarkKind::Link, one_quad());
-        plan.marks[0].note = note.to_string();
+        plan.marks[0].note = note.into();
         let source = scratch.join("in.pdf");
         let out = scratch.join("out.pdf");
         std::fs::write(&source, document_with_annots(AnnotShape::Absent)).expect("write fixture");

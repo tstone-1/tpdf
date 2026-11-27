@@ -64,7 +64,7 @@ export function place(host: HTMLElement, element: HTMLElement, at: Anchor): void
 /** A file operation waits for the journal before closing the editor. A string
  * is the refusal to show. The attempted words stay in the editor for a retry. */
 export async function submitPopup(
-  field: HTMLTextAreaElement,
+  field: { readOnly: boolean },
   write: () => unknown,
   refused: () => void,
 ): Promise<void> {

@@ -91,7 +91,7 @@ fn marked(plan: Plan) -> Plan {
             color: [1.0, 0.9, 0.2],
             width: 1.0,
             author: "tpdf".to_string(),
-            note: String::new(),
+            note: Default::default(),
             made: "D:20261119000000Z".to_string(),
         }],
         ..plan

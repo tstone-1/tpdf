@@ -336,7 +336,7 @@ fn reading(
                 color: [0.15, 0.35, 0.9],
                 width: tpdf_lib::docmodel::INK_WIDTH,
                 author: String::new(),
-                note: "the reader typed this".to_string(),
+                note: "the reader typed this".into(),
             },
             save::pdf_date(std::time::SystemTime::now()),
         )
