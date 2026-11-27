@@ -55,6 +55,7 @@
  * recolouring this one.
  */
 
+import { isSaved } from "./savedfields";
 import { CommentFormatting, type CommentField, type CommentStyle } from "./commentformat";
 import type { MarkKind, MarkView } from "./pages";
 import { catalog, message } from "./i18n";
@@ -67,6 +68,10 @@ import {
   type MarkColor,
   type Swatch,
 } from "./markcolors";
+
+export function canRecolorMark(mark: MarkView): boolean {
+  return !isSaved(mark.id) && mark.kind !== "signature" && mark.kind !== "picture";
+}
 
 /** What the popup does on the reader's behalf. The viewer supplies all three. */
 export interface MarkPopupOptions {
@@ -486,23 +491,9 @@ export class MarkPopup {
     this.input.setAttribute("aria-label", label);
     this.plain.placeholder = label;
     this.plain.rows = mark.kind === "field" || mark.kind === "link" ? 1 : 3;
-    // Picking the already selected sidebar row only refocuses its editor.
-    // A pristine editor can still follow undo or a change in the other view.
-    if (was !== mark.id || (!this.hasDraft && !this.input.readOnly)) {
-      const refilled = was === mark.id && this.input.value !== mark.note;
-      this.was = mark.note;
-      if (was !== mark.id || refilled || JSON.stringify(mark.styles ?? []) !== JSON.stringify(this.formatting.styles)) {
-        this.formatting.load(rich ? mark.note : "", rich ? mark.styles : []);
-        if (!rich) this.input.value = mark.note;
-      }
-      if (refilled) this.opts.onDraft(mark.id, mark.note);
-    }
-    this.showColor(mark.color);
-    // A signature and a picture are sized by width and drawn in their own pixels.
-    const raster = mark.kind === "signature" || mark.kind === "picture";
-    this.signatureSize.hidden = !raster;
-    this.syncSignatureSize(mark);
-    for (const button of this.swatches) button.hidden = raster;
+    this.syncMark(mark, was !== mark.id);
+    this.signatureSize.hidden = mark.kind !== "signature" && mark.kind !== "picture";
+    for (const button of this.swatches) button.hidden = !canRecolorMark(mark);
     this.together.hidden = !together;
     this.element.style.display = "block";
     this.place(at);
@@ -528,8 +519,22 @@ export class MarkPopup {
   }
 
   /** Follow journal updates without replacing the note currently being typed. */
-  syncSignatureSize(mark: MarkView): void {
-    if (this.shown === mark.id) this.signatureWidth = (mark.quads[2] ?? 0) - (mark.quads[0] ?? 0);
+  syncMark(mark: MarkView, changedMark = false): void {
+    if (this.shown !== mark.id) return;
+    // Picking the already selected sidebar row only refocuses its editor.
+    // A pristine editor can still follow undo or a change in the other view.
+    const rich = this.input === this.formatting.field;
+    if (changedMark || (!this.hasDraft && !this.input.readOnly)) {
+      const refilled = !changedMark && this.input.value !== mark.note;
+      this.was = mark.note;
+      if (changedMark || refilled || JSON.stringify(mark.styles ?? []) !== JSON.stringify(this.formatting.styles)) {
+        this.formatting.load(rich ? mark.note : "", rich ? mark.styles : []);
+        if (!rich) this.input.value = mark.note;
+      }
+      if (refilled) this.opts.onDraft(mark.id, mark.note);
+    }
+    this.showColor(mark.color);
+    this.signatureWidth = (mark.quads[2] ?? 0) - (mark.quads[0] ?? 0);
   }
 
   /**

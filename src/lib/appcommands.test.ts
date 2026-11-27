@@ -2770,3 +2770,17 @@ describe("edit.reversePages", () => {
     }
   });
 });
+
+it("uses the registry language for layout, swatch and nib titles and their English aliases", () => {
+  const registry = new CommandRegistry();
+  registerAppCommands(registry, {} as AppActions, "de-DE");
+  for (const [id, german, english] of [
+    ["view.facing", "Seiten: Doppelseiten", "pages: facing"],
+    ["edit.color.green", "Farbe: grün", "color: green"],
+    ["edit.nib.broad", "Linienstärke: breit", "nib: broad"],
+  ] as const) {
+    const command = registry.find(id);
+    expect(command?.title).toBe(german);
+    expect(command?.keywords).toContain(english);
+  }
+});

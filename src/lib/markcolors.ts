@@ -46,7 +46,7 @@ import type { MarkKind } from "./pages";
  * module load: the language is fixed at startup, so `Swatch.name` stays a plain
  * string and every caller keeps reading `entry.name`.
  */
-const TEXT = catalog({
+export const swatchNames = catalog({
   "en-US": {
     default: "default",
     yellow: "yellow",
@@ -73,7 +73,7 @@ export type MarkColor = readonly [number, number, number];
 /** One entry in the swatch row. */
 export interface Swatch {
   /** The part of the command id after `edit.color.`, and the session's word for it. */
-  readonly id: string;
+  readonly id: keyof ReturnType<typeof swatchNames>;
   /** What a reader sees, lowercase --- it appears mid-sentence in a command title. */
   readonly name: string;
   /**
@@ -158,7 +158,7 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
  * holding yellow here would quietly turn every underline yellow the first time
  * somebody used it to undo a choice.
  */
-export const DEFAULT_SWATCH: Swatch = { id: "default", name: TEXT().default, rgb: null };
+export const DEFAULT_SWATCH: Swatch = { id: "default", name: swatchNames().default, rgb: null };
 
 /**
  * The swatches, in the order the row draws them.
@@ -176,12 +176,12 @@ export const DEFAULT_SWATCH: Swatch = { id: "default", name: TEXT().default, rgb
  */
 export const PALETTE: readonly Swatch[] = [
   DEFAULT_SWATCH,
-  { id: "yellow", name: TEXT().yellow, rgb: MARK_COLORS.highlight },
-  { id: "green", name: TEXT().green, rgb: [0.35, 0.8, 0.35] },
-  { id: "blue", name: TEXT().blue, rgb: [0.3, 0.6, 0.95] },
-  { id: "pink", name: TEXT().pink, rgb: [0.95, 0.45, 0.75] },
-  { id: "orange", name: TEXT().orange, rgb: [1, 0.6, 0.15] },
-  { id: "red", name: TEXT().red, rgb: MARK_COLORS.underline },
+  { id: "yellow", name: swatchNames().yellow, rgb: MARK_COLORS.highlight },
+  { id: "green", name: swatchNames().green, rgb: [0.35, 0.8, 0.35] },
+  { id: "blue", name: swatchNames().blue, rgb: [0.3, 0.6, 0.95] },
+  { id: "pink", name: swatchNames().pink, rgb: [0.95, 0.45, 0.75] },
+  { id: "orange", name: swatchNames().orange, rgb: [1, 0.6, 0.15] },
+  { id: "red", name: swatchNames().red, rgb: MARK_COLORS.underline },
 ];
 
 /** The swatch with this id, or `undefined`. */

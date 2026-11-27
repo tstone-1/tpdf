@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarkPopup, TOGETHER } from "./markpopup";
+import { SAVED_BASE } from "./savedfields";
 import { DEFAULT_SWATCH, PALETTE } from "./markcolors";
 import { pageId, type MarkView } from "./pages";
 import type { Anchor } from "./popup";
@@ -178,6 +179,24 @@ describe("MarkPopup", () => {
     if (!found) throw new Error(`no swatch called ${name}`);
     return found;
   }
+
+  it("offers color on a new field and hides every swatch on a saved field", () => {
+    const note = popup();
+    note.show(mark({ kind: "field", id: 5 }), anchor(), false);
+    expect(note.colorButtons.every(button => !button.hidden)).toBe(true);
+    note.show(mark({ kind: "field", id: SAVED_BASE }), anchor(), false);
+    expect(note.colorButtons.every(button => button.hidden)).toBe(true);
+  });
+
+  it("updates the color while preserving a draft across a model update", () => {
+    const note = popup();
+    const original = mark({ id: 4, note: "saved" });
+    note.show(original, anchor(), false);
+    note.field.value = "typing";
+    note.syncMark({ ...original, note: "reverted", color: [0.35, 0.8, 0.35] });
+    expect(note.text).toBe("typing");
+    expect(swatch(note, "yellow").getAttribute("aria-pressed")).toBe("false");
+  });
 
   it("offers every colour a mark can be, and not the default", () => {
     // The row is six of `PALETTE`'s seven. The seventh means "each kind's own

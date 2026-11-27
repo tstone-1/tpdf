@@ -118,7 +118,7 @@ export interface ScreenPoint {
   clientX: number;
   clientY: number;
 }
-import { MarkPopup } from "./markpopup";
+import { canRecolorMark, MarkPopup } from "./markpopup";
 import { MarkDrafts } from "./markdraft";
 import { ArrangeBar, type BarCommand } from "./arrangebar";
 import { colorFor, sameColor, type MarkColor } from "./markcolors";
@@ -1679,7 +1679,8 @@ export class Viewer {
   private lastGesture = 0;
 
   /**
-   * The rectangle being dragged, in the slot's laid-out space.
+   * Box corners use laid-out coordinates. Stroke vertices use file coordinates
+   * so pending ink and polygon corners survive a change of view.
    *
    * Held rather than recomputed from the drag, because the overlay paints it
    * once a frame and the drag reports client coordinates --- which mean
@@ -1688,6 +1689,7 @@ export class Viewer {
    */
   private drawing: {
     slot: number;
+    fileSpace: boolean;
     from: Point;
     to: Point;
     /**
@@ -2294,13 +2296,16 @@ export class Viewer {
         if (this.inking && this.inking.slot !== page) return false;
         // On the page for `move`'s reason: a press in the gap below a page
         // answers for that page with a point just past its edge.
-        const start = keepOnPage({ x, y }, this.laidSize(page));
-        if (hasStrokes(this.tool.mark)) {
+        const laid = keepOnPage({ x, y }, this.laidSize(page));
+        const fileSpace = hasStrokes(this.tool.mark);
+        const start = fileSpace ? this.filePointOn(page, laid) : laid;
+        if (fileSpace) {
           const id = this.pages.idOf(page);
           if (id !== undefined) void this.preparePageUnit(page, id);
         }
         this.drawing = {
           slot: page,
+          fileSpace,
           from: start,
           to: { ...start },
           points: [{ ...start }],
@@ -2328,7 +2333,8 @@ export class Viewer {
         // by `keepOnPage` rather than silently moving. The clamp is here and
         // not only in `boxQuad` because ink, line and corner points reach the
         // model as they are, and nothing after this keeps them on the page.
-        const { x, y } = keepOnPage(this.pointOn(live.slot, at), this.laidSize(live.slot));
+        const laid = keepOnPage(this.pointOn(live.slot, at), this.laidSize(live.slot));
+        const { x, y } = live.fileSpace ? this.filePointOn(live.slot, laid) : laid;
         live.to = { x, y };
         // **Sampled, not every event.** A pointer reports at the display's rate
         // and a slow hand produces dozens of points inside one millimetre, none
@@ -2453,10 +2459,7 @@ export class Viewer {
           if (id === undefined) return;
           if (this.tool.kind === "draw") this.tool = NO_TOOL;
           this.showCursor();
-          const ends = [live.from, live.to].flatMap((point) => {
-            const mapped = this.fileRectOn(live.slot, { left: point.x, top: point.y, right: point.x, bottom: point.y });
-            return [mapped[0], mapped[1]];
-          });
+          const ends = [live.from.x, live.from.y, live.to.x, live.to.y];
           this.opts.onDrawn?.(kind, id, { quads: [], strokes: [ends], width: this.nib }, null);
           return;
         }
@@ -4168,6 +4171,7 @@ export class Viewer {
         this.cancelDraw();
       }
       else if (this.popup.openId !== null) this.closeComment();
+      else if (this.markNote.openId !== null) this.closeMark();
       else if (this.focusedLink) this.clearLinkFocus();
       else if (this.selection) this.clearSelection();
       else if (this.graphic) this.clearGraphic();
@@ -6212,17 +6216,7 @@ export class Viewer {
       id,
       {
         quads: [],
-        strokes: made.strokes.map((stroke) =>
-        stroke.flatMap((point) => {
-          const mapped = this.fileRectOn(made.slot, {
-            left: point.x,
-            top: point.y,
-            right: point.x,
-            bottom: point.y,
-          });
-          return [mapped[0], mapped[1]];
-        }),
-        ),
+        strokes: made.strokes.map((stroke) => stroke.flatMap(({ x, y }) => [x, y])),
         width: this.nib,
       },
       // Never a stamp: ink and corners are finished with Enter, a stamp with a drag.
@@ -6289,7 +6283,9 @@ export class Viewer {
 
   /** The rectangle being dragged, in the page's laid-out space. For the harness. */
   get drawPreview(): { slot: number; from: Point; to: Point } | null {
-    return this.drawing;
+    const live = this.drawing;
+    if (!live?.fileSpace) return live;
+    return { slot: live.slot, from: this.laidPointOn(live.slot, live.from), to: this.laidPointOn(live.slot, live.to) };
   }
 
   /**
@@ -6711,7 +6707,7 @@ export class Viewer {
     if (id === null) return false;
     const mark = this.markById(id);
     if (!mark) return false;
-    if (mark.kind === "signature" || mark.kind === "picture") return false;
+    if (!canRecolorMark(mark)) return false;
     const want = colorFor(mark.kind, color);
     if (sameColor(mark.color, want)) return false;
     this.opts.onMarkRecolor?.(id, want);
@@ -7771,7 +7767,7 @@ export class Viewer {
     for (const id of this.signatureImages.keys()) if (!live.has(id)) this.signatureImages.delete(id);
     this.pictures.keep(live);
     const open = marks.find((mark) => mark.id === this.markNote.openId);
-    if (open) this.markNote.syncSignatureSize(open);
+    if (open) this.markNote.syncMark(open);
     // A text box resized under its open box has a draft wrapped for the old width.
     if (open) this.drafts.refit(open);
     // A picked mark that was removed or undone is no longer picked.
@@ -8666,7 +8662,7 @@ export class Viewer {
     if (live && live.slot === slot) strokes.push(live.points);
 
     for (const stroke of strokes) {
-      const [first, ...rest] = stroke;
+      const [first, ...rest] = stroke.map((point) => this.laidPointOn(slot, point));
       if (!first) continue;
       ctx.beginPath();
       ctx.moveTo(
@@ -8708,10 +8704,13 @@ export class Viewer {
     ctx.lineJoin = "round";
     strokeSegments(
       ctx,
-      points.map((point) => ({
-        x: (origin.left + point.x * this.zoom) * dpr,
-        y: (origin.top + point.y * this.zoom - this.scrollTop) * dpr,
-      })),
+      points.map((point) => {
+        const laid = this.laidPointOn(slot, point);
+        return {
+          x: (origin.left + laid.x * this.zoom) * dpr,
+          y: (origin.top + laid.y * this.zoom - this.scrollTop) * dpr,
+        };
+      }),
       kind,
       arrowHead(width, unit) * this.zoom * dpr,
     );

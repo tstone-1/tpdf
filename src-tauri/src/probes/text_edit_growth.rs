@@ -152,14 +152,12 @@ struct Page {
     dictionary: Object,
 }
 
-thread_local! {
-    /// The page content an accepted trial wrote, hashed, when `TPDF_PROBE_DIGESTS`
-    /// is set: two probes' outputs can then be compared as well as their verdicts.
-    static LAST_DIGEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-}
-
 /// Run `textedit::write` and put the document back exactly as it was.
-fn trial(doc: &mut lopdf::Document, page: &Page, change: textedit::Change) -> Result<(), String> {
+fn trial(
+    doc: &mut lopdf::Document,
+    page: &Page,
+    change: textedit::Change,
+) -> Result<Option<String>, String> {
     let max_id = doc.max_id;
     // A wrap rewrites the rectangle of each link it moves, which is an object
     // the document already had: dropping the new objects and restoring the
@@ -189,32 +187,25 @@ fn trial(doc: &mut lopdf::Document, page: &Page, change: textedit::Change) -> Re
         .filter(|(_, object)| object.as_dict().is_ok_and(|dict| dict.has(b"ActualText")))
         .map(|(id, object)| (*id, object.clone()))
         .collect();
-    let result = textedit::write(doc, &[change]);
-    if result.is_ok() {
-        if std::env::var_os("TPDF_PROBE_DIGESTS").is_some() {
-            use sha2::Digest as _;
-            let content = doc.get_page_content(page.id);
-            LAST_DIGEST.with(|last| {
-                *last.borrow_mut() = Some(
-                    sha2::Sha256::digest(&content)
-                        .iter()
-                        .map(|byte| format!("{byte:02x}"))
-                        .collect(),
-                )
-            });
-        }
-        doc.objects.retain(|id, _| id.0 <= max_id);
-        doc.objects.insert(page.id, page.dictionary.clone());
-        doc.objects.extend(annotations);
-        doc.objects.extend(spoken);
-        doc.max_id = max_id;
-    }
-    result
+    textedit::write(doc, &[change])?;
+    let digest = std::env::var_os("TPDF_PROBE_DIGESTS").map(|_| {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(doc.get_page_content(page.id))
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    });
+    doc.objects.retain(|id, _| id.0 <= max_id);
+    doc.objects.insert(page.id, page.dictionary.clone());
+    doc.objects.extend(annotations);
+    doc.objects.extend(spoken);
+    doc.max_id = max_id;
+    Ok(digest)
 }
 
-fn verdict(result: &Result<(), String>) -> Value {
+fn verdict<T>(result: &Result<T, String>) -> Value {
     match result {
-        Ok(()) => Value::String("ok".into()),
+        Ok(_) => Value::String("ok".into()),
         Err(reason) => Value::String(reason.clone()),
     }
 }
@@ -231,7 +222,7 @@ impl Agreement {
         &mut self,
         worker: &mut Worker,
         change: &textedit::Change,
-        local: &Result<(), String>,
+        local: &Result<Option<String>, String>,
         label: &str,
     ) -> Result<(), String> {
         self.seen += 1;
@@ -244,7 +235,7 @@ impl Agreement {
             changes: vec![change.clone()],
         })?;
         let remote = if answer.ok { Ok(()) } else { Err(answer.error) };
-        if &remote != local {
+        if remote.as_ref() != local.as_ref().map(|_| &()) {
             self.disagreements.push(json!({
                 "page": change.page, "operator": change.operator, "trial": label,
                 "local": verdict(local), "worker": verdict(&remote),
@@ -364,7 +355,7 @@ pub(super) fn run(source: &Path, agree_every: usize) -> Result<(), String> {
                     let outcome = trial(&mut doc, &page, edit.clone());
                     agreement.check(&mut worker, &edit, &outcome, label)?;
                     result.insert(mode.into(), verdict(&outcome));
-                    if let Some(digest) = LAST_DIGEST.with(|last| last.borrow_mut().take()) {
+                    if let Ok(Some(digest)) = outcome {
                         result.insert(format!("{mode}_digest"), json!(digest));
                     }
                 }
@@ -386,10 +377,12 @@ pub(super) fn run(source: &Path, agree_every: usize) -> Result<(), String> {
                             _ => break outcome,
                         }
                     };
-                    result.insert(
-                        "widened".into(),
-                        json!({"verdict": verdict(&outcome), "width": width, "steps": steps}),
-                    );
+                    let mut widened =
+                        json!({"verdict": verdict(&outcome), "width": width, "steps": steps});
+                    if let Ok(Some(digest)) = outcome {
+                        widened["digest"] = json!(digest);
+                    }
+                    result.insert("widened".into(), widened);
                 }
                 record.insert(label.into(), Value::Object(result));
             }
@@ -436,7 +429,7 @@ pub(super) fn run(source: &Path, agree_every: usize) -> Result<(), String> {
             return Err(format!("page {index}: a trial was not undone"));
         }
         pages.push(
-            json!({"page": index, "status": "editable", "runs": mapped.runs.len(),
+            json!({"page": index, "status": run_status(&mapped), "runs": mapped.runs.len(),
             "blank": blank, "tried": runs}),
         );
     }
@@ -472,6 +465,9 @@ pub(super) fn request(
         .iter()
         .find(|run| run.operator == operator)
         .ok_or("no run with that operator")?;
+    if run.text.trim().is_empty() {
+        return Err("a blank text run has no growth trial".into());
+    }
     let replacement = match label {
         "control" => control(&run.text),
         "shrink25" => shrunk(&run.text),

@@ -247,3 +247,14 @@ describe("spoken", () => {
     expect(parse("a {{literal}} and {name}").segments).toEqual(["a {literal} and ", ""]);
   });
 });
+
+it.each(["de-DE", "de-DE-formal"] as const)("translates every hidden-text survey qualification in %s", locale => {
+  const limits = "; 40 characters could not be judged; 2 pages without text not checked (3, 4); 1 page too large to compare (9).";
+  const translated = "; 40 Zeichen konnten nicht beurteilt werden; 2 Seiten ohne Text nicht geprüft (3, 4); 1 Seite zu groß zum Vergleichen (9).";
+  for (const [headline, german] of [
+    ["No hidden text found: 1200 characters on 6 pages compared with the rendered page", "Kein verborgener Text gefunden: 1200 Zeichen auf 6 Seiten mit dem Seitenbild verglichen"],
+    ["1 passage is in the file and not visible on the page, on 1 page", "1 Textstelle steht in der Datei und ist auf der Seite nicht sichtbar, auf 1 Seite"],
+  ] as const) {
+    expect(spoken(headline + limits, locale)).toBe(german + translated);
+  }
+});

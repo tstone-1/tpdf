@@ -1040,6 +1040,26 @@ function stroke(at = -1, which = 0): number[] {
 }
 
 describe("drawing freehand", () => {
+  it("preserves each stroke in file coordinates across a turn between strokes", async () => {
+    const viewer = build();
+    await settle();
+    viewer.armDraw("ink");
+    const horizontal = [{ x: 100, y: 100 }, { x: 300, y: 100 }];
+    scribble(horizontal);
+    viewer.rotateBy(1);
+    await settle();
+    scribble(horizontal);
+    enter();
+    expect(drawn[0]?.shape.strokes).toHaveLength(2);
+    const first = stroke(-1, 0);
+    const second = stroke(-1, 1);
+    expect(first[1]).toBeCloseTo(first[3]!);
+    expect(Math.abs(first[2]! - first[0]!)).toBeGreaterThan(50);
+    expect(second[0]).toBeCloseTo(second[2]!);
+    expect(Math.abs(second[3]! - second[1]!)).toBeGreaterThan(50);
+    viewer.destroy();
+  });
+
   it("commits strokes and no rectangle", async () => {
     // **Both halves, and the second is the one that can go wrong quietly.** A
     // drawing that also carried a quad would be refused by the model rather
@@ -1947,6 +1967,24 @@ describe("drawing a line or an arrow", () => {
 });
 
 describe("drawing a polygon or connected lines", () => {
+  it.each(["polygon", "polyline"] as const)("keeps earlier %s corners in place across a turn", async kind => {
+    const viewer = build();
+    await settle();
+    viewer.armDraw(kind);
+    click(viewer.screenPoint(0, 100, 120));
+    click(viewer.screenPoint(0, 230, 120));
+    viewer.rotateBy(1);
+    await settle();
+    click(viewer.screenPoint(0, 300, 250));
+    enter();
+    const points = stroke();
+    expect(points).toHaveLength(6);
+    for (const [index, value] of [100, 120, 230, 120].entries()) {
+      expect(points[index]).toBeCloseTo(value);
+    }
+    viewer.destroy();
+  });
+
   it("places a corner per click and commits them on Enter", async () => {
     const viewer = build();
     await settle();

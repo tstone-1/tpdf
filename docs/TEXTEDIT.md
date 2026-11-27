@@ -1106,6 +1106,8 @@ past its advance refused a wrap that one word fewer on the line would have made
 (`textedit_a_wrapped_line_breaks_before_a_glyph_whose_ink_leaves_the_box`). One line has
 nowhere to break and is measured by its advance as before. Ordinary wrap opportunities exclude no-break spaces (U+00A0), figure spaces (U+2007) and narrow no-break spaces (U+202F). A word too wide for a whole line still uses the character fallback.
 
+A horizontal push leaves a partly clipped neighbour in place because moving it can expose previously hidden letters. A drawing overlapping the word being pushed, including a short underline, limits its travel.
+
 A wrap that moves a clipped neighbour uses its full ink bounds before applying the destination clip. The pending hit target therefore includes ink newly visible at the destination. To recognize a column, layout counts baselines perpendicular to the text direction in display space, including vertical text.
 
 **Not done.** A kept code whose glyph is a composite of an empty glyph is not proved blank,

@@ -53,6 +53,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
     }
     let mut changes = Vec::new();
     let mut boxes = Vec::new();
+    let mut deletions = Vec::new();
     for (index, edit) in edits.into_iter().enumerate() {
         let mapped = runs(&mut worker, edit.page)?;
         let matches: Vec<_> = mapped
@@ -88,6 +89,9 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         } else {
             edit.replacement
         };
+        if replacement.is_empty() && !run.text.trim().is_empty() {
+            deletions.push((edit.page, run.operator, run.display_rect));
+        }
         changes.push(textedit::Change {
             layout: edit.layout,
             page: edit.page,
@@ -186,6 +190,15 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         if before.len() != preview.len() || (before == preview) == edited {
             return Err("preview changed the wrong pages or no pixels".into());
         }
+        // A change elsewhere on this page cannot prove that the word at the
+        // requested location disappeared, even if that word occurs twice.
+        for (_, operator, rect) in deletions.iter().filter(|(p, _, _)| *p == page as u32) {
+            if !changed_in(&before, &preview, width, height, *rect) {
+                return Err(format!(
+                    "page {page}, operator {operator}: deletion changed no pixels at its target"
+                ));
+            }
+        }
         for (i, (a, b)) in before
             .chunks_exact(4)
             .zip(preview.chunks_exact(4))
@@ -236,35 +249,35 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
             return Err("saved pixels differ from preview".into());
         }
     }
-    for change in plan.text_edits.iter().map(|edit| &edit.change) {
-        let reopened = runs(&mut saved, change.page)?;
-        // A wrapped layout -- one the reader asked for, or one the paragraph
-        // gave a box that met the page edge -- splits the text over several
-        // runs, in reading order. The space a line breaks at is written
-        // nowhere, and where the font has no space glyph the ones inside a
-        // line come back as positions, so whitespace is not compared.
-        let bare = |text: &str| {
-            text.chars()
-                .filter(|c| !c.is_whitespace())
-                .collect::<String>()
-        };
-        let found = if change.layout.is_some() {
-            bare(
-                &reopened
-                    .runs
-                    .iter()
-                    .map(|run| run.text.as_str())
-                    .collect::<String>(),
-            )
-            .contains(&bare(&change.replacement))
-        } else {
-            reopened
-                .runs
+    let edited_pages: std::collections::BTreeSet<_> = plan
+        .text_edits
+        .iter()
+        .map(|edit| edit.change.page)
+        .collect();
+    for page in edited_pages {
+        let baseline = runs(&mut worker, page)?;
+        let reopened = runs(&mut saved, page)?;
+        let expected = baseline.runs.iter().map(|run| {
+            plan.text_edits
                 .iter()
-                .any(|run| run.text == change.replacement)
-        };
-        if !found {
-            return Err("replacement missing after reopening".into());
+                .find(|edit| edit.change.page == page && edit.change.operator == run.operator)
+                .map_or(run.text.as_str(), |edit| edit.change.replacement.as_str())
+        });
+        if !same_page_text(expected, reopened.runs.iter().map(|run| run.text.as_str())) {
+            return Err(format!(
+                "page {page}: reopened text differs at an edited or surrounding run"
+            ));
+        }
+        // A patch fits into a single show and preserves its whitespace exactly.
+        for edit in plan
+            .text_edits
+            .iter()
+            .map(|edit| &edit.change)
+            .filter(|change| change.page == page && change.layout.is_none())
+        {
+            if !reopened.runs.iter().any(|run| run.text == edit.replacement) {
+                return Err(format!("page {page}: exact patch missing after reopening"));
+            }
         }
     }
     if tpdf_lib::fingerprint::Fingerprint::of(source)? != fingerprint {
@@ -272,4 +285,61 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
     }
     println!("[PASS] {} edits; {} pages; preview/save pixels agree; adjacent pixels and original input unchanged", plan.text_edits.len(), page_count);
     Ok(())
+}
+
+fn changed_in(before: &[u8], after: &[u8], width: u16, height: u16, rect: [f32; 4]) -> bool {
+    let [left, top, right, bottom] = rect;
+    let x0 = (left.floor() as usize).min(width.into());
+    let x1 = (right.ceil() as usize).min(width.into());
+    let y0 = (top.floor() as usize).min(height.into());
+    let y1 = (bottom.ceil() as usize).min(height.into());
+    x0 < x1
+        && (y0..y1).any(|y| {
+            let row = y * usize::from(width);
+            let range = 4 * (row + x0)..4 * (row + x1);
+            before[range.clone()] != after[range]
+        })
+}
+
+// Wrapping can split a show and represent spaces by positioning. Compare the
+// complete sequence in content order, including the text on both sides of an edit.
+fn same_page_text<'a, 'b>(
+    expected: impl Iterator<Item = &'a str>,
+    saved: impl Iterator<Item = &'b str>,
+) -> bool {
+    expected
+        .flat_map(str::chars)
+        .filter(|c| !c.is_whitespace())
+        .eq(saved.flat_map(str::chars).filter(|c| !c.is_whitespace()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{changed_in, same_page_text};
+
+    #[test]
+    fn changing_the_second_location_does_not_prove_the_first_was_erased() {
+        let before = [0; 24];
+        let mut after = before;
+        after[20] = 255;
+        assert!(changed_in(&before, &after, 3, 2, [2., 1., 3., 2.]));
+        assert!(!changed_in(&before, &after, 3, 2, [0., 1., 2., 2.]));
+    }
+
+    #[test]
+    fn a_second_edit_cannot_mask_a_dropped_deletion_or_a_misplaced_replacement() {
+        let expected = ["", "middle", "new words"];
+        assert!(same_page_text(
+            expected.into_iter(),
+            ["middle", "new", "words"].into_iter()
+        ));
+        assert!(!same_page_text(
+            expected.into_iter(),
+            ["old", "middle", "new words"].into_iter()
+        ));
+        assert!(!same_page_text(
+            expected.into_iter(),
+            ["new words", "middle"].into_iter()
+        ));
+    }
 }

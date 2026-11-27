@@ -34,7 +34,7 @@ ROWS: list[Mutation] = []
 #: should find out that it was measured, not overlooked.
 ROWS += [
     Mutation('locale: ignore English region', 'src/lib/i18n.ts', 'COLOUR_REGIONS.has(locale.region ?? "US")', 'false', 'resolves ["en-GB","en-US"] to en-GB'),
-    Mutation('locale: hardcode color command spelling', 'src/lib/appcommands.ts', '${message("color", locale)}: ${entry.name}', 'Colour: ${entry.name}', 'localizes command titles but preserves command ids in en-US'),
+    Mutation('locale: hardcode color command spelling', 'src/lib/appcommands.ts', '${message("color", locale)}: ${swatchNames(locale)[entry.id]}', 'Colour: ${swatchNames(locale)[entry.id]}', 'localizes command titles but preserves command ids in en-US'),
     Mutation('toolbar: omit color swatches', 'src/lib/toolbar.ts', '      swatch: entry,', '', 'offers a visible swatch for every color using the annotation palette'),
     Mutation('toolbar: offer the colour and width while erasing', 'src/lib/toolbar.ts', '  if (tool.erasing) return { color: false, width: false };', '', 'offers neither while erasing, even if the pen is still reported'),
     Mutation('toolbar: offer a width to a comment', 'src/lib/toolbar.ts', 'const STROKED: readonly ArmedTool[] = ["square", "ellipse", "ink", "line", "arrow", "polygon", "polyline"];', 'const STROKED: readonly ArmedTool[] = ["square", "ellipse", "ink", "line", "arrow", "polygon", "polyline", "note"];', 'offers each tool what it uses'),
@@ -285,7 +285,7 @@ ROWS += [
     Mutation("signature field: let one be dragged as small as a text field", "src/lib/fieldnames.ts", "kind === \"signature\" ? 24 : 8;", "8;", "is a signature field under the next name of its kind, which is at least 24 points a side"),
     Mutation("signature field: show a saved one as a text field", "src/lib/savedfields.ts", "      : widget.control.kind === \"signature\" ? \"signature\"\n", "", "shows each field on the page it is on, under an id of its own, with its kind and name"),
     Mutation("signature field: refuse to copy one", "src/lib/duplicate.ts", "    case \"signature\":\n      // A copy is a new place for a signature, whether or not this one is signed.\n      return \"signature\";\n", "", "is an empty signature field for a signature field, signed or not"),
-    Mutation("sign a field: offer a field that holds a signature", "src/lib/signfield.ts", "  return widget.name !== \"\" && widget.control.kind === \"signature\" && !widget.control.signed;", "  return widget.name !== \"\" && widget.control.kind === \"signature\";", "are the ones that hold no signature, in the form's order, each in one place"),
+    Mutation("sign a field: offer a field that holds a signature", "src/lib/signfield.ts", "  return !widget.read_only && widget.name !== \"\" && widget.control.kind === \"signature\" && !widget.control.signed;", "  return !widget.read_only && widget.name !== \"\" && widget.control.kind === \"signature\";", "are the ones that hold no signature, in the form's order, each in one place"),
     Mutation("sign a field: offer a field shown in several places", "src/lib/signfield.ts", "counts.get(widget.name) === 1", "counts.get(widget.name) !== undefined", "are the ones that hold no signature, in the form's order, each in one place"),
     Mutation("sign a field: sign a field of another kind where it is", "src/lib/signfield.ts", "  if (page === undefined || !isEmptySignature(widget)) return null;", "  if (page === undefined) return null;", "are not offered on a page the file does not show, nor when signed or of another kind"),
     Mutation("sign a field: ask for a drag beside the field", "src/lib/signing.ts", "    const placed = field ? { page: field.page, rect: field.rect } : await shell.place();", "    const placed = await shell.place();", "draws a visible one in the field, where the field is, and drags nothing"),
@@ -1344,8 +1344,8 @@ ROWS += [
         # untried corpus hides.
         "viewer: leave a drawing's points unmapped into the file's space",
         "src/lib/viewer.ts",
-        "          const mapped = this.fileRectOn(made.slot, {",
-        "          const mapped = [point.x, point.y] as const;\n          void this.fileRectOn(made.slot, {",
+        "live.fileSpace ? this.filePointOn(live.slot, laid) : laid",
+        "laid",
         "puts the points back in the file's space on a turned page",
     ),
     Mutation(
@@ -1395,7 +1395,8 @@ ROWS += [
         "src/lib/viewer.ts",
         # The box's move, measured on its own page and clamped to it; the line
         # after it, which samples for ink, keeps the anchor the box's own.
-        "        const { x, y } = keepOnPage(this.pointOn(live.slot, at), this.laidSize(live.slot));\n"
+        "        const laid = keepOnPage(this.pointOn(live.slot, at), this.laidSize(live.slot));\n"
+        "        const { x, y } = live.fileSpace ? this.filePointOn(live.slot, laid) : laid;\n"
         "        live.to = { x, y };\n"
         "        // **Sampled, not every event.**",
         # **`x` and `y` are destructured here and read below**, by the ink

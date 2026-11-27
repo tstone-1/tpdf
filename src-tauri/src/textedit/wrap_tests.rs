@@ -1716,18 +1716,25 @@ fn an_underline_moves_with_its_line() {
     // Under text the wrap cuts, `ONCE AND` to the end of the edit's line and
     // `DONE` to the next (99.2 to 192.8 at 186): the pieces go different
     // distances, and no one distance is the underline's.
-    let cut = tagged(
-        &format!(
-            "0 g 99.2 184 93.6 0.8 re f {}",
-            content(52., "").replace(
-                &format!("({WIDEST}) Tj EMC"),
-                "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ EMC",
-            )
-        ),
-        &[&[0, 1, 2], &[3]],
-    );
-    let error = refusal(&cut, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SECOND AND");
-    assert!(error.contains("a drawing or an annotation"), "{error}");
+    // Within the run, the horizontal push already refuses. Just below it,
+    // the push reaches the page edge and the wrap checks the split underline.
+    for (y, reason) in [
+        (184, "a picture or a drawing"),
+        (182, "a drawing or an annotation"),
+    ] {
+        let cut = tagged(
+            &format!(
+                "0 g 99.2 {y} 93.6 0.8 re f {}",
+                content(52., "").replace(
+                    &format!("({WIDEST}) Tj EMC"),
+                    "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ EMC",
+                )
+            ),
+            &[&[0, 1, 2], &[3]],
+        );
+        let error = refusal(&cut, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SECOND AND");
+        assert!(error.contains(reason), "y={y}: {error}");
+    }
     // Only a painted path is moved: an image stretched to the same rule is
     // not one the writer can move, and still refuses.
     let mut image = underlined("q 21.6 0 0 0.8 20 170 cm /Im Do Q", &format!("({LAST}) Tj"));

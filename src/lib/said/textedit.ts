@@ -533,6 +533,38 @@ export default {
 
 /** The entries above that say "du", addressing the reader with "Sie" instead. */
 export const sie = {
+  "The table states its bounds, and this text would leave them. Reduce the box or font size to keep the text inside.":
+    "Die Tabelle legt ihre Grenzen fest, und dieser Text würde sie verlassen. Verkleinern Sie den Kasten oder die Schrift, damit der Text darin bleibt.",
+  "There is no room for more text on this line: other text follows it. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text: Danach folgt anderer Text. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room for more text on this line: the text after it cannot be moved. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text: Der Text danach lässt sich nicht verschieben. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room for more text on this line: a picture or a drawing follows it. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text: Danach folgt ein Bild oder eine Zeichnung. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room for more text on this line: it reaches the edge of the page. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text: Sie reicht bis an den Seitenrand. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room for more text on this line: the document clips the space after it. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text: Das Dokument beschneidet den Raum dahinter. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room for more text on this line: the table states its bounds, and the text would leave them. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text: Die Tabelle legt ihre Grenzen fest, und der Text würde sie verlassen. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room for more text on this line: it reaches the next column. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text: Sie reicht bis an die nächste Spalte. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room to keep this line centred. Shorten the text or reduce the font size.":
+    "Es ist kein Platz, um diese Zeile zentriert zu halten. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "Text exceeds the box height. Enlarge the box or reduce the font size.":
+    "Der Text ist höher als der Kasten. Vergrößern Sie den Kasten oder verkleinern Sie die Schrift.",
+  "The document clips this area. Reduce the box or font size to keep the text visible.":
+    "Das Dokument beschneidet diesen Bereich. Verkleinern Sie den Kasten oder die Schrift, damit der Text sichtbar bleibt.",
+  "The replacement needs too many font outlines; shorten the text":
+    "Der Ersatz braucht zu viele Schriftumrisse; kürzen Sie den Text",
+  "There is no room for more text on this line, and this paragraph cannot wrap: its lines would move onto what is below it. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text, und dieser Absatz kann nicht umbrechen: Seine Zeilen würden auf das rücken, was darunter steht. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room for more text on this line, and this paragraph cannot wrap: part of it below cannot be moved. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text, und dieser Absatz kann nicht umbrechen: Ein Teil darunter lässt sich nicht verschieben. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room for more text on this line, and this paragraph cannot wrap: its lines would move out of line with the text beside them. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text, und dieser Absatz kann nicht umbrechen: Seine Zeilen würden aus der Flucht mit dem Text daneben geraten. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
+  "There is no room for more text on this line, and this paragraph cannot wrap: a drawing or an annotation is placed over the lines that would move. Shorten the text or reduce the font size.":
+    "In dieser Zeile ist kein Platz für mehr Text, und dieser Absatz kann nicht umbrechen: Über den Zeilen, die sich verschieben würden, liegt eine Zeichnung oder eine Anmerkung. Kürzen Sie den Text oder verkleinern Sie die Schrift.",
   "This font shows spaces as gaps between words; use single spaces between words":
     "Diese Schrift zeigt Leerzeichen als Lücken zwischen Wörtern; setzen Sie nur einfache Leerzeichen zwischen Wörter",
   "A centred line cannot be wrapped yet. Keep the text on one line.":

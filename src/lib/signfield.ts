@@ -23,7 +23,7 @@ export interface SignTarget {
 
 /** Only a named empty signature field can be addressed by the signing worker. */
 export function isEmptySignature(widget: FormWidget): boolean {
-  return widget.name !== "" && widget.control.kind === "signature" && !widget.control.signed;
+  return !widget.read_only && widget.name !== "" && widget.control.kind === "signature" && !widget.control.signed;
 }
 
 // Scans are replaced on reopen. Pending edits live outside the scanned form.

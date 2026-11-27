@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { markWalk, PageMap, pageId, unedited, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
+import { SAVED_BASE } from "./savedfields";
 import { Viewer } from "./viewer";
 import { INK_WIDTH } from "./markband";
 
@@ -556,4 +557,29 @@ describe("the mark index the frame path draws from", () => {
 
     viewer.destroy();
   });
+});
+
+it("updates a pristine open note on undo and closes it on Escape from the page", async () => {
+  const original = { ...mark(4, 1, 100), note: "second" };
+  const viewer = build([original]);
+  await settle();
+  expect(viewer.stepMark(1)).toBe(true);
+  expect(viewer.markNoteText).toBe("second");
+  viewer.setMarks([{ ...original, note: "first" }]);
+  expect(viewer.markNoteText).toBe("first");
+  dom.root.dispatch("keydown", key("Escape", "page"));
+  expect(viewer.markOpen).toBe(-1);
+  viewer.destroy();
+});
+
+it("declines a palette color on saved fields and accepts it on new fields", async () => {
+  const saved = { ...mark(SAVED_BASE, 1, 100), kind: "field" as const };
+  const placed = { ...saved, id: 4 };
+  const viewer = build([saved, placed]);
+  await settle();
+  viewer.showMark(saved.id, false);
+  expect(viewer.recolorOpenMark([1, 0, 0])).toBe(false);
+  viewer.showMark(placed.id, false);
+  expect(viewer.recolorOpenMark([1, 0, 0])).toBe(true);
+  viewer.destroy();
 });

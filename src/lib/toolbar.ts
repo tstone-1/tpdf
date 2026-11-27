@@ -1,6 +1,6 @@
 import type { CommandRegistry } from "./commands";
-import { PALETTE, type Swatch } from "./markcolors";
-import { NIBS } from "./marknibs";
+import { PALETTE, swatchNames, type Swatch } from "./markcolors";
+import { NIBS, nibNames } from "./marknibs";
 import { catalog, message, UI_LOCALE, type UiLocale } from "./i18n";
 import type { IconName } from "./icons";
 import type { MarkKind } from "./pages";
@@ -246,6 +246,7 @@ export const TOOL_ACTIONS: ToolItem[] = toolActions();
 
 /** The tool row's menus, in `locale`. */
 export function toolGroups(locale: UiLocale = UI_LOCALE): ToolGroup[] {
+  const capitalize = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
   const text = TEXT(locale);
   return [
     {
@@ -377,7 +378,7 @@ export function toolGroups(locale: UiLocale = UI_LOCALE): ToolGroup[] {
       label: message("color", locale),
       items: PALETTE.map((entry) => ({
         id: `edit.color.${entry.id}`,
-        label: entry.name[0]!.toUpperCase() + entry.name.slice(1),
+        label: capitalize(swatchNames(locale)[entry.id]),
         swatch: entry,
       })),
     },
@@ -387,7 +388,7 @@ export function toolGroups(locale: UiLocale = UI_LOCALE): ToolGroup[] {
       icon: "width",
       items: NIBS.map((entry) => ({
         id: `edit.nib.${entry.id}`,
-        label: `${entry.name[0]!.toUpperCase()}${entry.name.slice(1)} (${entry.pt} pt)`,
+        label: `${capitalize(nibNames(locale)[entry.id])} (${entry.pt} pt)`,
       })),
     },
   ];

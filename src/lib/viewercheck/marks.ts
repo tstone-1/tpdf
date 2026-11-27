@@ -165,8 +165,8 @@ const MARK_COLOR_CHECKS: string[] = Object.values(MARK_COLOR_CHECK);
  *
  * **Separate from `markpopup.test.ts`, which drives the same row against a fake
  * DOM.** What that cannot reach is the row in the *shipped* bundle inside a real
- * web view: whether the buttons are laid out at all, whether a `pointerdown` on
- * one reaches its handler through the popup's own press guard, and whether the
+ * web view: whether the buttons are laid out at all, whether a click through the
+ * popup's press guard recolors exactly once, and whether the
  * ring `showColor` writes survives the popup being reopened by the frame loop.
  *
  * The last two checks are the palette's route rather than the pointer's ---
@@ -224,20 +224,14 @@ export async function markColorChecks(viewer: Viewer, edits: string[]): Promise<
     `yellow=${pressed("yellow")}, green=${pressed("green")} on a yellow mark`,
   );
 
-  /** Presses the swatch labelled `name`, as a reader does. */
-  const pressSwatch = (name: string): void => {
-    buttons
-      .find((button) => button.getAttribute("aria-label") === name)
-      ?.dispatchEvent(
-        new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
-      );
-  };
-
+  const greenButton = buttons.find((button) => button.getAttribute("aria-label") === "green");
   edits.length = 0;
-  pressSwatch("green");
+  greenButton?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+  const silentOnPress = edits.length === 0;
+  greenButton?.click();
   check(
     MARK_COLOR_CHECK.sends,
-    edits.join(",") === `color:${mark.id}:${green.rgb.join(",")}`,
+    silentOnPress && edits.join(",") === `color:${mark.id}:${green.rgb.join(",")}`,
     `sent [${edits.join(", ")}]`,
   );
 
@@ -245,7 +239,7 @@ export async function markColorChecks(viewer: Viewer, edits: string[]): Promise<
   // model: the ring is what invites a second press, so the swatch that is
   // already on is the one a reader is most likely to hit twice.
   edits.length = 0;
-  pressSwatch("green");
+  greenButton?.click();
   check(
     MARK_COLOR_CHECK.same,
     edits.length === 0,

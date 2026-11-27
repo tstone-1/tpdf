@@ -512,24 +512,26 @@ fn reach(
         let mut best = (limit - far, kind);
         let span = (rect[axis.cross()], rect[axis.cross() + 2]);
         for (other, kind) in fixed {
+            let start = axis.at(axis.edge(*rect, false));
+            let end = axis.at(axis.edge(*other, true));
             if *kind == Room::Annotation {
                 let cross = axis.cross();
-                if other[cross] >= span.1
-                    || other[cross + 2] <= span.0
-                    || axis.at(axis.edge(*other, true)) <= axis.at(axis.edge(*rect, false))
-                {
+                if other[cross] >= span.1 || other[cross + 2] <= span.0 || end <= start {
                     continue;
                 }
-            } else if !axis.beside(span, *other) || axis.at(axis.edge(*other, true)) <= far {
-                continue;
+            } else {
+                let behind = if *kind == Room::Drawn { start } else { far };
+                if !axis.beside(span, *other) || end <= behind {
+                    continue;
+                }
             }
             // A drawing that starts behind the run holds it -- a frame, a
             // background -- and the run may move as far as it still does; the
             // wrap asks the same of the lines it moves. Anything else that
             // overlaps the run leaves it no room.
             let near = axis.at(axis.edge(*other, false));
-            let room = if *kind == Room::Drawn && near <= axis.at(axis.edge(*rect, false)) {
-                axis.at(axis.edge(*other, true)) - far
+            let room = if *kind == Room::Drawn && near <= start {
+                end - far
             } else {
                 (near - far).max(0.)
             };
@@ -626,7 +628,10 @@ fn pushable(page: &Inspection, run: &Run, other: u32) -> bool {
             })
         })
         && shows.iter().all(|show| {
-            !page.actual_text.contains_key(show) && !page.compound_run_clips.contains_key(show)
+            // A stationary clip can reveal different letters when the run moves.
+            !page.actual_text.contains_key(show)
+                && !page.compound_run_clips.contains_key(show)
+                && !page.unclipped.contains_key(show)
         })
 }
 

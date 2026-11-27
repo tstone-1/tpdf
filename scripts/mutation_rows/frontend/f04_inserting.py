@@ -271,8 +271,8 @@ ROWS += [
         # they could not tell apart by their effect.
         "marknibs: give two nibs the same width",
         "src/lib/marknibs.ts",
-        '  { id: "broad", name: TEXT().broad, pt: 5 },',
-        '  { id: "broad", name: TEXT().broad, pt: 1 },',
+        '  { id: "broad", name: nibNames().broad, pt: 5 },',
+        '  { id: "broad", name: nibNames().broad, pt: 1 },',
         "goes from thinnest to thickest, with no two the same",
     ),
     Mutation(
@@ -282,8 +282,8 @@ ROWS += [
         # with nothing on either side saying so.
         "marknibs: offer a nib past what the backend accepts",
         "src/lib/marknibs.ts",
-        '  { id: "marker", name: TEXT().marker, pt: 10 },',
-        '  { id: "marker", name: TEXT().marker, pt: 40 },',
+        '  { id: "marker", name: nibNames().marker, pt: 10 },',
+        '  { id: "marker", name: nibNames().marker, pt: 40 },',
         "offers every one inside the range the backend clamps to",
     ),
     Mutation(
@@ -293,8 +293,8 @@ ROWS += [
         # does not match them.
         "marknibs: write the default nib as a number instead of the constant",
         "src/lib/marknibs.ts",
-        '  { id: "medium", name: TEXT().medium, pt: INK_WIDTH },',
-        '  { id: "medium", name: TEXT().medium, pt: 2.6 },',
+        '  { id: "medium", name: nibNames().medium, pt: INK_WIDTH },',
+        '  { id: "medium", name: nibNames().medium, pt: 2.6 },',
         "holds the default by reference, so it cannot be a shade off",
     ),
     Mutation(
@@ -2301,7 +2301,7 @@ ROWS += [
         '      this.opts.onDraft(this.shown ?? 0, this.input.value);',
         "reports nothing from a box that is not open on a mark"),
     Mutation("note box: discard typed words when the same mark is selected again", "src/lib/markpopup.ts",
-        "    if (was !== mark.id || (!this.hasDraft && !this.input.readOnly)) {",
+        "    if (changedMark || (!this.hasDraft && !this.input.readOnly)) {",
         "    if (true) {",
         "keeps typed words when the same mark is selected again"),
     Mutation("note box: leave a draft on the page when the box is filled again", "src/lib/markpopup.ts",
@@ -2309,12 +2309,12 @@ ROWS += [
         '',
         "reports the note again when the box is filled again on the mark it is on"),
     Mutation("note box: report a draft whenever another mark takes the box", "src/lib/markpopup.ts",
-        '    const refilled = was === mark.id && this.input.value !== mark.note;',
+        '    const refilled = !changedMark && this.input.value !== mark.note;',
         '    const refilled = this.input.value !== mark.note;',
         "reports the note again when the box is filled again on the mark it is on"),
     Mutation("note box: report a draft on every show of the open mark", "src/lib/markpopup.ts",
-        '    const refilled = was === mark.id && this.input.value !== mark.note;',
-        '    const refilled = was === mark.id;',
+        '    const refilled = !changedMark && this.input.value !== mark.note;',
+        '    const refilled = !changedMark;',
         "reports the note again when the box is filled again on the mark it is on"),
     Mutation("draft on the page: draw the model's lines over a text box's draft", "src/lib/viewer.ts",
         '          this.drafts.linesOf(mark).forEach((line, index) => {',

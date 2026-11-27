@@ -81,6 +81,14 @@ fn runs(worker: &mut Worker, page: u32) -> Result<textedit::PageRuns, String> {
     }
 }
 
+fn run_status(mapped: &textedit::PageRuns) -> &'static str {
+    if mapped.runs.is_empty() {
+        "no_runs"
+    } else {
+        "editable"
+    }
+}
+
 fn inspect_page(worker: &mut Worker, page: u32) -> Result<serde_json::Value, String> {
     let reply = worker.call(&Request::TextRuns {
         page,
@@ -92,11 +100,7 @@ fn inspect_page(worker: &mut Worker, page: u32) -> Result<serde_json::Value, Str
         if runs.page != page {
             return Err("text inspection returned a different page".into());
         }
-        let status = if runs.runs.is_empty() {
-            "no_runs"
-        } else {
-            "editable"
-        };
+        let status = run_status(&runs);
         Ok(serde_json::json!({"page": page, "status": status, "runs": runs.runs.len()}))
     } else {
         Err("unexpected text inspection reply".into())

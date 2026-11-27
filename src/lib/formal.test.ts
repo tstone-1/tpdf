@@ -32,7 +32,7 @@ const SOURCES = import.meta.glob<string>(["../**/*.ts", "../**/*.svelte", "!../*
 const IMPERATIVES = [
   "aktiviere", "beende", "behandle", "benenne", "bestätige", "bewahre", "deaktiviere", "drücke",
   "entferne", "ergänze", "erkenne", "erstelle", "füge", "gib", "halte", "installiere",
-  "klicke", "korrigiere", "lass", "lege", "lies", "markiere", "nimm", "nutze", "öffne",
+  "klicke", "korrigiere", "kürze", "verkleinere", "lass", "lege", "lies", "markiere", "nimm", "nutze", "öffne",
   "platziere", "probiere", "prüfe", "schließe", "setze", "signiere", "speichere", "starte",
   "tippe", "verwende", "vergleiche", "versuche", "wähle", "warte", "wende", "ziehe", "zeichne",
   "mach", "verlass", "schneide", "drehe", "lösche", "widerrufe", "schwärze", "führe", "behalte", "schalte", "ändere", "zieh", "verschiebe",

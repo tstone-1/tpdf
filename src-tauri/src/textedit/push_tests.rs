@@ -183,12 +183,39 @@ fn a_drawing_after_the_run_that_moves_stops_the_push_but_not_the_box() {
         ));
         assert!(refusal(&doc, 0, &"F".repeat(26)).contains("a picture or a drawing follows it"));
     }
-    // The same rule does not stop the box itself: with nothing to push, 26 of
+    // The same rule does not stop the box itself: with nothing to push, 32 of
     // the run's own characters grow straight over it.
     let alone = synthetic("0 g 260 170 10 30 re f BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
     let mut grown = alone.clone();
-    write(&mut grown, &[in_default_box(&alone, 0, &"F".repeat(26))]).unwrap();
-    assert_eq!(find(&grown, &"F".repeat(26)).matrix[4], 40.);
+    let replacement = "F".repeat(32);
+    write(&mut grown, &[in_default_box(&alone, 0, &replacement)]).unwrap();
+    let result = find(&grown, &replacement);
+    assert_eq!(result.matrix[4], 40.);
+    assert!(result.display_rect[2] > 260.);
+}
+
+#[test]
+fn a_partial_underline_stays_under_the_word_when_earlier_text_grows() {
+    for width in [15, 26] {
+        let doc = synthetic(&format!(
+            "0 g 210 179 {width} 1 re f BT /F1 12 Tf 40 180 Td (FIRST) Tj ET \
+             BT /F1 12 Tf 200 180 Td (FIRST) Tj ET"
+        ));
+        assert!(refusal(&doc, 0, &"F".repeat(25)).contains("drawing"));
+    }
+}
+
+#[test]
+fn a_push_cannot_expose_a_clipped_neighbour_under_the_replacement() {
+    let doc = synthetic(
+        "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET q 110 0 180 300 re W n \
+         BT /F1 12 Tf 100 180 Td (FIRST) Tj ET Q",
+    );
+    assert_eq!(scan(&doc, 0).unwrap().runs[1].display_rect[0], 110.);
+    refusal(&doc, 0, &"F".repeat(11));
+    let mut fits = doc.clone();
+    write(&mut fits, &[in_default_box(&doc, 0, &"F".repeat(8))]).unwrap();
+    assert_eq!(find(&fits, "FIRST").matrix[4], 100.);
 }
 
 // A drawing that already holds the run -- a frame, a background -- lets it

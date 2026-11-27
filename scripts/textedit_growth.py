@@ -264,6 +264,7 @@ def table(summary):
 
 def self_test(probe):
     from pypdf import PdfWriter
+    from unittest.mock import patch
     from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
     with tempfile.TemporaryDirectory(prefix='tpdf-growth-') as directory:
         root = Path(directory)
@@ -293,7 +294,8 @@ def self_test(probe):
         page[NameObject('/Contents')] = writer._add_object(stream)
         path = root / 'growth.pdf'
         writer.write(path)
-        report = measure(probe, path, 1)
+        with patch.dict('os.environ', TPDF_PROBE_DIGESTS='1'):
+            report = measure(probe, path, 1)
         assert report['agreement']['checked'] > 0 and not report['agreement']['disagreements']
         tried = report['pages'][0]['tried']
         assert sorted(r['chars'] for r in tried) == [2, 4, 5, 8, 8, 9, 15]
@@ -343,6 +345,17 @@ def self_test(probe):
         assert all(classify(free[g]['widened']['verdict']) == 'ok' for g in GROWTHS)
         assert all(classify(edge[g]['widened']['verdict']) == 'page_edge' for g in GROWTHS)
         assert all(classify(boxed[g]['widened']['verdict']) == 'overlap' for g in GROWTHS)
+        for run in tried:
+            for trial in GROWTHS:
+                result = run[trial]
+                for mode in ('app', 'patch'):
+                    assert (mode + '_digest' in result) == (result[mode] == 'ok'), result
+                widened = result['widened']
+                if widened['verdict'] == 'ok':
+                    assert len(bytes.fromhex(widened['digest'])) == 32, widened
+                else:
+                    assert 'digest' not in widened, widened
+
         summary = aggregate([report], None)
         # The `widened` column clears `grow`, so the push is not in it at all and the
         # two neighbour lines both reach their neighbour: the long one is the second
@@ -360,6 +373,25 @@ def self_test(probe):
         else:
             raise AssertionError('a missing trial was counted')
         assert classify('something new') == 'other'
+
+        blank = root / 'blank.pdf'
+        for contents in (b'q Q', b'BT /F1 12 Tf 20 80 Td () Tj ET', b'BT /F1 12 Tf 20 80 Td (   ) Tj ET'):
+            stream.set_data(contents)
+            writer.write(blank)
+            if contents == b'q Q':
+                result = measure(probe, blank, 1)
+                counts = coverage([result])
+                assert result['pages'][0]['status'] == 'no_runs'
+                assert (counts['documents_editable'], counts['pages_editable']) == (0, 0), counts
+                blocks = subprocess.check_output([probe, '--blocks', blank], text=True, timeout=30)
+                assert json.loads(blocks)['pages'][0]['status'] == 'no_runs'
+            else:
+                # The first show follows BT, Tf and Td in both blank runs.
+                for trial in ('shrink25', 'grow25'):
+                    request = subprocess.run([probe, '--growth-request', blank, '0', '3', trial, 'app'],
+                                             capture_output=True, text=True, timeout=10)
+                    assert request.returncode and 'blank text run' in request.stderr, request
+
     # Coverage and the comparison, on plain records: one document with an editable
     # page and a refused one, one with nothing editable. A page that becomes editable
     # is counted as newly offered, and a run no longer offered is a regression.

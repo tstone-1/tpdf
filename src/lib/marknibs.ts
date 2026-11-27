@@ -41,7 +41,7 @@ import { catalog } from "./i18n";
 import { INK_WIDTH } from "./markband";
 
 /** The nib names, read once at module load like the swatch names in `markcolors.ts`. */
-const TEXT = catalog({
+export const nibNames = catalog({
   "en-US": { fine: "fine", medium: "medium", broad: "broad", marker: "marker" },
   "de-DE": { fine: "fein", medium: "mittel", broad: "breit", marker: "Marker" },
 });
@@ -49,7 +49,7 @@ const TEXT = catalog({
 /** One entry in the nib list. */
 export interface Nib {
   /** The part of the command id after `edit.nib.`, and the session's word for it. */
-  readonly id: string;
+  readonly id: keyof ReturnType<typeof nibNames>;
   /** What a reader sees, lowercase --- it appears mid-sentence in a command title. */
   readonly name: string;
   /** How thick a line drawn with it is, in points. */
@@ -73,14 +73,14 @@ export interface Nib {
  * for and which the range in `docmodel.rs` would still have to bound.
  */
 export const NIBS: readonly Nib[] = [
-  { id: "fine", name: TEXT().fine, pt: 1 },
+  { id: "fine", name: nibNames().fine, pt: 1 },
   // The default, by reference rather than by value: a list whose "medium" is a
   // shade off `INK_WIDTH` means a reader picking the entry that matches their
   // existing drawings gets ink that does not match them, and nothing on screen
   // says why. `markcolors.ts` makes the same argument about yellow.
-  { id: "medium", name: TEXT().medium, pt: INK_WIDTH },
-  { id: "broad", name: TEXT().broad, pt: 5 },
-  { id: "marker", name: TEXT().marker, pt: 10 },
+  { id: "medium", name: nibNames().medium, pt: INK_WIDTH },
+  { id: "broad", name: nibNames().broad, pt: 5 },
+  { id: "marker", name: nibNames().marker, pt: 10 },
 ];
 
 /**

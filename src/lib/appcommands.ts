@@ -48,11 +48,11 @@ import {
 } from "./pageranges";
 import { positionForLabel, positionsFor, runsOf, withPrinted } from "./pagelabels";
 import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
-import { PALETTE } from "./markcolors";
+import { PALETTE, swatchNames } from "./markcolors";
 import type { CloseWhich } from "./tabclose";
-import { kindOf, SPREAD_TITLES, withKind, type SpreadKind } from "./spreads";
+import { kindOf, spreadTitles, withKind, type SpreadKind } from "./spreads";
 import { catalog, LOCALE_NAMES, message, UI_LOCALES, UI_LOCALE, type LanguageChoice, type UiLocale } from "./i18n";
-import { NIBS } from "./marknibs";
+import { NIBS, nibNames } from "./marknibs";
 import {
   pick as pickLanguage,
   placeholder as languagePlaceholder,
@@ -1879,9 +1879,9 @@ export function registerAppCommands(
     // remembered with its place.
     // Written out rather than mapped from `SPREAD_KINDS`, so that each id is a
     // literal `check_classified.py` can find.
-    { id: "view.singlePage", title: SPREAD_TITLES.single, ...layoutCommand("single") },
-    { id: "view.facing", title: SPREAD_TITLES.facing, ...layoutCommand("facing") },
-    { id: "view.book", title: SPREAD_TITLES.book, ...layoutCommand("book") },
+    { id: "view.singlePage", title: spreadTitles(locale).single, ...layoutCommand("single") },
+    { id: "view.facing", title: spreadTitles(locale).facing, ...layoutCommand("facing") },
+    { id: "view.book", title: spreadTitles(locale).book, ...layoutCommand("book") },
     // Favourites: pages the reader marked, across every document. Each one is
     // also a palette entry of its own (`favourites.ts`, `FAVOURITE_PREFIX`).
     {
@@ -2421,7 +2421,7 @@ export function registerAppCommands(
       // list sorted by title, and it is what a reader searches for when they do
       // not know this application calls the colour "pink". The colour itself is
       // lowercase because it is a word in a sentence rather than a name.
-      title: `${message("color", locale)}: ${entry.name}`,
+      title: `${message("color", locale)}: ${swatchNames(locale)[entry.id]}`,
       // Enabled on any open document, with or without a mark open: with one it
       // recolours, without one it arms the next mark. Guarding on `hasOpenMark`
       // would grey out exactly the case a reader uses to choose before marking.
@@ -2445,7 +2445,7 @@ export function registerAppCommands(
       // "Nib:" leads for `Colour:`'s reason --- it groups the run in a list
       // sorted by title, and it is the word a reader searches for when they do
       // not know whether this application says "pen", "weight" or "thickness".
-      title: TEXT(locale).nib(entry.name),
+      title: TEXT(locale).nib(nibNames(locale)[entry.id]),
       enabled: withDocument,
       run: () => actions.setNib(entry.id),
     })),

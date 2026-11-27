@@ -133,11 +133,19 @@ export function spoken(sentence: string, locale: UiLocale = UI_LOCALE, depth = 0
   if (!isGerman(locale) || depth > 8 || sentence.length === 0) return sentence;
   const found = recognise(sentence);
   if (!found) return sentence;
+  // The hidden-text survey assembles its summary from semicolon-delimited
+  // clauses. Match each clause separately so a later template cannot capture
+  // earlier diagnostics as its page-count argument.
+  const key = found.template.key;
+  if ((key.startsWith("No hidden text found:") || key.endsWith("on {pages}; {more}")) && sentence.endsWith(".") && sentence.includes("; ")) {
+    return sentence.slice(0, -1).split("; ")
+      .map(clause => spoken(clause + ".", locale, depth + 1).replace(/\.$/, ""))
+      .join("; ") + ".";
+  }
   const args: Record<string, string> = {};
   for (const [name, value] of Object.entries(found.args)) {
     args[name] = DIAGNOSTIC_ARGUMENTS.has(name) ? spoken(value, locale, depth + 1) : value;
   }
-  const key = found.template.key;
   return render((locale === "de-DE-formal" ? SIE[key] : undefined) ?? GERMAN[key]!, args);
 }
 

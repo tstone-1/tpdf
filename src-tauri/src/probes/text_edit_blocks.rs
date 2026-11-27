@@ -690,7 +690,7 @@ pub(super) fn run(source: &Path, agree_every: usize) -> Result<(), String> {
             return Err(format!("page {index}: a trial was not undone"));
         }
         pages.push(json!({
-            "page": index, "status": "editable", "runs": mapped.runs.len(),
+            "page": index, "status": run_status(&mapped), "runs": mapped.runs.len(),
             "width": geometry.width, "height": geometry.height, "turns": geometry.turns,
             "tagged": tags.is_some(), "mcid_map": map_status,
             "mcid_slots": tags.as_ref().map_or(0, |tags| tags.owners.len()),

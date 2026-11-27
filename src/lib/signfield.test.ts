@@ -37,6 +37,14 @@ describe("the signature fields somebody can sign", () => {
     expect(form.widgets.map(isEmptySignature)).toEqual([false, false, true, true, true, true, false]);
   });
 
+  it("skips a locked signature even when it comes first or is the only choice", () => {
+    const locked = widget(18, "Locked", { read_only: true });
+    const next = widget(19, "Next");
+    expect(emptySignatureFields({ widgets: [locked, next] })).toEqual([next]);
+    expect(emptySignatureFields({ widgets: [locked] })).toEqual([]);
+    expect(signTarget(locked, PAGES)).toBeNull();
+  });
+
   it("excludes a nameless widget from both signing entry points", () => {
     const unnamed = widget(18, "");
     expect(emptySignatureFields({ widgets: [unnamed] })).toEqual([]);
