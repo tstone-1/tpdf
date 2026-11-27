@@ -89,13 +89,7 @@ fn take_readings(engine: &WindowsOcr) -> Vec<Reading> {
                     // own silent regions look like, and folding it into DIFFERS
                     // would report a size the engine cannot see as a correction
                     // it made.
-                    let verdict = if got.trim().is_empty() {
-                        "NOTHING READ"
-                    } else if got.split_whitespace().any(|w| w == text) {
-                        "VERBATIM"
-                    } else {
-                        "DIFFERS"
-                    };
+                    let verdict = super::reading_verdict(text, &got);
                     (got, verdict.to_string())
                 }
                 Err(why) => (String::new(), format!("failed: {why}")),

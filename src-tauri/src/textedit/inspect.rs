@@ -21,7 +21,7 @@ pub(super) struct Graphics<'a> {
     pub compound_clips: Vec<clipping::Region>,
     // ISO 32000-1 9.3.6 and 8.4.3.2: the text render mode and the line width
     // are graphics state, saved and restored with it. Modes 1 and 2 stroke the
-    // glyphs, so their ink reaches half the line width beyond the outlines.
+    // glyphs, so their ink bounds include the width and projecting joins.
     pub render: i64,
     pub line_width: f64,
     square_cap: bool,
@@ -228,7 +228,11 @@ impl<'a> Graphics<'a> {
             // Translating one subpath would translate its siblings as well.
             let simple_line =
                 subpath.len() == 2 && subpath[1].operator == "l" && self.line_width > 0.;
+            let filled = !matches!(paint.operator.as_str(), "S" | "s");
+            let solid = (!filled || matches!(self.fill_components, patterns::Colour::Solid(_)))
+                && (!stroked || matches!(self.stroke_components, patterns::Colour::Solid(_)));
             if single
+                && solid
                 && (!stroked || simple_line)
                 && !self.turned_clip
                 && self.compound_clips.is_empty()
@@ -925,7 +929,8 @@ impl Found {
             || !diagonal(state.page_transform)
             || !orthogonal(page_matrix)
             || page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0
-            || !matches!(state.fill_components, patterns::Colour::Solid(_))
+            || (matches!(state.render, 0 | 2)
+                && !matches!(state.fill_components, patterns::Colour::Solid(_)))
             || (matches!(state.render, 1 | 2)
                 && !matches!(state.stroke_components, patterns::Colour::Solid(_)))
             || marked.placed > 0
@@ -935,9 +940,15 @@ impl Found {
         if let Some(paint) = [Some("f"), Some("S"), Some("B"), None][state.render as usize] {
             patterns::paint(paint, state.fill_components, state.stroke_components)?;
         }
-        // Half the line width, in page units, around stroked glyphs.
+        // A mitered glyph corner can project beyond the half-width of a bevel join.
         let stroke = if matches!(state.render, 1 | 2) {
+            let reach = if state.miter_join {
+                state.miter_limit.max(1.)
+            } else {
+                1.
+            };
             state.line_width / 2.
+                * reach
                 * (state.page_transform[0].abs() + state.page_transform[2].abs())
                     .max(state.page_transform[1].abs() + state.page_transform[3].abs())
         } else {

@@ -457,7 +457,15 @@ pub(crate) fn concluded(
         now,
         worker,
         asking,
-        &|bytes| publish_signed(&sign.input, &sign.output, bytes, sign.force),
+        &|bytes| {
+            publish_signed(
+                &sign.input,
+                sign.image_path(),
+                &sign.output,
+                bytes,
+                sign.force,
+            )
+        },
     )
     .map_err(|stopped| match stopped {
         Stopped::Unstamped { why, .. } => {
@@ -986,8 +994,18 @@ impl Subcommand for Sign {
     }
 }
 
+impl Sign {
+    fn image_path(&self) -> Option<&PathBuf> {
+        match &self.image {
+            Picture::File(path) => Some(path),
+            _ => None,
+        }
+    }
+}
+
 pub(super) fn publish_signed(
     input: &std::path::Path,
+    image: Option<&PathBuf>,
     output: &std::path::Path,
     bytes: &[u8],
     force: bool,
@@ -999,7 +1017,10 @@ pub(super) fn publish_signed(
     let temporary = Temporary::beside(output).map_err(|e| e.message)?;
     let staged = temporary.0.join("signed.pdf");
     save::write_signed(input, &staged, bytes).map_err(|e| e.message)?;
-    Temporary::publish(&[input.to_owned()], &staged, output, force).map_err(|e| e.message)
+    let inputs: Vec<_> = std::iter::once(input.to_owned())
+        .chain(image.cloned())
+        .collect();
+    Temporary::publish(&inputs, &staged, output, force).map_err(|e| e.message)
 }
 
 fn run_sign(
@@ -1017,7 +1038,11 @@ fn run_sign(
              as a new file, so choose another name for it",
         ));
     }
-    super::pages::check_target(&[], &sign.output, sign.force)?;
+    super::pages::check_target(
+        sign.image_path().map_or(&[][..], std::slice::from_ref),
+        &sign.output,
+        sign.force,
+    )?;
     let (file, len) = opened(&sign.input).map_err(|why| Failure::new(Exit::Refused, why))?;
     sign_cms::refuse_too_large(len as u64).map_err(|why| Failure::new(Exit::Refused, why))?;
 

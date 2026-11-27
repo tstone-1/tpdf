@@ -91,7 +91,7 @@ ROWS += [
     Mutation('libreoffice tags: refuse a figure in a paragraph', 'src/textedit/tagging.rs', ' || (in_paragraph && tag == b"Figure")', '', 'textedit_a_figure_in_a_paragraph_is_kept_and_the_paragraph_stays_editable'),
     Mutation('libreoffice tags: take any decoration on a link', 'src/textedit/tagging.rs', 'Ok(b"None" | b"Underline" | b"Overline" | b"LineThrough")', 'Ok(_)', 'textedit_read_only_owners_keep_their_layout_attributes'),
     Mutation('partial editing: reject merged cell spans', 'src/textedit/tagging/tables.rs', '!(1..=128).contains(&integer(span)?)', 'integer(span)? != 1', 'textedit_tables_preserve_merged_cells_and_paragraph_leaf_ownership'),
-    Mutation('partial editing: expose pattern text', 'src/textedit/inspect.rs', '|| !matches!(state.fill_components, patterns::Colour::Solid(_))', '', 'textedit_pattern_text_is_preserved_beside_editable_solid_text'),
+    Mutation('partial editing: expose pattern text', 'src/textedit/inspect.rs', '|| (matches!(state.render, 0 | 2)\n                && !matches!(state.fill_components, patterns::Colour::Solid(_)))', '', 'textedit_pattern_text_is_preserved_beside_editable_solid_text'),
     Mutation('local text preservation: reject unused parent index', 'src/textedit/tagging.rs', 'if page_dict.has(b"StructParent")', 'if page_dict.has(b"StructParents") || page_dict.has(b"StructParent")', 'textedit_unused_parent_index_preserves_plain_text_edits_and_metadata'),
     Mutation('local text preservation: skip shading validation', 'src/textedit/patterns.rs', 'check(doc, resources, name)?;', 'let _ = (doc, resources);', 'textedit_shading_resource_refusals_are_atomic'),
     Mutation('local text preservation: ignore preserved collisions', 'src/textedit/layout.rs', '        .chain(\n            page.preserved', '        .chain(\n            page.runs.runs', 'preserved_skew_text_blocks_layout_collisions'),
@@ -1428,7 +1428,7 @@ ROWS += [
     Mutation('type1: narrow the read-only reach', 'src/textedit/fonts/type1.rs', 'const OPAQUE_REACH: f64 = 4000.;', 'const OPAQUE_REACH: f64 = 2000.;', 'textedit_type1_opaque_glyphs_measure_read_only_text'),
     Mutation('images: shrink the page budget', 'src/textedit.rs', 'const MAX_IMAGES: usize = 32 * 1024 * 1024;', 'const MAX_IMAGES: usize = 8 * 1024 * 1024;', 'textedit_a_screenshot_with_its_mask_fits_the_page_budget'),
     Mutation('render: no margin around stroked text', 'src/textedit/inspect.rs', '        let stroke = if matches!(state.render, 1 | 2) {', '        let stroke = if false {', 'textedit_stroked_and_invisible_text_is_edited_with_its_mode_and_ink'),
-    Mutation('render: margin ignores the CTM scale', 'src/textedit/inspect.rs', '            state.line_width / 2.\n                * (state.page_transform[0].abs() + state.page_transform[2].abs())\n                    .max(state.page_transform[1].abs() + state.page_transform[3].abs())', '            state.line_width / 2.', 'textedit_stroked_and_invisible_text_is_edited_with_its_mode_and_ink'),
+    Mutation('render: margin ignores the CTM scale', 'src/textedit/inspect.rs', '            state.line_width / 2.\n                * reach\n                * (state.page_transform[0].abs() + state.page_transform[2].abs())\n                    .max(state.page_transform[1].abs() + state.page_transform[3].abs())', '            state.line_width / 2. * reach', 'textedit_stroked_and_invisible_text_is_edited_with_its_mode_and_ink'),
     Mutation('render: margin around invisible text', 'src/textedit/inspect.rs', '        let stroke = if matches!(state.render, 1 | 2) {', '        let stroke = if matches!(state.render, 1 | 2 | 3) {', 'textedit_stroked_and_invisible_text_is_edited_with_its_mode_and_ink'),
     Mutation('render: margin misses the ink bounds', 'src/textedit/inspect.rs', '                ink_bounds[0] - stroke,\n                ink_bounds[1] - stroke,', '                ink_bounds[0],\n                ink_bounds[1],', 'textedit_compound_clips_contain_the_stroke_around_text'),
     Mutation('render: gs width is ignored', 'src/textedit/inspect.rs', 'if let Some(width) = settings.width {\n            self.line_width = width;', 'if let Some(width) = settings.width {\n            let _ = width;', 'textedit_stroked_and_invisible_text_is_edited_with_its_mode_and_ink'),
@@ -1728,7 +1728,7 @@ ROWS += [
     Mutation("choices: retarget radio answers when pages move", "src/forms.rs", "        group.sort_by_key(|i| result.widgets[*i].widget);", "        // keep page order", "radio_answers_survive_page_moves_and_support_duplicate_states"),
     Mutation("choices: draw export values instead of labels", "src/forms.rs", "                .map(|i| options[*i].label.as_str())", "                .map(|i| options[*i].export.as_str())", "choices_and_radio_round_trip_exports_indices_and_appearances"),
     Mutation("choices: ignore the selected radio sibling", "src/forms.rs", "                            selected == index || (*unison && states[*selected] == states[*index])", "                            selected == index || (!*unison && states[*selected] != states[*index])", "choices_and_radio_round_trip_exports_indices_and_appearances"),
-    Mutation("forms: skip answers in the save pipeline", "src/save.rs", '    forms::write_except_pages(&mut doc, &plan.forms, &dropped)?;', "    // form answers omitted", "form_answers_force_a_rewrite_and_reach_the_saved_file"),
+    Mutation("forms: skip answers in the save pipeline", "src/save.rs", '    forms::write_retained_answers(&mut doc, &plan.forms, &dropped, &plan.field_edits)?;', "    // form answers omitted", "form_answers_force_a_rewrite_and_reach_the_saved_file"),
     Mutation("forms: write no appearances or values", "src/forms.rs", "    if changes.is_empty() {", "    if true {", "forms_round_trip_values_and_every_shared_widget_appearance"),
     Mutation("forms: lose current answers on replay", "src/docmodel.rs", "                self.forms.insert(object, version);", "                let _ = (object, version);", "forms_journal_undo_redo_and_redo_branch_are_independent_of_comments"),
     Mutation(
@@ -1998,7 +1998,7 @@ ROWS += [
         # down a margin is answered with "that mark covers nothing".
         "edits: take ink's rectangle tight against the strokes",
         "src/edits.rs",
-        "            quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width))",
+        "            quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width, unit))",
         "            quads = Stroke::bounds(&strokes, 0.0)",
         # **Not the `docmodel` test that looks like the right one.** That one
         # builds its `Mark` by hand, so it exercises `Stroke::bounds` and says

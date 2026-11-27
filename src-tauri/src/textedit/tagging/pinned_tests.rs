@@ -18,30 +18,29 @@ fn offered(doc: &Document) -> Vec<String> {
         .collect()
 }
 
+fn change_for(doc: &Document, original: &str) -> Change {
+    let scan = textedit::scan(doc, 0).unwrap();
+    let run = scan.runs.iter().find(|run| run.text == original).unwrap();
+    Change {
+        layout: None,
+        page: 0,
+        revision: scan.revision,
+        operator: run.operator,
+        original: original.into(),
+        replacement: "IN".into(),
+    }
+}
+
 fn edit(doc: &mut Document, original: &str) -> Result<(), String> {
-    let scan = textedit::scan(doc, 0)?;
-    let operator = scan
-        .runs
-        .iter()
-        .find(|run| run.text == original)
-        .map_or(0, |run| run.operator);
-    textedit::write(
-        doc,
-        &[Change {
-            layout: None,
-            page: 0,
-            revision: scan.revision,
-            operator,
-            original: original.into(),
-            replacement: "IN".into(),
-        }],
-    )
+    let change = change_for(doc, original);
+    textedit::write(doc, &[change])
 }
 
 fn refused(mut doc: Document) {
+    let change = change_for(&fixture(CONTENT).0, "FIRST");
     let original = doc.objects.clone();
-    assert!(textedit::scan(&doc, 0).is_err());
-    assert!(edit(&mut doc, "FIRST").is_err());
+    let why = textedit::scan(&doc, 0).unwrap_err();
+    assert_eq!(textedit::write(&mut doc, &[change]).unwrap_err(), why);
     assert_eq!(doc.objects, original);
 }
 
@@ -58,18 +57,23 @@ fn textedit_alternate_text_and_titles_pin_the_content_they_describe() {
     // and the edit leaves the pinned element's metadata untouched.
     for key in ["Alt", "T", "ActualText"] {
         let (mut doc, ids) = fixture(CONTENT);
+        let mut pinned = change_for(&doc, "SECOND");
         doc.get_dictionary_mut(ids[4])
             .unwrap()
             .set(key, Object::string_literal("SECOND"));
         assert_eq!(offered(&doc), ["FIRST"], "{key}");
+        // Only the paragraph metadata changed since we recorded its operator.
+        let before = doc.objects.clone();
+        pinned.revision = textedit::scan(&doc, 0).unwrap().revision;
+        assert_eq!(
+            textedit::write(&mut doc, &[pinned]).unwrap_err(),
+            "text run no longer exists"
+        );
+        assert_eq!(doc.objects, before);
         let kept = doc.objects[&ids[4]].clone();
         edit(&mut doc, "FIRST").unwrap();
         assert_eq!(offered(&doc), ["IN"]);
         assert_eq!(doc.objects[&ids[4]], kept);
-        // A change aimed at the pinned paragraph is refused atomically.
-        let before = doc.objects.clone();
-        assert!(edit(&mut doc, "SECOND").is_err());
-        assert_eq!(doc.objects, before);
     }
     // Alt and ActualText stand in for everything a grouping element holds, so
     // each pins every descendant. A grouping element's title names it and pins

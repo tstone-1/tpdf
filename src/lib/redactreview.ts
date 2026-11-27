@@ -52,7 +52,7 @@ const TEXT = catalog({
   "en-US": {
     foundLabel: "Still in the file",
     foundAdvice: "check the details below; if you can locate the content on a page, mark it for redaction",
-    picturesLabel: "Not read in pictures",
+    picturesLabel: "Pictures and drawings to review",
     picturesAdvice:
       "check these pictures yourself; an image-only copy removes everything inside the marked regions",
     uncheckedLabel: "Could not be checked",
@@ -62,7 +62,7 @@ const TEXT = catalog({
   "de-DE": {
     foundLabel: "Noch in der Datei",
     foundAdvice: "prüfe die Angaben unten; wenn du den Inhalt auf einer Seite findest, markiere ihn zum Schwärzen",
-    picturesLabel: "In Bildern nicht gelesen",
+    picturesLabel: "Zu prüfende Bilder und Zeichnungen",
     picturesAdvice:
       "prüfe diese Bilder selbst; eine Kopie nur aus Bildern entfernt alles in den markierten Bereichen",
     uncheckedLabel: "Nicht prüfbar",

@@ -76,7 +76,7 @@ it, and a move that would land on text staying where it is gets refused:
   full*). A list item of one line starts its new lines under its words, the first text
   after its label, and not under the label (`wrap::plan`, `Inspection::labels`).
 - **With the line.** A link annotation over a moved line moves with it (*Links over lines a
-  wrap moves*), and so does a thin painted rule inside the line's box, such as the
+  wrap moves*), and so does a thin solid-colour rule inside the line's box, such as the
   rectangle Word draws for an underline, up to a quarter of the line's depth
   (`layout::UNDERLINE`; *Underlines move with their lines*). Read-only text of a line or a
   block that moves goes with it, drawn from the bytes it had at another position
@@ -493,9 +493,10 @@ preserved rendering tolerances (`graphics::tolerance`).
 Text render modes 0-3 are accepted (fill, stroke, both, invisible; OCR text
 layers are mode 3). Mode and line width are graphics state, saved by `q` and
 restored by `Q`; `w` and an ExtGState `/LW` set the width. A stroked run (1, 2)
-needs a solid stroke colour, and its hit box and ink grow by half the width
-times the CTM scale, which clips, compound clips and the layout editor
-(`layout::Context.stroke`) all see. Modes 4-7 add to the clipping path and are
+needs a solid stroke colour. Only modes 0 and 2 also require a solid fill for editing.
+The hit and ink bounds include half the scaled stroke width for round and bevel joins.
+For miter joins the allowance is multiplied by the active miter limit. Clips, compound clips
+and the layout editor (`layout::Context.stroke`) use the same bounds. Modes 4-7 add to the clipping path and are
 refused.
 
 Layout attributes are also accepted on Figure, Link, Form and Table, where
@@ -871,7 +872,7 @@ already reaches past it (`layout::Context::table`, built in `inspect::Found::rec
 
 Ink is measured as the layout measures a replacement's: the font's own vertical extent where it
 has outlines, otherwise a quarter em below the baseline to an em above, across the run's
-horizontal ink, widened by half the line width for stroked text. No tolerance of its own was
+horizontal ink, widened by the join-aware stroke allowance for stroked text. No tolerance of its own was
 added. The comparison is exact, and the only allowance in play is the existing 1e-6 on the
 source's own advance and right ink edge, which decides whether a replacement at the source's
 positions counts as within the source's ink. A line a wrap moves is compared by its hit

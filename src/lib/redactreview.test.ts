@@ -38,10 +38,23 @@ describe("reviewLines", () => {
     expect(lines).toHaveLength(3);
     const laid = messageLines(["head", ...lines].join("\n"));
     expect(laid.map((line) => line.label)).toEqual([
-      null, "Still in the file", "Not read in pictures", "Could not be checked",
+      null, "Still in the file", "Pictures and drawings to review", "Could not be checked",
     ]);
     expect(laid[1]!.value).toBe("check the details below; if you can locate the content on a page, mark it for redaction");
     expect(laid[1]!.detail).toBe(`${why[1]}; ${why[3]}`);
+  });
+
+  it("labels both legible and unchecked pictures for review", () => {
+    const reasons = ["still legible", "could not be read"];
+    const groups = reviewGroups(reasons, ["pictures", "pictures"])!;
+    for (const [locale, label] of [
+      ["en-US", "Pictures and drawings to review"],
+      ["de-DE", "Zu prüfende Bilder und Zeichnungen"],
+    ] as const) {
+      const line = messageLines(["head", ...reviewLines(groups, locale)].join("\n"))[1]!;
+      expect(line.label).toBe(label);
+      expect(line.detail).toBe(reasons.join("; "));
+    }
   });
 
   it("keeps a reason with a dash in it whole", () => {
@@ -64,7 +77,7 @@ describe("the verdict sentences", () => {
     const laid = messageLines(said);
     expect(laid[0]!.value).toMatch(/^Redaction not verified\. Redacted 2 regions, 3 removals/);
     expect(laid.slice(1).map((line) => line.label)).toEqual([
-      "Still in the file", "Not read in pictures", "Could not be checked",
+      "Still in the file", "Pictures and drawings to review", "Could not be checked",
     ]);
     for (const reason of why) expect(said).toContain(reason);
   });

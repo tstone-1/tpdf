@@ -935,8 +935,8 @@ ROWS += [
         "    y: tip.y - head * (uy * cos + ux * sin),",
         "puts the head at the tip, its wings back along the line at 30 degrees"),
     Mutation("arrow: no least head", "src/lib/markband.ts",
-        "  return Math.max(width * 3, 6);",
-        "  return width * 3;",
+        "  return Math.max(width * 3, 6 / unit);",
+        "  void unit; return width * 3;",
         "is three widths long, and never under 6 points"),
 ]
 

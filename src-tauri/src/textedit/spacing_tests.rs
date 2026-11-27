@@ -142,13 +142,12 @@ fn textedit_spacing_replacement_advance_and_ink_are_both_checked_atomically() {
 
 #[test]
 fn textedit_spacing_source_clips_use_ink_instead_of_final_cursor() {
-    for (spacing, right) in [(-2, 50.), (2, 54.)] {
-        for (edge, accepted) in [(right, true), (right - 0.01, false)] {
+    for (spacing, right) in [(-2, 50.0_f64), (2, 54.)] {
+        for edge in [right - 0.01, right, right + 1.0] {
             let bytes =
                 format!("q 0 0 {edge} 240 re W n BT /F1 10 Tf {spacing} Tc 40 180 Td (AB) Tj ET Q");
             let runs = super::tests::clipped_roundtrip(&embedded(bytes.as_bytes()));
-            assert!((f64::from(runs.runs[0].display_rect[2]) - edge).abs() < 0.0001);
-            assert_eq!(edge == right, accepted);
+            assert!((f64::from(runs.runs[0].display_rect[2]) - edge.min(right)).abs() < 0.0001);
         }
     }
 }

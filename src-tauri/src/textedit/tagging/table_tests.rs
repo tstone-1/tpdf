@@ -584,7 +584,7 @@ fn textedit_bounded_tables_allow_the_ink_their_text_already_had_outside() {
     };
     assert!(smaller(&doc, "FIRST").is_ok());
     assert_eq!(smaller(&doc, "FIRSTFI").unwrap_err(), LEAVES_ALONG);
-    // Stroked text reaches half its line's width past its outlines, and that
+    // Bevel-joined text reaches half its line's width past its outlines, and that
     // is ink it already had: 2 pt on every side of bounds drawn at the
     // outlines themselves. Longer text crosses three of them as far as it did,
     // and six glyphs at 10 pt end at 76 and reach 78 as the source did.
@@ -592,7 +592,7 @@ fn textedit_bounded_tables_allow_the_ink_their_text_already_had_outside() {
         let (mut doc, ids) = bounded(entries);
         let content = String::from_utf8(doc.get_page_content(ids[0]))
             .unwrap()
-            .replace("(FIRST) Tj", "1 Tr 4 w (FIRST) Tj");
+            .replace("(FIRST) Tj", "1 Tr 2 j 4 w (FIRST) Tj");
         let stream = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
         doc.get_dictionary_mut(ids[0])
             .unwrap()

@@ -206,3 +206,14 @@ fn textedit_an_equal_width_edit_fits_despite_rounding() {
         assert_eq!(result.is_ok(), fits, "{base} {to}: {result:?}");
     }
 }
+
+#[test]
+fn stroked_helvetica_bounds_include_the_rendered_v_corners() {
+    // Horizontal dark-pixel extents in a 72 dpi Poppler rendering.
+    for (join, left, right) in [(0, 32., 71.), (2, 35., 68.)] {
+        let content = format!("12 w {join} j BT /F1 36 Tf 1 Tr 40 100 Td (V) Tj ET");
+        let doc = with_font("Helvetica", None, content.as_bytes());
+        let rect = textedit::scan(&doc, 0).unwrap().runs[0].display_rect;
+        assert!(rect[0] <= left && rect[2] >= right, "join {join}: {rect:?}");
+    }
+}

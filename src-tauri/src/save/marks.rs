@@ -354,6 +354,12 @@ pub(super) fn write_marks(
         let appearance = if paint(mark.kind) == Paint::None {
             None
         } else {
+            let unit = if mark.kind == MarkKind::Arrow {
+                crate::pagetree::user_unit(doc, page)
+                    .ok_or_else(|| said!("the page has an invalid user unit"))?
+            } else {
+                1.0
+            };
             Some(appearance_stream(
                 doc,
                 mark,
@@ -361,6 +367,7 @@ pub(super) fn write_marks(
                 &strokes,
                 rect,
                 shown.turns,
+                unit,
             ))
         };
         let mut dictionary = mark_dictionary(mark, page, &quads, &strokes, rect, appearance);
@@ -1729,6 +1736,7 @@ fn appearance_stream(
     strokes: &[Vec<(f64, f64)>],
     rect: [f64; 4],
     turns: u8,
+    unit: f64,
 ) -> ObjectId {
     let style = paint(mark.kind);
     let mut state = Dictionary::new();
@@ -1852,7 +1860,12 @@ fn appearance_stream(
         Paint::Wave => draw_wave(&mut content, quads, mark.kind, turns),
         Paint::Ellipse => draw_ellipse(&mut content, quads),
         Paint::Path => draw_path(&mut content, strokes),
-        Paint::Segments => draw_segments(&mut content, strokes, mark.kind, mark.width),
+        Paint::Segments => draw_segments(
+            &mut content,
+            strokes,
+            mark.kind,
+            arrow_head(mark.width, unit),
+        ),
         // Nothing. Unreachable, because the caller does not build an
         // appearance stream for a kind that has none; written out rather
         // than caught by a wildcard so that a kind added later is a compile
@@ -2161,7 +2174,7 @@ fn draw_path(out: &mut String, strokes: &[Vec<(f64, f64)>]) {
 /// polygon or a polyline has. A polygon closes back to its first corner with
 /// `h`; an arrow adds an open head at its second end, two strokes of
 /// [`arrow_head`] at 30 degrees either side of the line.
-fn draw_segments(out: &mut String, strokes: &[Vec<(f64, f64)>], kind: MarkKind, width: f64) {
+fn draw_segments(out: &mut String, strokes: &[Vec<(f64, f64)>], kind: MarkKind, head: f64) {
     for stroke in strokes {
         let Some(((x0, y0), rest)) = stroke.split_first() else {
             continue;
@@ -2177,7 +2190,7 @@ fn draw_segments(out: &mut String, strokes: &[Vec<(f64, f64)>], kind: MarkKind, 
         });
     }
     if kind == MarkKind::Arrow {
-        if let Some([wing, tip, other]) = arrow_wings(strokes, width) {
+        if let Some([wing, tip, other]) = arrow_wings(strokes, head) {
             out.push_str(&format!(
                 "{} {} m\n{} {} l\n{} {} l\nS\n",
                 wing.0, wing.1, tip.0, tip.1, other.0, other.1
@@ -2192,12 +2205,12 @@ pub(super) fn arrow_wings_for_tests(
     strokes: &[Vec<(f64, f64)>],
     width: f64,
 ) -> Option<[(f64, f64); 3]> {
-    arrow_wings(strokes, width)
+    arrow_wings(strokes, arrow_head(width, 1.))
 }
 
 /// An arrow's head: one wing, the tip, the other wing. `None` for a line of no
 /// length, which has no direction to point in.
-fn arrow_wings(strokes: &[Vec<(f64, f64)>], width: f64) -> Option<[(f64, f64); 3]> {
+fn arrow_wings(strokes: &[Vec<(f64, f64)>], head: f64) -> Option<[(f64, f64); 3]> {
     let [from, tip] = strokes.first()?.as_slice() else {
         return None;
     };
@@ -2206,7 +2219,6 @@ fn arrow_wings(strokes: &[Vec<(f64, f64)>], width: f64) -> Option<[(f64, f64); 3
     if length == 0.0 {
         return None;
     }
-    let head = arrow_head(width);
     let (ux, uy) = (dx / length, dy / length);
     let (cos, sin) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
     let wing = |side: f64| {

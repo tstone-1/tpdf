@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- Extract and Split omit new answers when all widgets for a field were removed or left on other pages. CLI signing protects the selected signature image even with `--force`.
+- Text edits keep gradient underlines fixed and account for mitered corners on stroked letters. Invisible and stroke-only text remains editable when its unused fill is a gradient.
+- Fine arrowheads keep their physical size on scaled pages. Save shortcuts work with Caps Lock, and keyboard focus follows the next mark after removal. Redaction results group legible and unchecked pictures under a neutral heading.
+
 - In-place Save preserves pending redaction work by asking you to apply or remove the regions first. Extract and Split write new form answers only when the output keeps a widget for that field. Adding long-term validation data protects a newly chosen output name while waiting for the authorities.
 - New form fields are checked as you place or resize them, including their default text and physical size. Pen strokes keep their selected thickness on scaled PDF pages. Panning and the scrollbar follow the pointer that started the drag.
 - Editing after undoing a page import releases the discarded document's renderer. The message for a comment on an imported page now explains how to edit it.

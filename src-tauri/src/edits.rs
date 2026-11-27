@@ -1710,7 +1710,7 @@ impl Edits {
         }
         let width = nib(want.width) / unit;
         if want.kind.has_strokes() {
-            quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width))
+            quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width, unit))
                 .into_iter()
                 .collect();
         }
@@ -8148,7 +8148,7 @@ mod tests {
             edits.annotate(7, want, stamped()).expect("a line");
         }
         let marks = edits.state(7).expect("state").marks;
-        let pad = |kind: MarkKind| kind.stroke_pad(INK_WIDTH);
+        let pad = |kind: MarkKind| kind.stroke_pad(INK_WIDTH, 1.);
         for mark in &marks {
             let p = pad(mark.kind);
             assert_eq!(

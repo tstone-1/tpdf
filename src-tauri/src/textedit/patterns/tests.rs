@@ -8,6 +8,18 @@ const ART: &str = "q /Pattern CS /Pattern cs /Gradient SCN /Gradient scn 10 10 m
 fn fixture(prefix: &str) -> (Document, [ObjectId; 4]) {
     let (mut doc, _, _, _) = textedit::fonts::tests::fixture();
     let page = crate::pagetree::ordered_pages(&doc)[0];
+    let ids = install_gradient(&mut doc, page, [0, 0, 100, 0]);
+    let stream = doc.add_object(Stream::new(
+        Dictionary::new(),
+        format!("{prefix} {TEXT}").into_bytes(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    (doc, ids)
+}
+
+fn install_gradient(doc: &mut Document, page: ObjectId, coords: [i64; 4]) -> [ObjectId; 4] {
     let function = doc.add_object(dictionary! {
         "FunctionType" => 2, "Domain" => vec![0.into(), 1.into()],
         "C0" => vec![1.into(), 0.into(), 0.into()],
@@ -15,23 +27,19 @@ fn fixture(prefix: &str) -> (Document, [ObjectId; 4]) {
     });
     let shading = doc.add_object(dictionary! {
         "ShadingType" => 2, "ColorSpace" => "DeviceRGB",
-        "Coords" => vec![0.into(), 0.into(), 100.into(), 0.into()],
+        "Coords" => coords.into_iter().map(Object::Integer).collect::<Vec<_>>(),
         "Extend" => vec![true.into(), true.into()], "Function" => function
     });
     let pattern = doc.add_object(dictionary! {
         "Type" => "Pattern", "PatternType" => 2, "Shading" => shading,
         "Matrix" => vec![1.into(), 0.into(), 0.into(), 1.into(), 0.into(), 0.into()]
     });
-    let mut resources = textedit::resources(&doc, page).unwrap().clone();
+    let mut resources = textedit::resources(doc, page).unwrap().clone();
     resources.set("Pattern", dictionary! { "Gradient" => pattern });
-    let stream = doc.add_object(Stream::new(
-        Dictionary::new(),
-        format!("{prefix} {TEXT}").into_bytes(),
-    ));
-    let dict = doc.get_dictionary_mut(page).unwrap();
-    dict.set("Resources", resources);
-    dict.set("Contents", stream);
-    (doc, [page, pattern, shading, function])
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Resources", resources);
+    [page, pattern, shading, function]
 }
 
 #[test]
@@ -303,4 +311,41 @@ fn textedit_a_sampled_shading_function_is_exactly_what_it_says() {
         .dict
         .set("DecodeParms", dictionary! { "Predictor" => 1 });
     assert!(textedit::scan(&doc, 0).is_err());
+}
+
+#[test]
+fn wrapping_keeps_a_gradient_underline_fixed() {
+    use textedit::wrap_tests::{content, refusal, tagged, LONGER, WIDEST};
+    let rule = "q /Pattern cs /Gradient scn 20 170 21.6 0.8 re f Q";
+    let mut doc = tagged(&format!("{rule} {}", content(52., "")), &[&[0, 1, 2], &[3]]);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    install_gradient(&mut doc, page, [0, 160, 0, 180]);
+    assert!(refusal(&doc, WIDEST, LONGER).contains("a drawing or an annotation"));
+}
+
+#[test]
+fn only_painted_text_channels_pin_a_patterned_run() {
+    for mode in [1, 2, 3] {
+        let prefix =
+            format!("q /Pattern cs /Gradient scn BT /F1 12 Tf {mode} Tr 40 70 Td (IN) Tj ET Q");
+        let (mut doc, ids) = fixture(&prefix);
+        let scan = textedit::scan(&doc, 0).unwrap();
+        let target = scan.runs.iter().find(|run| run.text == "IN");
+        if mode == 2 {
+            assert!(target.is_none());
+            continue;
+        }
+        let change = Change {
+            page: 0,
+            layout: None,
+            revision: scan.revision,
+            operator: target.unwrap().operator,
+            original: "IN".into(),
+            replacement: "I".into(),
+        };
+        textedit::write(&mut doc, &[change]).unwrap();
+        assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "I");
+        let content = String::from_utf8(doc.get_page_content(ids[0])).unwrap();
+        assert!(content.contains(&format!("{mode} Tr")));
+    }
 }

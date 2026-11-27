@@ -141,6 +141,7 @@ describe("MarkList", () => {
     show(list, [mark({ id: 0 }), mark({ id: 1 }), mark({ id: 2 })]);
     const tabbable = [0, 1, 2].filter((id) => list.elementFor(id)?.tabIndex === 0);
     expect(tabbable).toEqual([0]);
+    for (const id of [0, 1, 2]) expect(removeControl(list, id).tabIndex).toBe(-1);
   });
 
   it("moves the roving tabindex with the arrow keys", () => {
@@ -165,6 +166,28 @@ describe("MarkList", () => {
     expect(picked).toEqual([1]);
   });
 
+  it("keeps keyboard focus on the next surviving mark after Delete", () => {
+    const list = panel();
+    const marks = [1, 2, 3].map((id) => mark({ id }));
+    show(list, marks);
+    Object.defineProperty(document, "activeElement", { get: () =>
+      marks.map(({ id }) => list.elementFor(id)).find((row) =>
+        (row as unknown as import("./testdom").FakeElement | null)?.focused) ?? null,
+    });
+    list.elementFor(2)!.focus();
+    const pressDelete = () => dom.root.children[1]?.dispatch("keydown", {
+      key: "Delete", target: document.activeElement,
+    });
+    pressDelete();
+    expect(removed).toEqual([2]);
+    show(list, [marks[0]!, marks[2]!]);
+    expect(document.activeElement).toBe(list.elementFor(3));
+    pressDelete();
+    expect(removed).toEqual([2, 3]);
+    show(list, [marks[0]!]);
+    expect(document.activeElement).toBe(list.elementFor(1));
+  });
+
   it("reports a press on a row", () => {
     const list = panel();
     show(list, [mark({ id: 3 })]);
@@ -179,6 +202,7 @@ describe("MarkList", () => {
     list: MarkList,
     id: number,
   ): {
+    tabIndex: number;
     dispatch: (t: string, e: object) => void;
     getAttribute: (n: string) => unknown;
   } {

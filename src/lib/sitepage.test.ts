@@ -37,7 +37,7 @@ const SHARED = [
   "Open Source Developer Timo Stein",
   "There is no build for Intel Macs, Windows on ARM or ARM Linux",
   "sudo apt install ./tpdf",
-  "Recognition is local and temporary: the PDF stays unchanged",
+  "Recognition is local and temporary: the PDF stays unchanged, and editing or leaving the view discards it",
   "INV-2026-0417",
 ];
 
@@ -53,6 +53,10 @@ const FIGURE = /\d[\d.,]*\s?(?:ms|MB|GB)\b/g;
 describe("the landing page", () => {
   const shown = words(page);
   const original = words(readme);
+
+  test("describes the optional signing choices", () => {
+    expect(shown).toContain("You can sign invisibly or show a signature on the page. A timestamp is optional. Leave the document unlocked if someone else needs to countersign.");
+  });
 
   test.each(SHARED)("says what the README says: %s", (sentence) => {
     // As booleans with a label: a failed `toContain` prints the whole README.
@@ -71,6 +75,11 @@ describe("the landing page", () => {
 describe("the German landing page", () => {
   const shown = words(german);
   const original = words(readme);
+
+  test("describes temporary recognition and the optional signing choices", () => {
+    expect(shown).toContain("Die Erkennung läuft auf Ihrem Computer und gilt nur vorübergehend: Das PDF bleibt unverändert, und eine Bearbeitung oder das Verlassen der Dokumentansicht verwirft sie.");
+    expect(shown).toContain("Sie können unsichtbar signieren oder eine Signatur auf der Seite anzeigen lassen. Ein Zeitstempel ist optional. Lassen Sie das Dokument entsperrt, wenn eine weitere Person gegenzeichnen soll.");
+  });
 
   test.each(SHARED_GERMAN)("says what the README says: %s", (sentence) => {
     expect(shown.includes(sentence), "on the page").toBe(true);

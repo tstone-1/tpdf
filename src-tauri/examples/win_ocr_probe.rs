@@ -37,13 +37,9 @@
 //! engine: a control sized from the smallest box a redaction covered. So the
 //! second size is that floor.
 //!
-//! **What it cannot say.** It runs at whatever integrity the shell gave it. The
-//! parser worker runs at low integrity inside a job object, and macOS already
-//! taught this lesson in the mirror: Vision is killed by SIGTRAP under
-//! `SANDBOX_PROFILE` and needs general `file-read`, which is why OCR is a
-//! separate process under `OCR_SANDBOX_PROFILE`. Whether `Windows.Media.Ocr`
-//! survives containment is a second measurement and wants a rung ladder like
-//! `win_sandbox_probe.rs`, not a line here.
+//! The probe repeats the readings in a child running under the worker's job
+//! and low-integrity token. It compares those readings with the parent's and
+//! reports when it could not measure the contained run.
 //!
 //! **Exit codes are the reading, not a verdict on the platform.** 0 means the
 //! probe measured something --- including "no language packs", which is an
@@ -74,3 +70,25 @@ fn main() {
 // binary in the Windows installer.
 #[path = "../src/probes/win_ocr_probe.rs"]
 mod imp;
+
+#[cfg(any(windows, test))]
+fn reading_verdict(expected: &str, observed: &str) -> &'static str {
+    match observed.trim() {
+        "" => "NOTHING READ",
+        text if text == expected => "VERBATIM",
+        _ => "DIFFERS",
+    }
+}
+
+#[test]
+fn compares_the_entire_reading() {
+    for (reading, verdict) in [
+        ("  WORD\n", "VERBATIM"),
+        ("WORD WORD", "DIFFERS"),
+        ("WORD extra", "DIFFERS"),
+        ("WOR", "DIFFERS"),
+        (" ", "NOTHING READ"),
+    ] {
+        assert_eq!(reading_verdict("WORD", reading), verdict);
+    }
+}

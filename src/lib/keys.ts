@@ -596,7 +596,8 @@ export function matches(id: BoundCommand, event: KeyboardEvent): boolean {
   // ⌘\ untypable on a German keyboard; the position alone would move the chord
   // for everyone whose layout is not the one it was written on.
   if (binding.code !== undefined && event.code === binding.code) return true;
-  return binding.keys.includes(event.key);
+  const key = /^[A-Z]$/.test(event.key) ? event.key.toLowerCase() : event.key;
+  return binding.keys.includes(key) || binding.keys.includes(event.key);
 }
 
 /**

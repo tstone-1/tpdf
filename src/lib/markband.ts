@@ -274,11 +274,11 @@ export function leastCorners(kind: MarkKind): number {
 }
 
 /**
- * How long an arrow's head is, in points, for a line `width` points wide.
+ * The arrowhead length in native page units, for a line of the same units.
  * `arrow_head` in `docmodel.rs`: three widths, and never less than 6 points.
  */
-export function arrowHead(width: number): number {
-  return Math.max(width * 3, 6);
+export function arrowHead(width: number, unit = 1): number {
+  return Math.max(width * 3, 6 / unit);
 }
 
 /**

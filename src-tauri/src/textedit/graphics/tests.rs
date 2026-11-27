@@ -678,7 +678,7 @@ fn textedit_rendering_tolerances_are_preserved_within_their_ranges() {
 // Word draws simulated bold as fill-then-stroke (Tr 2), and scanned documents
 // carry their OCR text invisibly (Tr 3). Both are edited in place: the mode is
 // kept, so the replacement paints the same way, and stroked text's hit area
-// reaches half the line width beyond the glyphs.
+// includes projecting joins.
 #[test]
 fn textedit_stroked_and_invisible_text_is_edited_with_its_mode_and_ink() {
     let rect = |body: &str, state: Dictionary| {
@@ -690,22 +690,32 @@ fn textedit_stroked_and_invisible_text_is_edited_with_its_mode_and_ink() {
         (
             "4 w BT /F1 12 Tf 2 Tr 40 180 Td (FIRST) Tj ET",
             dictionary! {},
-            2.,
+            20.,
         ),
         (
             "4 w BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
             dictionary! {},
-            2.,
+            20.,
         ),
         (
             "/G3 gs BT /F1 12 Tf 2 Tr 40 180 Td (FIRST) Tj ET",
             dictionary! { "LW" => 6 },
-            3.,
+            30.,
         ),
         (
             "2 0 0 2 0 0 cm 4 w BT /F1 6 Tf 2 Tr 20 90 Td (FIRST) Tj ET",
             dictionary! {},
-            4.,
+            40.,
+        ),
+        (
+            "2 j 12 w BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
+            dictionary! {},
+            6.,
+        ),
+        (
+            "0 j 4 M 12 w BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
+            dictionary! {},
+            24.,
         ),
         // Invisible text paints nothing and needs no margin.
         (
@@ -722,7 +732,7 @@ fn textedit_stroked_and_invisible_text_is_edited_with_its_mode_and_ink() {
         (
             "9 w q 1 w Q BT /F1 12 Tf 2 Tr 40 180 Td (FIRST) Tj ET",
             dictionary! {},
-            4.5,
+            45.,
         ),
     ] {
         let stroked = rect(body, state);

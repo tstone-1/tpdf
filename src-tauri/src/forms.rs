@@ -1468,19 +1468,25 @@ pub(crate) fn clear_choice(
 
 /// Writes all widgets of a shared field, plus its value, in one rewrite.
 pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
-    write_except_pages(doc, changes, &[])
+    write_retained_answers(doc, changes, &[], &[])
 }
 
 /// A terminal field may have widgets on several pages. Only apply a new answer
 /// when at least one of its widgets will still be present in the output.
-pub(crate) fn write_except_pages(
+pub(crate) fn write_retained_answers(
     doc: &mut Document,
     changes: &[Change],
     dropped: &[u32],
+    edits: &[crate::formedit::FieldEdit],
 ) -> Result<(), String> {
     if changes.is_empty() {
         return Ok(());
     }
+    let removed: HashSet<_> = edits
+        .iter()
+        .filter(|edit| edit.remove)
+        .map(|edit| edit.widget)
+        .collect();
     let form = scan(doc)?;
     let mut unique = BTreeMap::new();
     for change in changes {
@@ -1497,7 +1503,7 @@ pub(crate) fn write_except_pages(
         }
         if widgets
             .iter()
-            .all(|w| dropped.binary_search(&(w.page + 1)).is_ok())
+            .all(|w| removed.contains(&w.widget) || dropped.binary_search(&(w.page + 1)).is_ok())
         {
             continue;
         }

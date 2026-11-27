@@ -5006,9 +5006,10 @@ fn signing_preserves_a_destination_created_after_preflight_unless_forced() {
     std::fs::write(&source, b"source").unwrap();
     assert!(!output.exists());
     std::fs::write(&output, b"other signer").unwrap();
-    assert!(sign::publish_signed(&source, &output, b"signed", false).is_err());
+    assert!(sign::publish_signed(&source, None, &output, b"signed", false).is_err());
     assert_eq!(std::fs::read(&output).unwrap(), b"other signer");
-    sign::publish_signed(&source, &output, b"signed", true).unwrap();
+    assert!(sign::publish_signed(&source, Some(&output), &output, b"signed", true).is_err());
+    sign::publish_signed(&source, None, &output, b"signed", true).unwrap();
     assert_eq!(std::fs::read(&output).unwrap(), b"signed");
     assert_eq!(std::fs::read(&source).unwrap(), b"source");
 }

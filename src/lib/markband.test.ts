@@ -808,6 +808,8 @@ describe("arrowWings", () => {
   it("is three widths long, and never under 6 points", () => {
     expect(arrowHead(4)).toBe(12);
     expect(arrowHead(1)).toBe(6);
+    expect(arrowHead(0.5, 2)).toBe(3);
+    expect(arrowHead(2, 2)).toBe(6);
   });
 });
 

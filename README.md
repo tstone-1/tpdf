@@ -142,7 +142,7 @@ yourself, or make the image-only copy and check what it shows.
 
 From 26.11.11 on, a result that is not verified groups its reasons under three headings,
 with guidance for each: *Still in the file* (the check found content marked for removal,
-possibly outside any page), *Not read in pictures*, and *Could not be checked* (a part of
+possibly outside any page), *Pictures and drawings to review*, and *Could not be checked* (a part of
 the file the check cannot read; the marked regions were still removed).
 
 ![Two regions marked for removal and listed for review](docs/img/redact.png)

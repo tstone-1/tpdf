@@ -8120,6 +8120,11 @@ export class Viewer {
       if (style === "segments") {
         const drawn = this.viewStrokesOf(mark);
         if (drawn) {
+          const unit = mark.kind === "arrow" ? this.measures.pageUnit(mark.page) : 1;
+          if (unit === undefined) {
+            void this.preparePageUnit(slot, mark.page);
+            continue;
+          }
           ctx.strokeStyle = markInk(mark.color, false);
           ctx.lineWidth = mark.width * this.zoom * dpr;
           // Round, matching the `1 J 1 j` the appearance stream sets.
@@ -8133,7 +8138,7 @@ export class Viewer {
                 y: (origin.top + point.y * this.zoom - this.scrollTop) * dpr + oy,
               })),
               mark.kind,
-              arrowHead(mark.width) * this.zoom * dpr,
+              arrowHead(mark.width, unit) * this.zoom * dpr,
             );
           }
         }
@@ -8695,8 +8700,10 @@ export class Viewer {
     const origin = this.scroller.pageOrigin(slot);
     ctx.globalCompositeOperation = "source-over";
     ctx.strokeStyle = PREVIEW_STROKE;
-    const width = this.previewNib(slot);
-    if (width === undefined) return;
+    const page = this.pages.idOf(slot);
+    const unit = page === undefined ? undefined : this.measures.pageUnit(page);
+    if (unit === undefined) return;
+    const width = this.nib / unit;
     ctx.lineWidth = width * this.zoom * dpr;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -8707,7 +8714,7 @@ export class Viewer {
         y: (origin.top + point.y * this.zoom - this.scrollTop) * dpr,
       })),
       kind,
-      arrowHead(width) * this.zoom * dpr,
+      arrowHead(width, unit) * this.zoom * dpr,
     );
   }
 

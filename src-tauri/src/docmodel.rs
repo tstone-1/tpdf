@@ -945,9 +945,9 @@ impl MarkKind {
     /// its path, and for an arrow half its head as well, which spreads either
     /// side of the line at its end.
     #[must_use]
-    pub fn stroke_pad(self, width: f64) -> f32 {
+    pub fn stroke_pad(self, width: f64, unit: f64) -> f32 {
         let head = if self == Self::Arrow {
-            arrow_head(width) / 2.0
+            arrow_head(width, unit) / 2.0
         } else {
             0.0
         };
@@ -960,12 +960,11 @@ impl MarkKind {
 /// can send.
 pub const MAX_CORNERS: usize = 1000;
 
-/// How long an arrow's head is, in points, for a line `width` points wide:
-/// three widths, and never less than 6 points, so a thin arrow still reads as
-/// one. `markband.ts` holds the same rule for the overlay.
+/// Arrowhead length in native page units. Three stroke widths, with a floor
+/// of six physical points. `markband.ts` uses the same rule for the overlay.
 #[must_use]
-pub fn arrow_head(width: f64) -> f64 {
-    (width * 3.0).max(6.0)
+pub fn arrow_head(width: f64, unit: f64) -> f64 {
+    (width * 3.0).max(6.0 / unit)
 }
 
 /// Which standard stamp a [`MarkKind::Stamp`] is.

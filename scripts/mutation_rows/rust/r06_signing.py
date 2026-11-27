@@ -862,8 +862,8 @@ ROWS += [
     Mutation(
         "cli: replace an existing output without --force",
         "src/cli/sign.rs",
-        'super::pages::check_target(&[], &sign.output, sign.force)?;',
-        'super::pages::check_target(&[], &sign.output, true)?;',
+        '&sign.output,\n        sign.force,\n    )?;',
+        '&sign.output,\n        true,\n    )?;',
         "signing_refusals_that_need_no_worker_exit_before_one_is_asked_for",
     ),
     Mutation(

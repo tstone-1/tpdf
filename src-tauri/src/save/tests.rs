@@ -11018,7 +11018,7 @@ fn plan_with_ink() -> Plan {
 }
 
 #[test]
-fn a_five_point_pen_writes_the_same_physical_stroke_on_scaled_pages() {
+fn strokes_and_arrowheads_keep_their_physical_size_on_scaled_pages() {
     for unit in [1, 2] {
         let mut source = Document::load_mem(&two_blank_pages()).unwrap();
         let page = crate::pagetree::ordered_pages(&source)[0];
@@ -11028,33 +11028,55 @@ fn a_five_point_pen_writes_the_same_physical_stroke_on_scaled_pages() {
             .set("UserUnit", unit);
         let mut bytes = Vec::new();
         source.save_to(&mut bytes).unwrap();
-        let edits = crate::edits::Edits::default();
-        edits.open(1, 2, None);
-        let mark = crate::edits::NewMark {
-            kind: MarkKind::Ink,
-            page: edits.state(1).unwrap().pages[0].id,
-            quads: vec![],
-            strokes: vec![vec![5., 5., 20., 20.]],
-            stamp: None,
-            field: None,
-            image: None,
-            reply_to: None,
-            color: [0., 0., 0.],
-            width: 5.,
-            author: String::new(),
-            note: Default::default(),
-        };
-        edits
-            .annotate_at_scale(1, mark, String::new(), 0, f64::from(unit))
-            .unwrap();
-        let scratch = Scratch::new("scaled-ink-width");
-        let content = appearance_over(bytes, &edits.plan(1).unwrap(), &scratch);
-        let ops = lopdf::content::Content::decode(content.as_bytes()).unwrap();
-        let ink = ops.operations.iter().find(|op| op.operator == "w").unwrap();
-        assert_eq!(
-            f64::from(ink.operands[0].as_float().unwrap()) * f64::from(unit),
-            5.
-        );
+        for (kind, width) in [(MarkKind::Ink, 5.), (MarkKind::Arrow, 1.)] {
+            let edits = crate::edits::Edits::default();
+            edits.open(1, 2, None);
+            let mark = crate::edits::NewMark {
+                kind,
+                page: edits.state(1).unwrap().pages[0].id,
+                quads: vec![],
+                strokes: vec![vec![10., 10., 60., 10.]],
+                stamp: None,
+                field: None,
+                image: None,
+                reply_to: None,
+                color: [0., 0., 0.],
+                width,
+                author: String::new(),
+                note: Default::default(),
+            };
+            edits
+                .annotate_at_scale(1, mark, String::new(), 0, f64::from(unit))
+                .unwrap();
+            let scratch = Scratch::new("scaled-ink-width");
+            let content = appearance_over(bytes.clone(), &edits.plan(1).unwrap(), &scratch);
+            let ops = lopdf::content::Content::decode(content.as_bytes()).unwrap();
+            let ink = ops.operations.iter().find(|op| op.operator == "w").unwrap();
+            assert_eq!(
+                f64::from(ink.operands[0].as_float().unwrap()) * f64::from(unit),
+                width
+            );
+            if kind == MarkKind::Arrow {
+                let points: Vec<_> = ops
+                    .operations
+                    .iter()
+                    .filter(|op| matches!(op.operator.as_str(), "m" | "l"))
+                    .map(|op| {
+                        (
+                            f64::from(op.operands[0].as_float().unwrap()),
+                            f64::from(op.operands[1].as_float().unwrap()),
+                        )
+                    })
+                    .collect();
+                let [_, _, wing, tip, other] = points.as_slice() else {
+                    panic!("unexpected arrow: {points:?}")
+                };
+                for (x, y) in [wing, other] {
+                    let length = (x - tip.0).hypot(y - tip.1) * f64::from(unit);
+                    assert!((length - 6.).abs() < 0.001, "unit {unit}: {length}");
+                }
+            }
+        }
     }
 }
 
@@ -14604,7 +14626,7 @@ fn plan_with_corners(kind: MarkKind, corners: &[(f32, f32)]) -> Plan {
             .map(|&(x, y)| crate::docmodel::Point { x, y })
             .collect(),
     }];
-    let pad = kind.stroke_pad(crate::docmodel::INK_WIDTH);
+    let pad = kind.stroke_pad(crate::docmodel::INK_WIDTH, 1.);
     let mut plan = plan_of_kind(
         kind,
         crate::docmodel::Stroke::bounds(&strokes, pad)
@@ -14740,7 +14762,7 @@ fn an_arrows_head_is_inside_its_rectangle() {
         let width = crate::docmodel::INK_WIDTH;
         let strokes = vec![vec![from, tip]];
         let [one, _, other] = super::marks::arrow_wings_for_tests(&strokes, width).expect("a head");
-        let pad = f64::from(MarkKind::Arrow.stroke_pad(width));
+        let pad = f64::from(MarkKind::Arrow.stroke_pad(width, 1.));
         let (left, right) = (from.0.min(tip.0) - pad, from.0.max(tip.0) + pad);
         let (low, high) = (from.1.min(tip.1) - pad, from.1.max(tip.1) + pad);
         for (x, y) in [one, other] {

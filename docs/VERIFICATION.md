@@ -7675,3 +7675,17 @@ following lines moved down by 10.4 points, and overlapping glyph pairs stayed at
 pypdf, PDFium and PDFKit all read the added sentence and the following text in order.
 The separate boxed-layout check accepted the saved three-line replacement and rejected
 a copy with all four words and their fonts intact on a single baseline.
+
+## Subset exports, signature images and text geometry, 2026-11-27
+
+A two-page form test fills a shared field, removes its widget from the first page
+and extracts each page separately. The first output contains neither the widget
+nor the pending field value. The second retains the widget and its new answer.
+The CLI signing check selects the signature PNG as the output through an equivalent
+path with `--force`. The command exits before using the key and leaves the PNG
+byte-identical.
+
+A paragraph wrap that would move a vertical gradient underline is refused with
+the PDF object graph intact. The solid underline control moves 14 points with
+its text. On pages with user units 1 and 2, both wings of a one-point arrow
+measure six physical points in the saved appearance stream.

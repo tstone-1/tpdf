@@ -140,6 +140,13 @@ describe("matches and AltGr", () => {
 });
 
 describe("matches", () => {
+  it("keeps Save and Save Copy distinct with Caps Lock on", () => {
+    expect(matches("file.save", event("S", { ctrl: true }))).toBe(true);
+    expect(matches("file.saveCopy", event("S", { ctrl: true }))).toBe(false);
+    expect(matches("file.save", event("s", { ctrl: true, shift: true }))).toBe(false);
+    expect(matches("file.saveCopy", event("s", { ctrl: true, shift: true }))).toBe(true);
+  });
+
   it("accepts an event built from the binding's own declaration", () => {
     // The round trip this module exists for. A label is rendered from the same
     // modifiers `matches` tests, so the two cannot drift --- but that is only

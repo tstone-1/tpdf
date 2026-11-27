@@ -159,6 +159,22 @@ pub fn draws_the_file(report: &mut Report) {
         args
     };
 
+    let image_before = std::fs::read(&stamp_file).unwrap();
+    let alias = dir.join(".").join("stamp.png");
+    let held = store(None);
+    let (code, _, stderr) = signs(
+        &line(&alias, &["--image", &s(&stamp_file), "--force"]),
+        &held,
+        now,
+    );
+    report.check(
+        "--force preserves a signature image selected as the output",
+        code == 2
+            && held.asked.signed.get() == 0
+            && std::fs::read(&stamp_file).unwrap() == image_before,
+        &format!("exit {code}: {stderr}"),
+    );
+
     // The file's image is drawn, whether or not an image is saved, and the
     // saved image is never read.
     for (what, held) in [("no saved image", None), ("a saved image", Some(&saved))] {

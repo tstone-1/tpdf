@@ -2205,3 +2205,54 @@ fn subset_writes_pending_answers_only_for_fields_with_a_retained_widget() {
         }
     }
 }
+
+#[test]
+fn subset_checks_widget_removals_before_writing_a_pending_answer() {
+    use crate::edits::{Edits, FieldPatch, FieldTarget};
+    let input = shared_on_two_pages().doc;
+    let pair = widgets(&input, "Pair");
+    let model = Edits::default();
+    model.open(1, 2, None);
+    let page = model.state(1).unwrap().pages[0].id;
+    let pending = "pending private answer";
+    let contains_answer = |doc: &Document| {
+        doc.objects.values().any(|obj| {
+            obj.as_dict()
+                .ok()
+                .and_then(|dict| dict.get(b"V").ok())
+                .and_then(|value| lopdf::decode_text_string(value).ok())
+                .as_deref()
+                == Some(pending)
+        })
+    };
+    assert!(!contains_answer(&input));
+    model
+        .fill(1, pair[0].object, Value::Text(pending.into()))
+        .unwrap();
+    model
+        .refield(
+            1,
+            vec![FieldTarget {
+                object: pair[0].widget,
+                page,
+                patch: FieldPatch {
+                    removed: Some(true),
+                    ..Default::default()
+                },
+            }],
+            0,
+        )
+        .unwrap();
+    let original = bytes(&input);
+    let extract = |slot| {
+        let plan = model.plan_subset(1, &[slot]).unwrap();
+        let written =
+            crate::save::rewrite_update(&original, &plan, crate::save::Job::Save, None).unwrap();
+        Document::load_mem(&written).unwrap()
+    };
+    let removed = extract(0);
+    assert!(widgets(&removed, "Pair").is_empty());
+    assert!(!contains_answer(&removed));
+    let retained = extract(1);
+    assert_eq!(one(&retained, "Pair").value, Value::Text(pending.into()));
+}

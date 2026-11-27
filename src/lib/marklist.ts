@@ -271,6 +271,10 @@ export class MarkList {
   }
 
   private paint(): void {
+    const active = document.activeElement as HTMLElement | null;
+    const hadFocus = active !== null && this.list.contains(active);
+    if (hadFocus) this.focused = idOf(active) ?? idOf(active.parentElement) ?? this.focused;
+    const previousIndex = hadFocus && this.focused !== null ? [...this.elements.keys()].indexOf(this.focused) : 0;
     this.list.replaceChildren();
     this.elements.clear();
 
@@ -289,7 +293,8 @@ export class MarkList {
       this.focused === null ||
       !this.rows.some((row) => row.mark.id === this.focused)
     ) {
-      this.focused = this.rows[0]?.mark.id ?? null;
+      const next = Math.max(0, Math.min(previousIndex, this.rows.length - 1));
+      this.focused = this.rows[next]?.mark.id ?? null;
     }
     for (const row of this.rows) {
       const element = this.build(row);
@@ -297,6 +302,7 @@ export class MarkList {
       this.list.appendChild(element);
     }
     if (this.selected !== null) this.mark(this.selected, true);
+    if (hadFocus && this.focused !== null) this.elements.get(this.focused)?.focus({ preventScroll: true });
   }
 
   private say(text: string): void {
@@ -367,6 +373,8 @@ export class MarkList {
     // ways a mark comes off are one phrase rather than two spellings of one.
     const remove = document.createElement("button");
     remove.type = "button";
+    // The row owns keyboard focus. Delete and Backspace invoke the same removal.
+    remove.tabIndex = -1;
     remove.dataset.part = "remove";
     // The name literal stays on the call's own line: `check_webview_sinks.py`
     // reads these a line at a time and flags a call whose arguments it cannot
