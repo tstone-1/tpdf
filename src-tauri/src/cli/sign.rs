@@ -1017,15 +1017,7 @@ fn run_sign(
              as a new file, so choose another name for it",
         ));
     }
-    if !sign.force && sign.output.exists() {
-        return Err(Failure::new(
-            Exit::Refused,
-            format!(
-                "{} already exists --- choose another name, or give --force to replace it",
-                sign.output.display()
-            ),
-        ));
-    }
+    super::pages::check_target(&[], &sign.output, sign.force)?;
     let (file, len) = opened(&sign.input).map_err(|why| Failure::new(Exit::Refused, why))?;
     sign_cms::refuse_too_large(len as u64).map_err(|why| Failure::new(Exit::Refused, why))?;
 

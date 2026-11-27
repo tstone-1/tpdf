@@ -1402,7 +1402,7 @@ export class Viewer {
    */
   private differences: { spans: readonly Painted[]; side: "removed" | "added"; current: number } | null = null;
   /** Whether a pointer is currently extending the selection. */
-  private selecting = false;
+  private selectionPointer: number | null = null;
   /** Counts clicks, so a double- and triple-click can be told apart. */
   private readonly clicks = new ClickCounter();
   /**
@@ -2047,6 +2047,7 @@ export class Viewer {
     // questions" trap --- and `PointerDrag` deliberately allows only one live
     // drag per instance, so two gestures need two of them.
     this.moveDrag = new PointerDrag(root, {
+      moveOnRelease: true,
       begin: (_at: DragPoint) => {
         // Never starts itself: `onSelectStart` decides which mark was pressed and
         // sets `moving` before calling `start`, because that decision needs the
@@ -2269,6 +2270,7 @@ export class Viewer {
     });
 
     this.drawDrag = new PointerDrag(root, {
+      moveOnRelease: true,
       begin: (at: DragPoint) => {
         if (this.tool.kind !== "draw" && this.tool.kind !== "erase") return false;
         const { page, x, y } = this.pageAndPoint(at);
@@ -6955,6 +6957,8 @@ export class Viewer {
     // and must still start a selection. `isMac` is the same answer the chord
     // spelling reads, so there is one platform detector rather than two.
     if (event.button !== 0 || (isMac() && event.ctrlKey)) return;
+    if (this.selectionPointer !== null && this.selectionPointer !== event.pointerId) return;
+    if (this.moveDrag.active || this.drawDrag.active || this.measureDrag.active || this.cropDrag.active) return;
     // The scrollbar is inside the root and has its own drag.
     if (this.track.contains(event.target as Node)) return;
     this.root.focus();
@@ -7163,14 +7167,12 @@ export class Viewer {
     if (this.selectUnit === "char") {
       const caret = this.caretFrom(event);
       this.selection = caret ? new Selection(caret) : null;
-      this.selecting = caret !== null;
       this.anchorUnit = null;
     } else {
       // The unit is read with the granularity already set, so a triple-click
       // asks for a line rather than widening the word a double-click found.
       const unit = this.unitFrom(event);
       this.anchorUnit = unit;
-      this.selecting = unit !== null;
       if (unit) {
         this.selection = new Selection({ page: unit.page, index: unit.from });
         this.selection.focus = { page: unit.page, index: unit.to };
@@ -7179,6 +7181,7 @@ export class Viewer {
       }
     }
 
+    this.selectionPointer = event.pointerId;
     capture(this.root, event.pointerId);
     this.root.addEventListener("pointermove", this.onSelectMove);
     this.root.addEventListener("pointerup", this.onSelectEnd);
@@ -7188,7 +7191,7 @@ export class Viewer {
   }
 
   private readonly onSelectMove = (event: PointerEvent): void => {
-    if (!this.selecting || !this.selection) return;
+    if (event.pointerId !== this.selectionPointer || !this.selection) return;
 
     const anchor = this.anchorUnit;
     if (this.selectUnit !== "char" && anchor) {
@@ -7225,7 +7228,7 @@ export class Viewer {
 
   /** Lets go of the selection's pointer and every listener its press added. */
   private stopSelecting(pointerId: number): void {
-    this.selecting = false;
+    this.selectionPointer = null;
     release(this.root, pointerId);
     this.root.removeEventListener("pointermove", this.onSelectMove);
     this.root.removeEventListener("pointerup", this.onSelectEnd);
@@ -7241,11 +7244,14 @@ export class Viewer {
    * down, and the next release anywhere marked the selection for redaction.
    */
   private readonly onSelectCancel = (event: PointerEvent): void => {
+    if (event.pointerId !== this.selectionPointer) return;
     this.press = null;
     this.stopSelecting(event.pointerId);
   };
 
   private readonly onSelectEnd = (event: PointerEvent): void => {
+    if (event.pointerId !== this.selectionPointer) return;
+    this.onSelectMove(event);
     this.stopSelecting(event.pointerId);
     // With the redaction tool armed the selection was made to be marked. A
     // press that selected nothing is a click, and marks nothing.

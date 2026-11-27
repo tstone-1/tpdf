@@ -3,7 +3,7 @@
  *
  * ## Where they come from
  *
- * All but two are Lucide's (ISC), copied from `vendor/icons/` rather than taken
+ * The Lucide icons (ISC) are copied from `vendor/icons/` rather than taken
  * from the npm package: twenty-odd paths do not need a dependency, and a vendored
  * file with a digest in `vendor/icons/manifest.json` is something
  * `scripts/third_party_notices.py` can enumerate. `icons.test.ts` holds each

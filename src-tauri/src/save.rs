@@ -5014,6 +5014,7 @@ mod marks;
 mod signed;
 pub(crate) use signed::check_signed_destination;
 pub(crate) use signed::read_opened;
+pub(crate) use signed::write_signed_destination;
 pub use signed::{read_to_sign, write_signed};
 
 /// The marks half of a save: see [`marks`] for what is in it and why.

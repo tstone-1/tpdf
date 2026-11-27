@@ -123,6 +123,7 @@ struct Held {
     stage: Stage,
     source: PathBuf,
     out: PathBuf,
+    replace: bool,
 }
 
 /// What a held signature is waiting for, as the window reads it.
@@ -159,7 +160,7 @@ pub struct Unstamped {
 }
 
 impl Pending {
-    fn keep(&self, stage: Stage, source: PathBuf, out: PathBuf) -> u64 {
+    fn keep(&self, stage: Stage, source: PathBuf, out: PathBuf, replace: bool) -> u64 {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let number = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -168,6 +169,7 @@ impl Pending {
             stage,
             source,
             out,
+            replace,
         });
         number
     }
@@ -244,6 +246,7 @@ fn conclude(
     long_term: bool,
     source: PathBuf,
     out: PathBuf,
+    replace: bool,
     checking: &dyn crate::save::Verifier,
     pending: &Pending,
     asking: Asking<'_>,
@@ -264,7 +267,9 @@ fn conclude(
         now(),
         checking,
         asking,
-        &|bytes| save::write_signed(&source, &out, bytes).map_err(|why| why.message),
+        &|bytes| {
+            save::write_signed_destination(&source, &out, bytes, replace).map_err(|why| why.message)
+        },
     );
     match finished {
         Ok(finished) => {
@@ -291,7 +296,7 @@ fn conclude(
                 .and_then(url::Url::host_str)
                 .unwrap_or_default()
                 .to_string();
-            let number = pending.keep(Stage::Made(*made), source, out);
+            let number = pending.keep(Stage::Made(*made), source, out, replace);
             Ok(waiting(why.sentence(&host), number, Waiting::Timestamp))
         }
         // A revoked certificate: nothing is kept to be written without the
@@ -300,7 +305,7 @@ fn conclude(
             Err(said!("{why} --- nothing was written", why = why.sentence()))
         }
         Err(Stopped::Unextended { sealed, why }) => {
-            let number = pending.keep(*sealed, source, out);
+            let number = pending.keep(*sealed, source, out, replace);
             Ok(waiting(why.sentence(), number, Waiting::LongTerm))
         }
         Err(Stopped::Refused(why) | Stopped::Unwritten(why) | Stopped::Unread(why)) => Err(why),
@@ -441,9 +446,7 @@ pub async fn sign_add_certificate_file(path: String) -> Result<Option<String>, S
 /// for none --- in which case no request is made to anybody. It is judged here
 /// before anything else is asked. `long_term` asks for long-term validation
 /// data as well, and is refused without a timestamp.
-// Eleven because a Tauri command's arguments are its IPC shape: three are the
-// states Tauri injects, and bundling the eight the frontend sends into a struct
-// would change `ipc.ts`'s mirror for no reader's benefit.
+// Tauri injects the managed state. The other arguments mirror the frontend IPC command.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn sign_document(
@@ -454,6 +457,7 @@ pub async fn sign_document(
     source: String,
     identity: String,
     path: String,
+    replace: Option<bool>,
     placement: Option<Placement>,
     timestamp: Option<String>,
     long_term: Option<bool>,
@@ -534,6 +538,7 @@ pub async fn sign_document(
                 long_term,
                 PathBuf::from(source),
                 PathBuf::from(path),
+                replace.unwrap_or(false),
                 checking.as_ref(),
                 &app.state::<Pending>(),
                 asking,
@@ -570,7 +575,11 @@ pub async fn sign_resume(
         use tauri::Manager as _;
         let held = app.state::<Pending>();
         let Held {
-            stage, source, out, ..
+            stage,
+            source,
+            out,
+            replace,
+            ..
         } = resumed(&held, pending, long_term, authority.as_ref())?;
         asking_the_world(crate::trust::Anchors::System, |asking| {
             conclude(
@@ -579,6 +588,7 @@ pub async fn sign_resume(
                 long_term,
                 source,
                 out,
+                replace,
                 checking.as_ref(),
                 &held,
                 asking,
@@ -755,6 +765,7 @@ mod tests {
                 true,
                 source.clone(),
                 out.clone(),
+                false,
                 &crate::save::Here,
                 &pending,
                 asking,
@@ -783,6 +794,7 @@ mod tests {
                 false,
                 source,
                 out.clone(),
+                false,
                 &crate::save::Here,
                 &pending,
                 asking,
@@ -808,6 +820,7 @@ mod tests {
             ..Plan::default()
         });
         let (source, out) = scratch("good");
+        std::fs::write(&out, b"approved for replacement").unwrap();
         let answer = asking(test_vouch, |asking| {
             conclude(
                 sealed(&pki),
@@ -815,6 +828,7 @@ mod tests {
                 true,
                 source,
                 out,
+                true,
                 &crate::save::Here,
                 &Pending::default(),
                 asking,
@@ -848,6 +862,7 @@ mod tests {
                 true,
                 source,
                 out.clone(),
+                false,
                 &crate::save::Here,
                 &pending,
                 asking,
@@ -894,6 +909,7 @@ mod tests {
                 true,
                 source,
                 out.clone(),
+                false,
                 &crate::save::Here,
                 &pending,
                 asking,
@@ -1065,6 +1081,7 @@ mod tests {
                 true,
                 source.clone(),
                 out.clone(),
+                false,
                 &Recording {
                     steps: &window,
                     out: out.clone(),
@@ -1158,7 +1175,12 @@ mod tests {
             &Soft::p256(pki.signer.seed),
         )
         .expect("made");
-        let signing = |stage: Stage, long_term: bool, source: PathBuf, out: PathBuf, held| {
+        let signing = |stage: Stage,
+                       long_term: bool,
+                       source: PathBuf,
+                       out: PathBuf,
+                       replace,
+                       held| {
             let mut fetch = crate::longterm::fetch_blocking;
             let mut archive = test_archive;
             conclude(
@@ -1167,6 +1189,7 @@ mod tests {
                 long_term,
                 source,
                 out,
+                replace,
                 &crate::save::Here,
                 held,
                 Asking {
@@ -1191,8 +1214,15 @@ mod tests {
         };
         let (source, out) = scratch("long-term-unvouched");
         let pending = Pending::default();
-        let answer =
-            signing(Stage::Made(made), true, source, out.clone(), &pending).expect("an answer");
+        let answer = signing(
+            Stage::Made(made),
+            true,
+            source,
+            out.clone(),
+            false,
+            &pending,
+        )
+        .expect("an answer");
         let waiting = answer.unstamped.expect("held");
         assert_eq!(waiting.stage, Waiting::Timestamp, "{}", waiting.why);
         assert!(
@@ -1207,15 +1237,36 @@ mod tests {
         // *Sign without long-term data*, as `sign_resume` runs it on what is
         // held: the same authority is asked again and is refused again.
         let Held {
-            stage, source, out, ..
+            stage,
+            source,
+            out,
+            replace,
+            ..
         } = resumed(&pending, waiting.pending, false, Some(&authority)).expect("held");
-        let answer = signing(stage, false, source, out.clone(), &pending).expect("an answer");
-        assert_eq!(
-            answer.unstamped.map(|u| u.stage),
-            Some(Waiting::Timestamp),
-            "an unvouched token was written"
-        );
+        let answer =
+            signing(stage, false, source, out.clone(), replace, &pending).expect("an answer");
+        let retry = answer.unstamped.expect("still waiting");
+        assert_eq!(retry.stage, Waiting::Timestamp);
         assert!(!out.exists(), "nothing written");
+
+        // Another application creates the output while the timestamp question is open.
+        std::fs::write(&out, b"arrived during signing").unwrap();
+        let held = resumed(&pending, retry.pending, false, None).expect("held");
+        let result = asking(test_vouch, |asking| {
+            conclude(
+                held.stage,
+                None,
+                false,
+                held.source,
+                held.out,
+                held.replace,
+                &crate::save::Here,
+                &pending,
+                asking,
+            )
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&out).unwrap(), b"arrived during signing");
     }
 
     /// A worker that reads the written file as `save::Here` does, and then
@@ -1281,6 +1332,7 @@ mod tests {
                     false,
                     source,
                     out.clone(),
+                    false,
                     checking,
                     &Pending::default(),
                     asking,
@@ -1337,6 +1389,7 @@ mod tests {
                 false,
                 source,
                 out.clone(),
+                false,
                 &Rewording(starved),
                 &Pending::default(),
                 asking,
@@ -1374,7 +1427,7 @@ mod tests {
         .expect("made");
         let pending = Pending::default();
         let (source, out) = scratch("refused-answer");
-        let number = pending.keep(Stage::Made(made), source, out);
+        let number = pending.keep(Stage::Made(made), source, out, false);
 
         // Long-term data with no timestamp authority: refused.
         let why = match resumed(&pending, number, true, None) {

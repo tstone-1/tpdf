@@ -1623,6 +1623,21 @@ fn signing_refusals_that_need_no_worker_exit_before_one_is_asked_for() {
     assert!(err.contains("--force"), "{err}");
     assert_eq!(std::fs::read(&out).expect("kept"), b"keep me");
 
+    let (code, _, err) = ran(
+        &line(&[
+            "sign",
+            &s(&input),
+            "-o",
+            &s(&dir),
+            "--identity",
+            "Alice",
+            "--force",
+        ]),
+        &store,
+    );
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("regular file"), "{err}");
+
     // The input under a second name: 2, before anything else.
     let alias = dir.join("alias.pdf");
     #[cfg(unix)]
@@ -4059,6 +4074,10 @@ fn long_term_refuses_an_existing_output_and_a_missing_input_before_any_worker() 
     assert_eq!(code, 3, "{err}");
     assert!(err.contains("already exists"), "{err}");
     assert_eq!(std::fs::read(&out).expect("kept"), b"already here");
+
+    let (code, _, err) = long_term(&input, &dir, &["--force"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("regular file"), "{err}");
 
     let (code, _, err) = long_term(&dir.join("missing.pdf"), &dir.join("x.pdf"), &[]);
     assert_eq!(code, 3, "{err}");

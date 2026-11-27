@@ -135,8 +135,9 @@ async function dragAcrossPages(
   await settle();
 
   press(dom, viewer, from);
-  movePointer(dom, viewer, to);
-  dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root });
+  const end = viewer.screenPoint(to, 22, 15);
+  movePointerTo(dom, end);
+  dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root, clientX: end.x, clientY: end.y });
   await settle();
 }
 
@@ -2239,8 +2240,9 @@ describe("Selection changes during extraction", () => {
     viewer.goToPage(1);
     expect((await viewer.unturnedText(1))?.codes).toEqual([66, 98]);
     press(dom, viewer, 1);
-    movePointer(dom, viewer, 1);
-    dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root });
+    const end = viewer.screenPoint(1, 22, 15);
+    movePointerTo(dom, end);
+    dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root, clientX: end.x, clientY: end.y });
     await settle();
     expect((await viewer.selectionQuadsByPage())?.map(row => row.text)).toEqual(["B"]);
     release!(); await settle();

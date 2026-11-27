@@ -4,6 +4,12 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Cross-line redaction, tagged labels and signature fields (2026-11-27)
+
+On macOS the CLI removed the numbers from `123456 London` and `Bridge 876543` in a single rectangle. Poppler extracted both surviving words and qpdf found the original `London Bridge` bookmark in the verified output. A paragraph edit that would displace a boxed list label was refused. The same edit with an unboxed label succeeded, and Poppler measured the label 14 points lower. With direct Center and class Justify, the CLI offered the heading for editing. With class Justify alone it offered only the body.
+
+The signing worker prepared a named field with optional timestamp requirements and refused the same field with mandatory timestamp flags. Both checks stopped at preparation, before any signing key was used.
+
 ### Shared images, partial-line redaction and annotation-only pages (2026-11-27)
 
 On macOS, the CLI redacted a page image that a Form XObject also drew outside

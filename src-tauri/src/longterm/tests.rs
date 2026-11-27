@@ -879,7 +879,7 @@ fn an_issuer_nowhere_to_be_found_is_refused() {
     let vouched_chain = vouched(&cms, now(), &anchored).expect("vouched for");
     plan(
         &cms,
-        &move |_: &[u8], _: &[Vec<u8>]| vec![root.clone()],
+        &move |leaf: &[u8], _: &[Vec<u8>]| vec![leaf.to_vec(), root.clone()],
         &vouched_chain,
     )
     .expect("planned");
@@ -1409,7 +1409,7 @@ fn a_cross_certificate_of_a_root_the_os_holds_ends_the_chain() {
     let vouched_chain = vouched(&cms, now(), &anchored).expect("vouched for");
     let (subjects, carried) = plan(
         &cms,
-        &move |_: &[u8], _: &[Vec<u8>]| vec![root.clone()],
+        &move |leaf: &[u8], _: &[Vec<u8>]| vec![leaf.to_vec(), root.clone()],
         &vouched_chain,
     )
     .expect("planned");
@@ -1420,6 +1420,19 @@ fn a_cross_certificate_of_a_root_the_os_holds_ends_the_chain() {
         "the anchor is carried"
     );
     assert!(!carried.contains(&cross), "the cross-certificate is not");
+    // The same signature and timestamp, with the other trust path selected.
+    // Even though the TSA's chain carries the self-signed twin, the signer
+    // must gather evidence for the cross-certificate on its selected path.
+    let selected =
+        |leaf: &[u8], _: &[Vec<u8>]| vec![leaf.to_vec(), cross.clone(), older.certificate.clone()];
+    let (subjects, carried) = plan(&cms, &selected, &vouched_chain).expect("cross-signed path");
+    let issuer = subjects
+        .iter()
+        .find(|s| s.whose == Whose::SignerIssuer)
+        .expect("signer issuer");
+    assert_eq!(issuer.certificate.to_der().unwrap(), cross);
+    assert_eq!(issuer.issuer.to_der().unwrap(), older.certificate);
+    assert!(carried.contains(&cross) && carried.contains(&older.certificate));
 }
 
 // ------------------------------------------- the authority must be trusted

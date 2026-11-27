@@ -321,7 +321,7 @@ pub(super) fn check_target(inputs: &[PathBuf], target: &Path, force: bool) -> Re
             return Err(Failure::new(
                 Exit::Refused,
                 format!(
-                    "{} exists; choose a new name or use --force for a regular file",
+                    "{} already exists; choose a new name or use --force for a regular file",
                     target.display()
                 ),
             ));

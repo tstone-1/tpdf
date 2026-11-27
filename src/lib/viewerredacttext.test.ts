@@ -305,3 +305,21 @@ describe("the redaction tool pressed on text", () => {
     viewer.destroy();
   });
 });
+
+it("only the selecting pointer can extend, cancel or finish a text redaction", async () => {
+  const viewer = await build();
+  viewer.armRedact();
+  const start = at(60, 200);
+  const end = at(140, 200);
+  dom.root.dispatch("pointerdown", {
+    button: 0, pointerId: 1, clientX: start.x, clientY: start.y, target: dom.root,
+  });
+  for (const event of ["pointermove", "pointercancel", "pointerup"]) {
+    dom.root.dispatch(event, { pointerId: 2, clientX: end.x, clientY: end.y });
+  }
+  expect(selectionRequests).toBe(0);
+  expect(viewer.selectedText).toBe("");
+  dom.root.dispatch("pointerup", { pointerId: 1, clientX: end.x, clientY: end.y });
+  expect(selectionRequests).toBe(1);
+  viewer.destroy();
+});

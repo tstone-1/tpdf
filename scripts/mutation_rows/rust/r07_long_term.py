@@ -64,8 +64,8 @@ ROWS += [
     Mutation(
         "longterm: take no issuer from the OS chain",
         "src/longterm.rs",
-        "            above_signer.extend(os_chain(&der, &in_signature));",
-        "            above_signer.extend(os_chain(&der, &in_signature).into_iter().take(0));",
+        '.map(|der| os_chain(&der, &in_signature))',
+        '.map(|_| Vec::new())',
         "an_issuer_nowhere_to_be_found_is_refused",
     ),
     Mutation(

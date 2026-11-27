@@ -621,7 +621,7 @@ fn unvouched(trust: &crate::trust::Trust, blob: &[u8], whose: &str) -> (String, 
 /// What to ask about, and every certificate the `/DSS` should carry.
 ///
 /// `cms` is the timestamped signature just made. `os_chain` answers the chain
-/// the operating system assembles for a certificate from the ones given, DER,
+/// the operating system accepts for a certificate from the ones given, DER,
 /// offline --- `trust::platform::evaluate`'s chain in the application, nothing
 /// in a test that wants none. `vouched_chain` is the chain the timestamp
 /// authority was vouched for by, as [`vouched`] answers it.
@@ -629,9 +629,9 @@ fn unvouched(trust: &crate::trust::Trust, blob: &[u8], whose: &str) -> (String, 
 /// **Where an issuer may come from** differs for the two chains, because
 /// where the certificates came from does:
 ///
-/// - **Above the signer's**, from the signature's own set --- the chain the
-///   reader's key store gave when signing --- and what `os_chain` assembles
-///   for the signer from it. Never from the token.
+/// - **Above the signer's**, follow the ordered path accepted by the OS. If
+///   the OS returns no trusted path, a personal signer can still use issuers
+///   from the signature's own certificate set.
 /// - **Above the authority's**, from `vouched_chain` and nowhere else. The
 ///   token's own set is outside its signature: anybody on the path can add a
 ///   certificate with an issuer's name and key under a root of their own,
@@ -645,8 +645,7 @@ fn unvouched(trust: &crate::trust::Trust, blob: &[u8], whose: &str) -> (String, 
 /// carrying such a certificate where the walk meets it first is a refusal,
 /// not a signing by the genuine chain: the file would read back with that
 /// certificate on the chain, and nothing said about it. A cross-certificate
-/// of a root is not a link (the walk ends at it), so the tokens that carry
-/// one are not refused.
+/// selected below the anchor needs its own revocation evidence.
 ///
 /// It does not ask whether the authority is trusted: [`extend`] asks that
 /// first ([`vouched`]) and passes the chain on.
@@ -709,15 +708,23 @@ fn planned(
     };
     let in_signature = encoded(crate::docinfo::certificates_of(&signed));
     let in_token = encoded(crate::docinfo::certificates_of(&token));
-    // Which certificates may stand on each chain, DER. Above the signer's:
-    // the signature's own set, and what the OS assembles for the signer from
-    // it. Above the authority's: the chain it was vouched for by.
-    let mut above_signer = in_signature.clone();
-    if with_signer {
-        if let Ok(der) = signer.to_der() {
-            above_signer.extend(os_chain(&der, &in_signature));
-        }
-    }
+    // An accepted path fixes the order even when the signature also contains
+    // a self-signed twin of a selected intermediate.
+    let selected_signer = if with_signer {
+        signer
+            .to_der()
+            .ok()
+            .map(|der| os_chain(&der, &in_signature))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let signer_ordered = !selected_signer.is_empty();
+    let above_signer = if signer_ordered {
+        selected_signer
+    } else {
+        in_signature.clone()
+    };
     let above_authority = match vouched_chain {
         Some(chain) => chain.to_vec(),
         None => authority
@@ -753,7 +760,7 @@ fn planned(
         own: Whose::Signer,
         above: Whose::SignerIssuer,
         admitted: &above_signer,
-        ordered: false,
+        ordered: signer_ordered,
     };
     let authority = Leg {
         leaf: &authority,
@@ -834,19 +841,10 @@ fn walked(
     {
         // The walk is the reader's (`revocation::chain::walk`), so what is
         // asked about here is what the reader judges in the file written.
-        // A root needs nothing --- unless it is the signer or the authority
-        // itself, which then has nobody to vouch for it, and says so the way
-        // a certificate with no addresses does. Nor does a **cross-certificate
-        // of a root**, which the walk ends at too: DigiCert's and Sectigo's
-        // tokens carry their timestamping roots in that form (measured
-        // 2026-09-28, `docs/PLAN.md`).
-        //
-        // **The anchor is carried, and the cross-certificate is not.** Given
-        // both, pyHanko resolves an OCSP response signed by the root's key to
-        // the cross-certificate, which is not the issuer on its path, and calls
-        // the response unauthorised --- measured on DigiCert's and Sectigo's
-        // real data (`docs/TRAPS.md`). The token still carries the
-        // cross-certificate for whoever builds that path.
+        // Carry the selected anchor. A cross-certificate below it is an
+        // intermediate and needs revocation evidence. An unused twin stays
+        // out of the DSS because it can confuse issuer resolution in other
+        // readers (DigiCert and Sectigo measurements in `docs/TRAPS.md`).
         let discovered = walk(leaf, everyone);
         // An alternative, unvouched issuer in the document is still a
         // preflight refusal. Never follow its published addresses.
@@ -1425,8 +1423,9 @@ pub fn os_chain(leaf: &[u8], others: &[Vec<u8>]) -> Vec<Vec<u8>> {
         .map_or(0, |d| d.as_secs());
     os_chain_with(leaf, others, |leaf, others| {
         crate::trust::platform::evaluate(leaf, others, crate::trust::Anchors::System, now)
-            .map(|found| found.chain)
             .ok()
+            .filter(|found| found.passed)
+            .map(|found| found.chain)
     })
 }
 

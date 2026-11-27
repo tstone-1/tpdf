@@ -86,6 +86,15 @@ pub(crate) fn check_signed_destination(source: &Path, out: &Path) -> Result<(), 
 /// `out` is `source`, or the staging file cannot be written or put in place.
 /// Nothing is left at `out` on failure.
 pub fn write_signed(source: &Path, out: &Path, bytes: &[u8]) -> Result<(), Refusal> {
+    write_signed_destination(source, out, bytes, true)
+}
+
+pub(crate) fn write_signed_destination(
+    source: &Path,
+    out: &Path,
+    bytes: &[u8],
+    replace: bool,
+) -> Result<(), Refusal> {
     use std::io::Write as _;
 
     check_signed_destination(source, out)?;
@@ -94,6 +103,10 @@ pub fn write_signed(source: &Path, out: &Path, bytes: &[u8]) -> Result<(), Refus
             .and_then(|()| file.flush())
             .map_err(|e| Refusal::from(said!("could not write the signed document: {e}")))
     })?;
-    commit(&staged, out)?;
+    if replace {
+        commit(&staged, out)?;
+    } else {
+        super::publish_new(&staged, out)?;
+    }
     Ok(())
 }

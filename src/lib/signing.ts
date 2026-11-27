@@ -649,8 +649,8 @@ export interface SigningShell {
   appearance(identity: string, saved: SignatureImage | null): Promise<Appearance | null>;
   /** Arms the placement: where the reader dragged, or `null` for Escape. */
   place(): Promise<{ page: PageId; rect: [number, number, number, number] } | null>;
-  /** The save panel, suggesting `suggested`: a path, or `null` for Cancel. */
-  saveAs(suggested: string): Promise<string | null>;
+  /** The selected path and permission to replace it, or `null` for Cancel. */
+  saveAs(suggested: string): Promise<{ path: string; replace: boolean } | null>;
   /**
    * `sign_document`, with `null` for an invisible signature and `null` for no
    * timestamp, whether to add long-term validation data, and whether the
@@ -664,6 +664,7 @@ export interface SigningShell {
     longTerm: boolean,
     field: string | null,
     lock: boolean,
+    replace: boolean,
   ): Promise<SignOutcome>;
   /** The question after a timestamp did not come, with the reason. */
   stampFailed(why: string): Promise<AfterStamp>;
@@ -714,14 +715,14 @@ export async function signDocument(shell: SigningShell, field: SignTarget | null
     if (placed === null) return null;
     placement = { ...placed, image: appearance.image, options: appearance.options };
   }
-  const path = await shell.saveAs(signedName(shell.openPath));
-  if (!path) return null;
+  const target = await shell.saveAs(signedName(shell.openPath));
+  if (!target) return null;
   // Long-term data only ever with a timestamp: the backend refuses it without
   // one, and this never asks.
   const longTerm = chosen.longTerm === true && chosen.timestamp !== null;
   let outcome = await shell.sign(
-    chosen.identity, path, placement, chosen.timestamp, longTerm, field?.name ?? null,
-    chosen.lock === true,
+    chosen.identity, target.path, placement, chosen.timestamp, longTerm, field?.name ?? null,
+    chosen.lock === true, target.replace,
   );
   // A timestamp or long-term data that did not come: nothing is written until
   // the reader says what to do, and signing without either is only ever that

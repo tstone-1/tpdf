@@ -559,12 +559,24 @@ fn asked_of_the_signer(
     if let Some(seed) = asked(b"SV") {
         // A seed value that is not a dictionary cannot be read for what it
         // requires, so it is taken to require something.
-        let required = seed.as_dict().map_or(true, |seed| {
-            seed.get(b"Ff")
-                .ok()
-                .map(|flags| resolve(document, flags))
-                .is_some_and(|flags| flags.as_i64().map_or(true, |flags| flags != 0))
-        });
+        let required_flags = |object: &Object| {
+            object.as_dict().map_or(true, |dict| {
+                dict.get(b"Ff")
+                    .ok()
+                    .map(|flags| resolve(document, flags))
+                    .is_some_and(|flags| flags.as_i64().ok() != Some(0))
+            })
+        };
+        let required = required_flags(seed)
+            || seed.as_dict().is_ok_and(|dict| {
+                [b"TimeStamp".as_slice(), b"Cert"].iter().any(|key| {
+                    dict.get(key)
+                        .ok()
+                        .map(|value| resolve(document, value))
+                        .filter(|value| !matches!(value, Object::Null))
+                        .is_some_and(required_flags)
+                })
+            });
         if required {
             return Err(said!(
                 "`{name}` sets requirements its signature has to meet, which tpdf does not \

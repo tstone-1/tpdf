@@ -131,15 +131,7 @@ impl Subcommand for LongTerm {
                  added is written as a new file, so choose another name for it",
             ));
         }
-        if !self.force && self.output.exists() {
-            return Err(Failure::new(
-                Exit::Refused,
-                format!(
-                    "{} already exists --- choose another name, or give --force to replace it",
-                    self.output.display()
-                ),
-            ));
-        }
+        super::pages::check_target(&[], &self.output, self.force)?;
         // Read once: every revision is built against exactly these bytes,
         // and they are what a worker is handed to read the signatures in.
         // Measured before it is read, as `sign` measures it: a document past

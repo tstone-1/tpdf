@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 /** The dialog, and the pieces a reader touches. */
-function open(): {
+function open(locale?: "en-US" | "de-DE"): {
   dialog: PasswordDialog;
   backdrop: FakeElement;
   field: FakeElement & { value: string };
@@ -22,7 +22,7 @@ function open(): {
   unlock: FakeElement;
 } {
   const host = dom.root;
-  const dialog = new PasswordDialog(host as unknown as HTMLElement);
+  const dialog = new PasswordDialog(host as unknown as HTMLElement, locale);
   const backdrop = host.children.find((c) => c.classList.contains(DIALOG_CLASS));
   if (!backdrop) throw new Error("the dialog did not mount");
   const panel = backdrop.children[0];
@@ -87,6 +87,18 @@ describe("PasswordDialog", () => {
     // tell a reader who just mistyped that the document is locked, which they
     // already knew.
     expect(shown).toContain("That password did not open this document.");
+  });
+
+  it.each(["en-US", "de-DE"] as const)("explains a locked file and a wrong password in %s", (locale) => {
+    const { dialog, backdrop } = open(locale);
+    const note = backdrop.children[0]!.children[1]!;
+    const locked = "This document is locked, and needs a password.";
+    const retry = "That password did not open this document.";
+    void dialog.ask("locked.pdf", locked);
+    expect(note.textContent).toBe(locale === "en-US" ? locked : "Dieses Dokument ist gesperrt und braucht ein Passwort.");
+    void dialog.ask("locked.pdf", retry);
+    expect(note.textContent).toBe(locale === "en-US" ? retry : "Mit diesem Passwort lässt sich das Dokument nicht öffnen.");
+    dialog.close();
   });
 
   it.each([

@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- Signing preserves files created at a new output name while a PIN or timestamp is pending. It refuses unsupported mandatory timestamp and certificate constraints on signature fields. The CLI rejects a directory selected as an output before signing or archiving.
+- Text redaction, drawing and annotation moves follow the pointer that began the gesture through its release. Redacting across lines preserves bookmarks and form answers made up of surviving words.
+- Editing tagged text preserves the position of boxed list labels and honours a paragraph’s direct alignment over its style class. The password dialog explains locked files and incorrect passwords in the selected language.
+
 - Redaction preserves unmarked image placements, bookmarks and form values when removing part of a line. It refuses a text edit inside a PDF Form when the following text would move. Comments can be redacted on pages without a content stream.
 - Redaction reports describe where surviving words were found and account for omitted page locations and hidden widgets. Certificate verification and long-term signing distinguish incomplete evidence from a checked result and respect the issuer selected by the trust store.
 

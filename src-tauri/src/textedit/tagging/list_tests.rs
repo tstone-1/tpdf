@@ -222,6 +222,32 @@ fn textedit_lists_refuse_ambiguous_numbering_and_stale_attributes() {
 }
 
 #[test]
+fn textedit_a_list_label_with_declared_bounds_cannot_be_carried_by_a_wrap() {
+    let (mut doc, _, _, owners) = list();
+    let before = textedit::inspect(&doc, 0).unwrap();
+    let label = before
+        .runs
+        .runs
+        .iter()
+        .find(|run| run.text == "1.")
+        .unwrap()
+        .operator;
+    doc.get_dictionary_mut(owners[0]).unwrap().set(
+        "A",
+        dictionary! {
+            "O" => "Layout", "Placement" => "Inline",
+            "BBox" => vec![Object::from(38), 176.into(), 50.into(), 192.into()]
+        },
+    );
+    let after = textedit::inspect(&doc, 0).unwrap();
+    assert!(after
+        .preserved
+        .iter()
+        .any(|run| run.operator == label && run.text == "1."));
+    assert!(!after.held.contains_key(&label));
+}
+
+#[test]
 fn textedit_lists_refuse_wrong_roles_owners_cycles_and_semantic_overrides() {
     for mode in 0..14 {
         let (mut doc, ids, list, owners) = list();

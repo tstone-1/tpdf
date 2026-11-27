@@ -528,7 +528,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
     // allocation, so retaining one is only sound while it still encloses the
     // content it describes. A figure, link and field are already read-only.
     // A table's cells are edited inside the bounds it states, so it pins
-    // nothing here: `table_bounds` reads them and `Tags::table` carries them.
+    // nothing here: `structure_bounds` reads them and `Tags::table` carries them.
     if matches!(tag, b"Figure" | b"Link" | b"Form" | b"Table") {
         let attributes = value.as_dict().map_err(|_| invalid())?;
         // PowerPoint also writes the block indents and spacing on figures.
@@ -697,11 +697,9 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
     match attributes.get(b"TextAlign") {
         Err(_) => Ok(bounded),
         Ok(value) => match name(value)? {
-            b"Start" => Ok(bounded),
-            // A centred line is edited about its own centre (`centred`,
-            // `layout::prepare`), so it pins nothing.
-            b"Center" => Ok(bounded),
-            b"End" | b"Justify" => Ok(true),
+            // The effective alignment is resolved at the owning MCID, after
+            // direct, class and inherited declarations have been considered.
+            b"Start" | b"Center" | b"End" | b"Justify" => Ok(bounded),
             _ => Err(invalid()),
         },
     }
@@ -740,26 +738,21 @@ fn declared_alignment<'a>(
     })
 }
 
-// Whether content claimed by `id` is centred: TextAlign is inherited (ISO
+// TextAlign for the content claimed by `id` is inherited (ISO
 // 32000-1 14.8.5.2), so the nearest element that declares one decides.
-fn centred(doc: &Document, classes: Option<&Dictionary>, mut id: ObjectId) -> bool {
+fn alignment<'a>(
+    doc: &'a Document,
+    classes: Option<&'a Dictionary>,
+    mut id: ObjectId,
+) -> Option<&'a [u8]> {
     for _ in 0..64 {
-        let Ok(element) = node(doc, id) else {
-            return false;
-        };
+        let element = node(doc, id).ok()?;
         if let Some(alignment) = declared_alignment(doc, classes, element) {
-            return alignment == b"Center";
+            return Some(alignment);
         }
-        let Some(parent) = element
-            .get(b"P")
-            .ok()
-            .and_then(|value| reference(value).ok())
-        else {
-            return false;
-        };
-        id = parent;
+        id = reference(element.get(b"P").ok()?).ok()?;
     }
-    false
+    None
 }
 
 // K may be a single child/item or an array. An indirect array is a container,
@@ -1077,21 +1070,17 @@ fn bounding_box(doc: &Document, attributes: &Dictionary) -> Result<Option<[f64; 
     Ok(Some([a.min(c), b.min(d), a.max(c), b.max(d)]))
 }
 
-// The bounds the table around `id` states for its own ink, where it states
-// any: content `id` claims is edited only inside them, so that they go on
-// enclosing the table and are written back as they were (`Tags::table`). A
-// table cannot hold a table, so the nearest one is the only one. One that
-// states bounds more than once, in its attributes or its classes, keeps its
-// content inside every one of them. Each object here has passed `attributes`,
-// and each parent the walk, which bounds how far up a table can be.
-fn table_bounds(
+// Intersect the layout boxes declared directly and through classes on the
+// enclosing table or list label. Their coordinates survive a text edit.
+fn structure_bounds(
     doc: &Document,
     classes: Option<&Dictionary>,
     mut id: ObjectId,
+    tag: &[u8],
 ) -> Option<[f64; 4]> {
     for _ in 0..64 {
         let element = node(doc, id).ok()?;
-        if element.get(b"S").and_then(Object::as_name).ok() != Some(b"Table") {
+        if element.get(b"S").and_then(Object::as_name).ok() != Some(tag) {
             id = reference(element.get(b"P").ok()?).ok()?;
             continue;
         }
@@ -1219,9 +1208,10 @@ pub(super) struct Tags {
     // stands (`element`), a list label's ink bounds among it, so their text
     // must stay as it is.
     bounded: BTreeSet<usize>,
+    fixed_labels: BTreeSet<usize>,
     // MCIDs under a table that states its ink bounds, with those bounds. They
     // are kept on save, so the text is edited only inside them (ISO 32000-1
-    // Table 344, `table_bounds`).
+    // Table 344, `structure_bounds`).
     tables: BTreeMap<usize, [f64; 4]>,
     // MCIDs of content set centred, which an edit keeps centred (`centred`).
     centred: BTreeSet<usize>,
@@ -1459,6 +1449,7 @@ impl Tags {
             .map(|child| (child, root_id, 0, false))
             .collect();
         let mut bounded_slots: BTreeMap<ObjectId, BTreeSet<usize>> = BTreeMap::new();
+        let mut fixed_labels = BTreeSet::new();
         let mut centred_slots: BTreeMap<ObjectId, BTreeSet<usize>> = BTreeMap::new();
         let mut table_slots: BTreeMap<ObjectId, BTreeMap<usize, [f64; 4]>> = BTreeMap::new();
         let mut actual_slots: BTreeMap<ObjectId, BTreeMap<usize, ObjectId>> = BTreeMap::new();
@@ -1715,15 +1706,22 @@ impl Tags {
                     }
                     names[mcid] = tag.to_vec();
                     blocks[mcid] = Some(block);
-                    if pinned {
+                    if owner == page
+                        && pinned
+                        && structure_bounds(doc, classes, id, b"Lbl").is_some()
+                    {
+                        fixed_labels.insert(mcid);
+                    }
+                    let alignment = alignment(doc, classes, id);
+                    if pinned || matches!(alignment, Some(b"End" | b"Justify")) {
                         bounded_slots.entry(owner).or_default().insert(mcid);
-                    } else if centred(doc, classes, id) {
+                    } else if alignment == Some(b"Center") {
                         centred_slots.entry(owner).or_default().insert(mcid);
                     }
                     if actual {
                         actual_slots.entry(owner).or_default().insert(mcid, id);
                     }
-                    if let Some(bounds) = table_bounds(doc, classes, id) {
+                    if let Some(bounds) = structure_bounds(doc, classes, id, b"Table") {
                         table_slots.entry(owner).or_default().insert(mcid, bounds);
                     }
                 }
@@ -1761,6 +1759,7 @@ impl Tags {
         Ok(Self {
             names,
             blocks,
+            fixed_labels,
             bounded: bounded_slots.remove(&page).unwrap_or_default(),
             centred: centred_slots.remove(&page).unwrap_or_default(),
             tables: table_slots.remove(&page).unwrap_or_default(),
@@ -1978,6 +1977,12 @@ impl Tags {
             .is_some_and(|mcid| self.names[mcid] == b"Lbl")
     }
 
+    pub(super) fn fixed_label(&self) -> bool {
+        self.active
+            .flatten()
+            .is_some_and(|mcid| self.fixed_labels.contains(&mcid))
+    }
+
     /// Whether the marked content now open is centred in its block.
     pub(super) fn centred(&self) -> bool {
         self.active
@@ -1986,7 +1991,7 @@ impl Tags {
     }
 
     /// The bounds the table around the marked content now open states for its
-    /// own ink, in default user space, where it states any (`table_bounds`).
+    /// own ink, in default user space, where it states any (`structure_bounds`).
     pub(super) fn table(&self) -> Option<[f64; 4]> {
         self.active
             .flatten()

@@ -290,7 +290,7 @@ describe("Reading a page's text, and asking for it again", () => {
       clientX: to.x,
       clientY: to.y,
     });
-    dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root });
+    dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root, clientX: to.x, clientY: to.y });
     await settle();
   }
 
@@ -562,7 +562,7 @@ describe("Reading a page's text, and asking for it again", () => {
       clientX: to.x,
       clientY: to.y,
     });
-    dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root });
+    dom.root.dispatch("pointerup", { pointerId: 1, target: dom.root, clientX: to.x, clientY: to.y });
     await settle();
 
     // What the reader sees, first --- a copy that matched a *broken* selection

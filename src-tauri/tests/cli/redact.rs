@@ -371,12 +371,90 @@ fn check_angled_redaction(
     );
 }
 
+/// A space inserted between shows cannot make surviving words a redacted phrase.
+fn check_separate_shows(dir: &Path, report: &mut Report) {
+    let mut doc = Document::load_mem(&multi_widget_pdf("London Bridge", false)).unwrap();
+    let page = doc.get_pages()[&1];
+    let body = b"BT /F1 16 Tf 110 642 Td (123456 London) Tj ET BT /F1 16 Tf 60 602 Td (Bridge 876543) Tj ET";
+    let stream = doc.add_object(Stream::new(dictionary! {}, body.to_vec()));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    for title in ["London Bridge", "123456"] {
+        doc.add_bookmark(lopdf::Bookmark::new(title.into(), [0.; 3], 0, page), None);
+    }
+    let outlines = doc.build_outline().unwrap();
+    doc.catalog_mut().unwrap().set("Outlines", outlines);
+    let input = dir.join("adjacent-shows.pdf");
+    let out = dir.join("adjacent-shows-saved.pdf");
+    let regions = dir.join("adjacent-regions.json");
+    doc.save(&input).unwrap();
+    std::fs::write(&regions, r#"[{"page":1,"rect":[110,134,49,65]}]"#).unwrap();
+    let (code, result, err) = run(
+        &strings(&[
+            "redact",
+            &s(&input),
+            "-o",
+            &s(&out),
+            "--regions",
+            &s(&regions),
+            "--json",
+        ]),
+        &[],
+    );
+    // OCR engines differ in their ability to read the control token. Only that
+    // specific refusal may accompany the saved copy on this fixture.
+    let verdict = (code == 0 && result["verified"] == true)
+        || (code == 1
+            && result["verified"] == false
+            && result["reasons"].as_array().is_some_and(|reasons| {
+                !reasons.is_empty()
+                    && reasons.iter().all(|r| {
+                        r.as_str().is_some_and(|reason| {
+                            reason.contains("control token") && reason.contains("was not read back")
+                        })
+                    })
+            }));
+    report.check(
+        "two partial shows are removed and the verdict accounts for the OCR control",
+        verdict && result["written"] == true && result["pages"][0]["text_removals"] == 2,
+        &format!("{err} {result}"),
+    );
+    if !out.is_file() {
+        return;
+    }
+    let saved = Document::load(&out).unwrap();
+    let values = |key: &[u8]| -> Vec<String> {
+        saved
+            .objects
+            .values()
+            .filter_map(|o| o.as_dict().ok()?.get(key).ok()?.as_str().ok())
+            .map(tpdf_lib::annots::decode_text_string)
+            .collect()
+    };
+    let titles = values(b"Title");
+    let answers = values(b"V");
+    let text = text_of(&out, &[], &[]);
+    report.check(
+        "only the bookmark repeating removed digits is scrubbed",
+        titles.contains(&"London Bridge".into())
+            && !titles.contains(&"123456".into())
+            && answers.contains(&"London Bridge".into())
+            && !text.contains("123456")
+            && !text.contains("876543")
+            && text.contains("London")
+            && text.contains("Bridge"),
+        &format!("titles {titles:?}, answers {answers:?}, text {text}"),
+    );
+}
+
 /// A marked part of a line goes, and the rest of the line stays where it was.
 ///
 /// The removal used to take the whole show operator, so marking an account
 /// number took the line it stood in. Reported from use.
 pub(super) fn part_of_a_line_is_removed(report: &mut Report) {
     let dir = scratch("redact-cuts");
+    check_separate_shows(&dir, report);
     let input = dir.join("cuts.pdf");
     std::fs::write(&input, cuts_pdf()).expect("fixture");
     let secrets: Vec<&str> = CUT_LINES.iter().map(|line| line.0).collect();

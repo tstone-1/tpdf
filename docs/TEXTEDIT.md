@@ -720,7 +720,7 @@ Typst, ReportLab, afp2pdf, Microsoft Print to PDF; `BUILD.md` *Producer sample,
 second batch*):
 - `/A` may be an array of up to 8 attribute objects, each checked alone; revision
   numbers stay refused. `WritingMode` is accepted only as the default `LrTb`.
-  A list label may be `Placement /Inline`, and a `BBox` on one pins its text
+  A list label may be `Placement /Inline`, and a `BBox` on one pins both its text and its position during paragraph wrapping
   (`tagging::bounding_box`). Figures, links, fields and tables accept the block
   indents and spacing.
 - A figure may hold figures (`goes_back_to_the_walk`), like a list body a list.

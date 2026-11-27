@@ -2274,3 +2274,16 @@ describe("the measure tool", () => {
     viewer.destroy();
   });
 });
+
+it("draws to the release point even when the last move was short of it", async () => {
+  const viewer = build();
+  await settle();
+  viewer.armDraw("square");
+  drag({ x: 100, y: 100 }, { x: 160, y: 160 });
+  const expected = drawn[0]!.shape.quads;
+  viewer.armDraw("square");
+  drag({ x: 100, y: 100 }, { x: 130, y: 130 }, false);
+  dom.root.dispatch("pointerup", { pointerId: 1, clientX: 160, clientY: 160 });
+  expect(drawn[1]!.shape.quads).toEqual(expected);
+  viewer.destroy();
+});

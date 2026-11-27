@@ -110,6 +110,7 @@
       destinationOpen: "Close the open destination document before saving a copy there.",
       makingDocument: "Making the document...",
       saveSigned: "Save the signed document",
+      replaceSigned: (path: string) => `Replace the existing file with the signed document?\n${path}`,
       saveWithValidation: "Save the document with long-term validation data",
       noDocumentToAsk: "This document is no longer open.",
       showInExplorer: "Show PDFs in Explorer",
@@ -291,6 +292,7 @@
       destinationOpen: "Schließen Sie das geöffnete Zieldokument, bevor Sie dort eine Kopie speichern.",
       makingDocument: "Dokument wird erstellt...",
       saveSigned: "Signiertes Dokument speichern",
+      replaceSigned: (path: string) => `Vorhandene Datei durch das signierte Dokument ersetzen?\n${path}`,
       saveWithValidation: "Dokument mit Langzeitvalidierungsdaten speichern",
       noDocumentToAsk: "Dieses Dokument ist nicht mehr geöffnet.",
       showInExplorer: "PDFs im Explorer anzeigen",
@@ -4653,13 +4655,21 @@
             if (error === spoken(signing.PLACE)) say(null);
             return placed;
           },
-          saveAs: (suggested) => saveDialog({
-            title: TEXT().saveSigned,
-            defaultPath: suggested,
-            filters: [{ name: "PDF", extensions: ["pdf"] }],
-          }),
-          sign: (identity, path, placement, timestamp, longTerm, into, lock) =>
-            call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm, field: into, lock }),
+          saveAs: async (suggested) => {
+            const path = await saveDialog({
+              title: TEXT().saveSigned,
+              defaultPath: suggested,
+              filters: [{ name: "PDF", extensions: ["pdf"] }],
+            });
+            if (!path) return null;
+            const replace = (await matchingFile(path, [path], true)) !== null;
+            if (replace && !await confirmDialog(TEXT().replaceSigned(path), {
+              title: TEXT().saveSigned, kind: "warning", okLabel: TEXT().replace, cancelLabel: TEXT().keepIt,
+            })) return null;
+            return { path, replace };
+          },
+          sign: (identity, path, placement, timestamp, longTerm, into, lock, replace) =>
+            call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm, field: into, lock, replace }),
           // A timestamp or long-term data that did not come: the question, then
           // the signature the backend is holding written or dropped. The OS is
           // not asked again.

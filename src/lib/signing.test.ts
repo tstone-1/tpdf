@@ -110,7 +110,7 @@ function shell(overrides: Partial<SigningShell> = {}) {
     },
     saveAs: async (suggested) => {
       asked.push(`saveAs:${suggested}`);
-      return "/docs/report-signed.pdf";
+      return { path: "/docs/report-signed.pdf", replace: false };
     },
     sign: async (identity, path, placement, timestamp) => {
       asked.push(`sign:${identity}:${path}${timestamp === null ? "" : `:${timestamp}`}`);
@@ -323,6 +323,18 @@ describe("the order the questions are asked in", () => {
     });
     expect(await signDocument(s)).toBe(nothingToChoose(found));
     expect(asked).toEqual(["list"]);
+  });
+
+  it.each([false, true])("passes the chosen replacement permission (%s) to signing", async (replace) => {
+    const permissions: boolean[] = [];
+    const { shell: s } = shell({ saveAs: async () => ({ path: "signed.pdf", replace }) });
+    const sign = s.sign;
+    s.sign = (...args) => {
+      permissions.push(args[7]);
+      return sign(...args);
+    };
+    await signDocument(s);
+    expect(permissions).toEqual([replace]);
   });
 
   it("passes a refusal from the backend on rather than reporting success", async () => {

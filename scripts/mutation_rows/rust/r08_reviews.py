@@ -1793,17 +1793,8 @@ ROWS += [
     Mutation(
         "cli: long-term over an output that exists",
         "src/cli/long_term.rs",
-        "        if !self.force && self.output.exists() {\n"
-        "            return Err(Failure::new(\n"
-        "                Exit::Refused,\n"
-        "                format!(\n"
-        '                    "{} already exists --- choose another name, or give --force to replace it",\n'
-        "                    self.output.display()\n"
-        "                ),\n"
-        "            ));\n"
-        "        }\n"
-        "        // Read once",
-        "        // Read once",
+        'super::pages::check_target(&[], &self.output, self.force)?;',
+        'super::pages::check_target(&[], &self.output, true)?;',
         "long_term_refuses_an_existing_output_and_a_missing_input_before_any_worker",
     ),
     Mutation(

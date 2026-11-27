@@ -918,7 +918,8 @@ impl Found {
         // draws back over itself, a pattern's paint (anchored to the page, so
         // the same glyphs lower down would show another part of it), placed
         // artwork, a Fill & Sign addition.
-        let fixed = marked.layer
+        let fixed = marked.tags.fixed_label()
+            || marked.layer
             || state.turned_clip
             || backtracks
             || !diagonal(state.page_transform)

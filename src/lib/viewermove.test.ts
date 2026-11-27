@@ -446,3 +446,17 @@ describe("a page an edit has turned", () => {
     viewer.destroy();
   });
 });
+
+it("continues the original annotation move after a second pointer presses the mark", async () => {
+  const viewer = build();
+  await settle();
+  viewer.setMarks(mark("square"));
+  const p = onMark(viewer);
+  drag(p, { x: 5, y: 5 }, false);
+  dom.root.dispatch("pointerdown", {
+    button: 0, pointerId: 2, clientX: p.x + 3, clientY: p.y + 3, target: dom.root,
+  });
+  dom.root.dispatch("pointerup", { pointerId: 1, clientX: p.x + 5, clientY: p.y + 5 });
+  expect(moved).toHaveLength(1);
+  viewer.destroy();
+});

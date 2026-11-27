@@ -2614,6 +2614,8 @@ pub fn redaction_plans_of(
             let mut kept_spans: Vec<(usize, usize)> = Vec::new();
             for ordinal in touched {
                 if !lines.is_empty() {
+                    // A separator between shows represents no removed glyph.
+                    kept_spans.push((lines.len(), lines.len() + 1));
                     lines.push(' ');
                 }
                 let partial = plan
@@ -2641,6 +2643,8 @@ pub fn redaction_plans_of(
             }
             for text in in_forms(&plan) {
                 if !lines.is_empty() {
+                    // A separator between shows represents no removed glyph.
+                    kept_spans.push((lines.len(), lines.len() + 1));
                     lines.push(' ');
                 }
                 lines.push_str(text);

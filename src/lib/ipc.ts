@@ -549,6 +549,7 @@ export interface Commands {
       source: string;
       identity: string;
       path: string;
+      replace: boolean;
       placement: Placement | null;
       timestamp: string | null;
       /** Long-term validation data as well; refused without `timestamp`. */

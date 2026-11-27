@@ -275,6 +275,13 @@ fn textedit_the_nearest_declared_alignment_decides() {
     let first = doc.get_dictionary_mut(ids[3]).unwrap();
     first.remove(b"A");
     first.set("C", Object::Name(b"Centred".to_vec()));
+    let mut mixed = doc.clone();
+    mixed.get_dictionary_mut(ids[1]).unwrap().set(
+        "ClassMap",
+        dictionary! { "Centred" => dictionary! { "O" => "Layout", "TextAlign" => "Justify" } },
+    );
+    align(&mut mixed, ids[3], "Center");
+    assert!((centre(&write(mixed)) - middle).abs() < 0.01);
     assert!((centre(&write(doc.clone())) - middle).abs() < 0.01);
     align(&mut doc, ids[3], "Start");
     assert_eq!(span(&write(doc), "FIRSTFIRST").0, start);

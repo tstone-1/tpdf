@@ -36,7 +36,8 @@
  * than this paragraph.
  */
 
-import { catalog } from "./i18n";
+import { spoken } from "./said";
+import { catalog, UI_LOCALE, type UiLocale } from "./i18n";
 import { passwordKeys } from "./passwordkeys";
 
 const TEXT = catalog({
@@ -79,7 +80,7 @@ export class PasswordDialog {
    */
   private shown = false;
 
-  constructor(host: HTMLElement) {
+  constructor(host: HTMLElement, private readonly locale: UiLocale = UI_LOCALE) {
     this.backdrop = document.createElement("dialog");
     this.backdrop.className = DIALOG_CLASS;
     this.backdrop.style.cssText =
@@ -88,7 +89,7 @@ export class PasswordDialog {
 
     this.panel = document.createElement("div");
     this.backdrop.setAttribute("aria-modal", "true");
-    this.backdrop.setAttribute("aria-label", TEXT().dialog);
+    this.backdrop.setAttribute("aria-label", TEXT(this.locale).dialog);
     this.panel.style.cssText =
       "margin-top:14vh;width:min(420px,92vw);" +
       "border-radius:10px;background:Canvas;color:CanvasText;" +
@@ -105,7 +106,7 @@ export class PasswordDialog {
     // Through the property rather than `setAttribute`, which is how everything
     // else in this file sets one, and which the `sinks` gate is happier with.
     this.field.type = "password";
-    this.field.setAttribute("aria-label", TEXT().password);
+    this.field.setAttribute("aria-label", TEXT(this.locale).password);
     this.field.style.cssText =
       "width:100%;box-sizing:border-box;padding:0.4rem 0.5rem;font:inherit;" +
       "border-radius:6px;border:1px solid color-mix(in srgb, CanvasText 28%, transparent);" +
@@ -114,8 +115,8 @@ export class PasswordDialog {
     const buttons = document.createElement("div");
     buttons.style.cssText =
       "display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.85rem;";
-    const cancel = this.button(TEXT().cancel, () => this.settle(null));
-    const unlock = this.button(TEXT().unlock, () => this.submit());
+    const cancel = this.button(TEXT(this.locale).cancel, () => this.settle(null));
+    const unlock = this.button(TEXT(this.locale).unlock, () => this.submit());
     unlock.style.fontWeight = "600";
     buttons.append(cancel, unlock);
 
@@ -154,7 +155,7 @@ export class PasswordDialog {
     this.settle(null);
 
     this.heading.textContent = name;
-    this.note.textContent = problem;
+    this.note.textContent = spoken(problem, this.locale);
     this.field.value = "";
 
     if (!this.shown) {

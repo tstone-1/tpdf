@@ -2611,6 +2611,14 @@ fn a_field_that_asks_something_of_its_signer_is_refused() {
             "{flags:?}: {why}"
         );
     }
+    for key in ["TimeStamp", "Cert"] {
+        for flags in [Object::Integer(1), Object::Name(b"unknown".to_vec())] {
+            let seed = dictionary! { key => dictionary! { "Ff" => flags } };
+            assert!(refused(asking("SV", seed.into())).contains("sets requirements"));
+        }
+        let optional = dictionary! { key => dictionary! { "Ff" => 0 } };
+        signed(asking("SV", optional.into()));
+    }
     // And one that is not a dictionary at all.
     assert!(refused(asking("SV", Object::Integer(7))).contains("sets requirements"));
 
