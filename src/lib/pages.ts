@@ -149,6 +149,7 @@ export type FieldKind = "text" | "multiline" | "checkbox" | "dropdown" | "radio"
 
 /** What a placed field is. `formfields::Placed` on the wire. */
 export interface PlacedField {
+  page_unit?: number;
   kind: FieldKind;
   /** Whether a text field draws a thin line round itself. A checkbox always draws its box. */
   border: boolean;

@@ -34,7 +34,7 @@ import {
   withSources,
 } from "./pages";
 import { colorFor, type MarkColor } from "./markcolors";
-import { INK_WIDTH } from "./markband";
+import { hasStrokes, INK_WIDTH } from "./markband";
 import { pictureBody } from "./picture";
 import type { Fill } from "./redactfill";
 import type { PreparedImport } from "./pendingimport";
@@ -562,6 +562,7 @@ export class Edits {
     return this.adopt(
       await call("annot_mark", {
         doc: this.doc,
+        ...((field || hasStrokes(kind)) && { unit: await this.pageUnit(page) }),
         ...(sweep ? { sweep } : {}),
         mark: {
           kind,

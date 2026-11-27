@@ -149,9 +149,9 @@ it("preserves physical rectangles, stroke points and widths across page units", 
     const [box, line] = clipboard.forPaste(to, 0);
     expect(box!.quads.map(n => n * to)).toEqual(mark("square").quads.map(n => n * from));
     expect(line!.strokes[0]!.map(n => n * to)).toEqual(mark("line").strokes[0]!.map(n => n * from));
-    expect(line!.width * to).toBe(mark("line").width * from);
-    expect(clipboard.forPaste(from, 0)).toBe(clipboard.marks);
-    expect(() => clipboard.forPaste(1000, 0)).toThrow("stroke width");
+    expect(line!.width).toBe(mark("line").width * from);
+    expect(clipboard.forPaste(from, 0)[1]!.width).toBe(mark("line").width * from);
+    expect(clipboard.forPaste(1000, 0)[1]!.width).toBe(mark("line").width * from);
   }
 });
 

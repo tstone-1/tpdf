@@ -100,12 +100,14 @@ pub async fn annot_mark(
     doc: u32,
     mark: edits::NewMark,
     sweep: Option<u64>,
+    unit: Option<f64>,
 ) -> Result<edits::EditState, String> {
-    edits.annotate_in(
+    edits.annotate_at_scale(
         doc,
         mark,
         save::pdf_date(std::time::SystemTime::now()),
         sweep.unwrap_or(0),
+        unit.unwrap_or(1.0),
     )
 }
 

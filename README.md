@@ -838,7 +838,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   bullets down, and keeping the two apart is the point: what you mark is what you get to
   look at before anything happens to it. A region that has only been marked must not look
   like one that has been removed, so a pending region is never black, never saved, and never
-  written into a copy — see the two entries under *What Phase 0 established* for why this
+  written into a copy. In-place Save asks you to apply or remove pending regions first. See the two entries under *What Phase 0 established* for why this
   is the hardest thing here to get right. A page inserted from another file cannot be
   marked, and says so when you try: tpdf can only remove content from the pages of the file
   you opened — both working out what to take and taking it are addressed to that document —
@@ -1633,10 +1633,11 @@ must be unencrypted, since one output cannot preserve different encryption setti
 Page outputs are staged beside their destinations, then opened in fresh sandboxed
 workers to check page counts, displayed sizes and encryption before publication.
 An existing output is refused unless `--force` is given; symbolic links and directories
-are refused even with `--force`. Without `--force`, publication uses a hard link so a
-file appearing during processing is also preserved; the destination filesystem must
-support hard links. All split parts are staged and checked before publishing any.
-Publication is atomic per file, not across the set: if a later publication fails,
+are refused even with `--force`. Without `--force`, a file appearing during
+processing is preserved. On filesystems without exclusive rename or hard links,
+tpdf exclusively creates the destination and copies into it. A failed copy can
+leave a partial output. Split stages and checks all parts before publishing any.
+If a later part fails to publish,
 earlier parts remain and the report lists exactly those files. It has `complete: false`
 and a non-null `error`; scripts must check both the exit code and report. Staging
 failures publish nothing and leave any existing outputs intact.

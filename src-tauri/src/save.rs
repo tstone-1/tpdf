@@ -4198,7 +4198,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // Before the answers, so that a field can be added and answered in one
     // write. Addressed to the file's own pages, like everything above.
     crate::formfields::add(&mut doc, &plan.new_fields)?;
-    forms::write(&mut doc, &plan.forms)?;
+    forms::write_except_pages(&mut doc, &plan.forms, &dropped)?;
     // After the answers, so a resized field is drawn again with the answer
     // this plan gives it, and a removed field's answer has gone with it.
     crate::formedit::apply(&mut doc, &plan.field_edits)?;

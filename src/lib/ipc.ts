@@ -341,7 +341,7 @@ export interface Commands {
     reply: EditState;
   };
   page_import_cancel: { args: { doc: DocHandle; pending: number }; reply: boolean };
-  annot_mark: { args: { doc: DocHandle; mark: NewMark; sweep?: number }; reply: EditState };
+  annot_mark: { args: { doc: DocHandle; mark: NewMark; sweep?: number; unit?: number }; reply: EditState };
   annot_remove: {
     args: { doc: DocHandle; mark: number; sweep: number };
     reply: EditState;
@@ -585,7 +585,7 @@ export interface Commands {
    * `validationdata.ts`.
    */
   add_validation_data: {
-    args: { doc: DocHandle; source: string; path: string; timestamp: string };
+    args: { doc: DocHandle; source: string; path: string; timestamp: string; replace: boolean };
     reply: string;
   };
   keyboard_positions: { args: NoArgs; reply: Record<string, string> };

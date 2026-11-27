@@ -206,8 +206,6 @@ export default {
   "`{name}`: another field has this name": "`{name}`: Ein anderes Feld hat diesen Namen",
 
   // edits.rs
-  "a field of this kind is at least {least} by {least_high} points":
-    "Ein Feld dieser Art ist mindestens {least} mal {least_high} Punkt groß",
   "a page cannot be {bad} points": "Eine Seite kann nicht {bad} Punkt groß sein",
   "the file chosen for that insert is no longer open ({pending})":
     "Die für dieses Einfügen gewählte Datei ist nicht mehr geöffnet ({pending})",
@@ -218,8 +216,6 @@ export default {
   "a mark cannot have a corner at {bad}": "Eine Markierung kann keine Ecke bei {bad} haben",
   "The picture is empty, invalid or too large": "Das Bild ist leer, ungültig oder zu groß",
   "The signature image is empty, invalid or too large": "Das Unterschriftsbild ist leer, ungültig oder zu groß",
-  "a signature field is at least {least} by {least_high} points; drag a larger rectangle":
-    "Ein Signaturfeld ist mindestens {least} mal {least_high} Punkt groß; zieh ein größeres Rechteck",
   "a redaction cannot have a corner at {bad}": "Eine Schwärzung kann keine Ecke bei {bad} haben",
   "stroke {past} of a drawing that has {held}, so this gesture was aimed at something else":
     "Strich {past} einer Zeichnung mit {held} Strichen, diese Geste galt also etwas anderem",
@@ -279,8 +275,8 @@ export default {
     "Diese Seite des anderen Dokuments ist zweimal in diesem, und eine Änderung erschiene in beiden – lösche eine davon und bearbeite dann die andere",
   "page {number} of that document already has edited text in this one, and inserting it again would show the edit twice --- undo the edit, or insert a different page":
     "Seite {number} dieses Dokuments hat hier schon bearbeiteten Text, und ein erneutes Einfügen würde die Änderung zweimal zeigen – widerrufe die Änderung oder füge eine andere Seite ein",
-  "that comment is not on a page inserted from another document":
-    "Dieser Kommentar steht nicht auf einer Seite, die aus einem anderen Dokument eingefügt wurde",
+  "Comments from an inserted document cannot be edited here. Save and reopen the combined document first.":
+    "Kommentare aus einem eingefügten Dokument lassen sich hier nicht bearbeiten. Speichere das zusammengeführte Dokument und öffne es erneut.",
   "that page came from another document, and tpdf can only remove content from the pages of the file you opened --- save this document, reopen it, and redact there":
     "Diese Seite stammt aus einem anderen Dokument, und tpdf kann nur aus den Seiten der geöffneten Datei Inhalte entfernen – speichere dieses Dokument, öffne es erneut und schwärze dort",
   "no such mark": "Diese Markierung gibt es nicht",
@@ -452,6 +448,8 @@ export default {
 
 /** The entries above that say "du", addressing the reader with "Sie" instead. */
 export const sie = {
+  "Comments from an inserted document cannot be edited here. Save and reopen the combined document first.":
+    "Kommentare aus einem eingefügten Dokument lassen sich hier nicht bearbeiten. Speichern Sie das zusammengeführte Dokument und öffnen Sie es erneut.",
   "no picture or drawing lies wholly inside the region; drag around all of it":
     "Kein Bild und keine Zeichnung liegt ganz im Bereich; ziehen Sie ganz darum herum",
   "it holds text, which the SVG cannot draw yet; save it as PNG":
@@ -470,8 +468,6 @@ export const sie = {
     "Wählen Sie ein vorhandenes Optionsfeld",
   "Choose available options without duplicates":
     "Wählen Sie vorhandene Einträge, jeden nur einmal",
-  "a signature field is at least {least} by {least_high} points; drag a larger rectangle":
-    "Ein Signaturfeld ist mindestens {least} mal {least_high} Punkt groß; ziehen Sie ein größeres Rechteck",
   "save or undo redactions before editing text":
     "Speichern oder widerrufen Sie die Schwärzungen, bevor Sie Text bearbeiten",
   "save or undo text edits before redacting":

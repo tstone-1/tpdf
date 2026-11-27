@@ -4655,19 +4655,7 @@
             if (error === spoken(signing.PLACE)) say(null);
             return placed;
           },
-          saveAs: async (suggested) => {
-            const path = await saveDialog({
-              title: TEXT().saveSigned,
-              defaultPath: suggested,
-              filters: [{ name: "PDF", extensions: ["pdf"] }],
-            });
-            if (!path) return null;
-            const replace = (await matchingFile(path, [path], true)) !== null;
-            if (replace && !await confirmDialog(TEXT().replaceSigned(path), {
-              title: TEXT().saveSigned, kind: "warning", okLabel: TEXT().replace, cancelLabel: TEXT().keepIt,
-            })) return null;
-            return { path, replace };
-          },
+          saveAs: (suggested) => signedDestination(suggested, TEXT().saveSigned),
           sign: (identity, path, placement, timestamp, longTerm, into, lock, replace) =>
             call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm, field: into, lock, replace }),
           // A timestamp or long-term data that did not come: the question, then
@@ -4710,14 +4698,9 @@
           // worker.
           properties: () => call("document_properties", { doc }),
           chooseAuthority: () => validationData.askAuthority(),
-          saveAs: (suggested) =>
-            saveDialog({
-              title: TEXT().saveWithValidation,
-              defaultPath: suggested,
-              filters: [{ name: "PDF", extensions: ["pdf"] }],
-            }),
-          add: (path, timestamp) =>
-            call("add_validation_data", { doc, source, path, timestamp }),
+          saveAs: (suggested) => signedDestination(suggested, TEXT().saveWithValidation),
+          add: (path, timestamp, replace) =>
+            call("add_validation_data", { doc, source, path, timestamp, replace }),
           // The line the copy and redaction flows show while they work.
           waiting: (message) => {
             blockingTask = message;
@@ -6401,6 +6384,18 @@
     const open = await matchingTab(path, undefined, true).catch(() => { throw TEXT().destinationUnknown; });
     if (open) throw TEXT().destinationOpen;
     return path;
+  }
+
+  async function signedDestination(suggested: string, title: string) {
+    const path = await saveDialog({
+      title, defaultPath: suggested, filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!path) return null;
+    const replace = (await matchingFile(path, [path], true)) !== null;
+    if (replace && !await confirmDialog(TEXT().replaceSigned(path), {
+      title, kind: "warning", okLabel: TEXT().replace, cancelLabel: TEXT().keepIt,
+    })) return null;
+    return { path, replace };
   }
 
   const isOpenTab = (path: string) => tabs.forPath(path) !== undefined;

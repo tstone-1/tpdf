@@ -2111,3 +2111,29 @@ fn physical_field_dimensions_and_type_size_survive_page_scaling() {
     assert_eq!(widget.text_size, Some(4.));
     assert_eq!(widget.value, forms::Value::Text("A".into()));
 }
+
+#[test]
+fn a_placed_signature_field_is_measured_in_physical_points_when_written() {
+    for unit in [1, 2] {
+        let mut doc = document(Held::Absent, false);
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        doc.get_dictionary_mut(page).unwrap().set("UserUnit", unit);
+        let side = 32.0 / f64::from(unit);
+        let rect = [10., 10., 10. + side, 10. + side];
+        let id = place(&mut doc, page, rect, "Signature", &Kind::Signature.into()).unwrap();
+        let saved = reloaded(&mut doc);
+        let written = numbers(saved.get_dictionary(id).unwrap(), b"Rect");
+        let scale = crate::pagetree::user_unit(&saved, page).unwrap();
+        assert_eq!(f64::from(written[2] - written[0]) * scale, 32.);
+        assert_eq!(f64::from(written[3] - written[1]) * scale, 32.);
+        let small = 20.0 / f64::from(unit);
+        assert!(place(
+            &mut doc,
+            page,
+            [0., 0., small, small],
+            "Small",
+            &Kind::Signature.into()
+        )
+        .is_err());
+    }
+}

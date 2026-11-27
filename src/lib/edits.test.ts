@@ -531,18 +531,29 @@ describe("Edits", () => {
     expect(edits.state.marks[0]?.id).toBe(1);
   });
 
+  it("sends the physical nib and its page unit when drawing on a scaled page", async () => {
+    const edits = new Edits(9, 1);
+    core.invoke.mockResolvedValueOnce([2]).mockResolvedValueOnce(state(1));
+    await edits.mark("ink", pageId(1), [], [[1, 2, 4, 5]], "", null, null, null, 5);
+    expect(core.invoke).toHaveBeenCalledWith("page_units", { doc: 9, pages: [0] });
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_mark", expect.objectContaining({
+      doc: 9, unit: 2, mark: expect.objectContaining({ kind: "ink", width: 5 }),
+    }));
+  });
+
   it("sends a form field with its kind and its name, and a kind with nothing else", async () => {
     core.invoke.mockResolvedValueOnce(state(3));
     const edits = new Edits(9);
     await edits.refresh();
 
-    core.invoke.mockResolvedValueOnce(state(3));
+    core.invoke.mockResolvedValueOnce([2]).mockResolvedValueOnce(state(3));
     await edits.mark(
       "field", pageId(1), [10, 20, 110, 40], [], "Text 1", null, null, null, INK_WIDTH, undefined,
       { kind: "multiline", border: true },
     );
     expect(core.invoke).toHaveBeenLastCalledWith("annot_mark", {
       doc: 9,
+      unit: 2,
       mark: {
         kind: "field",
         page: 1,

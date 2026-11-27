@@ -182,6 +182,11 @@ export class Measurements {
     return ready;
   }
 
+  /** Physical points per native coordinate once the page geometry is known. */
+  pageUnit(page: PageId): number | undefined {
+    return this.units.get(page) ?? undefined;
+  }
+
   /** How many lines there are. */
   get count(): number {
     return this.lines.length;

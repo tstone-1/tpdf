@@ -171,6 +171,26 @@ fn default_problem(field: &NewField, rect: [f64; 4], turns: u8, unit: f64) -> Op
 }
 
 impl Placed {
+    pub(crate) fn check_size(
+        &self,
+        name: &str,
+        width: f64,
+        height: f64,
+        unit: f64,
+    ) -> Result<(), String> {
+        if !unit.is_finite() || unit <= 0.0 {
+            return Err(said!("the page has an invalid user unit"));
+        }
+        let least = least_side(self.kind);
+        if width * unit < least || height * unit < least {
+            return Err(said!(
+                "`{name}`: a field of this kind needs at least {least} by {least_high} points",
+                least_high = least
+            ));
+        }
+        Ok(())
+    }
+
     /// Why this field's default value would not be drawn in a rectangle of
     /// this size, or `None` when it would or there is none.
     ///
@@ -216,6 +236,9 @@ fn answer_default(doc: &mut Document, id: ObjectId, field: &NewField) -> Result<
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Placed {
     pub kind: Kind,
+    /// Physical points per native unit where the journal placed this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_unit: Option<f64>,
     /// [`NewField::border`].
     #[serde(default)]
     pub border: bool,
@@ -300,6 +323,7 @@ impl From<Kind> for Placed {
     fn from(kind: Kind) -> Self {
         Self {
             kind,
+            page_unit: None,
             border: false,
             options: Vec::new(),
             tooltip: String::new(),
@@ -1157,13 +1181,9 @@ pub fn place(
     if taken(doc)?.contains(name) && !(kind == Kind::Radio && radio_group(doc, name).is_some()) {
         return Err(said!("`{name}`: the form already has a field of this name"));
     }
-    let least = least_side(kind);
-    if rect[2] - rect[0] < least || rect[3] - rect[1] < least {
-        return Err(said!(
-            "`{name}`: a field of this kind needs at least {least} by {least_high} points",
-            least_high = least
-        ));
-    }
+    let unit = crate::pagetree::user_unit(doc, page)
+        .ok_or_else(|| said!("the page has an invalid user unit"))?;
+    placed.check_size(name, rect[2] - rect[0], rect[3] - rect[1], unit)?;
     let form = ensure_form(doc)?;
     if kind == Kind::Radio {
         let to = Grouped {
@@ -1189,8 +1209,6 @@ pub fn place(
         text_size: placed.text_size,
         default_value: (!placed.default_value.is_empty()).then(|| placed.default_value.clone()),
     };
-    let unit = crate::pagetree::user_unit(doc, page)
-        .ok_or_else(|| said!("the page has an invalid user unit"))?;
     if let Some(why) = default_problem(&field, rect, turns, unit) {
         return Err(why);
     }

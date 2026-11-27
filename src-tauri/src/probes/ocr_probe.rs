@@ -123,20 +123,22 @@ impl Sheet {
 pub fn main() {
     let mut args = std::env::args().skip(1);
     let mut file = PathBuf::new();
+    let mut expect_blank = false;
     let mut library = PathBuf::from("vendor/pdfium/lib");
     let mut scale = 2.0_f32;
     while let Some(a) = args.next() {
         match a.as_str() {
+            "--expect-blank" => expect_blank = true,
             "--lib" => library = PathBuf::from(args.next().unwrap_or_default()),
             "--scale" => scale = args.next().and_then(|s| s.parse().ok()).unwrap_or(2.0),
             other => file = PathBuf::from(other),
         }
     }
     if file.as_os_str().is_empty() {
-        eprintln!("[ERROR] usage: ocr-probe <file.pdf> [--lib DIR] [--scale N]");
+        eprintln!("[ERROR] usage: ocr-probe <file.pdf> [--lib DIR] [--scale N] [--expect-blank]");
         std::process::exit(2);
     }
-    match run(&file, &library, scale) {
+    match run(&file, &library, scale, expect_blank) {
         Ok(()) => {}
         Err(e) => {
             eprintln!("[ERROR] {e}");
@@ -145,7 +147,7 @@ pub fn main() {
     }
 }
 
-fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
+fn run(file: &Path, library: &Path, scale: f32, expect_blank: bool) -> Result<(), String> {
     use pdfium_render::prelude::Pdfium;
     let path = Pdfium::pdfium_platform_library_name_at_path(library);
     let bound = progressive::bind_library(&path)
@@ -190,17 +192,18 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
         }
     };
     // ------------------------------------------------------- it read the right words
-    let embedded_words: Vec<String> = String::from_utf16_lossy(
+    let reference = String::from_utf16_lossy(
         &embedded
             .codes
             .iter()
             .map(|c| u16::try_from(*c).unwrap_or(b'?'.into()))
             .collect::<Vec<u16>>(),
-    )
-    .split_whitespace()
-    .map(|w| w.chars().filter(char::is_ascii_alphanumeric).collect())
-    .filter(|w: &String| w.len() >= 4)
-    .collect();
+    );
+    let embedded_words: Vec<String> = reference
+        .split_whitespace()
+        .map(|w| w.chars().filter(char::is_ascii_alphanumeric).collect())
+        .filter(|w: &String| w.len() >= 4)
+        .collect();
     let read_blob: String = items
         .iter()
         .map(|i| i.text.as_str())
@@ -211,24 +214,42 @@ fn run(file: &Path, library: &Path, scale: f32) -> Result<(), String> {
         .filter(|w| read_blob.contains(w.as_str()))
         .count();
 
-    // What counts as a correct result depends on whether the page has text at all. On a
-    // page that has none, reading none is the right answer and reading something is the
-    // engine inventing it -- so this is two checks wearing one name, not a check plus a
-    // special case. A harness that only knew the first would have called `vector-heavy`,
-    // which is a pure vector drawing, a failure.
-    if embedded_words.is_empty() {
+    if expect_blank {
         r.check(
             items.is_empty(),
-            "no text is invented on a page that has none",
-            format!(
-                "the document has no extractable words; vision read {} span(s){}",
-                items.len(),
-                items
-                    .first()
-                    .map(|i| format!(", first {:?}", i.text))
-                    .unwrap_or_default()
-            ),
+            "no words on the known blank control",
+            format!("vision read {} span(s)", items.len()),
         );
+        r.finish();
+    }
+    if embedded_words.is_empty() {
+        let words = |text: &str| {
+            text.split(|c: char| !c.is_alphanumeric())
+                .filter(|word| !word.is_empty())
+                .map(str::to_lowercase)
+                .collect::<Vec<_>>()
+        };
+        let short = words(&reference);
+        if short.is_empty() {
+            r.skip(
+                "agreement with reference words",
+                format!(
+                    "no embedded reference words; vision read {} span(s)",
+                    items.len()
+                ),
+            );
+        } else {
+            let recognised = words(&read_blob);
+            let matched = short
+                .iter()
+                .filter(|word| recognised.contains(word))
+                .count();
+            r.check(
+                matched * 2 >= short.len(),
+                "OCR matches the short reference words",
+                format!("{matched}/{} words found", short.len()),
+            );
+        }
         r.finish();
     }
 

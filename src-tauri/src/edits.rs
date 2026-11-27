@@ -120,8 +120,8 @@ struct Open {
     ///
     /// **Undo does not release one**, and cannot: the redo tail still names the
     /// file, and redo has to draw the same pages without asking the reader to
-    /// choose it again. So a handle lives exactly as long as the document that
-    /// imported it, whatever the journal says about the pages.
+    /// choose it again. A new edit that discards that redo tail releases the
+    /// handle once the model no longer references the source.
     ///
     /// Only files a successful import recorded are here. An entry never changes
     /// once written --- the model reuses a [`crate::docmodel::SourceId`] for the
@@ -636,13 +636,27 @@ fn quad_of(rect: [f32; 4]) -> Quad {
 /// has no such floor.
 fn field_fits(model: &Doc, id: MarkId, rect: [f32; 4]) -> Result<(), String> {
     if let Some(placed) = model.field_of(id) {
-        let least = crate::formfields::least_side(placed.kind) as f32;
-        if rect[2] - rect[0] < least || rect[3] - rect[1] < least {
-            return Err(said!(
-                "a field of this kind is at least {least} by {least_high} points",
-                least_high = least
-            ));
-        }
+        check_field_rect(
+            placed,
+            model.note_of(id),
+            quad_of(rect),
+            placed.page_unit.unwrap_or(1.0),
+        )?;
+    }
+    Ok(())
+}
+
+fn check_field_rect(
+    placed: &crate::formfields::Placed,
+    name: &str,
+    quad: Quad,
+    unit: f64,
+) -> Result<(), String> {
+    let width = f64::from(quad.right - quad.left);
+    let height = f64::from(quad.bottom - quad.top);
+    placed.check_size(name, width, height, unit)?;
+    if let Some(why) = placed.default_problem(name, width * unit, height * unit) {
+        return Err(why);
     }
     Ok(())
 }
@@ -786,6 +800,8 @@ pub struct SourceView {
     pub doc: u32,
 }
 
+type ReleaseSource = Box<dyn Fn(u32) + Send + Sync>;
+
 /// Every open document's edit model.
 ///
 /// A short-lived `Mutex` protects the journal. State reads walk the page model;
@@ -794,6 +810,7 @@ pub struct SourceView {
 #[derive(Clone, Default)]
 pub struct Edits {
     docs: Arc<Mutex<HashMap<u32, Open>>>,
+    release_source: Arc<OnceLock<ReleaseSource>>,
     /// The last id [`Edits::prepare_import`] issued, across every document.
     ///
     /// Across documents rather than per document so that an id cannot be
@@ -831,6 +848,26 @@ fn answered(take: impl FnOnce() -> Option<Fingerprint>) -> Option<Fingerprint> {
 }
 
 impl Edits {
+    pub(crate) fn release_abandoned_sources_with(
+        &self,
+        release: impl Fn(u32) + Send + Sync + 'static,
+    ) {
+        assert!(self.release_source.set(Box::new(release)).is_ok());
+    }
+
+    fn after_edit(&self, open: &mut Open) -> EditState {
+        if let Some(release) = self.release_source.get() {
+            open.sources.retain(|id, handle| {
+                let keep = open.model.source(*id).is_some();
+                if !keep {
+                    release(*handle);
+                }
+                keep
+            });
+        }
+        reply(open)
+    }
+
     /// Pending text bodies for one open document, each naming the file its
     /// page number belongs to. This never waits for a file fingerprint.
     pub fn text_changes(&self, doc: u32) -> Vec<textedit::Edit> {
@@ -984,7 +1021,7 @@ impl Edits {
     /// **Called by every entry point that touches a document rather than by one
     /// of them**, which is the point: a trigger bound to a single caller covers
     /// that caller, and `docs/TRAPS.md` records exactly that shape. `edits.rs`
-    /// has no chokepoint --- fourteen public methods take the lock themselves ---
+    /// has no chokepoint --- individual mutators take the lock themselves ---
     /// so the coverage is asserted instead, by a test that drives each of them
     /// against a fresh document and reads [`Edits::hashing_started`].
     ///
@@ -1379,7 +1416,7 @@ impl Edits {
                 },
             )
             .map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Puts pages of a second file immediately after `after`, or first when
@@ -1436,7 +1473,7 @@ impl Edits {
             }
         };
         Ok(Imported {
-            state: reply(open),
+            state: self.after_edit(open),
             spare,
         })
     }
@@ -1586,7 +1623,7 @@ impl Edits {
     pub(crate) fn annotate_at_scale(
         &self,
         doc: u32,
-        want: NewMark,
+        mut want: NewMark,
         made: String,
         sweep: u64,
         unit: f64,
@@ -1668,6 +1705,9 @@ impl Edits {
         // rectangle the ink occupies is wider than the points it runs through ---
         // and tight bounds would additionally refuse a straight vertical line as
         // covering no area. See `Stroke::bounds`.
+        if !unit.is_finite() || unit <= 0.0 {
+            return Err(said!("the page has an invalid user unit"));
+        }
         let width = nib(want.width) / unit;
         if want.kind.has_strokes() {
             quads = Stroke::bounds(&strokes, want.kind.stroke_pad(width))
@@ -1680,26 +1720,16 @@ impl Edits {
         let model = &mut open.model;
         // A field's name, and its choices when it is a dropdown: checked
         // while the reader is placing it and not at the save.
-        if let (MarkKind::Field, Some(placed)) = (want.kind, &want.field) {
+        if let (MarkKind::Field, Some(placed)) = (want.kind, &mut want.field) {
+            placed.page_unit = (unit != 1.0).then_some(unit);
             if let Some(why) = field_name_problem(model, &want.note, placed, None) {
                 return Err(why);
             }
             if let Some(why) = placed.problem(&want.note) {
                 return Err(why);
             }
-            // A signature field has to be large enough to hold a signature,
-            // which is taller than a reader drags a line of text. Said at the
-            // drag and not at the save.
-            let least = crate::formfields::MIN_SIGNATURE as f32;
-            if placed.kind == crate::formfields::Kind::Signature
-                && quads
-                    .iter()
-                    .any(|q| q.right - q.left < least || q.bottom - q.top < least)
-            {
-                return Err(said!(
-                    "a signature field is at least {least} by {least_high} points; drag a larger rectangle",
-                    least_high = least
-                ));
+            for &quad in &quads {
+                check_field_rect(placed, &want.note, quad, unit)?;
             }
         }
         model
@@ -1724,7 +1754,7 @@ impl Edits {
                 gesture(sweep),
             )
             .map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Takes one mark off the page it is on, addressed by identity.
@@ -1791,7 +1821,7 @@ impl Edits {
         for region in checked {
             open.model.redact_checked(region).map_err(describe)?;
         }
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Takes a pending redaction back off its page, addressed by identity.
@@ -1879,7 +1909,7 @@ impl Edits {
                 .apply_in(Command::Unannotate { mark: id }, joins)
                 .map_err(describe)?;
         }
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Replaces what one mark says, addressed by identity.
@@ -1940,7 +1970,7 @@ impl Edits {
             }
         }
         model.renote(id, note).map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Replaces what a comment out of the file says, addressed by its object.
@@ -1999,7 +2029,7 @@ impl Edits {
                 made,
             )
             .map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Takes a comment out of the file off the page it is on.
@@ -2035,7 +2065,7 @@ impl Edits {
         model
             .discard(ObjectId::new(object.0, object.1), PageId::from_raw(page))
             .map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Replaces what one mark is drawn in, addressed by identity.
@@ -2062,7 +2092,7 @@ impl Edits {
         model
             .recolor(MarkId::from_raw(mark), color.map(channel))
             .map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Asks for every page's form fields to be listed in reading order by the
@@ -2081,7 +2111,7 @@ impl Edits {
             ));
         }
         open.model.apply(Command::TabOrder).map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Changes the properties of a form field placed in this session, as one
@@ -2164,7 +2194,7 @@ impl Edits {
             return Err(why);
         }
         model.refit(id, placed).map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Moves one mark by an offset, addressed by identity.
@@ -2203,7 +2233,7 @@ impl Edits {
         model
             .displace(MarkId::from_raw(mark), dx, dy)
             .map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Changes a signature's width in page points as one undoable edit.
@@ -2223,7 +2253,7 @@ impl Edits {
         let id = MarkId::from_raw(mark);
         field_fits(model, id, rect)?;
         model.reshape(id, quad_of(rect)).map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Gives several placed rectangles new rectangles as one edit: what
@@ -2284,7 +2314,7 @@ impl Edits {
                 )
                 .map_err(describe)?;
         }
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     pub fn resize_signature(&self, doc: u32, mark: u64, width: f32) -> Result<EditState, String> {
@@ -2295,7 +2325,7 @@ impl Edits {
         model
             .resize_signature(MarkId::from_raw(mark), width)
             .map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// A picture's pixels, which [`MarkView::picture`] leaves out.
@@ -2345,7 +2375,7 @@ impl Edits {
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
         model.apply_in(cmd, sweep).map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Record a worker-validated text replacement; no parser runs here.
@@ -2362,7 +2392,7 @@ impl Edits {
         model
             .replace_text(PageId::from_raw(page), change)
             .map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Journals an answer already checked against a worker's field description.
@@ -2379,7 +2409,7 @@ impl Edits {
         model
             .fill(ObjectId::new(object.0, object.1), value)
             .map_err(describe)?;
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Changes form fields the file already has: moves or resizes a widget,
@@ -2490,7 +2520,7 @@ impl Edits {
                 .refield(object, page, change, joins)
                 .map_err(describe)?;
         }
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Steps back one command.
@@ -2510,7 +2540,7 @@ impl Edits {
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
         model.undo();
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// Steps forward one command. Returns the state either way, as [`undo`](Edits::undo) does.
@@ -2525,7 +2555,7 @@ impl Edits {
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
         model.redo();
-        Ok(reply(open))
+        Ok(self.after_edit(open))
     }
 
     /// What to write, or print, for one document.
@@ -3720,7 +3750,7 @@ pub(crate) fn describe(why: Refusal) -> String {
             number = page + 1
         ),
         Refusal::ForeignCommentOnImportedPage(_) => {
-            said!("that comment is not on a page inserted from another document")
+            said!("Comments from an inserted document cannot be edited here. Save and reopen the combined document first.")
         }
         // Named for the page rather than for the document, which is the whole
         // of the 2026-09-20 narrowing: a region on the opened document's own
@@ -4124,7 +4154,7 @@ mod tests {
     /// Every method that changes the model starts it.
     ///
     /// **Enumerated rather than sampled**, because `edits.rs` has no chokepoint:
-    /// fourteen public methods take the lock themselves, so a trigger written at
+    /// individual mutators take the lock themselves, so a trigger written at
     /// one of them covers one of them --- the shape `docs/TRAPS.md` records as *a
     /// check bound to one caller covers only that caller*. Each runs against its
     /// own freshly opened document, so one that woke the hash cannot hide
@@ -4137,6 +4167,23 @@ mod tests {
     fn every_edit_starts_the_hash() {
         type Drive = (&'static str, fn(&Edits) -> ());
         let drives: &[Drive] = &[
+            ("order_tabs", |e| drop(e.order_tabs(1))),
+            ("refit", |e| {
+                drop(e.refit_at_scale(1, 1, Default::default(), 1.))
+            }),
+            ("reshape", |e| drop(e.reshape(1, 1, [1., 2., 3., 4.]))),
+            ("arrange", |e| drop(e.arrange(1, Vec::new(), 1))),
+            ("resize_signature", |e| drop(e.resize_signature(1, 1, 40.))),
+            ("import", |e| {
+                drop(e.import(1, None, other_file(1), vec![0], 40))
+            }),
+            ("replace_text", |e| {
+                drop(e.replace_text(1, 1, a_change(0, "edited")))
+            }),
+            ("fill", |e| {
+                drop(e.fill(1, (1, 0), forms::Value::Text("answer".into())))
+            }),
+            ("refield", |e| drop(e.refield(1, Vec::new(), 0))),
             ("rotate", |e| drop(e.rotate(1, 1, 1))),
             ("crop", |e| drop(e.crop(1, 1, None))),
             ("delete", |e| drop(e.delete(1, 1))),
@@ -4871,6 +4918,50 @@ mod tests {
     /// **The redo tail still names the file**, so a handle released at undo
     /// would leave redo drawing pages from a pool that is gone. The close is the
     /// one place the handle ends.
+    #[test]
+    fn editing_an_imported_comment_explains_how_to_make_it_editable() {
+        let edits = opened();
+        let added = edits.import(7, None, other_file(1), vec![0], 40).unwrap();
+        let page = added
+            .state
+            .pages
+            .iter()
+            .find(|page| matches!(page.source, PageSource::Imported { .. }))
+            .unwrap()
+            .id;
+        let why = edits
+            .rewrite(7, (2, 0), page, "comment".into(), stamped())
+            .unwrap_err();
+        assert!(why.contains("Comments from an inserted document"));
+        assert!(why.contains("Save and reopen"));
+    }
+
+    #[test]
+    fn branching_after_an_undone_import_releases_just_its_abandoned_handle() {
+        let edits = opened();
+        let released = Arc::new(Mutex::new(Vec::new()));
+        let closed = Arc::clone(&released);
+        edits.release_abandoned_sources_with(move |handle| closed.lock().unwrap().push(handle));
+        let original = edits.state(7).unwrap().pages[0].id;
+        assert!(edits
+            .import(7, None, other_file(1), vec![0], 40)
+            .unwrap()
+            .spare
+            .is_none());
+        edits.undo(7).unwrap();
+        assert!(released.lock().unwrap().is_empty());
+        let branched = edits.rotate(7, original, 1).unwrap();
+        assert!(!branched.can_redo && branched.sources.is_empty());
+        assert_eq!(*released.lock().unwrap(), [40]);
+        assert!(edits
+            .import(7, None, other_file(1), vec![0], 41)
+            .unwrap()
+            .spare
+            .is_none());
+        assert_eq!(edits.close(7), [41]);
+        assert_eq!(*released.lock().unwrap(), [40]);
+    }
+
     #[test]
     fn undoing_an_import_keeps_the_handle_and_closing_releases_it() {
         let edits = opened();
@@ -6619,6 +6710,61 @@ mod tests {
     }
 
     #[test]
+    fn new_fields_use_physical_dimensions_and_keep_defaults_drawable_after_resize() {
+        use crate::formfields::{Kind, Placed};
+        let edits = opened();
+        let page = edits.state(7).unwrap().pages[0].id;
+        let field = |name, kind, w, h| NewMark {
+            quads: vec![0., 0., w, h],
+            ..a_field(page, name, kind)
+        };
+        assert!(edits
+            .annotate(7, field("Short", Kind::Text, 20., 6.), stamped())
+            .is_err());
+        let large = edits
+            .annotate_at_scale(
+                7,
+                field("Sign", Kind::Signature, 16., 16.),
+                stamped(),
+                0,
+                2.,
+            )
+            .unwrap();
+        let signature = large.marks[0].id;
+        assert!(edits.reshape(7, signature, [0., 0., 12., 12.]).is_ok());
+        assert!(edits.reshape(7, signature, [0., 0., 10., 10.]).is_err());
+        let label = edits
+            .annotate(
+                7,
+                NewMark {
+                    field: Some(Placed {
+                        text_size: Some(12.),
+                        default_value: "A longer default".into(),
+                        ..Kind::Text.into()
+                    }),
+                    ..field("Label", Kind::Text, 200., 40.)
+                },
+                stamped(),
+            )
+            .unwrap();
+        let id = label.marks.last().unwrap().id;
+        let small = [0., 0., 20., 20.];
+        assert!(edits.reshape(7, id, small).is_err());
+        let moves = vec![
+            Placement {
+                mark: signature,
+                rect: [1., 1., 20., 20.],
+            },
+            Placement {
+                mark: id,
+                rect: small,
+            },
+        ];
+        assert!(edits.arrange(7, moves, 1).is_err());
+        assert_eq!(edits.state(7).unwrap().marks, label.marks);
+    }
+
+    #[test]
     fn a_signature_field_is_placed_at_a_size_a_signature_fits() {
         use crate::formfields::Kind;
         let edits = opened();
@@ -6846,6 +6992,7 @@ mod tests {
         let before = quads(&edits.state(7).expect("open"));
         let placed = |at: usize, rect: [f32; 4]| Placement {
             mark: ids[at],
+
             rect,
         };
         let new = [

@@ -457,3 +457,24 @@ describe("Middle-button panning", () => {
     );
   });
 });
+
+it("records the owner of the middle-button pan", () => {
+  const viewer = build();
+  drag(1, { x: 500, y: 400 }, [], "held");
+  const before = anchor(viewer);
+  dom.root.dispatch("pointermove", { pointerId: 2, clientX: 400, clientY: 330 });
+  const delta = moved(before, anchor(viewer));
+  dom.root.dispatch("pointerup", { pointerId: 2, clientX: 400, clientY: 330 });
+  expect(delta).toEqual([0, 0]);
+  expect(viewer.cursorName).toBe("grabbing");
+});
+
+it("keeps the scrollbar active after a different touch ends", () => {
+  const viewer = build();
+  const track = dom.root.children.find(child => (child.style.cssText ?? "").includes("bottom:0"))!;
+  track.dispatch("pointerdown", { button: 0, pointerId: 1, clientX: 890, clientY: 50 });
+  const before = anchor(viewer).top;
+  track.dispatch("pointercancel", { pointerId: 2, clientX: 890, clientY: 55 });
+  track.dispatch("pointermove", { pointerId: 1, clientX: 890, clientY: 300 });
+  expect(anchor(viewer).top).not.toBe(before);
+});

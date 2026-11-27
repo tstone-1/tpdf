@@ -279,6 +279,21 @@ describe("arming the tool", () => {
     viewer.destroy();
   });
 
+  it.each(["ink", "line"] as const)("previews a 5 point %s stroke at the page's physical scale", async kind => {
+    core.invoke.mockImplementation(async (name: string) => name === "page_units" ? [2] : null);
+    const viewer = build();
+    await settle();
+    viewer.setNib(5);
+    viewer.armDraw(kind);
+    drag({ x: 100, y: 100 }, { x: 300, y: 200 }, false);
+    await settle();
+    const ctx = { lineWidth: 0, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {} };
+    const paint = viewer as unknown as { paintInkPreview(context: typeof ctx, dpr: number): void };
+    paint.paintInkPreview(ctx, 1);
+    expect(ctx.lineWidth).toBe(2.5 * viewer.currentZoom);
+    viewer.destroy();
+  });
+
   it("carries the nib that was set, and the default until one is", async () => {
     // **The seam the whole feature rests on.** The preview is painted from the
     // viewer's own nib and the committed mark carries it out on `Drawn.width`;

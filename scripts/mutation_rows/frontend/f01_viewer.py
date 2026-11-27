@@ -840,8 +840,8 @@ ROWS += [
         # looks like the viewer ignoring a gesture rather than adding one.
         "viewer: pan on any button, not the middle one",
         "src/lib/viewer.ts",
-        "    if (event.button !== MIDDLE_BUTTON) return;",
-        "    if (false) return;",
+        "    if (event.button !== MIDDLE_BUTTON || this.panFrom) return;",
+        "    if (this.panFrom) return;",
         "is the middle button and no other",
     ),
     Mutation(

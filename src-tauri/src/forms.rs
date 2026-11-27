@@ -1468,6 +1468,16 @@ pub(crate) fn clear_choice(
 
 /// Writes all widgets of a shared field, plus its value, in one rewrite.
 pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
+    write_except_pages(doc, changes, &[])
+}
+
+/// A terminal field may have widgets on several pages. Only apply a new answer
+/// when at least one of its widgets will still be present in the output.
+pub(crate) fn write_except_pages(
+    doc: &mut Document,
+    changes: &[Change],
+    dropped: &[u32],
+) -> Result<(), String> {
     if changes.is_empty() {
         return Ok(());
     }
@@ -1484,6 +1494,12 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             .collect();
         if widgets.is_empty() {
             return Err(said!("The form field is no longer in this document"));
+        }
+        if widgets
+            .iter()
+            .all(|w| dropped.binary_search(&(w.page + 1)).is_ok())
+        {
+            continue;
         }
         for widget in &widgets {
             validate(widget, &change.value)?;

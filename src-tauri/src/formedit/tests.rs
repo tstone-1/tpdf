@@ -2112,9 +2112,7 @@ fn moving_a_checkbox_preserves_its_physical_size_on_scaled_pages() {
     }
 }
 
-#[test]
-fn extracting_the_second_widget_writes_a_field_edit_made_on_the_first_page() {
-    use crate::edits::{Edits, FieldPatch, FieldTarget};
+fn shared_on_two_pages() -> Fixture {
     let mut f = fixture();
     let pair = widgets(&f.doc, "Pair");
     let second = pair[1].widget;
@@ -2135,6 +2133,14 @@ fn extracting_the_second_widget_writes_a_field_edit_made_on_the_first_page() {
             .collect::<Vec<_>>(),
         [0, 1]
     );
+    f
+}
+
+#[test]
+fn extracting_the_second_widget_writes_a_field_edit_made_on_the_first_page() {
+    use crate::edits::{Edits, FieldPatch, FieldTarget};
+    let f = shared_on_two_pages();
+    let pair = widgets(&f.doc, "Pair");
     let edits = Edits::default();
     edits.open(1, 2, None);
     let page = edits.state(1).unwrap().pages[0].id;
@@ -2165,4 +2171,37 @@ fn extracting_the_second_widget_writes_a_field_edit_made_on_the_first_page() {
     assert_eq!(kept.page, 0);
     assert_eq!(kept.tooltip, "Kept");
     assert_eq!(kept.value, pair[1].value);
+}
+
+#[test]
+fn subset_writes_pending_answers_only_for_fields_with_a_retained_widget() {
+    let input = shared_on_two_pages().doc;
+    let model = crate::edits::Edits::default();
+    model.open(1, 2, None);
+    for (name, answer) in [("Turned", "OMITTED"), ("Name", "KEPT"), ("Pair", "SHARED")] {
+        let widget = widgets(&input, name).remove(0);
+        model
+            .fill(1, widget.object, Value::Text(answer.into()))
+            .unwrap();
+    }
+    let original = bytes(&input);
+    let plan = model.plan_subset(1, &[0]).unwrap();
+    let result =
+        crate::save::rewrite_update(&original, &plan, crate::save::Job::Save, None).unwrap();
+    let output = Document::load_mem(&result).unwrap();
+    assert_eq!(output.get_pages().len(), 1);
+    assert_eq!(one(&output, "Name").value, Value::Text("KEPT".into()));
+    assert_eq!(one(&output, "Pair").value, Value::Text("SHARED".into()));
+    for object in output.objects.values() {
+        if let Ok(value) = object.as_dict().and_then(|d| d.get(b"V")) {
+            assert_ne!(
+                lopdf::decode_text_string(value).ok().as_deref(),
+                Some("OMITTED")
+            );
+        }
+        if let Ok(stream) = object.as_stream() {
+            let bytes = stream.get_plain_content().unwrap();
+            assert!(!bytes.windows(7).any(|word| word == b"OMITTED"));
+        }
+    }
 }

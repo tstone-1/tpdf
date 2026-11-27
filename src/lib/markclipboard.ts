@@ -209,10 +209,11 @@ export class MarkClipboard {
     const { frame } = this.source;
     const scale = this.source.unit / unit;
     const rotate = frame.turns - destinationTurns;
-    if (scale === 1 && !frame.turns && !rotate && !frame.crop.left && !frame.crop.top) return this.held;
-    // The annotation command clamps native nib widths outside this range.
+    if (scale === 1 && this.source.unit === 1 && !frame.turns && !rotate && !frame.crop.left && !frame.crop.top) return this.held;
+    // The annotation command accepts a physical nib width.
     // Refuse the group before placing its first mark if a stroke would change.
-    if (this.held.some(mark => hasStrokes(mark.kind) && (mark.width * scale < 0.25 || mark.width * scale > 24))) {
+    const sourceUnit = this.source.unit;
+    if (this.held.some(mark => hasStrokes(mark.kind) && (mark.width * sourceUnit < 0.25 || mark.width * sourceUnit > 24))) {
       throw new Error(TEXT().nib);
     }
     const display = (left: number, top: number, right: number, bottom: number) =>
@@ -232,7 +233,7 @@ export class MarkClipboard {
         }
         return points;
       });
-      return { ...mark, quads, strokes, width: mark.width * scale,
+      return { ...mark, quads, strokes, width: hasStrokes(mark.kind) ? mark.width * sourceUnit : mark.width,
         ...(mark.picture && { picture: rotatePixels(mark.picture, rotate) }),
         ...(mark.image && { image: rotateSignature(mark.image, rotate) }) };
     });

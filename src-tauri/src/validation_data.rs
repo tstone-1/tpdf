@@ -330,6 +330,31 @@ mod tests {
     }
 
     #[test]
+    fn archiving_respects_the_chosen_replacement_policy_at_publication() {
+        let pki = good();
+        let original = signed(&pki);
+        for (arrives, replace) in [(false, false), (true, false), (true, true)] {
+            let (source, out) = scratch(&format!("archive-destination-{arrives}-{replace}"));
+            std::fs::write(&source, &original).unwrap();
+            let done = finished(&pki, &original, &out, &crate::save::Here, &|bytes| {
+                if arrives {
+                    std::fs::write(&out, b"other file").unwrap();
+                }
+                save::write_signed_destination(&source, &out, bytes, replace)
+                    .map_err(|why| why.message)
+            });
+            let archived = !arrives || replace;
+            assert_eq!(done.is_ok(), archived);
+            let bytes = std::fs::read(&out).unwrap();
+            if archived {
+                assert!(bytes.starts_with(&original));
+            } else {
+                assert_eq!(bytes, b"other file");
+            }
+        }
+    }
+
+    #[test]
     fn the_copy_is_written_read_back_and_said_in_one_sentence() {
         let pki = good();
         let original = signed(&pki);

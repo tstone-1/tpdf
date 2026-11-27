@@ -613,6 +613,8 @@ export default {
     "Der Arbeitsprozess hat auf den Druckauftrag mit {reply} geantwortet",
 
   // save_order.rs
+  "Apply or remove the pending redactions before saving this document in place.":
+    "Wende die vorgemerkten Schwärzungen an oder entferne sie, bevor du dieses Dokument überschreibst.",
   "there is nothing to save --- this document has no unsaved changes":
     "Es gibt nichts zu speichern - dieses Dokument hat keine ungespeicherten Änderungen",
 
@@ -730,6 +732,8 @@ export default {
 
 /** The entries above that say "du", addressing the reader with "Sie" instead. */
 export const sie = {
+  "Apply or remove the pending redactions before saving this document in place.":
+    "Wenden Sie die vorgemerkten Schwärzungen an oder entfernen Sie sie, bevor Sie dieses Dokument überschreiben.",
   "The original changed while it was opening. Reopen it before continuing.":
     "Das Original wurde beim Öffnen geändert. Öffnen Sie es erneut, um fortzufahren.",
   "the text you marked is inside a form that this document draws {times} time(s). Removing it would change every one of them, including places you did not mark, so nothing was removed.":

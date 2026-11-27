@@ -34,7 +34,7 @@ function shell(overrides: Partial<ValidationShell> = {}) {
     openPath: "/docs/contract.pdf",
     properties: async () => (asked.push("properties"), properties(true)),
     chooseAuthority: async () => (asked.push("authority"), "https://timestamp.sectigo.com"),
-    saveAs: async (suggested) => (asked.push(`save:${suggested}`), "/docs/contract-long-term.pdf"),
+    saveAs: async (suggested) => (asked.push(`save:${suggested}`), { path: "/docs/contract-long-term.pdf", replace: false }),
     add: async (path, timestamp) => (asked.push(`add:${path}:${timestamp}`), SAID),
     waiting: (message) => void asked.push(message === null ? "waiting:over" : `waiting:${message}`),
     ...overrides,
@@ -56,6 +56,17 @@ describe("adding long-term validation data", () => {
       "add:/docs/contract-long-term.pdf:https://timestamp.sectigo.com",
       "waiting:over",
     ]);
+  });
+
+  it.each([false, true])("passes the selected replacement permission (%s) to the writer", async (replace) => {
+    const { s } = shell({
+      saveAs: async () => ({ path: "archive.pdf", replace }),
+      add: async (path, _timestamp, allowed) => {
+        expect([path, allowed]).toEqual(["archive.pdf", replace]);
+        return SAID;
+      },
+    });
+    expect(await addValidationData(s)).toBe(SAID);
   });
 
   it("says it is waiting only while the backend works, and stops when it refuses", async () => {

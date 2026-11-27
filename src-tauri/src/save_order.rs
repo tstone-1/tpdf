@@ -141,6 +141,11 @@ where
     // answer. Writing a clean document would still produce a correct file, but
     // it would rewrite every object id in a file the reader did not change.
     let state = saving.state().map_err(SaveFailure::refused)?;
+    if !state.redactions.is_empty() {
+        return Err(SaveFailure::refused(said!(
+            "Apply or remove the pending redactions before saving this document in place."
+        )));
+    }
     if !state.dirty {
         return Err(SaveFailure::refused(said!(
             "there is nothing to save --- this document has no unsaved changes"
@@ -506,6 +511,51 @@ mod tests {
     /// half that matters is what the log does *not* contain: a save that got as
     /// far as closing the document would have spent the reader's journal to
     /// tell them there was nothing in it.
+    #[test]
+    fn a_mixed_journal_with_pending_redactions_is_refused_before_closure() {
+        let log: Log = Arc::default();
+        let model = crate::edits::Edits::default();
+        model.open(1, 1, None);
+        let page = model.state(1).unwrap().pages[0].id;
+        model.redact(1, page, [1.0, 2.0, 3.0, 4.0]).unwrap();
+        model
+            .annotate(
+                1,
+                crate::edits::NewMark {
+                    kind: MarkKind::Highlight,
+                    page,
+                    quads: vec![1., 2., 3., 4.],
+                    strokes: vec![],
+                    stamp: None,
+                    field: None,
+                    image: None,
+                    reply_to: None,
+                    color: [1., 1., 0.],
+                    author: String::new(),
+                    note: Default::default(),
+                    width: 1.,
+                },
+                String::new(),
+            )
+            .unwrap();
+        let marked = model.redact(1, page, [10.0, 22.0, 30.0, 40.0]).unwrap();
+        assert_eq!(marked.redactions.len(), 2);
+        let plan = model.plan(1).unwrap();
+        assert!(plan.redactions.is_empty());
+        assert_eq!(plan.marks.len(), 1);
+        let saving = Fake {
+            state: Ok(marked),
+            plan: Ok(plan),
+            ..Fake::new(&log)
+        };
+        let (_dir, source) = a_small_file("save-order-pending-redactions");
+        let why = run(save_over(&saving, &source, landing(&log))).expect_err("pending regions");
+        assert!(why.message.contains("pending redactions"));
+        assert!(!why.reopen());
+        assert_eq!(entries(&log), ["state"]);
+        assert_eq!(model.state(1).unwrap().redactions.len(), 2);
+    }
+
     #[test]
     fn a_clean_document_is_refused_before_anything_is_touched() {
         let log: Log = Arc::default();

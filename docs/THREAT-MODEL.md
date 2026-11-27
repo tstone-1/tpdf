@@ -2563,12 +2563,13 @@ filesystem snapshot against concurrent writers.
 
 Outputs go to an exclusively created staging directory beside the destination. Fresh
 workers check page counts, displayed dimensions and encryption before publication.
-Without `--force`, a hard link publishes each file without replacing a concurrent
-arrival. `--force` uses the save path's replacement; input aliases, symbolic-link
-outputs and directories are refused. A split checks all destinations and stages all
-parts before publishing; a publication failure can leave earlier parts, which are
-listed in its JSON report. This is per-file atomicity, not a multi-file transaction.
-The output filesystem must support hard links for no-replacement publication.
+Without `--force`, exclusive publication preserves a concurrent arrival. On a
+filesystem without exclusive rename or hard links, tpdf exclusively creates the
+destination and copies into it. A failed copy can leave a partial file there.
+`--force` uses the save path's replacement. Input aliases, symbolic-link outputs
+and directories are refused. Split checks all destinations and stages all parts
+before publication. A publication failure can leave earlier parts, which its JSON
+report lists.
 `tests/cli/pages.rs` exercises the built tool and checks content/order, rotation and
 crop boxes independently of its JSON reports. Page-range expansion is bounded to
 100,000 selected pages, and splits to 10,000 output files.

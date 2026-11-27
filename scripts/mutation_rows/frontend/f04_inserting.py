@@ -1663,7 +1663,7 @@ ROWS += [
         "  if (timestamp === undefined) return null;",
         "is cancelled by the dialog and by the save panel, and adds nothing"),
     Mutation("validation-data: go on after the save panel was cancelled", "src/lib/validationdata.ts",
-        "  if (!path) return null;\n  shell.waiting(WAITING);",
+        "  if (!target) return null;\n  shell.waiting(WAITING);",
         "  shell.waiting(WAITING);",
         "is cancelled by the dialog and by the save panel, and adds nothing"),
     Mutation("validation-data: suggest a name that keeps an upper-case extension", "src/lib/validationdata.ts",

@@ -22,6 +22,7 @@
 //! did before.
 
 use std::path::{Path, PathBuf};
+use tauri::Manager;
 
 use super::outside_of;
 use crate::render::RenderService;
@@ -46,14 +47,15 @@ use crate::{edits, save};
 #[tauri::command]
 pub async fn add_validation_data(
     app: tauri::AppHandle,
-    edits: tauri::State<'_, edits::Edits>,
     service: tauri::State<'_, RenderService>,
     doc: u32,
     source: String,
     path: String,
     timestamp: String,
+    replace: Option<bool>,
 ) -> Result<String, String> {
     let authority = crate::tsa::authority(&timestamp).map_err(|why| why.sentence(""))?;
+    let edits = app.state::<edits::Edits>();
     refuse_unsaved(edits.state(doc)?.dirty)?;
     let opened_as = edits.plan(doc)?.opened_as.ok_or_else(|| {
         said!(
@@ -94,7 +96,10 @@ pub async fn add_validation_data(
                 now(),
                 checking.as_ref(),
                 asking,
-                &|bytes| save::write_signed(&source, &out, bytes).map_err(|why| why.message),
+                &|bytes| {
+                    save::write_signed_destination(&source, &out, bytes, replace.unwrap_or(false))
+                        .map_err(|why| why.message)
+                },
             )
         })
         .map(|finished| finished.summary)

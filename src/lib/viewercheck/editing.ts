@@ -787,7 +787,7 @@ export async function validationDataChecks(path: string): Promise<void> {
     timestamp: string,
   ): Promise<string> => {
     try {
-      await call("add_validation_data", { doc, source, path: out, timestamp });
+      await call("add_validation_data", { doc, source, path: out, timestamp, replace: false });
       return "";
     } catch (e) {
       return describeThrown(e);

@@ -55,13 +55,15 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-probe -- 
     testdata/text-base14.pdf --lib vendor/pdfium/lib
 ```
 
+Use `--expect-blank` for a known text-free page. Short embedded words are compared as whole words. Without embedded words or an explicit blank control, the comparison is skipped and the run reports that it measured nothing.
+
 | fixture | result |
 |---|---|
 | `text-base14`, `text-marked`, `text-truetype`, `text-cid`, `rotated` | 9/9 |
 | `outline-simple` | 8/8, 1 skipped |
 | `form` | 7/7, 2 skipped |
 | `columns` | 2/2, 4 skipped — two columns leave no vertically isolated span to use as a control |
-| `vector-heavy` | 1/1 against the *inverted* claim: the page has no text, so reading none is correct |
+| `vector-heavy` with `--expect-blank` | 1/1 when Vision reads no text from this known drawing |
 | `links` | **7/8**, 1 skipped — one expected red, below |
 | `encodings` | **7/8**, 1 skipped — one expected red, below |
 | `text-wide` | 9/9 — the wide-sheet fixture, below |

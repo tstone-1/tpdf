@@ -4,6 +4,12 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Pending edits, subset forms and archive destinations (2026-11-27)
+
+On macOS the save coordinator refused a mixed journal with a highlight and two pending redaction regions before closing the document. A two-page form was extracted after entering new answers in an omitted field, a retained field and a field shared by both pages. The written one-page PDF retained the two applicable answers. Inspection of field dictionaries and appearance streams found no new answer from the omitted field. A local archive test preserved another writer's bytes when its file arrived after destination selection. A free path and an explicitly approved replacement both produced a signed archive.
+
+The OCR probe read all four short reference words in a one-page PDF containing `NO ID NO ID`. The known `vector-heavy` drawing passed with `--expect-blank`, and `text-base14` passed all nine checks.
+
 ### Cross-line redaction, tagged labels and signature fields (2026-11-27)
 
 On macOS the CLI removed the numbers from `123456 London` and `Bridge 876543` in a single rectangle. Poppler extracted both surviving words and qpdf found the original `London Bridge` bookmark in the verified output. A paragraph edit that would displace a boxed list label was refused. The same edit with an unboxed label succeeded, and Poppler measured the label 14 points lower. With direct Center and class Justify, the CLI offered the heading for editing. With class Justify alone it offered only the body.

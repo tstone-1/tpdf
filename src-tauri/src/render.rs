@@ -581,7 +581,7 @@ pub(crate) enum Job {
 #[derive(Clone)]
 pub struct RenderService {
     views: textview::Source,
-    tx: Sender<Job>,
+    tx: Arc<Sender<Job>>,
     /// Which requests are outstanding and which have been withdrawn. See
     /// `queue.rs`, which is where that state machine lives and is tested.
     queue: SharedQueue,
@@ -596,6 +596,17 @@ impl RenderService {
     /// Uses journaled text for rendering, selection and search, while retaining the source for saves.
     pub fn follow_text_edits(&self, edits: &edits::Edits) {
         self.views.follow(edits);
+        // The render service already references the journal. A weak sender lets
+        // the journal release an abandoned import without keeping the service alive.
+        let sender = Arc::downgrade(&self.tx);
+        edits.release_abandoned_sources_with(move |doc| {
+            if let Some(tx) = sender.upgrade() {
+                let _ = tx.send(Job::Close {
+                    doc,
+                    reply: Box::new(|_| {}),
+                });
+            }
+        });
     }
 
     /// Reads baseline text operands and preflights a proposed pending batch in the worker.
@@ -730,7 +741,7 @@ impl RenderService {
 
         Self {
             views,
-            tx,
+            tx: Arc::new(tx),
             queue,
             workers,
             backend,
@@ -3313,7 +3324,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let service = RenderService {
             views: Default::default(),
-            tx,
+            tx: Arc::new(tx),
             queue: Default::default(),
             workers: None,
             backend: Backend::Worker,

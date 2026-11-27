@@ -170,9 +170,9 @@ export interface ValidationShell {
   /** The dialog: the timestamp authority's address, or `null` for Cancel. */
   chooseAuthority(): Promise<string | null>;
   /** The save panel, suggesting `suggested`: a path, or `null` for Cancel. */
-  saveAs(suggested: string): Promise<string | null>;
+  saveAs(suggested: string): Promise<{ path: string; replace: boolean } | null>;
   /** `add_validation_data`: the sentence about the written file. */
-  add(path: string, timestamp: string): Promise<string>;
+  add(path: string, timestamp: string, replace: boolean): Promise<string>;
   /**
    * Says what is being waited for, or with `null` that the wait is over. The
    * requests can take a minute and a half between them, and a window that
@@ -198,11 +198,11 @@ export async function addValidationData(shell: ValidationShell): Promise<string 
   if (!hasSignature(properties)) return NOTHING_SIGNED;
   const timestamp = await shell.chooseAuthority();
   if (timestamp === null) return null;
-  const path = await shell.saveAs(keptName(shell.openPath));
-  if (!path) return null;
+  const target = await shell.saveAs(keptName(shell.openPath));
+  if (!target) return null;
   shell.waiting(WAITING);
   try {
-    const said = await shell.add(path, timestamp);
+    const said = await shell.add(target.path, timestamp, target.replace);
     return said;
   } finally {
     // Whether it answered or refused: the wait is over either way.

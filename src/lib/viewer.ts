@@ -70,6 +70,7 @@ import {
   arrowHead,
   arrowWings,
   drawsALine,
+  hasStrokes,
   leastCorners,
   placesCorners,
   paintOf,
@@ -1485,6 +1486,7 @@ export class Viewer {
    * then has to drag back further than they dragged out.
    */
   private panFrom: {
+    pointer: number;
     x: number;
     y: number;
     top: number;
@@ -1866,7 +1868,7 @@ export class Viewer {
    * been. See {@link viewportSize} for why this is held rather than read.
    */
   private viewport: { width: number; height: number } | null = null;
-  private dragOffset: number | null = null;
+  private trackDrag: { pointer: number; offset: number } | null = null;
 
   constructor(root: HTMLElement, opts: ViewerOptions) {
     this.root = root;
@@ -2222,15 +2224,8 @@ export class Viewer {
         const from = keepOnPage({ x, y }, this.laidSize(page));
         const id = this.pages.idOf(page);
         if (id === undefined) return false;
-        const source = this.pages.addressOf(page, this.opts.doc);
-        const view = this.pages.at(page);
-        if (!source && !(view && "blank" in view.source)) return false;
-        const ready = this.measures.prepareUnit(id, () =>
-          source ? physicalPageUnit(source.doc, source.page) : Promise.resolve(1)
-        ).then(() => { this.wake(); return true; }, error => {
-          if (!this.life.ended) this.opts.onError?.(String(error));
-          return false;
-        });
+        const ready = this.preparePageUnit(page, id);
+        if (!ready) return false;
         this.measuring = { slot: page, from, to: from, ready };
         this.wake();
         return true;
@@ -2300,6 +2295,10 @@ export class Viewer {
         // On the page for `move`'s reason: a press in the gap below a page
         // answers for that page with a point just past its edge.
         const start = keepOnPage({ x, y }, this.laidSize(page));
+        if (hasStrokes(this.tool.mark)) {
+          const id = this.pages.idOf(page);
+          if (id !== undefined) void this.preparePageUnit(page, id);
+        }
         this.drawing = {
           slot: page,
           from: start,
@@ -5231,7 +5230,7 @@ export class Viewer {
     want: { dx: number; dy: number },
   ): { dx: number; dy: number } {
     const mark = this.markById(id);
-    const least = mark?.kind === "field" ? leastSide(mark.field?.kind) / (mark.fieldUnit ?? 1) : 4;
+    const least = mark?.kind === "field" ? leastSide(mark.field?.kind) / (mark.fieldUnit ?? mark.field?.page_unit ?? 1) : 4;
     const next = grown(base, want.dx, want.dy, this.laidSize(slot), least);
     return { dx: next.right - base.right, dy: next.bottom - base.bottom };
   }
@@ -5741,6 +5740,24 @@ export class Viewer {
     this.tool = { kind: "draw", mark: kind, stamp };
     this.showCursor();
     this.wake();
+  }
+
+  private preparePageUnit(slot: number, id: PageId): Promise<boolean> | null {
+    const source = this.pages.addressOf(slot, this.opts.doc);
+    const view = this.pages.at(slot);
+    if (!source && !(view && "blank" in view.source)) return null;
+    return this.measures.prepareUnit(id, () =>
+      source ? physicalPageUnit(source.doc, source.page) : Promise.resolve(1)
+    ).then(() => { if (!this.life.ended) this.wake(); return true; }, error => {
+      if (!this.life.ended) this.opts.onError?.(String(error));
+      return false;
+    });
+  }
+
+  private previewNib(slot: number): number | undefined {
+    const id = this.pages.idOf(slot);
+    const unit = id === undefined ? undefined : this.measures.pageUnit(id);
+    return unit === undefined ? undefined : this.nib / unit;
   }
 
   /**
@@ -8632,7 +8649,9 @@ export class Viewer {
     const origin = this.scroller.pageOrigin(slot);
     ctx.globalCompositeOperation = "source-over";
     ctx.strokeStyle = PREVIEW_STROKE;
-    ctx.lineWidth = this.nib * this.zoom * dpr;
+    const width = this.previewNib(slot);
+    if (width === undefined) return;
+    ctx.lineWidth = width * this.zoom * dpr;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
 
@@ -8676,7 +8695,9 @@ export class Viewer {
     const origin = this.scroller.pageOrigin(slot);
     ctx.globalCompositeOperation = "source-over";
     ctx.strokeStyle = PREVIEW_STROKE;
-    ctx.lineWidth = this.nib * this.zoom * dpr;
+    const width = this.previewNib(slot);
+    if (width === undefined) return;
+    ctx.lineWidth = width * this.zoom * dpr;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     strokeSegments(
@@ -8686,7 +8707,7 @@ export class Viewer {
         y: (origin.top + point.y * this.zoom - this.scrollTop) * dpr,
       })),
       kind,
-      arrowHead(this.nib) * this.zoom * dpr,
+      arrowHead(width) * this.zoom * dpr,
     );
   }
 
@@ -9304,7 +9325,7 @@ export class Viewer {
    * the left and right arrows ({@link onWheel}, {@link onKeyDown}).
    */
   private readonly onPanStart = (event: PointerEvent): void => {
-    if (event.button !== MIDDLE_BUTTON) return;
+    if (event.button !== MIDDLE_BUTTON || this.panFrom) return;
     // The scrollbar is inside the root and has its own drag, exactly as
     // {@link onSelectStart} says of the primary button.
     if (this.track.contains(event.target as Node)) return;
@@ -9314,6 +9335,7 @@ export class Viewer {
     this.root.focus();
 
     this.panFrom = {
+      pointer: event.pointerId,
       x: event.clientX,
       y: event.clientY,
       top: this.scrollTop,
@@ -9339,7 +9361,7 @@ export class Viewer {
    */
   private readonly onPanMove = (event: PointerEvent): void => {
     const from = this.panFrom;
-    if (!from) return;
+    if (!from || from.pointer !== event.pointerId) return;
     // **The content follows the pointer.** Dragging down brings the page down
     // with it, which means the view has moved *up* the document -- so the
     // offsets are subtracted. This is the hand-tool convention every reader
@@ -9357,7 +9379,7 @@ export class Viewer {
    * is simply a shorter pan.
    */
   private readonly onPanEnd = (event: PointerEvent): void => {
-    if (!this.panFrom) return;
+    if (!this.panFrom || this.panFrom.pointer !== event.pointerId) return;
     this.panFrom = null;
     release(this.root, event.pointerId);
     this.root.removeEventListener("pointermove", this.onPanMove);
@@ -9367,13 +9389,14 @@ export class Viewer {
   };
 
   private readonly onTrackPointerDown = (event: PointerEvent): void => {
+    if (this.trackDrag) return;
     const trackTop = this.track.getBoundingClientRect().top;
     const y = event.clientY - trackTop;
     const { top, height } = this.thumbRect();
 
     // Grab the thumb where it was clicked; click the bare track and it centres
     // there, which is what every native scrollbar on this platform does.
-    this.dragOffset = y >= top && y <= top + height ? y - top : height / 2;
+    this.trackDrag = { pointer: event.pointerId, offset: y >= top && y <= top + height ? y - top : height / 2 };
     capture(this.track, event.pointerId);
     this.track.addEventListener("pointermove", this.onTrackPointerMove);
     this.track.addEventListener("pointerup", this.onTrackPointerUp);
@@ -9387,11 +9410,13 @@ export class Viewer {
   };
 
   private readonly onTrackPointerMove = (event: PointerEvent): void => {
+    if (!this.trackDrag || this.trackDrag.pointer !== event.pointerId) return;
     this.dragTo(event.clientY - this.track.getBoundingClientRect().top);
   };
 
   private readonly onTrackPointerUp = (event: PointerEvent): void => {
-    this.dragOffset = null;
+    if (!this.trackDrag || this.trackDrag.pointer !== event.pointerId) return;
+    this.trackDrag = null;
     release(this.track, event.pointerId);
     this.track.removeEventListener("pointermove", this.onTrackPointerMove);
     this.track.removeEventListener("pointerup", this.onTrackPointerUp);
@@ -9399,11 +9424,11 @@ export class Viewer {
   };
 
   private dragTo(y: number): void {
-    if (this.dragOffset === null) return;
+    if (!this.trackDrag) return;
     const { height } = this.thumbRect();
     const travel = this.root.clientHeight - height;
     if (travel <= 0) return;
-    const fraction = Math.max(0, Math.min(1, (y - this.dragOffset) / travel));
+    const fraction = Math.max(0, Math.min(1, (y - this.trackDrag.offset) / travel));
     this.scrollTo(fraction * this.scroller.maxScroll);
   }
 }

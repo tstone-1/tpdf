@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- In-place Save preserves pending redaction work by asking you to apply or remove the regions first. Extract and Split write new form answers only when the output keeps a widget for that field. Adding long-term validation data protects a newly chosen output name while waiting for the authorities.
+- New form fields are checked as you place or resize them, including their default text and physical size. Pen strokes keep their selected thickness on scaled PDF pages. Panning and the scrollbar follow the pointer that started the drag.
+- Editing after undoing a page import releases the discarded document's renderer. The message for a comment on an imported page now explains how to edit it.
+
 - Signing preserves files created at a new output name while a PIN or timestamp is pending. It refuses unsupported mandatory timestamp and certificate constraints on signature fields. The CLI rejects a directory selected as an output before signing or archiving.
 - Text redaction, drawing and annotation moves follow the pointer that began the gesture through its release. Redacting across lines preserves bookmarks and form answers made up of surviving words.
 - Editing tagged text preserves the position of boxed list labels and honours a paragraph’s direct alignment over its style class. The password dialog explains locked files and incorrect passwords in the selected language.

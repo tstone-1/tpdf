@@ -11018,6 +11018,47 @@ fn plan_with_ink() -> Plan {
 }
 
 #[test]
+fn a_five_point_pen_writes_the_same_physical_stroke_on_scaled_pages() {
+    for unit in [1, 2] {
+        let mut source = Document::load_mem(&two_blank_pages()).unwrap();
+        let page = crate::pagetree::ordered_pages(&source)[0];
+        source
+            .get_dictionary_mut(page)
+            .unwrap()
+            .set("UserUnit", unit);
+        let mut bytes = Vec::new();
+        source.save_to(&mut bytes).unwrap();
+        let edits = crate::edits::Edits::default();
+        edits.open(1, 2, None);
+        let mark = crate::edits::NewMark {
+            kind: MarkKind::Ink,
+            page: edits.state(1).unwrap().pages[0].id,
+            quads: vec![],
+            strokes: vec![vec![5., 5., 20., 20.]],
+            stamp: None,
+            field: None,
+            image: None,
+            reply_to: None,
+            color: [0., 0., 0.],
+            width: 5.,
+            author: String::new(),
+            note: Default::default(),
+        };
+        edits
+            .annotate_at_scale(1, mark, String::new(), 0, f64::from(unit))
+            .unwrap();
+        let scratch = Scratch::new("scaled-ink-width");
+        let content = appearance_over(bytes, &edits.plan(1).unwrap(), &scratch);
+        let ops = lopdf::content::Content::decode(content.as_bytes()).unwrap();
+        let ink = ops.operations.iter().find(|op| op.operator == "w").unwrap();
+        assert_eq!(
+            f64::from(ink.operands[0].as_float().unwrap()) * f64::from(unit),
+            5.
+        );
+    }
+}
+
+#[test]
 fn the_stroke_width_is_the_nib_the_reader_chose() {
     // **The number that reaches every foreign reader.** The overlay draws ink
     // from `MarkView::width` and the file draws it from this `w`; a writer
