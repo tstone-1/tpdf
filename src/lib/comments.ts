@@ -28,7 +28,7 @@
 
 import type { CommentStyle } from "./commentformat";
 import { catalog } from "./i18n";
-import { quarterTurns } from "./pages";
+import { quarterTurns, type PageId } from "./pages";
 import { coveredText } from "./reading";
 import { rowLine } from "./rowline";
 import { turnQuad, type PageText, type Quad } from "./text";
@@ -71,6 +71,8 @@ export interface Comment {
    */
   object: [number, number] | null;
   page: number;
+  /** Stable owner assigned when mapping a scanned comment into the working document. */
+  pageId?: PageId;
   kind: CommentKind;
   author: string;
   body: string;
@@ -317,7 +319,7 @@ export function rowsOf(items: readonly Comment[]): CommentRow[] {
  * there is no mark under the pointer to have been clicked. It is still listed in
  * the panel, where the reader asked for it explicitly.
  */
-export function hitTest<T extends Placed>(
+export function hitTest<T extends Placed & { quads?: readonly number[] }>(
   items: readonly T[],
   page: number,
   x: number,
@@ -329,25 +331,19 @@ export function hitTest<T extends Placed>(
 
   for (const item of items) {
     if (item.page !== page || item.hidden) continue;
-    const [left, top, right, bottom] = item.rect;
-    const width = right - left;
-    const height = bottom - top;
-    // A rectangle with no area is one the file did not state or stated
-    // unusably, and `annots.rs` reports it as zeroes. Treating that as a hit
-    // would put an invisible target in the page's top-left corner.
-    if (width <= 0 || height <= 0) continue;
-    if (
-      x < left - slack ||
-      x > right + slack ||
-      y < top - slack ||
-      y > bottom + slack
-    ) {
-      continue;
-    }
-    const area = width * height;
-    if (area <= bestArea) {
-      best = item;
-      bestArea = area;
+    const boxes = item.quads?.length ? item.quads : item.rect;
+    for (let i = 0; i + 3 < boxes.length; i += 4) {
+      const left = boxes[i]!;
+      const top = boxes[i + 1]!;
+      const right = boxes[i + 2]!;
+      const bottom = boxes[i + 3]!;
+      if (right <= left || bottom <= top) continue;
+      if (x < left - slack || x > right + slack || y < top - slack || y > bottom + slack) continue;
+      const area = (right - left) * (bottom - top);
+      if (area <= bestArea) {
+        best = item;
+        bestArea = area;
+      }
     }
   }
   return best;
@@ -367,7 +363,7 @@ export function onPage<T extends Placed>(items: readonly T[], page: number): T[]
  * that move independently --- the view rotation and a page whose real size has
  * just arrived to replace an estimate.
  */
-export function turnedFor<T extends Placed>(
+export function turnedFor<T extends Placed & { quads?: readonly number[] }>(
   items: readonly T[],
   turns: number,
   width: number,
@@ -376,8 +372,15 @@ export function turnedFor<T extends Placed>(
   if (quarterTurns(turns) === 0) return [...items];
   return items.map((item) => {
     const quad = viewRect(item.rect, turns, width, height);
+    const quads: number[] = [];
+    const boxes = item.quads ?? [];
+    for (let i = 0; i + 3 < boxes.length; i += 4) {
+      const turned = turnQuad({ left: boxes[i]!, top: boxes[i + 1]!, right: boxes[i + 2]!, bottom: boxes[i + 3]! }, turns, width, height);
+      quads.push(turned.left, turned.top, turned.right, turned.bottom);
+    }
     return {
       ...item,
+      ...(boxes.length ? { quads } : {}),
       rect: [quad.left, quad.top, quad.right, quad.bottom] as [number, number, number, number],
     };
   });

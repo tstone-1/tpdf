@@ -11,6 +11,8 @@ const n = (count: string | undefined, one: string, many: string): string =>
   count === "1" ? one : many;
 
 export default {
+  "the comment being answered is not on the reply's page":
+    "Der beantwortete Kommentar befindet sich auf einer anderen Seite als die Antwort.",
   "The original changed while it was opening. Reopen it before continuing.":
     "Das Original wurde beim Öffnen geändert. Öffne es erneut, um fortzufahren.",
   "This PDF is too large to insert pages from. The limit is {limit} MiB.":

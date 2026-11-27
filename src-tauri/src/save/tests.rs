@@ -5517,6 +5517,14 @@ fn a_reply_naming_something_that_is_not_an_annotation_is_refused_on_both_paths()
     // being satisfied by a writer that refuses every reply.
     let mut honest = plan_of(&[0, 0]);
     honest.marks = vec![reply_naming(annot)];
+    let mut wrong_page = honest.clone();
+    wrong_page.marks[0].at = 0;
+    let why = append_update(original.clone(), &wrong_page, None).expect_err("wrong reply page");
+    assert!(why.message.contains("reply's page"), "{why:?}");
+    wrong_page.pages[0].turns = 1;
+    let why =
+        rewrite_update(&original, &wrong_page, Job::Save, None).expect_err("wrong reply page");
+    assert!(why.message.contains("reply's page"), "{why:?}");
     assert!(
         append_update(original, &honest, None).is_ok(),
         "a reply naming the real comment must go through"

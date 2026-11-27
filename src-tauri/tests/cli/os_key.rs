@@ -226,9 +226,14 @@ mod platform {
         static TOKEN: OnceLock<Result<Pkcs11, String>> = OnceLock::new();
         TOKEN
             .get_or_init(|| {
-                let module = SOFTHSM
-                    .iter()
-                    .find(|path| std::path::Path::new(path).exists())
+                let module = std::env::var("TPDF_TEST_SOFTHSM_MODULE")
+                    .ok()
+                    .or_else(|| {
+                        SOFTHSM
+                            .iter()
+                            .find(|path| std::path::Path::new(path).exists())
+                            .map(|path| (*path).to_owned())
+                    })
                     .ok_or("SoftHSM is not installed (the package softhsm2)")?;
                 let dir =
                     std::env::temp_dir().join(format!("tpdf-cli-softhsm-{}", std::process::id()));
@@ -244,7 +249,7 @@ mod platform {
                 )
                 .map_err(|e| e.to_string())?;
                 std::env::set_var("SOFTHSM2_CONF", &conf);
-                let context = tpdf_lib::pkcs11::open(module)?;
+                let context = tpdf_lib::pkcs11::open(&module)?;
                 let fail = |e: cryptoki::error::Error| e.to_string();
                 let slot = context.get_all_slots().map_err(fail)?[0];
                 context

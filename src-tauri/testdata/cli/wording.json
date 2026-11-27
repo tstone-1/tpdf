@@ -43177,7 +43177,7 @@
         "verdict": "unchecked",
         "why": "algorithm"
       },
-      "sentence": "not checked — it uses an algorithm tpdf does not implement. This says nothing either way about whether the document changed.",
+      "sentence": "not checked — tpdf cannot verify this signature algorithm with the certificate's key. This says nothing either way about whether the document changed.",
       "trust_follows": false
     },
     {
@@ -43188,7 +43188,7 @@
         "verdict": "unchecked",
         "why": "algorithm"
       },
-      "sentence": "not checked — it uses an algorithm tpdf does not implement. This says nothing either way about whether the document changed.",
+      "sentence": "not checked — tpdf cannot verify this signature algorithm with the certificate's key. This says nothing either way about whether the document changed.",
       "trust_follows": true
     },
     {
@@ -43199,7 +43199,7 @@
         "verdict": "unchecked",
         "why": "algorithm"
       },
-      "sentence": "not checked — it uses an algorithm tpdf does not implement. This says nothing either way about whether the document changed.",
+      "sentence": "not checked — tpdf cannot verify this signature algorithm with the certificate's key. This says nothing either way about whether the document changed.",
       "trust_follows": false
     },
     {
@@ -43210,7 +43210,7 @@
         "verdict": "unchecked",
         "why": "algorithm"
       },
-      "sentence": "not checked — it uses an algorithm tpdf does not implement. This says nothing either way about whether the document changed.",
+      "sentence": "not checked — tpdf cannot verify this signature algorithm with the certificate's key. This says nothing either way about whether the document changed.",
       "trust_follows": true
     },
     {
@@ -52396,7 +52396,7 @@
         "verdict": "unchecked",
         "why": "algorithm"
       },
-      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: it uses an algorithm tpdf does not implement.",
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: tpdf cannot verify this signature algorithm with the certificate's key.",
       "when": "2026-08-21 12:00:00 UTC"
     },
     {
@@ -52408,7 +52408,7 @@
         "verdict": "unchecked",
         "why": "algorithm"
       },
-      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: it uses an algorithm tpdf does not implement.",
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: tpdf cannot verify this signature algorithm with the certificate's key.",
       "when": "2026-08-21 12:00:00 UTC"
     },
     {
@@ -52420,7 +52420,7 @@
         "verdict": "unchecked",
         "why": "algorithm"
       },
-      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: it uses an algorithm tpdf does not implement.",
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: tpdf cannot verify this signature algorithm with the certificate's key.",
       "when": "2026-08-21 12:00:00 UTC"
     },
     {
@@ -52432,7 +52432,7 @@
         "verdict": "unchecked",
         "why": "algorithm"
       },
-      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: it uses an algorithm tpdf does not implement.",
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: tpdf cannot verify this signature algorithm with the certificate's key.",
       "when": "2026-08-21 12:00:00 UTC"
     },
     {

@@ -2285,8 +2285,8 @@ ROWS += [
         # the file that gets saved says the same thing.
         "comments: keep the file's date when the body is rewritten",
         "src/lib/pages.ts",
-        "        ? { ...comment, page: slot, body: edit.body, styles: edit.styles ?? [], date: edit.shown }",
-        "        ? { ...comment, page: slot, body: edit.body, styles: edit.styles ?? [] }",
+        "body: edit.body, styles: edit.styles ?? [], date: edit.shown",
+        "body: edit.body, styles: edit.styles ?? []",
         "writes a reader's rewrite over the comment it names, and no other",
     ),
     Mutation(

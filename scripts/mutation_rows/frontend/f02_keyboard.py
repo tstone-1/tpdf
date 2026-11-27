@@ -791,7 +791,7 @@ ROWS += [
         # `/Rect` it could not read.
         "comments: accept a rectangle with no area",
         "src/lib/comments.ts",
-        "    if (width <= 0 || height <= 0) continue;",
+        "      if (right <= left || bottom <= top) continue;",
         "    if (false) continue;",
         "ignores a rectangle with no area",
     ),

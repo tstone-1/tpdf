@@ -17,7 +17,7 @@ def sign_from_terminal(executable):
     import hashlib
     import ssl
     import termios
-    from tpdf_client import CommandTimeout, Tpdf
+    from tpdf_client import CommandError, CommandTimeout, Tpdf
 
     # The parent owns the PTY master. Make the slave our controlling terminal.
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
@@ -27,6 +27,15 @@ def sign_from_terminal(executable):
     cert = ssl.PEM_cert_to_DER_cert(Path('cert.pem').read_text(encoding='ascii'))
     identity = hashlib.sha256(cert).hexdigest()
     assert any(i['id'] == identity for i in signer.identities()['usable'])
+    key_file = Path('test.p12')
+    before = key_file.read_bytes()
+    try:
+        signer.sign('source.pdf', key_file, identity=identity, force=True)
+    except CommandError as error:
+        assert error.exit_code == 2 and 'input' in str(error), error
+    else:
+        raise AssertionError('forced output overwrote the registered key')
+    assert key_file.read_bytes() == before
     signer.sign('source.pdf', 'signed.pdf', identity=identity)
     signatures = signer.verify('signed.pdf')['files'][0]['signatures']
     assert len(signatures) == 1 and signatures[0]['integrity']['verdict'] == 'intact'

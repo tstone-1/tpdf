@@ -145,6 +145,14 @@ describe("hitTest", () => {
 });
 
 describe("viewRect and turnedFor", () => {
+  it("turns each highlighted line with the comment", () => {
+    const mark = comment({ id: 1, rect: [10, 20, 30, 60], quads: [10, 20, 30, 28, 10, 52, 30, 60] });
+    const turned = turnedFor([mark], 1, 600, 800);
+    expect(hitTest(turned, mark.page, 776, 20)?.id).toBe(mark.id);
+    expect(hitTest(turned, mark.page, 760, 20)).toBeNull();
+    expect(mark.quads).toEqual([10, 20, 30, 28, 10, 52, 30, 60]);
+  });
+
   it("turns a rectangle with the view", () => {
     // A quarter turn clockwise on a 600 x 800 page sends the display's y to its
     // x. The numbers are asymmetric on purpose: a square rectangle maps to

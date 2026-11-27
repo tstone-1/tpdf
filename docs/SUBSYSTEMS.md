@@ -31,6 +31,8 @@ Copy captures the selection and its draft note before requesting the source page
 or picture pixels. It can finish after the reader switches tabs. Cut checks the source
 view and selection again before removing anything.
 
+A saved comment carries its owning page ID into the popup. Submitting a reply checks that this page still exists, and both PDF writers check that its annotation list contains the parent.
+
 Root-certificate refresh uses the same fingerprinted bytes for its initial survey
 and for the fresh worker's properties report. A file handle can still see an
 in-place rewrite while Windows is retrieving a root. Structural byte-range
@@ -47,7 +49,7 @@ an intact signature and cannot repair an altered one, so it is shown for every
 signed document alike. The verdict is shown in the properties dialog, where it
 says what it checked and that the key's owner was not. The read that feeds this
 warning therefore also hashes each signature's range, under the per-document
-`integrity::MAX_HASHED` budget, once per document.
+`integrity::MAX_HASHED` budget, once per document. Comparing the hexadecimal signature values with their source bytes uses a separate scan allowance shared by the initial survey and historical revision checks. A PSS-only key permits only PSS signatures. When its certificate supplies parameters, the hash, mask and trailer must agree and the signature must meet the minimum salt length.
 
 **Signing with a certificate (Phase 6 step 2, 2026-09-26)** is split across the boundary:
 the worker builds the revision (`sign_prepare.rs`, `Request::PrepareSignature`), the app

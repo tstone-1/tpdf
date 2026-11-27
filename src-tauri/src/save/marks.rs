@@ -311,6 +311,21 @@ pub(super) fn write_marks(
             turned_by,
         } = site;
         let (page, shown) = (*page, *shown);
+        if let Some(parent) = mark.reply_to {
+            let entries: &[Object] = match annots {
+                AnnotsSite::Inline(entries) => entries,
+                AnnotsSite::ArrayObject(id) => doc
+                    .get_object(*id)
+                    .and_then(Object::as_array)
+                    .map_err(|e| said!("this page's /Annots is not an array: {e}"))?,
+                AnnotsSite::Absent => &[],
+            };
+            if !entries.contains(&Object::Reference(parent)) {
+                return Err(said!(
+                    "the comment being answered is not on the reply's page"
+                ));
+            }
+        }
         let quads = user_quads(mark, shown);
         if quads.is_empty() {
             return Err(said!(

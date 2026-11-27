@@ -2465,12 +2465,20 @@ fn sign_reads_back(report: &mut Report) {
 // --- 3 ----------------------------------------------------------------------
 
 fn pdfium_in(images: &[String]) -> bool {
-    images
-        .iter()
-        .any(|image| image.to_ascii_lowercase().contains("pdfium"))
+    images.iter().any(|image| {
+        Path::new(image)
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case(tpdf_lib::PDFIUM_LOADABLE))
+    })
 }
 
 fn never_maps_pdfium(report: &mut Report) {
+    report.check(
+        "only the PDFium library basename counts as a loader observation",
+        !pdfium_in(&["pdfium-upgrade/tpdf-cli".into()])
+            && pdfium_in(&[format!("lib/{}", tpdf_lib::PDFIUM_LOADABLE)]),
+        "check PDFium loader path matching",
+    );
     let dir = scratch("maps");
     let document = dir.join("plain.pdf");
     std::fs::write(&document, plain_pdf()).expect("document");

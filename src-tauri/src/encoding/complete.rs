@@ -34,6 +34,39 @@ fn whitespace(byte: u8) -> bool {
     matches!(byte, 0 | 9 | 10 | 12 | 13 | 32)
 }
 
+/// PDF hex digits, ignoring the six whitespace bytes and padding a final
+/// half-byte with zero. An invalid character is reported at its position.
+pub(crate) fn hex_bytes(input: &[u8]) -> impl Iterator<Item = Option<u8>> + '_ {
+    let mut digits = input
+        .iter()
+        .copied()
+        .filter(|&byte| !whitespace(byte))
+        .map(|byte| char::from(byte).to_digit(16).map(|n| n as u8));
+    std::iter::from_fn(move || {
+        let high = digits.next()?;
+        let low = digits.next().unwrap_or(Some(0));
+        Some(high.zip(low).map(|(high, low)| high << 4 | low))
+    })
+}
+
+pub(crate) fn ascii_hex(input: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    let end = input
+        .iter()
+        .position(|&b| b == b'>')
+        .ok_or_else(|| said!("incomplete ASCIIHex attachment"))?;
+    if !input[end + 1..].iter().all(|&b| whitespace(b)) {
+        return Err(said!("incomplete ASCIIHex attachment"));
+    }
+    let mut output = Vec::new();
+    for byte in hex_bytes(&input[..end]) {
+        if output.len() == limit {
+            return Err(said!("attachment exceeds its size limit"));
+        }
+        output.push(byte.ok_or_else(|| said!("incomplete ASCIIHex attachment"))?);
+    }
+    Ok(output)
+}
+
 fn append(output: &mut Vec<u8>, bytes: &[u8], limit: usize) -> Result<(), String> {
     if bytes.len() > limit.saturating_sub(output.len()) {
         return Err(said!("ASCII85 output exceeds its limit"));

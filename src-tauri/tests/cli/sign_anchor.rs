@@ -280,6 +280,16 @@ pub fn places_beside_text(report: &mut Report) {
             "off the page",
         ),
         (
+            "a signature extending past the right edge",
+            &["--anchor", "Signature:", "--offset", "330,0"][..],
+            "not on its page",
+        ),
+        (
+            "a signature extending past the bottom edge",
+            &["--anchor", "Signature:", "--offset", "0,200"][..],
+            "not on its page",
+        ),
+        (
             "a page the document does not have",
             &["--anchor", "Signature:", "--page", "2"][..],
             "has 1 page",

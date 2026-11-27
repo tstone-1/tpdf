@@ -69,6 +69,14 @@ describe("CommentPopup", () => {
   let replies: { object: [number, number]; body: string }[] = [];
   let discards: [number, number][] = [];
 
+  it.each(["", "First words"])("shows a clipped reply's preview in its thread", (body) => {
+    const note = popup();
+    const child = comment({ id: 2, body, body_clipped: true, reply_to: 1 });
+    note.show(comment({ id: 1 }), [child], anchor(), false);
+    expect(words(note)).toContain("Only a preview");
+    if (body) expect(words(note)).toContain(body);
+  });
+
   function popup(refuse?: (body: string) => unknown): CommentPopup {
     // A host with a size, since the placement clamps against it.
     dom.root.clientWidth = 900;

@@ -41,6 +41,29 @@ fn a_signature_made_here_is_intact_under_the_verifier_the_dialog_uses() {
     }
 }
 
+#[test]
+fn the_chooser_and_verifier_have_the_same_rsa_ceiling() {
+    use der::asn1::{BitString, UintRef};
+    let mut cert = Certificate::from_der(&own(&Soft::rsa(), "Size test")).unwrap();
+    for bits in [8192_usize, 8193] {
+        let mut modulus = vec![0xff; bits.div_ceil(8)];
+        modulus[0] = if bits % 8 == 0 { 0xff } else { 1 };
+        let key = rsa::pkcs1::RsaPublicKey {
+            modulus: UintRef::new(&modulus).unwrap(),
+            public_exponent: UintRef::new(&[1, 0, 1]).unwrap(),
+        };
+        cert.tbs_certificate
+            .subject_public_key_info
+            .subject_public_key = BitString::from_bytes(&key.to_der().unwrap()).unwrap();
+        let offer = usable(&cert.to_der().unwrap(), NOW);
+        if bits == 8192 {
+            assert_eq!(offer.unwrap().method, "RSA 8192");
+        } else {
+            assert!(offer.unwrap_err().contains("8193 bits"));
+        }
+    }
+}
+
 // ---------------------------------------- the worker's numbers are checked
 
 #[test]

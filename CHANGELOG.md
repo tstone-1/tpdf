@@ -19,6 +19,9 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- Reply drafts stay with their parent when pages move. Links between highlighted lines remain clickable, and a clipped reply shows its preview notice inside the thread.
+- Signature verification enforces RSA-PSS certificate restrictions. Signing checks the RSA size limit and anchored placement before requesting a key. Attachments encoded as ASCIIHex accept all PDF whitespace.
+
 - CLI signing checks that the PDF still matches the revision used to place the signature and protects the selected Linux key file. Form exports also protect JSON read from redirected standard input.
 - Pasted text boxes keep their physical font size, short thick arrows keep both ends of the head, and underlines turn with their pages. Page labels check the painted glyphs against the visible page.
 - On Windows, PowerPoint copies preserve labels inside stroked table borders and the width of condensed text. Nested artwork stays in one bitmap when the slide is ungrouped.

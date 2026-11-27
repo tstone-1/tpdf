@@ -40,7 +40,7 @@ pub fn why(why: Why) -> &'static str {
         Why::Certificate => {
             "the certificate the signature names is not in it, or its key could not be read"
         }
-        Why::Algorithm => "it uses an algorithm tpdf does not implement",
+        Why::Algorithm => "tpdf cannot verify this signature algorithm with the certificate's key",
         Why::Attributes => "its signed attributes are not in the form the CMS standard requires",
         Why::Budget => {
             "the document's signatures together cover more data than tpdf checks at once"

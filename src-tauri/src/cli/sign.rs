@@ -765,11 +765,17 @@ fn anchored(
         })?,
     };
     let halves = super::regions::halves(std::slice::from_ref(hit));
-    let chosen = found.texts.get(&(page - 1))
-        .and_then(|page_text| super::regions::regions_on(page_text, page - 1, &halves).first().copied())
-        .ok_or_else(|| refused(format!(
-            "the selected occurrence of `{text}` on page {page} has no usable rectangle for a signature --- nothing was written"
-        )))?;
+    let missing_rectangle = || {
+        refused(format!(
+            "the selected occurrence of `{text}` on page {page} has no usable rectangle \
+             for a signature --- nothing was written"
+        ))
+    };
+    let page_text = found.texts.get(&(page - 1)).ok_or_else(missing_rectangle)?;
+    let chosen = super::regions::regions_on(page_text, page - 1, &halves)
+        .first()
+        .copied()
+        .ok_or_else(missing_rectangle)?;
     let [dx, dy] = anchor.offset;
     let [w, h] = anchor.size;
     let physical = rectangle_of(chosen[0] + dx, chosen[1] + dy, w, h).ok_or_else(|| {
@@ -779,6 +785,13 @@ fn anchored(
             chosen[0], chosen[1]
         ))
     })?;
+    crate::sign_prepare::appearance::check_on_page(
+        physical,
+        page_text.width_pt,
+        page_text.height_pt,
+        1.0,
+    )
+    .map_err(refused)?;
     Ok((physical, unit))
 }
 

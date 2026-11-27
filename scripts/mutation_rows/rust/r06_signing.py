@@ -226,8 +226,8 @@ ROWS += [
     Mutation(
         "sign: sign with an RSA key under 2048 bits",
         "src/sign_cms.rs",
-        "            if bits < MIN_RSA_BITS {",
-        "            if false {",
+        "            if !(MIN_RSA_BITS..=max).contains(&bits) {",
+        "            if bits > max {",
         "only_the_keys_tpdf_signs_with_are_offered",
     ),
     Mutation(

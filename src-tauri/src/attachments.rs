@@ -192,16 +192,7 @@ fn decode_stage(
             }
             Some(lzw(&input, early == 1, limit)?)
         }
-        b"ASCIIHexDecode" => {
-            if !input
-                .iter()
-                .position(|&b| b == b'>')
-                .is_some_and(|end| input[end + 1..].iter().all(u8::is_ascii_whitespace))
-            {
-                return Err(said!("incomplete ASCIIHex attachment"));
-            }
-            None
-        }
+        b"ASCIIHexDecode" => return crate::encoding::complete::ascii_hex(&input, limit),
         b"RunLengthDecode" => {
             let mut rest = input.as_ref();
             loop {
@@ -523,6 +514,29 @@ fn file_name(raw: &str) -> String {
 mod tests {
     use super::*;
     use lopdf::{dictionary, Stream, StringFormat};
+
+    #[test]
+    fn ascii_hex_accepts_pdf_whitespace_and_bounds_the_padded_byte() {
+        let decode = |bytes: &[u8], limit| {
+            super::decode_stage(
+                b"ASCIIHexDecode",
+                std::borrow::Cow::Borrowed(bytes),
+                lopdf::Dictionary::new(),
+                limit,
+            )
+        };
+        for space in [0, 9, 10, 12, 13, 32] {
+            assert_eq!(
+                decode(&[space, b'4', space, b'1', b'f', space, b'>', space], 2).unwrap(),
+                [65, 240]
+            );
+        }
+        for invalid in [b"4x>".as_slice(), b"41", b"41>x", b"4\x0b1>", b"41>\x0b"] {
+            assert!(decode(invalid, 2).is_err());
+        }
+        assert!(decode(b"41f>", 1).is_err());
+        assert!(decode(b">", 0).unwrap().is_empty());
+    }
 
     #[test]
     fn long_names_keep_the_extension_within_the_byte_budget() {

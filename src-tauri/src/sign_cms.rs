@@ -372,7 +372,7 @@ pub struct Offer {
 ///
 /// # Errors
 ///
-/// A key that is not RSA of at least [`MIN_RSA_BITS`], P-256 or P-384.
+/// A key outside the supported RSA size range, P-256 or P-384.
 pub fn key_kind(certificate: &Certificate) -> Result<KeyKind, String> {
     let spki = &certificate.tbs_certificate.subject_public_key_info;
     match spki.algorithm.oid.to_string().as_str() {
@@ -390,9 +390,10 @@ pub fn key_kind(certificate: &Certificate) -> Result<KeyKind, String> {
                     })
                 })
                 .ok_or_else(|| said!("its RSA key could not be read"))?;
-            if bits < MIN_RSA_BITS {
+            let max = crate::integrity::MAX_RSA_BITS;
+            if !(MIN_RSA_BITS..=max).contains(&bits) {
                 return Err(said!(
-                    "its RSA key has {bits} bits, and tpdf signs only with {MIN_RSA_BITS} or more"
+                    "its RSA key has {bits} bits, and tpdf signs only with {MIN_RSA_BITS} to {max} bits"
                 ));
             }
             Ok(KeyKind::Rsa(bits))

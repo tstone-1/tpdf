@@ -1,28 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { chooseTab, commentTarget, followStatus, type TabWork } from "./documentmount";
-import type { PageId } from "./pages";
+import { PageMap, pageId } from "./pages";
 import type { Tab } from "./sidebar";
 
-const id = (n: number) => n as PageId;
-
 describe("commentTarget", () => {
-  it("names the comment's object and the identity of its page, not its slot", () => {
-    // Slot 2 is page 7: a page was moved above it. Handing the slot through is
-    // the id-and-slot mix-up the translation exists for.
-    expect(commentTarget({ object: [12, 0], page: 2 }, (slot) => (slot === 2 ? id(7) : undefined)))
-      .toEqual({ object: [12, 0], page: 7 });
+  const pages = new PageMap([{ id: pageId(0), source: { baseline: 1 }, turns: 0 }]);
+
+  it("retains the captured owner at slot zero", () => {
+    expect(commentTarget({ object: [12, 0], pageId: pageId(0) }, pages))
+      .toEqual({ object: [12, 0], page: 0 });
   });
 
-  it("addresses nothing for a comment written as a direct dictionary", () => {
-    expect(commentTarget({ object: null, page: 0 }, () => id(0))).toBeNull();
-  });
-
-  it("addresses nothing on a slot the model no longer has", () => {
-    expect(commentTarget({ object: [3, 0], page: 9 }, () => undefined)).toBeNull();
-  });
-
-  it("keeps page 0, which is a page and not a missing one", () => {
-    expect(commentTarget({ object: [3, 0], page: 0 }, () => id(0))).toEqual({ object: [3, 0], page: 0 });
+  it("drops a missing object, missing owner or deleted page", () => {
+    expect(commentTarget({ object: null, pageId: pageId(0) }, pages)).toBeNull();
+    expect(commentTarget({ object: [3, 0] }, pages)).toBeNull();
+    expect(commentTarget({ object: [3, 0], pageId: pageId(9) }, pages)).toBeNull();
   });
 });
 

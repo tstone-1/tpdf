@@ -6750,33 +6750,16 @@
       // application issued --- `Comment.id` is a position in one scan, and a
       // save crosses a process boundary.
       //
-      // The page is this viewer's slot and the model wants an identity, so
-      // the translation happens here, where the map is. A comment on a page
-      // the model no longer has translates to nothing and is dropped: it is
-      // the same guard `Edits.mark` states, and the reader cannot have got
-      // here anyway --- `setComments` closes a popup whose comment has gone.
       onCommentEdit: (comment, body, styles) => {
-        const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
+        const to = commentTarget(comment, edits?.map);
         return to ? typedEdit((e) => e.rewrite(to.object, to.page, commentBody(body, styles)), body) : typedNotTaken(body);
       },
-      // The same two lookups as the rewrite above and for its reasons: a
-      // comment the file wrote as a direct dictionary has no object to name,
-      // and one on a page the model no longer has translates to nothing. A
-      // comment a reply of the reader's own answers is refused by the model
-      // rather than predicted here --- the refusal names the order to do the
-      // two in, which is more than this side could say.
       onCommentDelete: (comment) => {
-        const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
+        const to = commentTarget(comment, edits?.map);
         if (to) void applyEdit((e) => e.discard(to.object, to.page));
       },
-      // The reply's own icon goes on the parent's rectangle, which is why
-      // this callback needs a third thing off the comment where the one above
-      // needs two. `comment.page` is a slot and `idOf` turns it into the page
-      // identity the model addresses --- the translation that exists because
-      // an id and a slot are both `number`, which this repository has paid
-      // for once.
       onCommentReply: (comment, body, styles) => {
-        const to = commentTarget(comment, (slot) => edits?.map.idOf(slot));
+        const to = commentTarget(comment, edits?.map);
         return to ? typedEdit((e) => e.reply(to.page, to.object, comment.rect, commentBody(body, styles)), body) : typedNotTaken(body);
       },
       onMarkRemove: (mark, sweep) => removeNamed(mark, sweep),

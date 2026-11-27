@@ -756,7 +756,7 @@ fn scan_judged(
         Vec::new()
     };
     let mut signatures = if readable {
-        let mut budget = crate::integrity::MAX_HASHED;
+        let mut budget = SignatureBudget::new(crate::integrity::MAX_HASHED);
         let judging = Judging::of(document, &mut limits, anchors, now);
         let mut signatures = read_signatures(
             document,
@@ -1313,12 +1313,28 @@ fn signature_bounds() -> fields::Bounds {
     }
 }
 
+/// Historical revision checks share both allowances with the initial survey.
+struct SignatureBudget {
+    hashing: u64,
+    coverage: usize,
+}
+
+impl SignatureBudget {
+    fn new(hashing: u64) -> Self {
+        Self {
+            hashing,
+            // Two hex digits per byte, with equal room for PDF whitespace or padding.
+            coverage: 4 * MAX_SIG_BLOB * MAX_SIGNATURES,
+        }
+    }
+}
+
 fn read_signatures(
     document: &Document,
     size: u64,
     bytes: &[u8],
     limits: &mut Limits,
-    budget: &mut u64,
+    budget: &mut SignatureBudget,
     judging: &Judging<'_>,
 ) -> Vec<Signature> {
     // The traversal is `fields.rs`; what stays here is what to do with a node.
@@ -1406,7 +1422,7 @@ fn assign_pades(
     bytes: &[u8],
     password: Option<&str>,
     judging: &Judging<'_>,
-    budget: &mut u64,
+    budget: &mut SignatureBudget,
 ) {
     let mut revisions = std::collections::BTreeMap::new();
     let mut current_dss = None;
@@ -1437,7 +1453,7 @@ fn assign_pades(
             if material == *current_dss.get_or_insert_with(|| read_dss(document)) {
                 return vec![true; count];
             }
-            if *budget == 0 {
+            if budget.hashing == 0 {
                 return Vec::new();
             }
             let historical = Judging::from_material(material, judging.anchors, judging.now);
@@ -1648,7 +1664,7 @@ fn read_signature(
     size: u64,
     bytes: &[u8],
     limits: &mut Limits,
-    budget: &mut u64,
+    budget: &mut SignatureBudget,
     judging: &Judging<'_>,
     archive: Option<u64>,
 ) -> Signature {
@@ -1739,12 +1755,21 @@ fn read_signature(
         .get(b"Contents")
         .ok()
         .and_then(|o| resolve(document, o).as_str().ok());
-    let pieces = contents.and_then(|raw| crate::integrity::covered(bytes, &strict, raw));
-    out.range_valid = pieces.is_some();
+    let pieces = contents
+        .ok_or(crate::integrity::Why::Range)
+        .and_then(|raw| {
+            crate::integrity::covered_bounded(bytes, &strict, raw, &mut budget.coverage)
+        });
+    out.range_valid = pieces.is_ok();
     out.covers_whole_file = out.range_valid && out.appended_bytes == 0;
     let blob = signature_contents(document, sig, MAX_SIG_BLOB, &mut limits.timestamps_unread);
-
-    let integrity = crate::integrity::check_pieces(pieces, blob.as_deref(), &out.kind, budget);
+    let budget = &mut budget.hashing;
+    let integrity = match pieces {
+        Err(crate::integrity::Why::Budget) => {
+            crate::integrity::Integrity::unchecked(crate::integrity::Why::Budget)
+        }
+        range => crate::integrity::check_pieces(range.ok(), blob.as_deref(), &out.kind, budget),
+    };
 
     // What this signature's own CMS carries toward revocation, and its
     // token's: the Adobe archival attribute, the `crls` sets, and both
@@ -4863,11 +4888,33 @@ mod tests {
             340,
             &file,
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert!(covering[0].covers_whole_file);
         assert_eq!(covering[0].covered_bytes, 140);
+
+        let mut budget = SignatureBudget {
+            hashing: 0,
+            coverage: 198,
+        };
+        for expected in [true, false] {
+            let found = read_signatures(
+                &parse(&bytes),
+                340,
+                &file,
+                &mut Limits::default(),
+                &mut budget,
+                &judging(),
+            );
+            assert_eq!(found[0].range_valid, expected);
+            if !expected {
+                assert_eq!(
+                    found[0].integrity.as_ref().unwrap().why,
+                    Some(crate::integrity::Why::Budget)
+                );
+            }
+        }
 
         file.resize(900, b' ');
         let short = read_signatures(
@@ -4875,7 +4922,7 @@ mod tests {
             900,
             &file,
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert!(!short[0].covers_whole_file, "560 bytes lie past the range");
@@ -4911,7 +4958,7 @@ mod tests {
             900,
             &[],
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert_eq!(appended[0].appended_bytes, 560, "900 - (300 + 40)");
@@ -4926,7 +4973,7 @@ mod tests {
             340,
             &[],
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert_eq!(
@@ -4957,7 +5004,7 @@ mod tests {
             200,
             &[],
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert_eq!(read[0].appended_bytes, 0);
@@ -4977,7 +5024,7 @@ mod tests {
             340,
             &[],
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert_eq!(read[0].appended_bytes, 0);
@@ -4998,7 +5045,7 @@ mod tests {
             340,
             &[],
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert!(
@@ -5020,7 +5067,7 @@ mod tests {
             340,
             &[],
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert_eq!(read[0].covered_bytes, 0);
@@ -5054,7 +5101,7 @@ mod tests {
             340,
             &[],
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert_eq!(
@@ -5080,7 +5127,7 @@ mod tests {
             340,
             &[],
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         // 300 is an offset, never a length. Summing every number would give 400.
@@ -5116,7 +5163,7 @@ mod tests {
             340,
             &[],
             &mut Limits::default(),
-            &mut 0,
+            &mut SignatureBudget::new(0),
             &judging(),
         );
         assert_eq!(
@@ -5220,7 +5267,7 @@ mod tests {
                 340,
                 &[],
                 &mut Limits::default(),
-                &mut 0,
+                &mut SignatureBudget::new(0),
                 &judging(),
             );
             assert_eq!(i64::from(read[0].lock), level);
@@ -5326,7 +5373,7 @@ mod tests {
                 340,
                 &[],
                 &mut Limits::default(),
-                &mut 0,
+                &mut SignatureBudget::new(0),
                 &judging(),
             );
             assert_eq!(
@@ -5452,7 +5499,7 @@ mod tests {
         };
         let whole = scan(&bytes, 1, None).expect("parses");
         let first = whole.signatures[0].covered_bytes;
-        let mut budget = first;
+        let mut budget = SignatureBudget::new(first);
         let read = read_signatures(
             &parse(&bytes),
             bytes.len() as u64,
@@ -5468,7 +5515,7 @@ mod tests {
         assert_eq!(verdicts[0].verdict, crate::integrity::Verdict::Intact);
         assert_eq!(verdicts[1].verdict, crate::integrity::Verdict::Unchecked);
         assert_eq!(verdicts[1].why, Some(crate::integrity::Why::Budget));
-        assert_eq!(budget, 0);
+        assert_eq!(budget.hashing, 0);
     }
 
     #[test]

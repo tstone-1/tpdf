@@ -585,11 +585,6 @@ function replyBlock(reply: Comment): HTMLElement {
   who.textContent = bylineOf(reply);
   who.style.cssText = "opacity:0.6;font-size:0.85em;margin-bottom:0.15rem;";
 
-  const said = document.createElement("div");
-  said.textContent = reply.body;
-  if (reply.styles?.length) paintComment(said, reply.body, reply.styles);
-  said.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;";
-
-  element.append(who, said);
+  element.append(who, body(reply));
   return element;
 }

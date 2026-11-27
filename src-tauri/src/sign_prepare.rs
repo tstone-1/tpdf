@@ -842,7 +842,7 @@ fn build(
             if crate::forms::hidden(target.flags) {
                 return Err(said!("This field is hidden"));
             }
-            appearance::check_on_page(target.display_rect, shown, unit)?;
+            appearance::check_on_page(target.display_rect, shown.width, shown.height, unit)?;
             let [left, bottom, right, top] = target.rect;
             let (width, height) = ((right - left) * unit, (top - bottom) * unit);
             let least = appearance::MIN_SIDE;

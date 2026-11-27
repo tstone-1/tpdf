@@ -2160,8 +2160,8 @@ ROWS += [
         # range leaves some other value uncovered and the digest still matches.
         "integrity: accept a hole that is not this signature's value",
         "src/integrity.rs",
-        "    if decode_hex(inner)? != contents {",
-        "    if decode_hex(inner).is_none() {",
+        "    if !crate::encoding::complete::hex_bytes(inner).eq(contents.iter().copied().map(Some)) {",
+        "    if crate::encoding::complete::hex_bytes(inner).any(|byte| byte.is_none()) {",
         "a_range_whose_hole_holds_anything_but_this_signature_is_refused",
     ),
     Mutation(
@@ -2237,8 +2237,8 @@ ROWS += [
         # pyHanko salts with the digest's own length, so the mathematics fails.
         "integrity: assume PSS's default salt length",
         "src/integrity.rs",
-        "        salt: usize::from(params.salt_len),",
-        "        salt: 20,",
+        "    Ok((named, usize::from(params.salt_len)))",
+        "    Ok((named, 20))",
         "each_signature_scheme_is_checked_by_its_own_mathematics",
     ),
     Mutation(
@@ -2282,7 +2282,7 @@ ROWS += [
         "docinfo: give each signature its own hashing budget",
         "src/docinfo.rs",
         "            limits,\n            budget,\n            judging,\n            archive,\n",
-        "            limits,\n            &mut budget.clone(),\n            judging,\n            archive,\n",
+        "            limits,\n            &mut SignatureBudget { hashing: budget.hashing, coverage: budget.coverage },\n            judging,\n            archive,\n",
         "the_hashing_budget_is_shared_by_every_signature_of_a_document",
     ),
 ]

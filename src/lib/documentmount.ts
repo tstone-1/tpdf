@@ -14,7 +14,7 @@
  */
 
 import type { Comment } from "./comments";
-import type { PageId } from "./pages";
+import type { PageId, PageMap } from "./pages";
 import type { Tab } from "./sidebar";
 import type { ViewerStatus } from "./viewer";
 
@@ -22,25 +22,16 @@ import type { ViewerStatus } from "./viewer";
  * What an edit of somebody else's comment addresses: the object the file gave
  * the annotation, and the identity of the page it is on.
  *
- * `null` when either is missing, and the edit is then dropped. A comment the
- * file wrote as a direct dictionary in `/Annots` has no object to name
- * (`Comment.object`), and one on a slot the model no longer has translates to
- * no page --- `Edits.mark` states the same guard. `idOf` is the model's page
- * map, because `comment.page` is a slot and the model wants an identity: the
- * translation exists because an id and a slot are both `number`, which this
- * repository has paid for once.
- *
- * One function for the rewrite, the delete and the reply, which held three
- * copies of these lines until 2026-10-15.
+ * A popup can submit after a reorder or deletion. Use the owner captured by
+ * commentsIn and confirm that page still exists before recording an edit.
  */
 export function commentTarget(
-  comment: Pick<Comment, "object" | "page">,
-  idOf: (slot: number) => PageId | undefined,
+  comment: Pick<Comment, "object" | "pageId">,
+  pages: PageMap | undefined,
 ): { object: [number, number]; page: PageId } | null {
-  const object = comment.object;
-  const page = idOf(comment.page);
-  if (!object || page === undefined) return null;
-  return { object, page };
+  const { object, pageId } = comment;
+  if (!object || pageId === undefined || pages?.slotOfId(pageId) === undefined) return null;
+  return { object, page: pageId };
 }
 
 /** What choosing a sidebar tab may set off, as the component does each. */

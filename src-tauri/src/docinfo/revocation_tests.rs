@@ -1046,7 +1046,14 @@ fn a_document_timestamp_only_seals_validation_data_present_in_its_revision() {
         crate::trust::Anchors::Only(&roots),
         NOW,
     );
-    assign_pades(&mut reported, &document, &unchanged, None, &judging, &mut 0);
+    assign_pades(
+        &mut reported,
+        &document,
+        &unchanged,
+        None,
+        &judging,
+        &mut SignatureBudget::new(0),
+    );
     assert_eq!(reported[0].pades, Some(Lta));
 }
 

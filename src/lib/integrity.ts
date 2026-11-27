@@ -281,7 +281,7 @@ const TEXT = catalog({
         case "certificate":
           return "the certificate the signature names is not in it, or its key could not be read";
         case "algorithm":
-          return "it uses an algorithm tpdf does not implement";
+          return "tpdf cannot verify this signature algorithm with the certificate's key";
         case "attributes":
           return "its signed attributes are not in the form the CMS standard requires";
         case "budget":
@@ -685,7 +685,7 @@ const TEXT = catalog({
             "Schlüssel konnte nicht gelesen werden"
           );
         case "algorithm":
-          return "sie verwendet einen Algorithmus, den tpdf nicht implementiert";
+          return "tpdf kann diesen Signaturalgorithmus mit dem Schlüssel des Zertifikats nicht prüfen";
         case "attributes":
           return "ihre signierten Attribute haben nicht die Form, die der CMS-Standard verlangt";
         case "budget":

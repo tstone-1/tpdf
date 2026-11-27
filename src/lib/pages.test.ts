@@ -277,7 +277,7 @@ describe("PageMap", () => {
     it("moves a comment to the slot its page is in and drops the rest", () => {
       const pages = map([1, 0], [3, 2]);
       expect(commentsIn([comment(1, 2), comment(2, 1)], pages)).toEqual([
-        { ...comment(1, 2), page: 1 },
+        { ...comment(1, 2), page: 1, pageId: pageId(3) },
       ]);
     });
 
@@ -379,7 +379,7 @@ describe("PageMap", () => {
       // file does, which is the case every other consumer assumes.
       const pages = map([1, 0]);
       expect(commentsIn([comment(1, 0, [12, 0])], pages)).toEqual([
-        { ...comment(1, 0, [12, 0]), page: 0 },
+        { ...comment(1, 0, [12, 0]), page: 0, pageId: pageId(1) },
       ]);
     });
   });

@@ -1138,11 +1138,8 @@ export function commentsIn(
             note.object[1] === comment.object[1],
         )
       : undefined;
-    mapped.push(
-      edit
-        ? { ...comment, page: slot, body: edit.body, styles: edit.styles ?? [], date: edit.shown }
-        : { ...comment, page: slot },
-    );
+    const placed = { ...comment, page: slot, pageId: pages.idOf(slot)! };
+    mapped.push(edit ? { ...placed, body: edit.body, styles: edit.styles ?? [], date: edit.shown } : placed);
   }
   return mapped;
 }

@@ -599,7 +599,7 @@ pub fn check(visible: &Visible) -> Result<(), String> {
 /// side is shorter than [`MIN_SIDE`].
 pub fn place(visible: &Visible, shown: DisplayedPage, unit: f64) -> Result<[f64; 4], String> {
     let [left, top, right, bottom] = visible.rect;
-    check_on_page(visible.rect, shown, unit)?;
+    check_on_page(visible.rect, shown.width, shown.height, unit)?;
     if f64::from(right - left) * unit < MIN_SIDE || f64::from(bottom - top) * unit < MIN_SIDE {
         return Err(said!(
             "the rectangle chosen for the signature is smaller than {MIN_SIDE} points a side, \
@@ -611,9 +611,14 @@ pub fn place(visible: &Visible, shown: DisplayedPage, unit: f64) -> Result<[f64;
     Ok([page[0] + ox, page[1] + oy, page[2] + ox, page[3] + oy])
 }
 
-pub(super) fn check_on_page(rect: [f32; 4], shown: DisplayedPage, unit: f64) -> Result<(), String> {
+pub(crate) fn check_on_page(
+    rect: [f32; 4],
+    width: f32,
+    height: f32,
+    unit: f64,
+) -> Result<(), String> {
     let [left, top, right, bottom] = rect;
-    let (width, height) = (f64::from(shown.width), f64::from(shown.height));
+    let (width, height) = (f64::from(width), f64::from(height));
     // Half a point of slack, for a drag clamped to the page in display pixels
     // and converted to points with a rounding either way.
     let slack = 0.5 / unit;

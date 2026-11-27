@@ -111,7 +111,7 @@ pub const MAX_HASHED: u64 = 1024 * 1024 * 1024;
 /// qualified-signature issuers do hand out. Verification with a small public
 /// exponent is cheap at 8192, and `rsa` separately refuses an exponent large
 /// enough to make it expensive.
-const MAX_RSA_BITS: usize = 8192;
+pub(crate) const MAX_RSA_BITS: usize = 8192;
 
 /// What checking a signature found.
 ///
@@ -192,7 +192,7 @@ pub enum Why {
 }
 
 impl Integrity {
-    fn unchecked(why: Why) -> Self {
+    pub(crate) fn unchecked(why: Why) -> Self {
         Integrity {
             verdict: Verdict::Unchecked,
             why: Some(why),
@@ -282,60 +282,49 @@ pub(crate) fn check_pieces(
 /// uncovered, such as one a page draws as text, and the digest would still
 /// match after it was changed.
 pub fn covered<'a>(bytes: &'a [u8], range: &[i64], contents: &[u8]) -> Option<[&'a [u8]; 2]> {
+    covered_bounded(bytes, range, contents, &mut bytes.len()).ok()
+}
+
+pub(crate) fn covered_bounded<'a>(
+    bytes: &'a [u8],
+    range: &[i64],
+    contents: &[u8],
+    budget: &mut usize,
+) -> Result<[&'a [u8]; 2], Why> {
     let [start, first, second, last] = range else {
-        return None;
+        return Err(Why::Range);
     };
-    let size = u64::try_from(bytes.len()).ok()?;
-    let start = u64::try_from(*start).ok()?;
-    let first = u64::try_from(*first).ok()?;
-    let second = u64::try_from(*second).ok()?;
-    let last = u64::try_from(*last).ok()?;
+    let size = u64::try_from(bytes.len()).map_err(|_| Why::Range)?;
+    let start = u64::try_from(*start).map_err(|_| Why::Range)?;
+    let first = u64::try_from(*first).map_err(|_| Why::Range)?;
+    let second = u64::try_from(*second).map_err(|_| Why::Range)?;
+    let last = u64::try_from(*last).map_err(|_| Why::Range)?;
     // Two values under 2^63, so their sum fits a `u64` whatever the document
     // chose --- which is why this is a plain addition and not a checked one:
     // a check that cannot fire is not a guard. The bound below is the guard.
     let end = second + last;
     if start != 0 || first == 0 || second <= first || end > size {
-        return None;
+        return Err(Why::Range);
     }
     let (first, second, end) = (
-        usize::try_from(first).ok()?,
-        usize::try_from(second).ok()?,
-        usize::try_from(end).ok()?,
+        usize::try_from(first).map_err(|_| Why::Range)?,
+        usize::try_from(second).map_err(|_| Why::Range)?,
+        usize::try_from(end).map_err(|_| Why::Range)?,
     );
-    let hole = bytes.get(first..second)?;
+    let hole = bytes.get(first..second).ok_or(Why::Range)?;
     let [b'<', inner @ .., b'>'] = hole else {
-        return None;
+        return Err(Why::Range);
     };
-    if decode_hex(inner)? != contents {
-        return None;
+    *budget = budget.checked_sub(inner.len()).ok_or(Why::Budget)?;
+    if !crate::encoding::complete::hex_bytes(inner).eq(contents.iter().copied().map(Some)) {
+        return Err(Why::Range);
     }
-    Some([&bytes[..first], &bytes[second..end]])
+    Ok([&bytes[..first], &bytes[second..end]])
 }
 
-/// A PDF hex string's value: whitespace ignored, an odd final digit padded.
-///
-/// PDF 32000-1 §7.3.4.3. `None` for anything that is not a hex digit or
-/// whitespace, because a hole holding anything else holds more than a value.
+#[cfg(test)]
 fn decode_hex(digits: &[u8]) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(digits.len() / 2);
-    let mut high: Option<u8> = None;
-    for &byte in digits {
-        let nibble = match byte {
-            b'0'..=b'9' => byte - b'0',
-            b'a'..=b'f' => byte - b'a' + 10,
-            b'A'..=b'F' => byte - b'A' + 10,
-            b' ' | b'\t' | b'\r' | b'\n' | b'\x0c' | b'\0' => continue,
-            _ => return None,
-        };
-        match high.take() {
-            Some(h) => out.push(h << 4 | nibble),
-            None => high = Some(nibble),
-        }
-    }
-    if let Some(h) = high {
-        out.push(h << 4);
-    }
-    Some(out)
+    crate::encoding::complete::hex_bytes(digits).collect()
 }
 
 /// A digest algorithm this can compute.
@@ -443,16 +432,44 @@ struct Signer {
 
 /// A public key this can verify with.
 enum Key {
-    Rsa(Box<rsa::RsaPublicKey>),
+    Rsa(Box<rsa::RsaPublicKey>, RsaUse),
     P256(p256::ecdsa::VerifyingKey),
     P384(p384::ecdsa::VerifyingKey),
 }
 
+/// RFC 4055 section 3.3. An absent PSS parameter sequence permits any
+/// supported PSS parameters. A present sequence constrains the hash, MGF,
+/// trailer and minimum salt length.
+enum RsaUse {
+    General,
+    PssOnly,
+    Restricted { hash: Hash, minimum_salt: usize },
+}
+
 impl Key {
+    fn permits(&self, method: Method, hash: Hash) -> bool {
+        match (self, method) {
+            (Key::Rsa(_, RsaUse::General), Method::Rsa | Method::Pss { .. })
+            | (Key::Rsa(_, RsaUse::PssOnly), Method::Pss { .. })
+            | (Key::P256(_) | Key::P384(_), Method::Ecdsa) => true,
+            (
+                Key::Rsa(
+                    _,
+                    RsaUse::Restricted {
+                        hash: allowed,
+                        minimum_salt,
+                    },
+                ),
+                Method::Pss { salt },
+            ) => hash == *allowed && salt >= *minimum_salt,
+            _ => false,
+        }
+    }
+
     fn name(&self, method: Method) -> &'static str {
         match (self, method) {
-            (Key::Rsa(_), Method::Pss { .. }) => "RSA-PSS",
-            (Key::Rsa(_), _) => "RSA",
+            (Key::Rsa(..), Method::Pss { .. }) => "RSA-PSS",
+            (Key::Rsa(..), _) => "RSA",
             (Key::P256(_), _) => "ECDSA P-256",
             (Key::P384(_), _) => "ECDSA P-384",
         }
@@ -584,13 +601,7 @@ impl Signer {
             method: key.name(method).into(),
         };
 
-        // A method whose curve and key disagree cannot be checked.
-        let compatible = matches!(
-            (&key, method),
-            (Key::Rsa(_), Method::Rsa | Method::Pss { .. })
-                | (Key::P256(_) | Key::P384(_), Method::Ecdsa)
-        );
-        if !compatible {
+        if !key.permits(method, hash) {
             return Integrity::unchecked(Why::Algorithm);
         }
 
@@ -672,6 +683,14 @@ fn pss(
     algorithm: &x509_cert::spki::AlgorithmIdentifierOwned,
     hash: Option<Hash>,
 ) -> Result<(Hash, Method), Why> {
+    let (hash, salt) = pss_parameters(algorithm, hash)?;
+    Ok((hash, Method::Pss { salt }))
+}
+
+fn pss_parameters(
+    algorithm: &x509_cert::spki::AlgorithmIdentifierOwned,
+    hash: Option<Hash>,
+) -> Result<(Hash, usize), Why> {
     let parameters = algorithm
         .parameters
         .as_ref()
@@ -687,19 +706,23 @@ fn pss(
         .as_ref()
         .map(|inner| inner.oid.to_string());
     let mgf1 = params.mask_gen.oid.to_string() == "1.2.840.113549.1.1.8";
-    if hash.is_some_and(|hash| named != hash)
+    let digest_parameters_ok = |id: &x509_cert::spki::AlgorithmIdentifierRef<'_>| {
+        id.parameters.is_none_or(|p| p == der::AnyRef::NULL)
+    };
+    if !digest_parameters_ok(&params.hash)
+        || !params
+            .mask_gen
+            .parameters
+            .as_ref()
+            .is_some_and(digest_parameters_ok)
+        || hash.is_some_and(|hash| named != hash)
         || !mgf1
         || mask.as_deref().and_then(Hash::from_oid) != Some(named)
         || params.trailer_field != rsa::pkcs1::TrailerField::BC
     {
         return Err(Why::Algorithm);
     }
-    Ok((
-        named,
-        Method::Pss {
-            salt: usize::from(params.salt_len),
-        },
-    ))
+    Ok((named, usize::from(params.salt_len)))
 }
 
 /// The hash and the method an X.509 `AlgorithmIdentifier` names --- the form
@@ -751,12 +774,7 @@ pub(crate) fn signed_by(
 ) -> Result<bool, Why> {
     let (hash, method) = x509_method(algorithm)?;
     let key = read_key(signer)?;
-    let compatible = matches!(
-        (&key, method),
-        (Key::Rsa(_), Method::Rsa | Method::Pss { .. })
-            | (Key::P256(_) | Key::P384(_), Method::Ecdsa)
-    );
-    if !compatible {
+    if !key.permits(method, hash) {
         return Err(Why::Algorithm);
     }
     Ok(verify(
@@ -860,12 +878,20 @@ fn read_key(certificate: &x509_cert::Certificate) -> Result<Key, Why> {
     match spki.algorithm.oid.to_string().as_str() {
         // rsaEncryption, and id-RSASSA-PSS for a key restricted to PSS: both
         // carry an RSAPublicKey in the bit string.
-        "1.2.840.113549.1.1.1" | "1.2.840.113549.1.1.10" => {
+        oid @ ("1.2.840.113549.1.1.1" | "1.2.840.113549.1.1.10") => {
+            let usage = if oid == "1.2.840.113549.1.1.1" {
+                RsaUse::General
+            } else if spki.algorithm.parameters.is_none() {
+                RsaUse::PssOnly
+            } else {
+                let (hash, minimum_salt) = pss_parameters(&spki.algorithm, None)?;
+                RsaUse::Restricted { hash, minimum_salt }
+            };
             let parsed = rsa::pkcs1::RsaPublicKey::from_der(bits).map_err(|_| Why::Certificate)?;
             let n = rsa::BigUint::from_bytes_be(parsed.modulus.as_bytes());
             let e = rsa::BigUint::from_bytes_be(parsed.public_exponent.as_bytes());
             rsa::RsaPublicKey::new_with_max_size(n, e, MAX_RSA_BITS)
-                .map(|key| Key::Rsa(Box::new(key)))
+                .map(|key| Key::Rsa(Box::new(key), usage))
                 .map_err(|_| Why::Certificate)
         }
         "1.2.840.10045.2.1" => {
@@ -897,7 +923,7 @@ fn verify(key: &Key, method: Method, hash: Hash, digest: &[u8], signature: &[u8]
     use ecdsa::signature::hazmat::PrehashVerifier;
 
     match (key, method) {
-        (Key::Rsa(key), Method::Rsa) => {
+        (Key::Rsa(key, _), Method::Rsa) => {
             let scheme = match hash {
                 Hash::Sha1 => rsa::Pkcs1v15Sign::new::<sha1::Sha1>(),
                 Hash::Sha224 => rsa::Pkcs1v15Sign::new::<sha2_10::Sha224>(),
@@ -907,7 +933,7 @@ fn verify(key: &Key, method: Method, hash: Hash, digest: &[u8], signature: &[u8]
             };
             key.verify(scheme, digest, signature).is_ok()
         }
-        (Key::Rsa(key), Method::Pss { salt }) => {
+        (Key::Rsa(key, _), Method::Pss { salt }) => {
             let scheme = match hash {
                 Hash::Sha1 => rsa::Pss::new_with_salt::<sha1::Sha1>(salt),
                 Hash::Sha224 => rsa::Pss::new_with_salt::<sha2_10::Sha224>(salt),
@@ -1030,6 +1056,51 @@ mod tests {
         file.extend_from_slice(tail);
         let range = vec![0, head.len() as i64, second as i64, tail.len() as i64];
         (file, range)
+    }
+
+    #[test]
+    fn pss_certificate_policy_is_applied_to_the_signing_method() {
+        use crate::sign_cms::testkeys::{certificate, Soft, Spec};
+        let der = certificate(&Soft::rsa(), &Spec::new("Policy test"));
+        let mut cert = x509_cert::Certificate::from_der(&der).unwrap();
+        let policy = &mut cert.tbs_certificate.subject_public_key_info.algorithm;
+        policy.oid = "1.2.840.113549.1.1.10".parse().unwrap();
+        policy.parameters = None;
+        let key = read_key(&cert).unwrap();
+        assert!(key.permits(Method::Pss { salt: 32 }, Hash::Sha256));
+        assert!(!key.permits(Method::Rsa, Hash::Sha256));
+
+        let params = rsa::pkcs1::RsaPssParams::new::<sha2_10::Sha256>(32);
+        cert.tbs_certificate
+            .subject_public_key_info
+            .algorithm
+            .parameters = Some(der::Any::encode_from(&params).unwrap());
+        let key = read_key(&cert).unwrap();
+        assert!(key.permits(Method::Pss { salt: 32 }, Hash::Sha256));
+        assert!(key.permits(Method::Pss { salt: 40 }, Hash::Sha256));
+        assert!(!key.permits(Method::Pss { salt: 31 }, Hash::Sha256));
+        assert!(!key.permits(Method::Pss { salt: 32 }, Hash::Sha384));
+        assert!(!key.permits(Method::Rsa, Hash::Sha256));
+        let signer = Signer {
+            hash: Ok(Hash::Sha256),
+            method: Ok(Method::Rsa),
+            key: Ok(key),
+            signed: None,
+            claimed: Ok(None),
+            signature: vec![],
+            content: None,
+            attributes: None,
+            certificate: None,
+        };
+        let verdict = signer.judge(&[b"test"], &mut 0);
+        assert_eq!(
+            (verdict.verdict, verdict.why),
+            (Verdict::Unchecked, Some(Why::Algorithm))
+        );
+        assert_eq!(
+            signed_by(&cert, &cert.signature_algorithm, b"test", &[]),
+            Err(Why::Algorithm)
+        );
     }
 
     #[test]

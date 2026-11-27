@@ -349,8 +349,8 @@ export default {
   "This document is {mb} MB, and tpdf signs documents of up to {most} MB.":
     "Dieses Dokument ist {mb} MB groß, und tpdf signiert Dokumente bis {most} MB.",
   "its RSA key could not be read": "sein RSA-Schlüssel konnte nicht gelesen werden",
-  "its RSA key has {bits} bits, and tpdf signs only with {MIN_RSA_BITS} or more":
-    "sein RSA-Schlüssel hat {bits} Bit, und tpdf signiert nur mit {MIN_RSA_BITS} oder mehr",
+  "its RSA key has {bits} bits, and tpdf signs only with {MIN_RSA_BITS} to {max} bits":
+    "sein RSA-Schlüssel hat {bits} Bit, und tpdf signiert nur mit {MIN_RSA_BITS} bis {max} Bit",
   "its key is on an elliptic curve tpdf does not sign with":
     "sein Schlüssel liegt auf einer elliptischen Kurve, mit der tpdf nicht signiert",
   "its key is of a kind tpdf does not sign with (only RSA and ECDSA)":

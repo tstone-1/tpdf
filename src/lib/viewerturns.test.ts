@@ -26,7 +26,8 @@ import { Viewer } from "./viewer";
 import type { Comment } from "./comments";
 import type { Link } from "./links";
 import type { PageText } from "./text";
-import { pageId } from "./pages";
+import { commentTarget } from "./documentmount";
+import { commentsIn, PageMap, pageId } from "./pages";
 import { INK_WIDTH } from "./markband";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -365,7 +366,8 @@ describe("a rectangle on a page an edit turned", () => {
 });
 
 it("restores text geometry when a second view adopts moved and turned pages", async () => {
-  const viewer = build(installFakeDom(), 2);
+  const dom = installFakeDom();
+  const viewer = build(dom, 2);
   try {
     viewer.setPages([
       { id: pageId(2), source: { baseline: 1 }, turns: 1 },
@@ -376,6 +378,7 @@ it("restores text geometry when a second view adopts moved and turned pages", as
     expect((await viewer.loadText(1))?.width_pt).toBe(600);
   } finally {
     viewer.destroy();
+    dom.restore();
   }
 });
 
@@ -521,4 +524,51 @@ describe("what a turned page does to a place in it", () => {
     expect(v.scroller.pageSize(1)).toEqual({ width_pt: 600, height_pt: 800 });
     viewer.destroy();
   });
+});
+
+it("submits an open reply on its original page when thumbnails swap", async () => {
+  const dom = installFakeDom();
+  const pages = [0, 1].map((baseline) => ({
+    id: pageId(baseline + 1), source: { baseline }, turns: 0,
+  }));
+  let map = new PageMap(pages);
+  const write = vi.fn();
+  const viewer = new Viewer(dom.root as unknown as HTMLElement, {
+    doc: 1, pageCount: 2, pages: [{ width_pt: 600, height_pt: 800 }],
+    onCommentReply: (parent, body) => write(commentTarget(parent, map), body),
+  });
+  try {
+    viewer.setPages(pages);
+    viewer.setComments(commentsIn([{ ...comment(), object: [12, 0] }], map));
+    viewer.showComment(7);
+    viewer.replyToComment();
+    const box = Array.from(viewer.commentPopup.children).find((n) => n.getAttribute("role") === "textbox");
+    expect(box).toBeDefined();
+    (box as HTMLTextAreaElement).value = "Reply";
+    viewer.goToPage(0);
+    viewer.focus();
+    expect(write).not.toHaveBeenCalled();
+    const swapped = [...pages].reverse();
+    map = new PageMap(swapped);
+    viewer.setPages(swapped);
+    await settle();
+    expect(write.mock.calls).toEqual([[{ object: [12, 0], page: pageId(1) }, "Reply"]]);
+  } finally {
+    viewer.destroy();
+    dom.restore();
+  }
+});
+
+it("opens a link in the gap between highlighted lines", async () => {
+  const dom = installFakeDom();
+  const viewer = build(dom);
+  try {
+    viewer.setLinks([link()]);
+    viewer.setComments([{ ...comment(), kind: "highlight", quads: [100, 50, 140, 57, 100, 83, 140, 90] }]);
+    await settle();
+    expect(pressAt(dom, viewer, 120, 70, () => viewer.linkFocus)).toBe(9);
+  } finally {
+    viewer.destroy();
+    dom.restore();
+  }
 });
