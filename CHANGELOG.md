@@ -19,6 +19,11 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- Signature cards identify the signer only when the certificate matches. Signing respects certifications that omit the permission level, and Remember saves an appearance only after its preview succeeds.
+- Properties distinguishes unreadable signature fields from empty ones, reports linearized PDFs and subsequent signing changes more accurately, and shows effective form-fill permissions. Long metadata alone no longer triggers a signature warning on save.
+- Links follow moved text before saving. Screen readers pick up text edits and undo immediately and announce headings whose text is split across inline spans.
+- Hidden-text highlights stay within the current page crop. Signing an existing field previews the appearance at the field's dimensions.
+
 - Editing text preserves partial underlines and refuses to push a partly clipped word into the replacement. Rotating the view while drawing preserves the ink and corners already placed.
 - Open comment editors follow undo and color changes while preserving drafts. Escape closes a mark opened from the keyboard. Saved fields hide color controls and locked signature fields are excluded from signing choices.
 - The German palette accepts English layout, color and nib names. German hidden-text reports translate every inspection limit, and formal text-edit messages use the selected form of address.

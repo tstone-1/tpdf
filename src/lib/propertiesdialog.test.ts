@@ -175,3 +175,13 @@ describe("the offer to ask Windows for a root", () => {
     expect(offer()!.disabled).toBeFalsy();
   });
 });
+
+it("counts a standalone timestamp chain once and a separate signing authority independently", () => {
+  const p = withTrust(missing);
+  const signature = p.signatures.find(field => field.timestamp)!;
+  p.signatures = [signature];
+  signature.kind = "adbe.pkcs7.detached";
+  expect(missingRootCount(p)).toBe(2);
+  signature.kind = "ETSI.RFC3161";
+  expect(missingRootCount(p)).toBe(1);
+});

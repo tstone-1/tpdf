@@ -361,10 +361,8 @@ ROWS += [
         # to Acrobat's.
         "docinfo: read a metadata stream only when it carries no filter",
         "src/docinfo.rs",
-        """    let packet = stream
-        .decompressed_content_with_limit(crate::xmp::MAX_PACKET)
-        .unwrap_or_else(|_| stream.content.clone());""",
-        "    let packet = stream.content.clone();",
+        "match stream.decompressed_content_with_limit(crate::xmp::MAX_PACKET) {",
+        "match Ok::<_, lopdf::Error>(stored.clone()) {",
         "a_conformance_claim_in_the_metadata_stream_reaches_the_readout",
     ),
     Mutation(
@@ -376,8 +374,8 @@ ROWS += [
         # length reported and not on `unread`.
         "docinfo: ask for a metadata packet with no bound on its size",
         "src/docinfo.rs",
-        "        .decompressed_content_with_limit(crate::xmp::MAX_PACKET)",
-        "        .decompressed_content()",
+        ".decompressed_content_with_limit(crate::xmp::MAX_PACKET)",
+        ".decompressed_content()",
         "a_metadata_packet_over_the_packet_bound_is_never_inflated",
     ),
     Mutation(
@@ -387,8 +385,8 @@ ROWS += [
         # distinguishable from the bound above it.
         "docinfo: bound the metadata packet at the general decode ceiling",
         "src/docinfo.rs",
-        "        .decompressed_content_with_limit(crate::xmp::MAX_PACKET)",
-        "        .decompressed_content_with_limit(MAX_DECODE)",
+        ".decompressed_content_with_limit(crate::xmp::MAX_PACKET)",
+        ".decompressed_content_with_limit(MAX_DECODE)",
         "a_metadata_packet_over_the_packet_bound_is_never_inflated",
     ),
     Mutation(

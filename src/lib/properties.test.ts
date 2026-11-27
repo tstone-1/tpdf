@@ -1364,8 +1364,17 @@ describe("digital signature save consent", () => {
     expect(signatureSaveMessage({...blank(),signatures:[{...signed(),signed:false}]})).toBeNull();
     expect(signatureSaveMessage(blank())).toBeNull();
   });
+  it("allows an unsigned file with clipped metadata to be saved without a signature warning", () => {
+    const properties = blank();
+    properties.limits.values_clipped = 1;
+    properties.limits.fields_dropped = 1;
+    expect(signatureSaveMessage(properties)).toBeNull();
+    properties.limits.unreadable = 1;
+    expect(signatureSaveMessage(properties)).toContain("could not be read completely");
+  });
+
   it("requires consent when signature enumeration is incomplete or fails", async () => {
-    for (const key of ["locked","unreadable","fields_dropped","signatures_dropped","values_clipped"] as const) {
+    for (const key of ["locked","unreadable","signatures_dropped"] as const) {
       const properties = blank(); Object.assign(properties.limits,{[key]:key === "locked" ? true : 1});
       expect(signatureSaveMessage(properties)).toContain("could not be read completely");
     }
@@ -1389,4 +1398,16 @@ it("warns on merges even when the open base is unsigned because incoming files m
   await expect(confirmSignatureSave(read,confirm,true)).rejects.toBeInstanceOf(SaveCancelled);
   expect(confirm).toHaveBeenCalledWith(expect.stringContaining("selected files"));
   expect(read).not.toHaveBeenCalled();
+});
+
+it("names a certificate holder on the card only when the signer identifier matches", () => {
+  const cert = { ...certificate(), subject_cn: "Synthetic certificate holder" };
+  const signature = { ...signed(), name: "Typed name", certificate: cert };
+  const properties = { ...blank(), signatures: [signature, signed()] };
+  const names = () => sections(properties).flatMap(section => section.card ?? []).map(item => item.text);
+  expect(names()).toContain(cert.subject_cn);
+  expect(certificateRows(signature).some(row => row.name === "Names disagree")).toBe(true);
+  cert.matched_signer = false;
+  expect(names()).not.toContain(cert.subject_cn);
+  expect(certificateRows(signature).some(row => row.name === "Names disagree")).toBe(false);
 });

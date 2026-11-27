@@ -2,7 +2,7 @@ import type { CommentField, CommentStyle } from "./commentformat";
 import { SearchRecovery } from "./searchrecovery";
 import { call, physicalPageUnit } from "./ipc";
 import { catalog } from "./i18n";
-import { changedTextPages, type TextChange } from "./textedit";
+import { changedTextPages, type TextPage, type TextChange } from "./textedit";
 import { redrawn, type FieldEdited } from "./savedfields";
 /**
  * The reading surface: input, a frame loop, and a {@link Scroller} under it.
@@ -4478,7 +4478,9 @@ export class Viewer {
     const page = this.pages.idOf(slot);
     if (page === undefined) return false;
     this.shownRegion = { page, rect: [rect[0], rect[1], rect[2], rect[3]] };
-    this.scrollToFileRect(slot, rect);
+    const clipped = this.visibleRegion(slot, rect);
+    if (clipped) this.scrollToFileRect(slot, clipped);
+    else this.goToPage(slot);
     this.placeRegion();
     this.wake();
     return true;
@@ -4503,15 +4505,23 @@ export class Viewer {
     return { left: px(style.left), top: px(style.top), width: px(style.width), height: px(style.height) };
   }
 
+  private visibleRegion(slot: number, rect: readonly [number, number, number, number]): [number, number, number, number] | null {
+    const crop = this.cropAt(slot);
+    const left = Math.max(rect[0], crop.left), top = Math.max(rect[1], crop.top);
+    const right = Math.min(rect[2], crop.left + crop.width_pt), bottom = Math.min(rect[3], crop.top + crop.height_pt);
+    return right > left && bottom > top ? [left, top, right, bottom] : null;
+  }
+
   /** Puts the ring over the shown region, or hides it when its page has gone. */
   private placeRegion(): void {
     if (!this.shownRegion) return;
     const slot = this.pages.slotOfId(this.shownRegion.page);
-    if (slot === undefined) {
+    const clipped = slot === undefined ? null : this.visibleRegion(slot, this.shownRegion.rect);
+    if (slot === undefined || !clipped) {
       this.regionRing.style.display = "none";
       return;
     }
-    const where = this.anchorOn(slot, this.shownRegion.rect);
+    const where = this.anchorOn(slot, clipped);
     this.regionRing.style.display = "block";
     this.regionRing.style.left = `${Math.round(where.left)}px`;
     this.regionRing.style.top = `${Math.round(where.top)}px`;
@@ -6353,20 +6363,27 @@ export class Viewer {
    * moment an undo puts the page back, because the journal reports the
    * replacement again with it.
    */
-  setTextEdits(changes: readonly TextChange[]): boolean {
+  setTextEdits(changes: readonly TextChange[], onChange?: (pages: readonly TextPage[]) => void): boolean {
     const changed = changedTextPages(this.textEdits, changes);
     this.textEdits = changes;
     if (!changed.length) return false;
+    const sourcePages = new Map<number | undefined, Set<number>>();
     for (const at of changed) {
-      const slot =
-        at.source === undefined
-          ? this.pages.slotOf(at.page)
-          : this.pages.slotOfSource(at.source, at.page);
-      if (slot === undefined) continue;
+      const pages = sourcePages.get(at.source) ?? new Set<number>();
+      pages.add(at.page);
+      sourcePages.set(at.source, pages);
+    }
+    for (const [slot, view] of this.pages.pages.entries()) {
+      const source = view.source;
+      const affected = "baseline" in source ? sourcePages.get(undefined)?.has(source.baseline)
+        : "imported" in source && sourcePages.get(source.imported.source)?.has(source.imported.page);
+      if (!affected) continue;
+      this.a11y.invalidatePage(slot);
       const text = this.textAt(slot);
       if (text) text.cache.invalidatePage(text.placement);
       this.scroller.invalidatePage(slot);
     }
+    onChange?.(changed);
     this.clearSelection();
     if (this.searcher.query) this.search(this.searcher.query);
     this.wake();

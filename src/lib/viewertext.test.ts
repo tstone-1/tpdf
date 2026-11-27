@@ -99,6 +99,26 @@ let errors: string[] = [];
 let written: string[] = [];
 
 describe("Reading a page's text, and asking for it again", () => {
+  it("updates the accessible article on edit and undo while its page stays visible", async () => {
+    let codes = [97, 98];
+    core.invoke.mockImplementation(async cmd => cmd === "page_text" ? { ...pageText(0), codes: [...codes] } : null);
+    const viewer = build();
+    const spoken = async () => {
+      await viewer.unturnedText(0);
+      (viewer as unknown as { syncAccessibleText(slots: number[]): void }).syncAccessibleText([0]);
+      return viewer.accessibleText.elementFor(0)?.firstChild?.firstChild?.textContent;
+    };
+    try {
+      expect(await spoken()).toBe("ab");
+      for (const replacement of ["AB", "ab", "AB"]) {
+        codes = Array.from(replacement, c => c.charCodeAt(0));
+        viewer.setTextEdits(replacement === "ab" ? [] : [{
+          page: 0, revision: [1], operator: 3, original: "ab", replacement,
+        }]);
+        expect(await spoken()).toBe(replacement);
+      }
+    } finally { viewer.destroy(); }
+  });
   let dom: FakeDom;
   /** Whatever `navigator` descriptor was there, for `afterEach` to put back. */
   let clipboardWas: PropertyDescriptor | undefined;

@@ -319,6 +319,17 @@ function open(overrides: Partial<Parameters<typeof askAppearance>[0]> = {}) {
 describe("the panel", () => {
   afterEach(() => vi.useRealTimers());
 
+  it("previews an existing field at its physical size and accepts without placement", async () => {
+    const preview = vi.fn(async () => picture);
+    const ui = open({ fieldSize: [30, 125], preview });
+    try {
+      await settle();
+      expect(preview).toHaveBeenCalledWith(saved, expect.anything(), [30, 125]);
+      expect(ui.button("Use appearance")).toBeDefined();
+      expect(ui.button("Place on page…")).toBeUndefined();
+    } finally { ui.done(); }
+  });
+
   it("previews on opening, and answers what the controls say on Place on page", async () => {
     vi.useFakeTimers();
     const ui = open();
@@ -441,6 +452,32 @@ describe("the panel", () => {
     dialog.dispatch("cancel", {});
     expect(await escaped.answer).toBeNull();
     escaped.done();
+  });
+
+  it("waits for the edited preview before remembering an appearance", async () => {
+    const pending = deferred<SignaturePreview>();
+    const ui = open({ preview: async (_image, options) => options.location ? pending.promise : picture });
+    try {
+      await settle();
+      const remember = ui.input("sign-appearance-remember");
+      remember.checked = true;
+      remember.dispatch("change", {});
+      const location = ui.input("sign-appearance-location");
+      location.value = "Last keystroke";
+      location.dispatch("input", {});
+      ui.button("Place on page…").dispatch("click", {});
+      await settle();
+      expect(ui.storage.items.has(PREFERENCE_KEY)).toBe(false);
+      pending.reject(new Error("cannot draw this location"));
+      await settle();
+      expect(ui.storage.items.has(PREFERENCE_KEY)).toBe(false);
+      expect(ui.status()).toBe("cannot draw this location");
+      expect(ui.button("Place on page…").disabled).toBe(true);
+      ui.button("Cancel").dispatch("click", {});
+      expect(await ui.answer).toBeNull();
+    } finally {
+      ui.done();
+    }
   });
 
   it("will not place what the signing would refuse, and says why", async () => {

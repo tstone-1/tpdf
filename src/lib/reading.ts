@@ -771,16 +771,26 @@ export function readingLines(text: PageText): ReadingLine[] {
  * consumer take the page as a sequence of lines and another as a sequence of
  * paragraphs without either of them re-deriving the order.
  */
-export function readingBlocks(text: PageText): ReadingBlock[] {
+export function readingBlocks(text: PageText, groupHeadings = false): ReadingBlock[] {
   const axes = axesFor(text.quarter_turns);
   const gap = cutWidth(text, axes);
   const { fragments, gaps } = fragmentsOf(text, axes, gap);
   const tagged = usableRuns(text);
   if (tagged) {
-    return within(text, fragments, ownership(text, tagged)).map((parts, at) => ({
-      tag: tagged[at]?.tag ?? null,
-      lines: linesOf(text, parts, axes),
-    }));
+    const parts = within(text, fragments, ownership(text, tagged));
+    const blocks: ReadingBlock[] = [];
+    for (let at = 0; at < tagged.length; at++) {
+      const run = tagged[at]!;
+      const heading = groupHeadings ? [...run.path].reverse().find(tag => /^H[1-6]?$/.test(tag)) : undefined;
+      const group = parts[at]!;
+      if (heading && run.heading !== undefined) {
+        while (tagged[at + 1]?.heading === run.heading) {
+          for (const fragment of parts[++at]!) group.push(fragment);
+        }
+      }
+      blocks.push({ tag: heading ?? run.tag, lines: linesOf(text, group, axes) });
+    }
+    return blocks;
   }
   if (text.char_turns?.length) {
     return directionGroups(fragments, axes).flatMap(({ turns, fragments }) => {

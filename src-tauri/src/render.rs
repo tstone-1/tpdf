@@ -593,7 +593,7 @@ pub struct RenderService {
 }
 
 impl RenderService {
-    /// Uses journaled text for rendering, selection and search, while retaining the source for saves.
+    /// Uses journaled text for rendering, links, selection and search, while retaining the source for saves.
     pub fn follow_text_edits(&self, edits: &edits::Edits) {
         self.views.follow(edits);
         // The render service already references the journal. A weak sender lets
@@ -1899,7 +1899,7 @@ impl Engine for InProcess {
     }
 
     fn links(&self, doc: u32) -> Result<Links, String> {
-        run_links(open_slot(&self.docs.borrow(), doc)?)
+        open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.view(doc), run_links)
     }
 
     fn properties(&self, doc: u32) -> Result<Properties, String> {
@@ -3028,10 +3028,13 @@ pub fn run_signature_preview(
             reason = refusal.reason
         )
     })?;
-    let scale = crate::sign_prepare::PREVIEW_SCALE;
-    let (width, height) = {
+    let (scale, width, height) = {
         let page = document.page(0)?;
+        let scale = crate::sign_prepare::PREVIEW_SCALE
+            * (crate::sign_prepare::PREVIEW_RASTER_SIDE / page.width_pt().max(page.height_pt()))
+                .min(1.0);
         (
+            scale,
             (page.width_pt() * scale).round().max(1.0) as u16,
             (page.height_pt() * scale).round().max(1.0) as u16,
         )

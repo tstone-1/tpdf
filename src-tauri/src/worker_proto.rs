@@ -1035,6 +1035,7 @@ impl Request {
         matches!(
             self,
             Self::Tile { .. }
+                | Self::Links
                 | Self::Text { .. }
                 | Self::Search { .. }
                 | Self::Content { .. }
@@ -1349,6 +1350,10 @@ mod tests {
             None
         );
         assert!(!Request::Properties.supports_text_view());
+        assert!(
+            Request::Links.supports_text_view(),
+            "links move when edited text pushes a run"
+        );
     }
 
     #[test]

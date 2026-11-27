@@ -15,8 +15,8 @@
  *
  * Nothing here draws the appearance. {@link PanelShell.preview} is the
  * `sign_preview` command, which runs the worker's signing code
- * (`sign_prepare::prepare_visible`) over a blank page the size of
- * {@link PREVIEW_SIZE} and renders it with PDFium (`sign_prepare::preview`).
+ * (`sign_prepare::prepare_visible`) over a blank page the size of the existing field or, for a
+ * new placement, {@link PREVIEW_SIZE}. PDFium renders it (`sign_prepare::preview`).
  * So the words, the layout and every refusal the reader sees are the ones the
  * signing will apply; the panel shows the refusal as the preview's message and
  * holds *Place on page* until the choices draw. The signing lays out again for
@@ -68,6 +68,8 @@ const TEXT = catalog({
     remember: "Remember as my default",
     cancel: "Cancel",
     place: "Place on page…",
+    accept: "Use appearance",
+    fieldHelp: "The preview uses the size of the signature field.",
     drawing: "Drawing the preview…",
   },
   "de-DE": {
@@ -91,6 +93,8 @@ const TEXT = catalog({
     remember: "Als meine Standardeinstellung merken",
     cancel: "Abbrechen",
     place: "Auf Seite platzieren…",
+    accept: "Erscheinungsbild übernehmen",
+    fieldHelp: "Die Vorschau verwendet die Größe des Signaturfelds.",
     drawing: "Die Vorschau wird gezeichnet…",
   },
   "de-DE-formal": {
@@ -116,7 +120,7 @@ export interface AppearanceOptions {
 
 /** A drawn appearance. Mirrors `sign_prepare::Preview`. */
 export interface SignaturePreview {
-  /** PNG bytes, two pixels a point. */
+  /** PNG bytes, up to two pixels per point. */
   png: number[];
   /** Pixels. */
   width: number;
@@ -300,11 +304,13 @@ export class AppearancePanel {
 
   setReason(text: string): void {
     this.#generation++;
+    this.state = { kind: "drawing" };
     this.options.reason = text;
   }
 
   setLocation(text: string): void {
     this.#generation++;
+    this.state = { kind: "drawing" };
     this.options.location = text;
   }
 
@@ -367,7 +373,8 @@ export async function paintPreview(canvas: HTMLCanvasElement, preview: Signature
 /** What {@link askAppearance} needs from the shell. */
 export interface AskShell {
   saved: SignatureImage | null;
-  preview: PanelShell["preview"];
+  fieldSize?: [number, number] | null;
+  preview(image: SignatureImage | null, options: AppearanceOptions, size: [number, number]): ReturnType<PanelShell["preview"]>;
   /** The Phase 4 drawing dialog: an image, or `null` when it was cancelled. */
   draw(savedChanged: (image: SignatureImage | null) => void): Promise<SignatureImage | null>;
   storage?: () => Store;
@@ -389,9 +396,11 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
   const previous = document.activeElement as HTMLElement | null;
   const canvas = document.createElement("canvas");
   const paint = shell.paint ?? paintPreview;
+  const size = shell.fieldSize ?? PREVIEW_SIZE;
+  const displayScale = Math.min(1, 320 / Math.max(1, size[0]), 180 / Math.max(1, size[1]));
   const panel = new AppearancePanel({
     saved: shell.saved,
-    preview: shell.preview,
+    preview: (image, options) => shell.preview(image, options, size),
     show: (preview, current) => paint(canvas, preview, current),
     ...(shell.storage ? { storage: shell.storage } : {}),
   });
@@ -402,14 +411,14 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
   dialog.setAttribute("aria-label", said.title);
   const heading = document.createElement("h2");
   heading.textContent = said.title;
-  const help = paragraph("tpdf-dialog-intro", said.help);
+  const help = paragraph("tpdf-dialog-intro", shell.fieldSize ? said.fieldHelp : said.help);
 
   canvas.setAttribute("role", "img");
   canvas.setAttribute("aria-label", said.preview);
-  canvas.width = PREVIEW_SIZE[0] * 2;
-  canvas.height = PREVIEW_SIZE[1] * 2;
+  canvas.width = Math.max(1, Math.round(size[0] * displayScale * 2));
+  canvas.height = Math.max(1, Math.round(size[1] * displayScale * 2));
   canvas.style.cssText =
-    `width:${PREVIEW_SIZE[0]}px;height:${PREVIEW_SIZE[1]}px;display:block;margin:0 auto;` +
+    `max-width:100%;width:${size[0] * displayScale}px;height:auto;display:block;margin:0 auto;` +
     "background:white;border:1px solid #999;border-radius:6px;margin-top:14px";
   const status = paragraph("tpdf-dialog-hint", "");
   status.setAttribute("role", "status");
@@ -485,7 +494,7 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
   keeping.style.marginTop = "14px";
 
   const cancel = button(said.cancel);
-  const place = button(said.place, true);
+  const place = button(shell.fieldSize ? said.accept : said.place, true);
 
   dialog.append(heading, help, canvas, status, ...sets, keeping, footer(cancel, place));
   document.body.append(dialog);
@@ -504,13 +513,17 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
       state.kind === "drawing" ? said.drawing : state.kind === "refused" ? state.why : "";
     place.disabled = !panel.canContinue();
   };
+  let pending: Promise<void>;
+  let typing: ReturnType<typeof setTimeout> | undefined;
   const redraw = () => {
-    const pending = panel.refresh();
+    clearTimeout(typing);
+    typing = undefined;
+    pending = panel.refresh();
     render();
     void pending.then(render);
   };
-  let typing: ReturnType<typeof setTimeout> | undefined;
   const redrawSoon = () => {
+    render();
     clearTimeout(typing);
     typing = setTimeout(redraw, shell.typingDelay ?? 200);
   };
@@ -563,11 +576,12 @@ export function askAppearance(shell: AskShell): Promise<Appearance | null> {
       resolve(answer);
     };
     cancel.addEventListener("click", () => finish(null));
-    place.addEventListener("click", () => {
-      // Typing reaches the state at once and only the redraw waits, so text
-      // not yet previewed is still the reader's choice here; the signing checks
-      // it as it checks everything.
-      if (!panel.canContinue()) return;
+    place.addEventListener("click", async () => {
+      if (typing !== undefined) redraw();
+      const validating = pending;
+      await validating;
+      // A cancellation or a later change supersedes the choices accepted here.
+      if (settled || typing !== undefined || validating !== pending || panel.state.kind !== "shown") return;
       finish(panel.finish());
     });
     dialog.addEventListener("cancel", (event) => {

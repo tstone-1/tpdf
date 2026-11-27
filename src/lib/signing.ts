@@ -764,6 +764,7 @@ export function askIdentity(
   choices: Choice[],
   storage?: () => Pick<Storage, "getItem" | "setItem">,
   field: string | null = null,
+  hidden = false,
 ): Promise<Chosen | null> {
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
@@ -816,8 +817,9 @@ export function askIdentity(
     shows.append(label);
     return radio;
   };
-  const visible = appearance("visible", said.visible, true);
-  const invisible = appearance("invisible", said.invisible, false);
+  const visible = appearance("visible", said.visible, !hidden);
+  const invisible = appearance("invisible", said.invisible, hidden);
+  visible.disabled = hidden;
   // In a signature field the field is where it shows and nothing is dragged.
   const appearanceHint = paragraph("tpdf-dialog-hint", "");
   const syncAppearance = () => {

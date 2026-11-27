@@ -650,11 +650,13 @@ pub struct Preview {
 /// high-density screen at the size the panel shows it.
 pub const PREVIEW_SCALE: f32 = 2.0;
 
-/// The largest side a preview may be asked for, in points.
+/// Largest raster side in points at the default preview scale.
 ///
-/// A bound on the render, not a layout rule: the frontend asks for one
-/// representative shape, and a preview is drawn at two pixels a point.
-pub const PREVIEW_MAX_SIDE: f32 = 720.0;
+/// Larger fields retain their layout dimensions and render at a lower scale.
+pub const PREVIEW_RASTER_SIDE: f32 = 720.0;
+
+/// Maximum physical dimension of a PDF page (default user space times UserUnit).
+const PREVIEW_MAX_SIDE: f32 = 14_400.0 * 75_000.0;
 
 /// A document holding only `visible`'s appearance, built by the code that signs.
 ///
@@ -674,7 +676,7 @@ pub const PREVIEW_MAX_SIDE: f32 = 720.0;
 /// # Errors
 ///
 /// The size is not a finite number between [`appearance::MIN_SIDE`] and
-/// [`PREVIEW_MAX_SIDE`], or [`prepare_visible`] refuses --- which is the
+/// the maximum physical PDF page dimension, or [`prepare_visible`] refuses --- the
 /// refusal the signing would give, said before anything is signed.
 pub fn preview(signed_at: u64, visible: &Visible) -> Result<Vec<u8>, String> {
     let [left, top, right, bottom] = visible.rect;
@@ -1179,6 +1181,22 @@ fn lock_reference(root: ObjectId) -> Object {
         },
         "Data" => root,
     })])
+}
+
+/// Whether the field and its approval carry the exact locking pair our writer adds.
+pub(crate) fn has_approval_lock(
+    field: &Dictionary,
+    signature: Option<&Dictionary>,
+    root: ObjectId,
+) -> bool {
+    field
+        .get(b"Lock")
+        .and_then(Object::as_dict)
+        .is_ok_and(|lock| *lock == field_lock())
+        && signature.is_some_and(|sig| {
+            sig.get(b"Type").and_then(Object::as_name).ok() == Some(b"Sig")
+                && sig.get(b"Reference").ok() == Some(&lock_reference(root))
+        })
 }
 
 /// The signature dictionary with both holes still unfilled. `reference` is a

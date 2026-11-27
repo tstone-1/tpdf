@@ -607,8 +607,8 @@ ROWS += [
     Mutation(
         "appendix: compare nothing of a place that was signed",
         "src/docinfo.rs",
-        "                && !same_apart_from(self.signed.get_dictionary(id).ok()?, now, writes)",
-        "                && false",
+        "if !same_apart_from(old, now, &changes) {",
+        "if false {",
         "a_prepared_signature_field_changed_beyond_signing_is_a_rewritten_page",
     ),
     Mutation(
@@ -1660,16 +1660,16 @@ ROWS += [
     Mutation(
         "values: call an unread value read",
         "src/docinfo.rs",
-        "                complete &= value.is_some();",
-        "                complete &= true;",
+        "            complete &= value.is_some();",
+        "            complete &= true;",
         "a_value_that_cannot_be_read_makes_the_survey_incomplete",
     ),
     Mutation(
         "values: stop at the signature bound without saying so",
         "src/docinfo.rs",
-        "                if values.len() >= MAX_SIGNATURES {\n"
-        "                    complete = false;",
-        "                if values.len() >= MAX_SIGNATURES {",
+        "            if values.len() >= MAX_SIGNATURES {\n"
+        "                complete = false;",
+        "            if values.len() >= MAX_SIGNATURES {",
         "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
     ),
     Mutation(
@@ -1680,12 +1680,12 @@ ROWS += [
         "            return fields::Flow::Leaf;\n"
         "        };\n"
         '        if terminal_signature(document, field) {\n'
-        "            if let Some(sig) =",
+        "            let sig = match signature_value(document, field) {",
         "        let Some(field) = node.dict else {\n"
         "            return fields::Flow::Leaf;\n"
         "        };\n"
         '        if terminal_signature(document, field) {\n'
-        "            if let Some(sig) =",
+        "            let sig = match signature_value(document, field) {",
         "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
     ),
     Mutation(
@@ -2009,7 +2009,7 @@ ROWS += [
         "            return fields::Flow::Leaf;\n"
         "        };\n"
         '        if terminal_signature(document, field) {\n'
-        "            if let Some(sig) =",
+        "            let sig = match signature_value(document, field) {",
         "        if values.len() >= MAX_SIGNATURES {\n"
         "            complete = false;\n"
         "            return fields::Flow::Leaf;\n"
@@ -2019,7 +2019,7 @@ ROWS += [
         "            return fields::Flow::Leaf;\n"
         "        };\n"
         '        if terminal_signature(document, field) {\n'
-        "            if let Some(sig) =",
+        "            let sig = match signature_value(document, field) {",
         "values_cut_short_by_a_bound_of_the_walk_are_not_complete",
     ),
     Mutation(

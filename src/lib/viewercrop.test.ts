@@ -444,6 +444,21 @@ describe("a cropped page", () => {
     }
   });
 
+  it("clips a passage at the crop and clears the ring beyond its page", async () => {
+    const viewer = build();
+    try {
+      viewer.setPages(pages(true));
+      await settle();
+      viewer.showRegion(0, [200, 600, 300, 650]);
+      const inside = viewer.regionRingBox;
+      expect(inside).not.toBeNull();
+      viewer.showRegion(0, [200, 600, 300, 750]);
+      expect(viewer.regionRingBox).toEqual(inside);
+      viewer.showRegion(0, [200, 775, 300, 790]);
+      expect(viewer.regionRingBox).toBeNull();
+    } finally { viewer.destroy(); }
+  });
+
   it("scrolls a form field to where it is on the cropped page, as a region is", async () => {
     // A field's rectangle is the file's displayed one. Its raw top is the
     // crop's own top further down than the field is on the cropped page.

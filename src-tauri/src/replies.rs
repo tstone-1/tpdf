@@ -1243,8 +1243,9 @@ fn samples() -> BTreeMap<&'static str, String> {
             char_turns: vec![0, 3, 3],
             extract_ms: 3.5,
             runs: vec![structure::TaggedRun {
-                tag: "H1".into(),
-                path: vec!["Document".into(), "Sect".into()],
+                heading: Some(2),
+                tag: "Span".into(),
+                path: vec!["Document".into(), "H1".into(), "Span".into()],
                 start: 0,
                 end: 2,
             }],

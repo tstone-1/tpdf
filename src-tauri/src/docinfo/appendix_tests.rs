@@ -427,7 +427,7 @@ fn a_content_stream_replaced_after_signing_touches_its_page_and_no_other() {
         );
     });
     assert_eq!(appendix.replaced, 1, "{appendix:?}");
-    assert_eq!(appendix.kinds, ["stream"]);
+    assert_eq!(appendix.kinds, ["XRef", "stream"]);
     assert_eq!(appendix.pages_touched, 1, "{appendix:?}");
     assert_eq!(appendix.pages_listing, Vec::<PageListing>::new());
 }
@@ -744,7 +744,7 @@ fn an_object_freed_after_signing_touches_the_page_that_drew_it() {
     assert_eq!(freed.pages_touched, 1, "{freed:?}");
     // The cross-reference stream is the one object that arrived.
     assert_eq!((freed.added, freed.replaced), (1, 0), "{freed:?}");
-    assert_eq!(freed.kinds, ["stream"]);
+    assert_eq!(freed.kinds, ["XRef"]);
 
     // Control: the same revision with no object freed touches nothing, so
     // what is counted is the freeing and not a cross-reference stream.
@@ -942,6 +942,7 @@ fn an_object_two_pages_draw_touches_both() {
             ),
         );
     });
+    assert!(appendix.kinds.iter().any(|kind| kind == "XObject/Form"));
     assert_eq!(appendix.pages_touched, 2, "{appendix:?}");
 }
 
@@ -1320,7 +1321,7 @@ fn a_page_object_written_outside_the_tree_is_counted() {
     let appendix = appended(&built, |_, new| {
         new.add_object(dictionary! { "Type" => "Page", "Parent" => built.pages });
     });
-    assert_eq!(appendix.kinds, ["Page", "stream"], "{appendix:?}");
+    assert_eq!(appendix.kinds, ["Page", "XRef"], "{appendix:?}");
     assert_eq!(appendix.pages_touched, 1, "{appendix:?}");
 }
 
@@ -2372,5 +2373,58 @@ fn an_append_two_parsers_could_read_differently_is_unread() {
         let appendix = read(tail);
         assert!(appendix.unread, "{case}");
         assert_eq!(strict(appendix), After::Unread, "{case}");
+    }
+}
+
+#[test]
+fn a_relocated_catalog_only_reports_new_keys() {
+    for had_dss in [false, true] {
+        let mut built = built();
+        let mut before = Document::load_mem(&built.bytes).unwrap();
+        if had_dss {
+            before.catalog_mut().unwrap().set("DSS", dictionary! {});
+        }
+        built.bytes.clear();
+        before.save_to(&mut built.bytes).unwrap();
+        let appendix = appended(&built, |before, new| {
+            let mut catalog = before.catalog().unwrap().clone();
+            catalog.set("DSS", dictionary! {});
+            let root = new.add_object(catalog);
+            new.trailer.set("Root", root);
+        });
+        let expected: &[&str] = if had_dss { &[] } else { &["DSS"] };
+        assert_eq!(appendix.catalog_gained, expected);
+    }
+}
+
+#[test]
+fn a_matched_approval_lock_is_part_of_signing_the_prepared_field() {
+    let prepared = prepared(false);
+    for name in ["Synthetic place", "Synthetic split place"] {
+        let bytes = &prepared.built.bytes;
+        let notes = crate::sign_prepare::Notes {
+            field: name.into(),
+            lock: true,
+            ..Default::default()
+        };
+        let unsigned =
+            crate::sign_prepare::prepare_noted(bytes.clone(), 1_790_000_000, None, None, &notes)
+                .unwrap();
+        let mut signed = bytes.clone();
+        signed.extend(unsigned.update);
+        assert_eq!(read(&prepared.built, &signed).pages_touched, 0, "{name}");
+    }
+    for place in [(prepared.place, prepared.place), prepared.split] {
+        let appendix = appended(&prepared.built, |before, new| {
+            fills(before, new, place, |_| {});
+            new.get_dictionary_mut(place.0).unwrap().set(
+                "Lock",
+                dictionary! { "Type" => "SigFieldLock", "Action" => "All", "P" => 1 },
+            );
+        });
+        assert_eq!(
+            appendix.pages_touched, 1,
+            "a field lock without its transform"
+        );
     }
 }

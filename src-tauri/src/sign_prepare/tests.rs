@@ -2198,12 +2198,13 @@ fn form_of(doc: &Document, widget: &Dictionary) -> (Vec<u8>, Vec<f64>, Vec<Vec<u
 fn a_preview_is_refused_where_the_signing_would_be() {
     for (rect, why) in [
         ([0.0, 0.0, 20.0, 80.0], "between"),
-        ([0.0, 0.0, 240.0, 800.0], "between"),
+        ([0.0, 0.0, 240.0, f32::INFINITY], "between"),
         ([0.0, 0.0, f32::NAN, 80.0], "between"),
     ] {
         let refused = preview(NOW, &visible(0, rect, None)).expect_err(why);
         assert!(refused.contains(why), "{rect:?}: {refused}");
     }
+    preview(NOW, &visible(0, [0.0, 0.0, 240.0, 800.0], None)).expect("large existing field");
     // The signing's own refusals, word for word.
     let original = two_pages(0);
     let mut placed = visible(1, [20.0, 30.0, 170.0, 90.0], None);
@@ -3002,4 +3003,36 @@ fn unicode_metadata_only_needs_a_glyph_when_the_appearance_displays_it() {
     assert!(prepare_visible(original, NOW, None, &placed)
         .unwrap_err()
         .contains("cannot draw"));
+}
+
+#[test]
+fn implicit_certification_level_two_controls_properties_and_visible_signing() {
+    let placed = visible(0, [20.0, 30.0, 170.0, 90.0], None);
+    for (method, params, level) in [
+        ("DocMDP", dictionary! {}, 2),
+        ("DocMDP", dictionary! {"P"=>2}, 2),
+        ("FieldMDP", dictionary! {}, 0),
+    ] {
+        let mut doc = Document::load_mem(&two_pages(0)).unwrap();
+        let sig = doc.add_object(
+            dictionary! { "Type"=>"Sig", "Reference"=>vec![Object::Dictionary(dictionary! {
+            "TransformMethod"=> method, "TransformParams"=> params })] },
+        );
+        let field = doc.add_object(dictionary! { "FT"=>"Sig", "V"=>sig });
+        let cat = doc.catalog_mut().unwrap();
+        cat.set("Perms", dictionary! {"DocMDP"=>sig});
+        cat.set("AcroForm", dictionary! {"Fields"=>vec![field.into()]});
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        assert_eq!(
+            crate::docinfo::scan(&bytes, 1, None).unwrap().signatures[0].certification,
+            level
+        );
+        let result = prepare_visible(bytes, NOW, None, &placed);
+        if level == 2 {
+            assert!(result.unwrap_err().contains("is certified"));
+        } else {
+            result.unwrap();
+        }
+    }
 }

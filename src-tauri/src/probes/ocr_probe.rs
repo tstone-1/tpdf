@@ -10,7 +10,7 @@ use std::time::Duration;
 use tpdf_lib::document::OpenDocument;
 
 use tpdf_lib::ocr::{
-    adjudicate, control_from_page, Control, ControlWord, Legibility, Options, Pixels, Recogniser,
+    adjudicate, control_from_page, Control, Legibility, Options, Pixels, Recogniser,
 };
 use tpdf_lib::ocr_gate;
 use tpdf_lib::ocr_vision::Vision;
@@ -192,27 +192,17 @@ fn run(file: &Path, library: &Path, scale: f32, expect_blank: bool) -> Result<()
         }
     };
     // ------------------------------------------------------- it read the right words
-    let reference = String::from_utf16_lossy(
-        &embedded
-            .codes
-            .iter()
-            .map(|c| u16::try_from(*c).unwrap_or(b'?'.into()))
-            .collect::<Vec<u16>>(),
-    );
-    let embedded_words: Vec<String> = reference
-        .split_whitespace()
-        .map(|w| w.chars().filter(char::is_ascii_alphanumeric).collect())
-        .filter(|w: &String| w.len() >= 4)
+    let reference: String = embedded
+        .codes
+        .iter()
+        .filter_map(|&code| char::from_u32(code))
         .collect();
     let read_blob: String = items
         .iter()
         .map(|i| i.text.as_str())
         .collect::<Vec<_>>()
         .join(" ");
-    let hit = embedded_words
-        .iter()
-        .filter(|w| read_blob.contains(w.as_str()))
-        .count();
+    let (hit, total, short) = agreement(&reference, &read_blob);
 
     if expect_blank {
         r.check(
@@ -222,15 +212,8 @@ fn run(file: &Path, library: &Path, scale: f32, expect_blank: bool) -> Result<()
         );
         r.finish();
     }
-    if embedded_words.is_empty() {
-        let words = |text: &str| {
-            text.split(|c: char| !c.is_alphanumeric())
-                .filter(|word| !word.is_empty())
-                .map(str::to_lowercase)
-                .collect::<Vec<_>>()
-        };
-        let short = words(&reference);
-        if short.is_empty() {
+    if short {
+        if total == 0 {
             r.skip(
                 "agreement with reference words",
                 format!(
@@ -239,15 +222,10 @@ fn run(file: &Path, library: &Path, scale: f32, expect_blank: bool) -> Result<()
                 ),
             );
         } else {
-            let recognised = words(&read_blob);
-            let matched = short
-                .iter()
-                .filter(|word| recognised.contains(word))
-                .count();
             r.check(
-                matched * 2 >= short.len(),
+                hit * 2 >= total,
                 "OCR matches the short reference words",
-                format!("{matched}/{} words found", short.len()),
+                format!("{hit}/{total} words found"),
             );
         }
         r.finish();
@@ -264,11 +242,11 @@ fn run(file: &Path, library: &Path, scale: f32, expect_blank: bool) -> Result<()
     // Bound rather than written twice: the control chooser below reads the
     // document's own text, so whether that text says what the page draws decides
     // which way its check runs.
-    let text_layer_agrees = hit * 2 >= embedded_words.len();
+    let text_layer_agrees = hit * 2 >= total;
     r.check(
         text_layer_agrees,
         "what it read matches the embedded text",
-        format!("{hit}/{} words of 4+ chars found", embedded_words.len()),
+        format!("{hit}/{total} words of 4+ chars found"),
     );
 
     // --------------------------------------------------------------- the flip
@@ -655,103 +633,78 @@ fn run(file: &Path, library: &Path, scale: f32, expect_blank: bool) -> Result<()
     // strip Vision has just read. `ocr::control_from_page` chooses from what the
     // *document* says instead, and this is the only place that claim meets an
     // engine at all.
-    match tpdf_lib::objects::read(&page) {
-        Err(e) => r.skip("the chosen control is read back", format!("objects: {e}")),
-        Ok(objects) => {
-            let height_pt = page.height_pt();
-            let mut words: Vec<ControlWord> = Vec::new();
-            let mut ordinal = 0usize;
-            for object in &objects.all {
-                if object.kind != "text" {
-                    continue;
-                }
-                let drawn = objects.text.get(ordinal).cloned().unwrap_or_default();
-                ordinal += 1;
-                // PDFium reports `left, bottom, right, top` with y up; `ocr.rs`
-                // is `left, top, right, bottom` with y down. Flipped here rather
-                // than tolerated there, for the reason `ControlWord::rect` says.
-                let [l, b, right, t] = object.bounds;
-                if !(l.is_finite() && b.is_finite() && right.is_finite() && t.is_finite()) {
-                    continue;
-                }
-                words.push(ControlWord {
-                    sideways: Some(false),
-                    rect: [l, height_pt - t, right, height_pt - b],
-                    text: drawn,
-                });
-            }
-            // A region over the topmost word, which is a redaction a reader
-            // could plausibly have drawn and is deterministic on any page.
-            let region = words
-                .iter()
-                .min_by(|a, b| {
-                    a.rect[1]
-                        .partial_cmp(&b.rect[1])
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then(a.rect[0].total_cmp(&b.rect[0]))
-                })
-                .map(|w| w.rect);
-            match region.map(|region| (region, control_from_page(&words, &[region]))) {
-                None => r.skip(
-                    "the chosen control is read back",
-                    "no text objects on this page",
-                ),
-                Some((_, Err(why))) => r.skip("the chosen control is read back", why.to_string()),
-                Some((region, Ok(chosen))) => {
-                    let rows = |top: f32, bottom: f32| {
-                        let a = (top * scale).floor().max(0.0) as u32;
-                        let b = (bottom * scale).ceil().min(sheet.height as f32) as u32;
-                        (a, b.saturating_sub(a))
+    {
+        let words = tpdf_lib::ocr_gate::words_from(&embedded);
+        // A region over the topmost word, which is a redaction a reader
+        // could plausibly have drawn and is deterministic on any page.
+        let region = words
+            .iter()
+            .min_by(|a, b| {
+                a.rect[1]
+                    .partial_cmp(&b.rect[1])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(a.rect[0].total_cmp(&b.rect[0]))
+            })
+            .map(|w| w.rect);
+        match region.map(|region| (region, control_from_page(&words, &[region]))) {
+            None => r.skip(
+                "the chosen control is read back",
+                "no text objects on this page",
+            ),
+            Some((_, Err(why))) => r.skip("the chosen control is read back", why.to_string()),
+            Some((region, Ok(chosen))) => {
+                let rows = |top: f32, bottom: f32| {
+                    let a = (top * scale).floor().max(0.0) as u32;
+                    let b = (bottom * scale).ceil().min(sheet.height as f32) as u32;
+                    (a, b.saturating_sub(a))
+                };
+                let (crop_top, crop_h) = rows(chosen.crop[1], chosen.crop[3]);
+                // The band is a strip of full-width rows, so a region on the
+                // same line would put a real survivor inside the control. The
+                // chooser promises the chosen *word* is outside every region
+                // and cannot promise that about its neighbours.
+                let clash = region[1] < chosen.crop[3] && chosen.crop[1] < region[3];
+                if clash || crop_h < 2 {
+                    r.skip(
+                        "the chosen control is read back",
+                        format!(
+                            "the control sits on the redacted line ({} row(s), clash {clash})",
+                            crop_h
+                        ),
+                    );
+                } else {
+                    let (probe, h, band) = sheet.stack((blank_top, blank_h), (crop_top, crop_h));
+                    let px = Pixels {
+                        rgba: &probe,
+                        width: sheet.width,
+                        height: h,
+                        scale,
                     };
-                    let (crop_top, crop_h) = rows(chosen.crop[1], chosen.crop[3]);
-                    // The band is a strip of full-width rows, so a region on the
-                    // same line would put a real survivor inside the control. The
-                    // chooser promises the chosen *word* is outside every region
-                    // and cannot promise that about its neighbours.
-                    let clash = region[1] < chosen.crop[3] && chosen.crop[1] < region[3];
-                    if clash || crop_h < 2 {
-                        r.skip(
-                            "the chosen control is read back",
-                            format!(
-                                "the control sits on the redacted line ({} row(s), clash {clash})",
-                                crop_h
+                    let control = chosen.placed(band);
+                    let verdict = adjudicate(&id, &control, &engine.recognise(px, &opts));
+                    // Two checks wearing one name, and the second is the one
+                    // worth having. A control chosen from the document's own
+                    // text is only evidence when that text says what the page
+                    // draws; `encodings.pdf` has no usable `/ToUnicode`, so
+                    // PDFium returns plausible garbage and the token is a
+                    // string nobody can read off the page. The gate must
+                    // refuse there, not certify.
+                    r.check(
+                        verdict.certifies() == text_layer_agrees,
+                        "the chosen control is read back",
+                        match (&verdict, text_layer_agrees) {
+                            (Legibility::Illegible { .. }, _) => format!(
+                                "{:?} at {:.1} pt, chosen from the document and read back",
+                                control.token, control.size_pt
                             ),
-                        );
-                    } else {
-                        let (probe, h, band) =
-                            sheet.stack((blank_top, blank_h), (crop_top, crop_h));
-                        let px = Pixels {
-                            rgba: &probe,
-                            width: sheet.width,
-                            height: h,
-                            scale,
-                        };
-                        let control = chosen.placed(band);
-                        let verdict = adjudicate(&id, &control, &engine.recognise(px, &opts));
-                        // Two checks wearing one name, and the second is the one
-                        // worth having. A control chosen from the document's own
-                        // text is only evidence when that text says what the page
-                        // draws; `encodings.pdf` has no usable `/ToUnicode`, so
-                        // PDFium returns plausible garbage and the token is a
-                        // string nobody can read off the page. The gate must
-                        // refuse there, not certify.
-                        r.check(
-                            verdict.certifies() == text_layer_agrees,
-                            "the chosen control is read back",
-                            match (&verdict, text_layer_agrees) {
-                                (Legibility::Illegible { .. }, _) => format!(
-                                    "{:?} at {:.1} pt, chosen from the document and read back",
-                                    control.token, control.size_pt
-                                ),
-                                (other, true) => format!("{:?} -> {other:?}", control.token),
-                                (_, false) => format!(
-                                    "refused, as it must: the text layer does not say what the \
+                            (other, true) => format!("{:?} -> {other:?}", control.token),
+                            (_, false) => format!(
+                                "refused, as it must: the text layer does not say what the \
                                      page draws, so {:?} is not on it",
-                                    control.token
-                                ),
-                            },
-                        );
-                    }
+                                control.token
+                            ),
+                        },
+                    );
                 }
             }
         }
@@ -896,4 +849,40 @@ fn render(
         height,
         scale,
     })
+}
+
+/// Prefer substantial words when present. Consume each recognised occurrence once.
+fn agreement(reference: &str, read: &str) -> (usize, usize, bool) {
+    fn words(text: &str) -> impl Iterator<Item = String> + '_ {
+        text.split(|ch: char| !ch.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+    }
+    let mut expected: Vec<_> = words(reference).collect();
+    let short = expected.iter().all(|word| word.chars().count() < 4);
+    if !short {
+        expected.retain(|word| word.chars().count() >= 4);
+    }
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    for word in words(read) {
+        *counts.entry(word).or_default() += 1;
+    }
+    let mut matched = 0;
+    for word in &expected {
+        if let Some(count) = counts.get_mut(word).filter(|n| **n > 0) {
+            *count -= 1;
+            matched += 1;
+        }
+    }
+    (matched, expected.len(), short)
+}
+
+#[cfg(test)]
+mod agreement_tests {
+    #[test]
+    fn counts_whole_unicode_words_with_multiplicity() {
+        assert_eq!(super::agreement("NO ID NO ID", "no id"), (2, 4, true));
+        assert_eq!(super::agreement("Prüfung", "PRÜFUNG"), (1, 1, false));
+        assert_eq!(super::agreement("Prüfung", "Prüfungen"), (0, 1, false));
+    }
 }

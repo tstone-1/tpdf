@@ -1723,7 +1723,7 @@ ROWS += [
         # line a reader could not work out by eye from the rows above it.
         "certificate: say nothing when the two names for a signer differ",
         "src/lib/properties.ts",
-        """  if (typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {""",
+        """  if (certificate.matched_signer && typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {""",
         """  if (false) {""",
         "points out two names for one signer that disagree",
     ),
@@ -1734,8 +1734,8 @@ ROWS += [
         # the row that matters.
         "certificate: call a difference of case a disagreement",
         "src/lib/properties.ts",
-        "  if (typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {",
-        "  if (typed && inCert && typed !== inCert) {",
+        "  if (certificate.matched_signer && typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {",
+        "  if (certificate.matched_signer && typed && inCert && typed !== inCert) {",
         "does not call a difference of case a disagreement",
     ),
     Mutation(

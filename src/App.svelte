@@ -509,7 +509,7 @@
   import { call } from "./lib/ipc";
   import * as signing from "./lib/signing";
   import * as validationData from "./lib/validationdata";
-  import { emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
+  import { fieldSize, emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
   import { openWithPassword } from "./lib/unlock";
   import { inTextField, isLinux, isMac, label, matches, revealTitle } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
@@ -518,7 +518,7 @@
   import { PendingImports } from "./lib/pendingimport";
   import { confirmSignatureSave, askSignatureSave, SaveCancelled } from "./lib/signedsave";
   import { APPEARANCE_WORDS, SignatureDialog } from "./lib/signaturedialog";
-  import { askAppearance, PREVIEW_SIZE } from "./lib/signappearance";
+  import { askAppearance } from "./lib/signappearance";
   import { loadSignature } from "./lib/signaturestore";
   import { SaveAnswers } from "./lib/saveanswer";
   import { PropertiesDialog } from "./lib/propertiesdialog";
@@ -3431,12 +3431,19 @@
     } else if (commentsChanged) {
       refreshFileComments();
     }
-    // Any other file whose first pages just arrived has links nobody has read.
-    void fetchImportedLinks(model);
     viewer?.setMarks(shownMarks(after));
     formLayer?.update(after);
     formLayer?.layout();
-    if (viewer?.setTextEdits(after.text_edits ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
+    const mounted = viewer;
+    if (mounted?.setTextEdits(after.text_edits ?? [], (changed) => {
+      const pages = importedLinks.invalidate(changed, openDoc, after.sources ?? []);
+      if (pages) {
+        rawLinks = rawLinks.filter(link => !pages.has(link.page));
+        readLinks(openView, openDoc, mounted);
+      }
+      mounted.setLinks(allLinksIn(rawLinks, importedLinks.all, model.map));
+    })) sidebar?.thumbnails?.setPages(after.pages.length);
+    void fetchImportedLinks(model);
     if (viewer?.setFieldEdits(scannedForm?.widgets ?? [], after.fields ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
     textEditor?.update(after);
     // The pending redactions arrive on the same reply and are pushed the same
@@ -3477,10 +3484,12 @@
     // the variable is another document's when the reader changes sides.
     const mine = importedLinks, view = openView;
     for (const doc of mine.wanted(model.map)) {
+      const revision = mine.revision(doc);
       try {
         const result = await call("document_links", { doc });
         const recorded = asDocument(view, () => {
           if (edits !== model) return false;
+          if (importedLinks !== mine || mine.revision(doc) !== revision) return true;
           importedLinks.record(doc, result.items);
           applyPageOrder();
           return true;
@@ -4631,15 +4640,16 @@
           dirty: () => dirty,
           openPath: source,
           list: () => call("sign_identities"),
-          choose: (choices, into) => signing.askIdentity(choices, undefined, into),
+          choose: (choices, into) => signing.askIdentity(choices, undefined, into, field?.hidden ?? false),
           savedImage: () => loadSignature(),
           // The preview is drawn in this document's worker by the signing's
           // own code; the drawing dialog is Phase 4's, named for this use.
           appearance: (identity, saved) =>
             askAppearance({
               saved,
-              preview: (image, options) =>
-                call("sign_preview", { doc, identity, size: PREVIEW_SIZE, image, options }),
+              fieldSize: field ? fieldSize(field) : null,
+              preview: (image, options, size) =>
+                call("sign_preview", { doc, identity, size, image, options }),
               draw: (savedChanged) => signatureDialog?.ask(APPEARANCE_WORDS, savedChanged) ?? Promise.resolve(null),
             }),
           // The viewer that is showing the document now: a tab switch while
@@ -7073,6 +7083,8 @@
 
   /** Reads the document's links once its first screen is up. */
   function readLinks(view: ViewId, wanted: number, mounted: Viewer): void {
+    const scans = importedLinks;
+    const revision = scans.revision(wanted);
     // The links, on the same terms again --- a third chain rather than a link
     // in either above, so one failing does not take the others with it.
     //
@@ -7082,11 +7094,11 @@
     // same reason they do, and for nothing else.
     void firstPaint(view)
       .then(() => {
-        if (!stillMounted(view, mounted)) return null;
+        if (!stillMounted(view, mounted) || scans.revision(wanted) !== revision) return null;
         return call("document_links", { doc: wanted });
       })
       .then((result) => asDocument(view, () => {
-        if (!result || viewer !== mounted) return;
+        if (!result || viewer !== mounted || scans.revision(wanted) !== revision) return;
         rawLinks = result.items;
         applyPageOrder();
         // A cut list is worth saying out loud, for the reason every bound in

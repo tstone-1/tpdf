@@ -4,8 +4,8 @@
  * `document_links` answers for one document, and an imported page's links are
  * in another one: the file open under the handle the page is drawn from. So the
  * opened file's scan is not enough once a page can come from somewhere else,
- * and each other file is scanned once, through its own handle, when the first
- * of its pages arrives.
+ * and each other file is scanned through its own handle when the first
+ * of its pages arrives and when edited text can move its links.
  *
  * **Here rather than in `App.svelte`**, which is the layer no unit test
  * reaches: this is a set of handles asked about and a map of answers, and
@@ -17,7 +17,8 @@
  */
 
 import type { Link } from "./links";
-import type { PageMap } from "./pages";
+import type { PageMap, SourceView } from "./pages";
+import type { TextPage } from "./textedit";
 
 export class ImportedLinks {
   /** Answers, by render handle. */
@@ -40,6 +41,31 @@ export class ImportedLinks {
     const fresh = pages.importedDocs().filter((doc) => !this.asked.has(doc));
     for (const doc of fresh) this.asked.add(doc);
     return fresh;
+  }
+
+  private readonly revisions = new Map<number, number>();
+
+  revision(doc: number): number {
+    return this.revisions.get(doc) ?? 0;
+  }
+
+  /** A pending edit or undo can move the link rectangles in this file. */
+  invalidate(changed: readonly TextPage[], opened: number, sources: readonly SourceView[]): ReadonlySet<number> | undefined {
+    const affected = new Map<number, Set<number>>();
+    for (const page of changed) {
+      const handle = page.source === undefined ? opened : sources.find(source => source.source === page.source)?.doc;
+      if (handle === undefined) continue;
+      const pages = affected.get(handle) ?? new Set<number>();
+      pages.add(page.page);
+      affected.set(handle, pages);
+    }
+    for (const [doc, pages] of affected) {
+      this.revisions.set(doc, this.revision(doc) + 1);
+      const previous = this.answers.get(doc);
+      if (previous) this.answers.set(doc, previous.filter(link => !pages.has(link.page)));
+      this.asked.delete(doc);
+    }
+    return affected.get(opened);
   }
 
   /** Records one file's scan. */

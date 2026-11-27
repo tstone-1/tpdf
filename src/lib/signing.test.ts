@@ -597,7 +597,7 @@ describe("the words", () => {
 
 describe("the chooser", () => {
   /** Opens the chooser on a fake DOM and hands back its controls. */
-  function open(choices: Choice[], storage?: () => Pick<Storage, "getItem" | "setItem">, into: string | null = null) {
+  function open(choices: Choice[], storage?: () => Pick<Storage, "getItem" | "setItem">, into: string | null = null, hidden = false) {
     const dom = installFakeDom();
     const body = new FakeElement("body");
     Object.assign(globalThis.document, { body, activeElement: null });
@@ -615,10 +615,10 @@ describe("the chooser", () => {
         });
       return node as unknown as HTMLElement;
     }) as typeof document.createElement);
-    const answer = askIdentity(choices, storage, into);
+    const answer = askIdentity(choices, storage, into, hidden);
     const nodes = (root: FakeElement): FakeElement[] =>
       root.children.flatMap((child) => [child, ...nodes(child)]);
-    const all = nodes(body) as (FakeElement & { checked: boolean; value: string; name: string })[];
+    const all = nodes(body) as (FakeElement & { checked: boolean; disabled?: boolean; value: string; name: string })[];
     const radio = (name: string, value: string) =>
       all.find((node) => node.tagName === "input" && node.name === name && node.value === value)!;
     const button = (text: string) => all.find((node) => node.tagName === "button" && node.textContent === text)!;
@@ -647,6 +647,17 @@ describe("the chooser", () => {
   // No storage is handed over in this block, and the fake window has none:
   // storage that throws reads as no timestamp. The lock question is answered
   // "last" wherever a test is about something else.
+  it("signs hidden fields without offering a visible appearance", async () => {
+    const dialog = open([choice], undefined, "Approval", true);
+    try {
+      expect(dialog.radio("sign-appearance", "visible").checked).toBe(false);
+      expect(dialog.radio("sign-appearance", "visible").disabled).toBe(true);
+      expect(dialog.radio("sign-appearance", "invisible").checked).toBe(true);
+      dialog.button("Cancel").dispatch("click", {});
+      expect(await dialog.answer).toBeNull();
+    } finally { dialog.done(); }
+  });
+
   it("offers a visible signature first when a signature field is being signed", async () => {
     const pressed = open([choice], undefined, "Approved");
     expect(pressed.radio("sign-appearance", "visible").checked).toBe(true);
@@ -964,7 +975,7 @@ describe("the chooser's timestamp", () => {
     const answer = askIdentity(choices, storage);
     const nodes = (root: FakeElement): FakeElement[] =>
       root.children.flatMap((child) => [child, ...nodes(child)]);
-    const all = nodes(body) as (FakeElement & { checked: boolean; value: string; name: string })[];
+    const all = nodes(body) as (FakeElement & { checked: boolean; disabled?: boolean; value: string; name: string })[];
     // These tests are about the timestamp: the lock question is answered.
     all.find((node) => node.name === "sign-lock" && node.value === "last")!.checked = true;
     const list = all.find((node) => node.tagName === "select" && node.name === "sign-timestamp")!;

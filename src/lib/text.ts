@@ -31,6 +31,7 @@ export interface TaggedRun {
   tag: string;
   /** The element's ancestry, deepest last: `["Document", "Sect", "P"]`. */
   path: string[];
+  heading?: number;
   start: number;
   end: number;
 }

@@ -65,6 +65,7 @@ fn page(parts: Vec<Vec<Glyph>>) -> PageText {
 
 fn run(tag: &str, start: u32, end: u32) -> TaggedRun {
     TaggedRun {
+        heading: None,
         tag: tag.into(),
         path: vec![tag.into()],
         start,

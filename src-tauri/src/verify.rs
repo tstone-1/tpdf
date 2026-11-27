@@ -2083,11 +2083,16 @@ fn carriers_held(doc: &Document) -> Held {
 /// does not read stream lengths, so it cannot tell that case from a second
 /// revision, and saying *not verified* there is the safe answer.
 pub(crate) fn revision_ends(bytes: &[u8]) -> usize {
+    revision_footers(bytes).count()
+}
+
+/// Each footer's decimal startxref offset and the end of its EOF marker.
+pub(crate) fn revision_footers(bytes: &[u8]) -> impl Iterator<Item = (&[u8], usize)> {
     const MARK: &[u8] = b"%%EOF";
     const START: &[u8] = b"startxref";
-    let mut ends = 0;
     let mut from = 0;
-    while let Some(found) = bytes[from..].windows(MARK.len()).position(|w| w == MARK) {
+    std::iter::from_fn(move || loop {
+        let found = bytes[from..].windows(MARK.len()).position(|w| w == MARK)?;
         let at = from + found;
         from = at + MARK.len();
         // Backwards from the marker: white space, digits, white space, keyword.
@@ -2101,10 +2106,9 @@ pub(crate) fn revision_ends(bytes: &[u8]) -> usize {
         // them was already taken as the white space before the marker, so
         // `space` is zero.
         if digits_end < before.len() && space > 0 && before[..keyword_end].ends_with(START) {
-            ends += 1;
+            return Some((&before[space_end..digits_end], from));
         }
-    }
-    ends
+    })
 }
 
 /// How many bytes at the end of `bytes` satisfy `is`.

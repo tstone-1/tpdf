@@ -9,8 +9,8 @@
  * its `button` rule never reached a dialog on `body`, which is why these
  * dialogs had the web view's grey default buttons.
  *
- * Every rule sits under `.tpdf-dialog`, so nothing here reaches the rest of the
- * window. The colours are system colours and mixes of them, so the light and
+ * Dialog controls use dialog classes. The comment toolbar and rich-text editor
+ * have their own selectors below. The colours are system colours and mixes of them, so the light and
  * dark themes need no second set.
  */
 .tpdf-dialog {

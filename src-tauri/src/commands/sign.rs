@@ -337,9 +337,8 @@ async fn signer_name(identity: &str, at: u64) -> Result<String, String> {
 
 /// Draws what a visible signature would look like, before anything is signed.
 ///
-/// `size` is `[width, height]` in points --- the panel asks for one
-/// representative shape before the reader has placed anything, and the signing
-/// lays out again for the rectangle actually placed. The name is read from the
+/// `size` is `[width, height]` in points --- the existing field size, or a representative
+/// shape while the reader has yet to place a new signature. The name is read from the
 /// certificate here, as [`sign_document`] reads it, so the preview names whom
 /// the signature will. The picture is drawn in `doc`'s worker by the function
 /// that signs (`sign_prepare::preview`); nothing of the document is read and

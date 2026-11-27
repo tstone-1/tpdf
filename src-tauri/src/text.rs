@@ -581,6 +581,7 @@ mod tests {
     /// A run over PDFium's indices, which is what `structure.rs` returns.
     fn run(start: u32, end: u32) -> TaggedRun {
         TaggedRun {
+            heading: None,
             tag: "P".to_string(),
             path: vec!["P".to_string()],
             start,

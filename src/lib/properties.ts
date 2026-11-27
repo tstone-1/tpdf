@@ -970,7 +970,7 @@ export function certificateRows(signature: Signature): Row[] {
   // could not work out from the rows above without comparing them by eye.
   const typed = signature.name.trim();
   const inCert = (certificate.subject_cn || certificate.subject).trim();
-  if (typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {
+  if (certificate.matched_signer && typed && inCert && typed.toLowerCase() !== inCert.toLowerCase()) {
     rows.push({
       name: said.namesDisagree,
       value: said.disagree(inCert, typed),
@@ -1165,7 +1165,7 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   // sentence, because a time and whether it is attested are one answer.
   const stamp = signature.timestamp;
   if (stamp?.when) {
-    const by = stamp.authority?.subject_cn || stamp.authority?.subject || "";
+    const by = stamp.authority?.matched_signer ? stamp.authority.subject_cn || stamp.authority.subject : "";
     rows.push(timestampRow(stamp.when, by, stamp.integrity, document));
     // A document timestamp's authority is the field's own signer: its standing
     // and its revocation are the rows above, and are not said twice.
@@ -1224,7 +1224,8 @@ export function countedSignatures(signatures: Signature[]): string {
  */
 export function briefly(signature: Signature, rows: Row[]): Brief[] {
   if (!signature.signed) return [{ text: TEXT().notYetSigned }];
-  const who = signature.certificate?.subject_cn || signature.certificate?.subject || "";
+  const certificate = signature.certificate;
+  const who = certificate?.matched_signer && (certificate.subject_cn || certificate.subject);
   const out: Brief[] = who ? [{ text: who }] : [];
   // Its own certificate's rows only. A signature's timestamp has an authority
   // with a standing too, and "trusted · trusted" on a face says nothing about
@@ -1263,7 +1264,7 @@ export function missingRootCount(properties: Properties): number {
   if (properties.encryption) return 0;
   return properties.signatures.reduce((count, signature) => count
     + Number(rootMayBeMissing(signature.trust))
-    + Number(rootMayBeMissing(signature.timestamp?.trust ?? null)), 0);
+    + Number(signature.kind !== DOCUMENT_TIMESTAMP && rootMayBeMissing(signature.timestamp?.trust ?? null)), 0);
 }
 
 /**

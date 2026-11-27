@@ -17,6 +17,8 @@ export interface SignTarget {
   /** The field's full name. */
   name: string;
   page: PageId;
+  unit?: number;
+  hidden?: boolean;
   /** `left, top, right, bottom` in points, as the page is displayed. */
   rect: [number, number, number, number];
 }
@@ -51,5 +53,16 @@ export function emptySignatureFields(form: Form | null): readonly FormWidget[] {
 export function signTarget(widget: FormWidget, pages: readonly PageView[]): SignTarget | null {
   const page = pages.find((one) => "baseline" in one.source && one.source.baseline === widget.page)?.id;
   if (page === undefined || !isEmptySignature(widget)) return null;
-  return { name: widget.name, page, rect: [...widget.display_rect] };
+  return {
+    name: widget.name, page, rect: [...widget.display_rect],
+    ...(widget.unit !== undefined ? { unit: widget.unit } : {}),
+    ...(widget.hidden ? { hidden: true } : {}),
+  };
+}
+
+/** Display dimensions in physical points, including a page's UserUnit. */
+export function fieldSize(field: SignTarget): [number, number] {
+  const [left, top, right, bottom] = field.rect;
+  const unit = field.unit ?? 1;
+  return [(right - left) * unit, (bottom - top) * unit];
 }

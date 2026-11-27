@@ -21,11 +21,13 @@
   "extract_ms": 3.5,
   "runs": [
     {
-      "tag": "H1",
+      "tag": "Span",
       "path": [
         "Document",
-        "Sect"
+        "H1",
+        "Span"
       ],
+      "heading": 2,
       "start": 0,
       "end": 2
     }

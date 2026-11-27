@@ -467,7 +467,7 @@ documents and 255 MB take 104 s.
 
 ### `redact-reach-probe`: how much of a redaction can be proved, over a corpus
 
-Not a check — it passes nothing and fails nothing. It is the instrument behind
+The survey reports coverage and returns a failure status when no document opens or a requested text read, plan or write fails. It is the instrument behind
 `docs/PLAN.md` §6's *What a removal can take, re-measured*, and it exists because the 39.1%
 that section had quoted since the beginning was measured before the form carrier, before the
 image carrier and before there was an OCR gate at all. **A figure that decides which increment
@@ -591,8 +591,8 @@ count at 36 and took *shown unreadable* from 276 to 264. The change was reverted
 §6 and the trap entry have why. Read the aspect rows as a property of the population, and do not
 rank work off them again.
 
-**An eighth axis, added 2026-08-28: what a higher scale ceiling would do.** For every unread
-control the probe computes the scale it would have needed — `ocr_gate::scale_wanted`, unclamped
+**An eighth axis, added 2026-08-28: what a higher scale ceiling would do.** Before the gate gained an explicit refusal for undersized controls, the probe computed for each unread
+control the scale it would have needed — `ocr_gate::scale_wanted`, unclamped
 — and whether the probe image fits at it, through `ocr_gate::bytes_at` against the worker's
 capacity. Both went public for this; neither is a second copy of anything. Measured: **0 of 24 and
 0 of 40 would fit**, worst case asking **31.1x** against a ceiling of 8. So raising `MAX_SCALE`
@@ -600,6 +600,8 @@ moves the refusal from *the ceiling could not reach it* to *probe image will not
 nothing, which is why it was not written. Rendering the control alone at a generous scale does fit
 and is unsound — a control read in its own kindly rendered image says nothing about the region
 strip.
+
+The current survey counts those refusals directly. It no longer prints the historical higher-ceiling estimate.
 
 That measurement is what `NotVerifiedCause::ControlTooSmall` came out of: those regions now refuse
 with *no scale renders the control legibly* and a message carrying what the page removed, the scale

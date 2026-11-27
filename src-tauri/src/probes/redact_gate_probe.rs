@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use tpdf_lib::docmodel::PageSource;
-use tpdf_lib::edits::{PageView, Plan, PlannedRedaction};
+use tpdf_lib::edits::{PageView, Plan};
 use tpdf_lib::ocr_gate::{self, GatePage};
 use tpdf_lib::render::{Backend, RenderService};
 use tpdf_lib::{save, worker, worker_child};
@@ -91,14 +91,18 @@ pub fn main() {
         eprintln!("usage: redact-gate-probe <file.pdf> [--lib <dir>]");
         std::process::exit(2);
     };
-    if let Err(e) = run(&file, &library) {
-        eprintln!("[ERROR] {e}");
-        std::process::exit(2);
+    match run(&file, &library) {
+        Ok(report) => report.finish(),
+        Err(e) => {
+            eprintln!("[ERROR] {e}");
+            std::process::exit(2);
+        }
     }
 }
 
-fn run(file: &Path, library: &Path) -> Result<(), String> {
+fn run(file: &Path, library: &Path) -> Result<Report, String> {
     let mut r = Report::default();
+    let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
     let service = RenderService::start_with(library.to_path_buf(), Backend::Worker);
     let opened = wait(|reply| service.open(file.to_path_buf(), false, None, reply))
         .map_err(|e: tpdf_lib::progressive::Refusal| e.reason)?;
@@ -132,7 +136,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             "this page has a word long enough to redact",
             "no word of five characters or more",
         );
-        r.finish();
+        return Ok(r);
     };
     // Inflated by a point, so the region covers the word rather than tracing it.
     // A region flush to a glyph box is the boundary `redact::overlaps` is most
@@ -146,19 +150,20 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     println!("redacting  {:?} at {:?} pt", target.text, region);
 
     let plans = wait(|reply| service.redaction_plans(opened.id, 0, vec![region], reply))?;
-    let Some(plan_for_region) = plans.first().cloned() else {
+    if plans.is_empty() {
         r.skip("the region has a removal plan", "the worker returned none");
-        r.finish();
-    };
-    if plan_for_region.shows.is_empty() && plan_for_region.show_cuts.is_empty() {
+        return Ok(r);
+    }
+    let aggregate = tpdf_lib::redact::aggregate(0, vec![region], plans, Some(&text));
+    if aggregate.shows == 0 {
         r.skip(
             "the region has a removal plan",
             format!("nothing to remove under {:?}", target.text),
         );
-        r.finish();
+        return Ok(r);
     }
 
-    let out = std::env::temp_dir().join(format!("tpdf-gate-probe-{}.pdf", std::process::id()));
+    let out = scratch.path().join("redacted.pdf");
     let plan = Plan {
         field_edits: Vec::new(),
         tab_order: false,
@@ -174,26 +179,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             })
             .collect(),
         marks: Vec::new(),
-        redactions: vec![PlannedRedaction {
-            lines: Vec::new(),
-            kept_spans: Vec::new(),
-            form_paths: Default::default(),
-            source: 0,
-            shows: plan_for_region.shows.clone(),
-            show_cuts: plan_for_region.show_cuts.clone(),
-            text_objects: plan_for_region.text_objects,
-            areas: vec![plan_for_region.area],
-            taking: vec![plan_for_region.taking.clone()],
-            form_shows: Vec::new(),
-            form_images: Vec::new(),
-            form_image_objects: Vec::new(),
-            form_text_objects: Vec::new(),
-            images: Vec::new(),
-            image_objects: 0,
-            paths: Vec::new(),
-            path_objects: 0,
-            cuts: Vec::new(),
-        }],
+        redactions: vec![aggregate.planned],
         notes: Vec::new(),
         discards: Vec::new(),
         sources: Vec::new(),
@@ -207,15 +193,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     };
     save::write_copy(file, &plan, &out, None, &save::Here).map_err(|e| e.message)?;
 
-    let mut page = GatePage {
-        unit: 1.0,
-        page: 0,
-        regions: vec![region],
-        words: words.clone(),
-        taking: plan_for_region.taking.clone(),
-        width_pt: text.width_pt,
-        height_pt: text.height_pt,
-    };
+    let mut page = aggregate.gate;
 
     let units = wait(|reply| service.page_units(opened.id, vec![0], reply))?;
     page.apply_unit(*units.first().ok_or("missing page unit")?)?;
@@ -228,8 +206,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     let survivors = ocr_gate::surviving(&page.words, &page.regions, &page.taking);
     if let Err(why) = tpdf_lib::ocr::control_from_page(&survivors, &page.regions) {
         r.skip("this page leaves a control to read back", format!("{why}"));
-        let _ = std::fs::remove_file(&out);
-        r.finish();
+        return Ok(r);
     }
 
     // Independent of the gate, and about the *region* rather than the file: the
@@ -244,8 +221,9 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     let before = render_region(&service, opened.id, region, &text)?;
     let reopened = wait(|reply| service.open(out.clone(), false, None, reply))
         .map_err(|e: tpdf_lib::progressive::Refusal| e.reason)?;
-    let after = render_region(&service, reopened.id, region, &text)?;
+    let after = render_region(&service, reopened.id, region, &text);
     let _: Result<(), String> = wait(|reply| service.close(reopened.id, reply));
+    let after = after?;
     r.check(
         before != after && before.len() == after.len(),
         "the removal changed the pixels inside the region",
@@ -260,9 +238,8 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             "a platform with no engine says so once, not once per region",
             format!("{} reason(s): {:?}", reasons.len(), reasons.first()),
         );
-        let _ = std::fs::remove_file(&out);
         let _ = why;
-        r.finish();
+        return Ok(r);
     }
 
     // ---------------------------------------------------------- the control
@@ -407,9 +384,8 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         format!("{refused:?}").chars().take(90).collect::<String>(),
     );
 
-    let _ = std::fs::remove_file(&out);
     let _: Result<(), String> = wait(|reply| service.close(opened.id, reply));
-    r.finish();
+    Ok(r)
 }
 
 /// The region's own rows, rendered from one open document.
@@ -423,6 +399,9 @@ fn render_region(
     let height_px = (text.height_pt * SCALE).ceil() as u32;
     let (top, rows) = ocr_gate::rows_of(region, height_px, SCALE)
         .ok_or_else(|| "the region is not on the page".to_string())?;
+    let width_px = (text.width_pt * SCALE).ceil() as u32;
+    let (left, columns) = ocr_gate::rows_of([0.0, region[0], 0.0, region[2]], width_px, SCALE)
+        .ok_or("the region is outside the page width")?;
     let request = tpdf_lib::render::TileRequest {
         annotations: true,
         printing: false,
@@ -432,10 +411,10 @@ fn render_region(
         scale: SCALE,
         turns: 0,
         invert: false,
-        x: 0,
+        x: i32::try_from(left).map_err(|_| "region offset too large")?,
         y: i32::try_from(top).unwrap_or(i32::MAX),
-        width: u16::try_from((text.width_pt * SCALE).ceil() as u32).unwrap_or(u16::MAX),
-        height: u16::try_from(rows).unwrap_or(u16::MAX),
+        width: u16::try_from(columns).map_err(|_| "region too wide")?,
+        height: u16::try_from(rows).map_err(|_| "region too tall")?,
         format: tpdf_lib::render::TileFormat::Raw,
         crop: None,
     };

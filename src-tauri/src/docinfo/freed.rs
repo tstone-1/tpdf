@@ -98,6 +98,40 @@ pub(super) fn after(bytes: &[u8], end: usize, last: usize, limit: usize) -> Opti
     })
 }
 
+/// The first cross-reference offset and original length declared by the leading
+/// linearization dictionary (Annex F). Later incremental updates keep that prefix.
+pub(super) fn linearized_layout(bytes: &[u8]) -> Option<(usize, usize)> {
+    // The linearization dictionary must end in the first 1024 bytes.
+    let mut scan = Scan {
+        bytes: &bytes[..bytes.len().min(1024)],
+        at: 0,
+    };
+    scan.skip_space();
+    number::<u32>(scan.token())?;
+    scan.skip_space();
+    number::<u16>(scan.token())?;
+    scan.skip_space();
+    if scan.token() != b"obj" {
+        return None;
+    }
+    let Object::Dictionary(dict) = scan.object(0)? else {
+        return None;
+    };
+    if dict.get(b"Linearized").ok()?.as_float().ok()? != 1.0 {
+        return None;
+    }
+    let length = offset(&dict, b"L")??;
+    let main_table = offset(&dict, b"T")??;
+    scan.skip_space();
+    if scan.token() != b"endobj" {
+        return None;
+    }
+    scan.bytes = bytes;
+    scan.skip_space();
+    (scan.at < main_table && main_table < length && length <= bytes.len())
+        .then_some((scan.at, length))
+}
+
 /// One revision's entries and where the section before it starts.
 ///
 /// A classic table may name a cross-reference stream of its own

@@ -41,11 +41,8 @@ export interface ReadingManifest {
  * is therefore not the writer agreeing with its own reader --- which
  * `docs/TRAPS.md` records as the shape that passes on output that is wrong.
  *
- * The strongest assertion is the differential one underneath it, and it needs
- * no manifest at all: `columns.pdf` carries two pages laid out identically and
- * emitted in opposite orders, so a correct implementation cannot tell them
- * apart. That one cannot be satisfied by any amount of self-consistency,
- * because self-consistency is exactly what produces two different answers.
+ * The manifest identifies the two pages of columns.pdf laid out identically
+ * and emitted in opposite orders. They must also agree with each other.
  */
 export async function readingChecks(doc: DocumentInfo): Promise<void> {
   const raw = await invoke<string | null>("reading_manifest");
@@ -82,12 +79,17 @@ export async function readingChecks(doc: DocumentInfo): Promise<void> {
   // since an exception here ends the run rather than reddening a row. Reported
   // as a failure rather than a skip: nothing is *inapplicable* here, a fixture
   // has claimed a name that means something it does not mean.
-  if (!Array.isArray(manifest.pages)) {
+  const pages = manifest?.pages;
+  if (
+    !Array.isArray(pages) || pages.length === 0 || pages.length !== doc.page_count ||
+    !pages.every(p => p && Number.isInteger(p.page) && p.page >= 0 && p.page < doc.page_count &&
+      typeof p.name === "string" && Array.isArray(p.lines) && p.lines.every((line: unknown) => typeof line === "string")) ||
+    new Set(pages.map(p => p.page)).size !== doc.page_count
+  ) {
     check(
       "a page reads in the order its generator laid it out",
       false,
-      "the manifest bound to TPDF_READING_MANIFEST has no `pages` array -- " +
-        "rename the sidecar so it does not end in `-manifest.json`",
+      "the reading manifest must give expected lines for each document page exactly once",
     );
     skip(
       "two pages laid out alike read alike, whatever their order in the file",
@@ -98,11 +100,11 @@ export async function readingChecks(doc: DocumentInfo): Promise<void> {
 
   const cache = new TextCache(doc.id);
   /** A page's non-empty lines, trimmed, in reading order. */
-  const read = async (at: number): Promise<string[]> => {
+  const read = async (at: number): Promise<string[] | null> => {
     // A page of the file, and these corpora are unedited, so it is also the
     // slot. The cast says which of the two this number is --- see `FilePage`.
     const text = await cache.load(filePage(at));
-    if (!text) return [];
+    if (!text) return null;
     return readingLines(text)
       .map((line) =>
         line.ranges
@@ -118,10 +120,17 @@ export async function readingChecks(doc: DocumentInfo): Promise<void> {
   };
 
   const wrong: string[] = [];
-  for (const expected of manifest.pages) {
+  const measured = new Map<number, string[]>();
+  for (const expected of pages) {
     const got = await read(expected.page);
+    if (!got) {
+      wrong.push(`${expected.name}: could not read page text`);
+      continue;
+    }
+    measured.set(expected.page, got);
     if (got.join("\n") !== expected.lines.join("\n")) {
-      const at = got.findIndex((line, i) => line !== expected.lines[i]);
+      const difference = got.findIndex((line, i) => line !== expected.lines[i]);
+      const at = difference < 0 ? got.length : difference;
       wrong.push(
         `${expected.name}: line ${at} is "${got[at] ?? "(missing)"}", ` +
           `wanted "${expected.lines[at] ?? "(nothing)"}"`,
@@ -132,7 +141,7 @@ export async function readingChecks(doc: DocumentInfo): Promise<void> {
     "a page reads in the order its generator laid it out",
     wrong.length === 0,
     wrong.length === 0
-      ? `${manifest.pages.length} pages, ${manifest.pages[0]?.lines.length ?? 0} lines each`
+      ? `${measured.size} pages matched`
       : wrong.join("; "),
   );
 
@@ -148,7 +157,8 @@ export async function readingChecks(doc: DocumentInfo): Promise<void> {
     );
     return;
   }
-  const [first, second] = [await read(natural.page), await read(shuffled.page)];
+  const first = measured.get(natural.page) ?? [];
+  const second = measured.get(shuffled.page) ?? [];
   check(
     "two pages laid out alike read alike, whatever their order in the file",
     first.length > 0 && first.join("\n") === second.join("\n"),

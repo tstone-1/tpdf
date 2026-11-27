@@ -50,8 +50,7 @@ export function signatureSaveMessage(properties: Properties | null): string | nu
     return TEXT().signed;
   }
   const limits = properties?.limits;
-  if (!limits || limits.locked || limits.unreadable > 0 || limits.fields_dropped > 0
-      || limits.signatures_dropped > 0 || limits.values_clipped > 0) {
+  if (!limits || limits.locked || limits.unreadable > 0 || limits.signatures_dropped > 0) {
     return TEXT().unread;
   }
   return null;

@@ -463,6 +463,17 @@ describe("AccessibleText and a paragraph the producer wrapped", () => {
     return { dom, text, blocks };
   }
 
+  it("joins the inline spans of one heading and keeps the next heading separate", () => {
+    const runs = [1, 1, 2, 2].map((heading, start) => ({
+      tag: "Span", path: ["Document", "H2", "Span"], start, end: start + 1, heading,
+    }));
+    const { dom } = build(runs);
+    try {
+      const article = dom.root.firstChild!.firstChild!;
+      expect(article.children.map(node => node.tagName)).toEqual(["h2", "h2"]);
+      expect(article.children.map(node => node.firstChild?.textContent)).toEqual(["AB", "CD"]);
+    } finally { dom.restore(); }
+  });
   it("joins the lines of one tagged paragraph with a space", () => {
     const { dom, text, blocks } = build([
       { tag: "P", path: ["Document", "P"], start: 0, end: 4 },

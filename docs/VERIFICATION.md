@@ -4,11 +4,25 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Signature reporting and certification permissions (2026-11-27)
+
+On macOS the signing worker refused a visible signature for both an explicit level 2 and an omitted DocMDP level. A FieldMDP reference with the same empty parameters allowed the signature. An unreadable field value caused CLI rewrite refusal, while a null value remained an empty field. The tracked qpdf linearization counted as one revision before an incremental append and two afterwards. Signing and locking existing merged and separate fields left the earlier signature's page-change count at zero. A field lock without its matching signature transform still counted as a change.
+
+The dialog tests compared matched and unmatched certificates on a two-field document. A delayed worker refusal after clicking Place with Remember enabled left the dialog open and the preference store empty. The reading-order check failed both an empty manifest and one listing the same page twice. With text and character boxes extracted by PDFium from all three pages of the columns fixture, both the generator comparison and the natural/interleaved comparison passed.
+
+### Links during text edits and redaction diagnostics (2026-11-27)
+
+On macOS, the render service read a link at x=98.5 in a synthetic PDF. Lengthening the preceding word moved the link to x=120.7 before saving. Undo returned it to x=98.5 and redo restored x=120.7. Viewer tests checked the accessible article through edit, undo and redo, two adjacent headings with inline spans, and highlights crossing or falling outside a crop.
+
+The macOS release-profile checks bundle passed all 409 applicable viewer checks on `text-heavy.pdf` with `incr-signed.pdf` as the signed fixture. A further 53 checks did not apply. When copying a checks bundle to a test host, launch it by its physical path. Launching under the macOS `/tmp` symlink prevented Tauri from resolving the bundled resources. The same bundle under `/private/tmp` loaded its PDFium. A debug bundle can instead find an older PDFium at its compiled checkout path on the test host.
+
+The redaction reach probe removed a filled rectangle from a nested Form XObject in its written copy. A forced write failure reported both requested regions as unanswered and returned exit code 1. In the gate probe, changing another word on the same rows left the target pixels identical. Changing the target word changed those pixels. A simulated error after writing the copy left its private temporary directory empty.
+
 ### Pending edits, subset forms and archive destinations (2026-11-27)
 
 On macOS the save coordinator refused a mixed journal with a highlight and two pending redaction regions before closing the document. A two-page form was extracted after entering new answers in an omitted field, a retained field and a field shared by both pages. The written one-page PDF retained the two applicable answers. Inspection of field dictionaries and appearance streams found no new answer from the omitted field. A local archive test preserved another writer's bytes when its file arrived after destination selection. A free path and an explicitly approved replacement both produced a signed archive.
 
-The OCR probe read all four short reference words in a one-page PDF containing `NO ID NO ID`. The known `vector-heavy` drawing passed with `--expect-blank`, and `text-base14` passed all nine checks.
+The original short-word check on `NO ID NO ID` accepted reused occurrences. The probe now matches whole Unicode words and consumes each recognised occurrence once. A fresh run read 4/4 occurrences. On a page with an inset crop and on a 90-degree page with the same crop, the probe selected and read back the expected word LOWER (9/9 checks each). The known `vector-heavy` drawing passed with `--expect-blank`, and `text-base14` passed all nine checks.
 
 ### Cross-line redaction, tagged labels and signature fields (2026-11-27)
 

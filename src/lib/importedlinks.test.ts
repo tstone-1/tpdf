@@ -43,6 +43,22 @@ describe("ImportedLinks", () => {
     expect(links.all.get(41)).toEqual([one]);
   });
 
+  it("expires outstanding scans on text edits and preserves other pages and files", () => {
+    const links = new ImportedLinks();
+    const pageMap = twoFiles();
+    links.wanted(pageMap);
+    const first: Link = { id: 0, page: 0, rect: [0, 0, 1, 1], target: { kind: "none" } };
+    const moved = { ...first, page: 3 };
+    links.record(40, [first, moved]);
+    const revision = links.revision(40);
+    const baseline = links.invalidate([{ page: 2 }, { source: 1, page: 3 }], 7, [{ source: 1, doc: 40 }]);
+    expect(baseline).toEqual(new Set([2]));
+    expect(links.all.get(40)).toEqual([first]);
+    expect(links.revision(40)).toBeGreaterThan(revision);
+    expect(links.revision(41)).toBe(0);
+    expect(links.wanted(pageMap)).toEqual([40]);
+  });
+
   it("asks again after it is cleared", () => {
     // A different document is shown, and its handles are its own.
     const links = new ImportedLinks();

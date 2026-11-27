@@ -336,7 +336,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         .recognise(sheet.pixels(), &opts)
         .map_err(|e| format!("the second call failed: {e}"))?;
     r.check(
-        worker.pid() == pid && !again.is_empty(),
+        worker.pid() == pid && joined(&again) == joined(&items),
         "a second call reuses the same process",
         format!("pid {} still, {} span(s)", worker.pid(), again.len()),
     );

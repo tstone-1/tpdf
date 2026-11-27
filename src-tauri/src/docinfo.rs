@@ -904,7 +904,27 @@ fn version_of(document: &Document, bytes: &[u8]) -> String {
 /// signing* is answered by [`Signature::covers_whole_file`] --- but a reader
 /// is shown it.
 fn revisions_in(bytes: &[u8]) -> usize {
-    crate::verify::revision_ends(bytes)
+    let Some((first_xref, original_length)) = freed::linearized_layout(bytes) else {
+        return crate::verify::revision_ends(bytes);
+    };
+    let mut count = 0;
+    let mut early_marker = false;
+    let mut paired = false;
+    for (offset, end) in crate::verify::revision_footers(bytes) {
+        count += 1;
+        if count == 1 {
+            early_marker = end > first_xref && offset.iter().all(|&digit| digit == b'0');
+        } else if count == 2 && early_marker && end <= original_length {
+            let pointer = std::str::from_utf8(offset)
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok());
+            paired = pointer == Some(first_xref)
+                && bytes[end..original_length]
+                    .iter()
+                    .all(u8::is_ascii_whitespace);
+        }
+    }
+    count - usize::from(paired)
 }
 
 /// Reads what `lopdf` recorded when it decrypted the document.
@@ -1052,7 +1072,7 @@ fn permissions(revision: i64, p: i64) -> Vec<Permission> {
         ),
         ("Change the content", modify),
         ("Add or change comments", annotate),
-        ("Fill in form fields", if old { annotate } else { bit(9) }),
+        ("Fill in form fields", annotate || (!old && bit(9))),
         ("Assemble pages", if old { modify } else { bit(11) }),
     ];
 
@@ -1075,40 +1095,71 @@ fn permissions(revision: i64, p: i64) -> Vec<Permission> {
 /// exists for one level down.
 pub(crate) fn read_xmp(document: &Document, catalog: &Dictionary) -> Option<crate::xmp::Xmp> {
     let object = catalog.get(b"Metadata").ok()?;
-    let stream = resolve(document, object).as_stream().ok()?;
-    // `decompressed_content_with_limit` fails on a stream with no filter, which
-    // is the common case here --- the specification wants a packet readable by a
-    // tool that does not parse PDF --- so falling back to the raw content is the
-    // normal path rather than an error path.
-    //
-    // **The bound is [`crate::xmp::MAX_PACKET`], not [`MAX_DECODE`], and the
-    // difference is 64x.** This was the unbounded `decompressed_content()` until
-    // 2026-09-01, and it was the last production call of it in the tree: a
-    // 2,289-byte document declaring a 1 GiB `/Metadata` packet made this worker
-    // allocate 1,081 MB, against a Windows job object that caps commit at 1 GiB
-    // and against nothing at all on macOS (`docs/THREAT-MODEL.md` residual risk
-    // 2). `LoadOptions::max_decompressed_size`, which [`scan`] does set, bounds
-    // what the *loader* expands for itself and not what a caller asks a `Stream`
-    // for afterwards.
-    //
-    // **What this does not change is the answer**, and saying so is the point.
-    // `xmp::scan` discards any packet over `MAX_PACKET` and reports it unread,
-    // so an inflated packet was thrown away one line later however large it got.
-    // The defect was cost, not correctness --- which is why the bound is the
-    // largest packet that can be *used* rather than the general decode ceiling,
-    // and why the test below asserts on `bytes` rather than on `unread`: `unread`
-    // is set here by two mechanisms and cannot tell them apart.
-    let packet = stream
-        .decompressed_content_with_limit(crate::xmp::MAX_PACKET)
-        .unwrap_or_else(|_| stream.content.clone());
-    if packet.is_empty() {
-        return Some(crate::xmp::Xmp {
-            bytes: 0,
-            unread: true,
-            ..Default::default()
+    let unread = |bytes| crate::xmp::Xmp {
+        bytes,
+        unread: true,
+        ..Default::default()
+    };
+    let Ok(stream) = resolve(document, object).as_stream() else {
+        return Some(unread(0));
+    };
+    let stored = &stream.content;
+    if stored.is_empty() {
+        return Some(unread(0));
+    }
+    if !stream.dict.has(b"Filter") {
+        return Some(crate::xmp::scan(stored));
+    }
+    let Ok(filters) = stream.filters() else {
+        return Some(unread(stored.len()));
+    };
+    if filters.is_empty() {
+        return Some(crate::xmp::scan(stored));
+    }
+    // A lone identity filter leaves the XML unchanged. A named crypt filter
+    // may also have been applied when lopdf decrypted the document.
+    if filters == [b"Crypt".as_slice()] {
+        let params = stream
+            .dict
+            .get(b"DecodeParms")
+            .ok()
+            .map(|o| resolve(document, o));
+        let params = match params {
+            Some(Object::Array(items)) if items.len() == 1 => Some(resolve(document, &items[0])),
+            other => other,
+        };
+        let name = match params {
+            None | Some(Object::Null) => Some(b"Identity".as_slice()),
+            Some(Object::Dictionary(dict)) if !dict.has(b"Name") => Some(b"Identity".as_slice()),
+            Some(Object::Dictionary(dict)) => dict
+                .get(b"Name")
+                .ok()
+                .and_then(|o| resolve(document, o).as_name().ok()),
+            _ => None,
+        };
+        let already_decoded = name.is_some_and(|n| {
+            n == b"Identity"
+                || document.encryption_state.as_ref().is_some_and(|state| {
+                    state.encrypt_metadata() && state.crypt_filters().contains_key(n)
+                }) && stream
+                    .dict
+                    .get(b"DecodeParms")
+                    .and_then(Object::as_dict)
+                    .and_then(|dict| dict.get(b"Name"))
+                    .and_then(Object::as_name)
+                    .ok()
+                    == Some(n)
+        });
+        return Some(if already_decoded {
+            crate::xmp::scan(stored)
+        } else {
+            unread(stored.len())
         });
     }
-    Some(crate::xmp::scan(&packet))
+    match stream.decompressed_content_with_limit(crate::xmp::MAX_PACKET) {
+        Ok(packet) if !packet.is_empty() => Some(crate::xmp::scan(&packet)),
+        _ => Some(unread(stored.len())),
+    }
 }
 
 /// Combine XMP claims with the identification keys used by early PDF/X editions.
@@ -1232,13 +1283,88 @@ fn clip(value: String, limits: &mut Limits) -> String {
 /// the year is optional and `O` is `+`, `-` or `Z`. Anything that does not parse
 /// is returned **unchanged** rather than dropped: a date this cannot read is
 /// still a date, and showing the raw string beats showing nothing.
-fn format_date(raw: &str) -> String {
-    let body = raw.strip_prefix("D:").unwrap_or(raw);
-    let digits: String = body.chars().take_while(char::is_ascii_digit).collect();
-    if digits.len() < 4 {
-        return raw.to_string();
+struct PdfDate<'a> {
+    digits: &'a str,
+    zone: &'a str,
+    offset_minutes: i32,
+    utc_seconds: Option<u64>,
+}
+
+impl<'a> PdfDate<'a> {
+    fn parse(raw: &'a str) -> Option<Self> {
+        let body = raw.strip_prefix("D:").unwrap_or(raw);
+        let (digits, zone) = body.split_at(body.bytes().take_while(u8::is_ascii_digit).count());
+        if !matches!(digits.len(), 4 | 6 | 8 | 10 | 12 | 14) {
+            return None;
+        }
+        let year: u16 = digits[..4].parse().ok()?;
+        let part = |at, default| {
+            digits
+                .get(at..at + 2)
+                .map_or(Some(default), |pair| pair.parse::<u8>().ok())
+        };
+        // The DER calendar starts at 1970. Earlier dates still display, using
+        // the same leap-year pattern in a later 400-year Gregorian cycle.
+        let calendar_year = if year < 1970 { 2000 + year % 400 } else { year };
+        let local = der::DateTime::new(
+            calendar_year,
+            part(4, 1)?,
+            part(6, 1)?,
+            part(8, 0)?,
+            part(10, 0)?,
+            part(12, 0)?,
+        )
+        .ok()?;
+        let offset_minutes = match zone {
+            "" | "Z" | "Z00'00'" | "Z00'00" | "Z0000" => 0,
+            _ => {
+                let offset = zone.strip_prefix(['+', '-'])?;
+                let hours = offset.get(..2)?;
+                let rest = &offset[2..];
+                let minutes = match rest {
+                    "" | "'" => "00",
+                    _ => {
+                        let rest = rest.strip_prefix('\'').unwrap_or(rest);
+                        rest.strip_suffix('\'').unwrap_or(rest)
+                    }
+                };
+                if !hours.bytes().all(|b| b.is_ascii_digit())
+                    || minutes.len() != 2
+                    || !minutes.bytes().all(|b| b.is_ascii_digit())
+                {
+                    return None;
+                }
+                let h = hours.parse::<i32>().ok()?;
+                let m = minutes.parse::<i32>().ok()?;
+                if h >= 24 || m >= 60 {
+                    return None;
+                }
+                (h * 60 + m) * if zone.starts_with('-') { -1 } else { 1 }
+            }
+        };
+        let utc_seconds = (year >= 1970)
+            .then(|| {
+                local
+                    .unix_duration()
+                    .as_secs()
+                    .checked_add_signed(-i64::from(offset_minutes) * 60)
+            })
+            .flatten();
+        Some(Self {
+            digits,
+            zone,
+            offset_minutes,
+            utc_seconds,
+        })
     }
-    let at = |from: usize, len: usize| -> Option<&str> { digits.get(from..from + len) };
+}
+
+fn format_date(raw: &str) -> String {
+    let Some(date) = PdfDate::parse(raw) else {
+        return raw.to_owned();
+    };
+    let digits = date.digits;
+    let at = |from: usize, len: usize| digits.get(from..from + len);
 
     let mut out = digits[..4].to_string();
     if let Some(month) = at(4, 2) {
@@ -1260,30 +1386,17 @@ fn format_date(raw: &str) -> String {
         }
     }
 
-    // The offset, which follows the digits. `Z` means UTC and may be written
-    // bare or as `Z00'00'`; the apostrophes are noise to a reader either way.
-    let zone = &body[digits.len()..];
-    if zone.starts_with('Z') {
+    if date.zone.starts_with('Z') {
         out.push_str(" UTC");
-    } else if let Some(rest) = zone.strip_prefix(['+', '-']) {
-        let sign = &zone[..1];
-        let hours: String = rest.chars().take(2).filter(char::is_ascii_digit).collect();
-        let minutes: String = rest
-            .chars()
-            .skip_while(|c| !c.is_ascii_digit())
-            .skip(2)
-            .skip_while(|c| !c.is_ascii_digit())
-            .take(2)
-            .collect();
-        if hours.len() == 2 {
-            out.push(' ');
-            out.push_str(sign);
-            out.push_str(&hours);
-            out.push(':');
-            out.push_str(if minutes.len() == 2 { &minutes } else { "00" });
-        }
+    } else if !date.zone.is_empty() {
+        let minutes = date.offset_minutes.unsigned_abs();
+        out.push_str(&format!(
+            " {}{:02}:{:02}",
+            &date.zone[..1],
+            minutes / 60,
+            minutes % 60
+        ));
     }
-
     out
 }
 
@@ -1351,20 +1464,17 @@ fn read_signatures(
     // dictionary is a handful of references, so the copy is cheap.
     let mut found: Vec<(String, Dictionary)> = Vec::new();
     let cut = fields::walk(document, &bounds, |node| {
-        // Charged before the dictionary is read, so the ceiling costs one pop
-        // rather than one parse -- and reported, because a form that stops
-        // yielding signatures reads exactly like one that has no more.
-        if found.len() >= MAX_SIGNATURES {
-            limits.signatures_dropped += 1;
-            return fields::Flow::Leaf;
-        }
         let Some(field) = node.dict else {
             limits.unreadable += 1;
             return fields::Flow::Leaf;
         };
 
         if terminal_signature(document, field) {
-            found.push((node.name, field.clone()));
+            if found.len() < MAX_SIGNATURES {
+                found.push((node.name, field.clone()));
+            } else {
+                limits.signatures_dropped += 1;
+            }
         }
         fields::Flow::Descend
     });
@@ -1383,7 +1493,7 @@ fn read_signatures(
     for at in order {
         let (name, field) = &found[at];
         let archive = reach[at].and_then(|(_, end)| archive_moment(&archives, end));
-        let signature = read_signature(
+        let Some(signature) = read_signature(
             document,
             field,
             name.clone(),
@@ -1393,7 +1503,9 @@ fn read_signatures(
             budget,
             judging,
             archive,
-        );
+        ) else {
+            continue;
+        };
         if let (Some((true, end)), Some(moment)) = (reach[at], archiving(&signature)) {
             archives.push(Archive { end, at: moment });
         }
@@ -1520,21 +1632,25 @@ pub(crate) fn signature_values(document: &Document) -> Values {
             return fields::Flow::Leaf;
         };
         if terminal_signature(document, field) {
-            if let Some(sig) =
-                inherited(document, field, b"V").and_then(|o| resolve(document, o).as_dict().ok())
-            {
-                // Only a signed value past the bound is one left out: a form
-                // of exactly that many signatures and other fields after
-                // them is whole.
-                if values.len() >= MAX_SIGNATURES {
+            let sig = match signature_value(document, field) {
+                Ok(Some(sig)) => sig,
+                Ok(None) => return fields::Flow::Descend,
+                Err(()) => {
                     complete = false;
-                    return fields::Flow::Leaf;
+                    return fields::Flow::Descend;
                 }
-                let mut unread = 0;
-                let value = signature_contents(document, sig, MAX_SIG_BLOB, &mut unread);
-                complete &= value.is_some();
-                values.push((node.name, value.unwrap_or_default()));
+            };
+            // Only a signed value past the bound is one left out: a form
+            // of exactly that many signatures and other fields after
+            // them is whole.
+            if values.len() >= MAX_SIGNATURES {
+                complete = false;
+                return fields::Flow::Leaf;
             }
+            let mut unread = 0;
+            let value = signature_contents(document, sig, MAX_SIG_BLOB, &mut unread);
+            complete &= value.is_some();
+            values.push((node.name, value.unwrap_or_default()));
         }
         fields::Flow::Descend
     });
@@ -1667,7 +1783,7 @@ fn read_signature(
     budget: &mut SignatureBudget,
     judging: &Judging<'_>,
     archive: Option<u64>,
-) -> Signature {
+) -> Option<Signature> {
     let text = |dict: &Dictionary, key: &[u8]| -> String { text_of(document, dict, key) };
     let mut out = Signature {
         field: name,
@@ -1678,10 +1794,13 @@ fn read_signature(
     // one. Reported rather than dropped: "this document has an unsigned
     // signature field" is a fact about it, and an empty list would say the
     // opposite.
-    let Some(sig) =
-        inherited(document, field, b"V").and_then(|o| resolve(document, o).as_dict().ok())
-    else {
-        return out;
+    let sig = match signature_value(document, field) {
+        Ok(Some(value)) => value,
+        Ok(None) => return Some(out),
+        Err(()) => {
+            limits.unreadable += 1;
+            return None;
+        }
     };
 
     out.signed = true;
@@ -1950,7 +2069,7 @@ fn read_signature(
         }
     }
     out.integrity = Some(integrity);
-    out
+    Some(out)
 }
 
 /// What a field's signer is trusted **for**: attesting a time for a document
@@ -2202,46 +2321,7 @@ fn attested_moment(timestamp: &Timestamp, token: &[u8], at: u64) -> Option<u64> 
 /// offset is applied; one that is missing is read as UTC, as the
 /// specification's own default is "unknown" and a moment has to be somewhere.
 fn pdf_date_seconds(raw: &str) -> Option<u64> {
-    let body = raw.strip_prefix("D:").unwrap_or(raw);
-    let digits: String = body.chars().take_while(char::is_ascii_digit).collect();
-    let part = |from: usize, len: usize, default: u8| -> Option<u8> {
-        match digits.get(from..from + len) {
-            Some(text) => text.parse().ok(),
-            None => Some(default),
-        }
-    };
-    let year: u16 = digits.get(..4)?.parse().ok()?;
-    let at = der::DateTime::new(
-        year,
-        part(4, 2, 1)?,
-        part(6, 2, 1)?,
-        part(8, 2, 0)?,
-        part(10, 2, 0)?,
-        part(12, 2, 0)?,
-    )
-    .ok()?
-    .unix_duration()
-    .as_secs();
-    let zone = &body[digits.len()..];
-    let offset = match zone.chars().next() {
-        Some(sign @ ('+' | '-')) => {
-            let numbers: Vec<u64> = zone[1..]
-                .split(|c: char| !c.is_ascii_digit())
-                .filter(|n| !n.is_empty())
-                .filter_map(|n| n.parse().ok())
-                .collect();
-            let hours = numbers.first().copied().unwrap_or(0);
-            let minutes = numbers.get(1).copied().unwrap_or(0);
-            let seconds = hours * 3_600 + minutes * 60;
-            if sign == '+' {
-                -(seconds as i64)
-            } else {
-                seconds as i64
-            }
-        }
-        _ => 0,
-    };
-    u64::try_from(at as i64 + offset).ok()
+    PdfDate::parse(raw)?.utc_seconds
 }
 
 /// Seconds since the epoch, now: the moment every trust question is asked at.
@@ -2694,7 +2774,13 @@ fn transform_level(document: &Document, references: &[Object], method: &str) -> 
             .get(b"TransformParams")
             .ok()
             .and_then(|o| resolve(document, o).as_dict().ok())
-            .map_or(0, |params| level_of(document, params));
+            .map_or(0, |params| {
+                if method == "DocMDP" && !params.has(b"P") {
+                    2 // ISO 32000-1, Table 254
+                } else {
+                    level_of(document, params)
+                }
+            });
         if level > 0 {
             return level;
         }
@@ -3035,23 +3121,13 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     // The catalog is where an LTV append announces itself: `/DSS` arriving there
     // is the difference between validation data and anything else, and it is one
     // key rather than a heuristic over fifteen objects.
-    if let Ok(root) = whole.trailer.get(b"Root").and_then(Object::as_reference) {
-        let keys = |doc: &Document| -> Vec<String> {
-            doc.get_object(root)
-                .ok()
-                .and_then(|o| o.as_dict().ok())
-                .map(|dict| {
-                    dict.iter()
-                        .map(|(key, _)| String::from_utf8_lossy(key).into_owned())
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        let before = keys(&signed);
-        out.catalog_gained = keys(&whole)
-            .into_iter()
-            .filter(|key| !before.contains(key))
+    if let (Ok(before), Ok(after)) = (signed.catalog(), whole.catalog()) {
+        out.catalog_gained = after
+            .iter()
+            .filter(|(key, _)| !before.has(key))
+            .map(|(key, _)| String::from_utf8_lossy(key).into_owned())
             .collect();
+        out.catalog_gained.sort();
     }
 
     out
@@ -3272,7 +3348,7 @@ fn pages_reaching(
 /// write: `Rect` (where the place is and how large), `FT`, `Subtype` and
 /// `Parent` (what it is), `T` (which field), `P`, `MK`, `A` and `AA` (what it
 /// does when pressed), `Lock` and `SV` (what the form's author asked of the
-/// signer), `OC` (whether it shows at all), and anything not named. A signer
+/// signer, except for the newly signed field's matching approval lock), `OC` (whether it shows at all), and anything not named. A signer
 /// that writes one of those reads as a rewritten page, which is the answer
 /// to be wrong with.
 const SIGNING_WRITES: [&[u8]; 4] = [b"V", b"AP", b"F", b"M"];
@@ -3516,7 +3592,7 @@ impl PageRead<'_> {
         {
             return None;
         }
-        self.new_signature(now)?;
+        let signature = self.new_signature(now)?;
         // Both sides: a token's widget that drew in the signed revision and has
         // gone blank has taken something off the page, for the price of a token.
         if self.holds_timestamp(now)
@@ -3529,10 +3605,30 @@ impl PageRead<'_> {
         let mut writes: &[&[u8]] = &SIGNING_WRITES;
         for depth in 0..PLACE_DEPTH {
             let now = self.whole.get_dictionary(id).ok()?;
-            if self.changed.contains(&id)
-                && !same_apart_from(self.signed.get_dictionary(id).ok()?, now, writes)
-            {
-                return None;
+            if self.changed.contains(&id) {
+                let old = self.signed.get_dictionary(id).ok()?;
+                let added_lock = now.has(b"Lock")
+                    && !old.has(b"Lock")
+                    && now.get(b"V").and_then(Object::as_reference).ok() == Some(signature)
+                    && self
+                        .whole
+                        .trailer
+                        .get(b"Root")
+                        .and_then(Object::as_reference)
+                        .is_ok_and(|root| {
+                            crate::sign_prepare::has_approval_lock(
+                                now,
+                                self.whole.get_dictionary(signature).ok(),
+                                root,
+                            )
+                        });
+                let mut changes = writes.to_vec();
+                if added_lock {
+                    changes.push(b"Lock");
+                }
+                if !same_apart_from(old, now, &changes) {
+                    return None;
+                }
             }
             for (key, value) in now.iter() {
                 let followed_here =
@@ -3800,6 +3896,17 @@ fn inherited<'a>(
     None
 }
 
+/// Absent and null values are unsigned. An unreadable value leaves the inventory incomplete.
+fn signature_value<'a>(
+    document: &'a Document,
+    field: &'a Dictionary,
+) -> Result<Option<&'a Dictionary>, ()> {
+    match inherited(document, field, b"V").map(|value| resolve(document, value)) {
+        None | Some(Object::Null) => Ok(None),
+        Some(value) => value.as_dict().map(Some).map_err(|_| ()),
+    }
+}
+
 /// Whether a widget belongs to a signature field.
 fn is_signature_field(document: &Document, widget: &lopdf::Dictionary) -> bool {
     inherited(document, widget, b"FT").and_then(|o| resolve(document, o).as_name().ok())
@@ -3879,11 +3986,10 @@ fn same_dictionary(before: &lopdf::Dictionary, after: &lopdf::Dictionary) -> boo
 /// holding a certificate or a revocation response, and omitting them would make
 /// the appendix read as two dictionaries.
 fn kind_of(object: &Object) -> String {
-    let Ok(dict) = object.as_dict() else {
-        return match object {
-            Object::Stream(_) => "stream".into(),
-            _ => "value".into(),
-        };
+    let (dict, unnamed) = match object {
+        Object::Dictionary(dict) => (dict, "untyped"),
+        Object::Stream(stream) => (&stream.dict, "stream"),
+        _ => return "value".into(),
     };
     let name = |key: &[u8]| {
         dict.get(key)
@@ -3895,7 +4001,7 @@ fn kind_of(object: &Object) -> String {
         (Some(kind), Some(sub)) => format!("{kind}/{sub}"),
         (Some(kind), None) => kind,
         (None, Some(sub)) => format!("/{sub}"),
-        (None, None) => "untyped".into(),
+        (None, None) => unnamed.into(),
     }
 }
 
@@ -6474,6 +6580,110 @@ mod tests {
     }
 
     #[test]
+    fn only_empty_signature_values_are_reported_as_unsigned() {
+        for (value, complete) in [
+            (None, true),
+            (Some(Object::Null), true),
+            (Some(Object::Integer(3)), false),
+            (Some(Object::Reference((99_999, 0))), false),
+        ] {
+            let (mut doc, _, _) = crate::forms::tests::fixture();
+            let mut field = dictionary! { "FT" => "Sig" };
+            if let Some(value) = value {
+                field.set("V", value);
+            }
+            let field = doc.add_object(field);
+            doc.catalog_mut()
+                .unwrap()
+                .set("AcroForm", dictionary! { "Fields" => vec![field.into()] });
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).unwrap();
+            let properties = read(&bytes);
+            assert_eq!(properties.signatures.len(), usize::from(complete));
+            assert_eq!(properties.limits.unreadable, usize::from(!complete));
+            assert_eq!(
+                crate::cli::fill::signed_refusal("form.pdf", &properties).is_none(),
+                complete
+            );
+            assert_eq!(super::signature_values(&doc).complete, complete);
+        }
+    }
+
+    #[test]
+    fn ordinary_fields_after_the_last_signature_do_not_charge_the_cap() {
+        for count in [MAX_SIGNATURES, MAX_SIGNATURES + 1] {
+            let (mut doc, _, _) = crate::forms::tests::fixture();
+            let mut fields: Vec<Object> = (0..count)
+                .map(|_| doc.add_object(dictionary! { "FT" => "Sig" }).into())
+                .collect();
+            fields.push(doc.add_object(dictionary! { "FT" => "Tx" }).into());
+            doc.catalog_mut()
+                .unwrap()
+                .set("AcroForm", dictionary! { "Fields" => fields });
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).unwrap();
+            let properties = read(&bytes);
+            assert_eq!(properties.signatures.len(), MAX_SIGNATURES);
+            assert_eq!(properties.limits.signatures_dropped, count - MAX_SIGNATURES);
+            assert_eq!(
+                crate::cli::verify::signatures_complete(&properties.limits),
+                count == MAX_SIGNATURES
+            );
+        }
+    }
+
+    #[test]
+    fn linearization_is_one_revision_until_an_update_is_appended() {
+        let bytes = include_bytes!("save/fixtures/linearized.pdf");
+        assert_eq!(revisions_in(bytes), 1);
+        let mut update = lopdf::IncrementalDocument::create_from(bytes.to_vec(), parse(bytes));
+        update
+            .new_document
+            .add_object(dictionary! {"Type" => "Example"});
+        let mut appended = Vec::new();
+        update.save_to(&mut appended).unwrap();
+        assert_eq!(revisions_in(&appended), 2);
+    }
+
+    #[test]
+    fn display_and_revocation_require_a_complete_valid_date_string() {
+        for (raw, display) in [
+            ("2026", "2026"),
+            ("D:20261127103000Z", "2026-11-27 10:30:00 UTC"),
+        ] {
+            assert_eq!(format_date(raw), display);
+            assert!(pdf_date_seconds(raw).is_some());
+        }
+        for raw in [
+            "2026-11-27T10:30:00Z",
+            "D:20260229",
+            "D:20261127103000+25'00'",
+            "D:20261",
+            "D:20260101Zextra",
+        ] {
+            assert_eq!(format_date(raw), raw);
+            assert_eq!(pdf_date_seconds(raw), None);
+        }
+    }
+
+    #[test]
+    fn effective_form_filling_includes_the_annotation_grant() {
+        for revision in [2, 3, 6] {
+            for bits in [0, 32, 256, 288] {
+                let allowed = permissions(revision, bits)
+                    .into_iter()
+                    .find(|p| p.what == "Fill in form fields")
+                    .unwrap()
+                    .allowed;
+                assert_eq!(
+                    allowed,
+                    bits & 32 != 0 || (revision >= 3 && bits & 256 != 0)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn inherited_signature_is_counted_once_and_prevents_a_form_rewrite() {
         let (mut doc, _, _) = crate::forms::tests::fixture();
         let value = doc.add_object(
@@ -7633,6 +7843,26 @@ mod tests {
         let xmp = plain.xmp.as_ref().expect("the catalog names a packet");
         assert_eq!(xmp.conformance, vec!["PDF/A-3B"]);
         assert!(!xmp.unread);
+
+        let mut doc = parse(&with_metadata(packet, false));
+        let metadata = doc
+            .catalog()
+            .unwrap()
+            .get(b"Metadata")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        for (filter, unread) in [("DCTDecode", true), ("Crypt", false)] {
+            doc.get_object_mut(metadata)
+                .unwrap()
+                .as_stream_mut()
+                .unwrap()
+                .dict
+                .set("Filter", filter);
+            let report = read_xmp(&doc, doc.catalog().unwrap()).unwrap();
+            assert_eq!(report.unread, unread);
+            assert_eq!(report.conformance.is_empty(), unread);
+        }
 
         // And the same packet behind a filter. The specification wants a packet
         // readable by a tool that does not parse PDF, so uncompressed is the

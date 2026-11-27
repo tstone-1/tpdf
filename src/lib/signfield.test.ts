@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Form, FormWidget } from "./forms";
 import { pageId, type PageView } from "./pages";
-import { emptySignatureFields, isEmptySignature, signTarget } from "./signfield";
+import { emptySignatureFields, fieldSize, isEmptySignature, signTarget } from "./signfield";
 
 function widget(n: number, name: string, extra: Partial<FormWidget> = {}): FormWidget {
   return {
@@ -52,6 +52,7 @@ describe("the signature fields somebody can sign", () => {
   });
 
   it("are signed where they are: by name, on the page's id, in the rectangle as displayed", () => {
+    expect(fieldSize(signTarget({ ...form.widgets[2]!, unit: 2 }, PAGES)!)).toEqual([320, 80]);
     expect(signTarget(form.widgets[2]!, PAGES)).toEqual({ name: "Approved", page: 5, rect: [20, 30, 180, 70] });
     expect(signTarget(form.widgets[5]!, PAGES)).toEqual({ name: "Witness", page: 8, rect: [20, 30, 180, 70] });
     // A copy, so that nothing the signing does to it reaches the form.

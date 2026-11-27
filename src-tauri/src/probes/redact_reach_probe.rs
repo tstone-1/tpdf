@@ -105,6 +105,9 @@ struct Tally {
     /// Pages the gate was run over, and what it said.
     gate_pages: usize,
     gate_regions: usize,
+    text_failures: usize,
+    plan_failures: usize,
+    write_failures: usize,
     /// The gate read words back out of the row band of a region the removal
     /// reported taking whole.
     ///
@@ -321,14 +324,6 @@ struct Tally {
     /// the image was halved to fit the buffer. They are not exclusive, so
     /// *both* is its own row rather than an arm that swallows one of them.
     unread_clamp: BTreeMap<&'static str, usize>,
-    /// Whether a higher scale ceiling would reach each unread control, and what
-    /// scale it would take.
-    ///
-    /// Not a proposal --- the arithmetic that decides whether the proposal is
-    /// worth writing. `worst_reach` is the largest scale any control asked for,
-    /// which is what a new ceiling would have to be.
-    unread_reach: BTreeMap<&'static str, usize>,
-    worst_reach: f32,
     /// The gate showed the region unreadable, which is the only verdict that
     /// may be presented as clean.
     proved: usize,
@@ -408,10 +403,14 @@ pub fn main() {
             &mut tally,
         );
     }
-    report(&tally, started.elapsed().as_secs_f32());
+    report(&tally, started.elapsed().as_secs_f32(), gate);
     // A run that opened nothing measured nothing. On 2026-10-17 a run started
     // from `src-tauri` could not load PDFium, refused all 174 documents and
     // exited 0 with every count at zero.
+    if tally.text_failures + tally.plan_failures + tally.write_failures > 0 {
+        eprintln!("[ERROR] the survey could not complete all requested measurements");
+        std::process::exit(1);
+    }
     if tally.opened == 0 {
         eprintln!(
             "[ERROR] no document was opened ({} refused), so nothing was measured",
@@ -483,7 +482,12 @@ fn measure(
         Ok(info) => info,
         Err(refusal) => {
             tally.refused += 1;
-            println!("[SKIP] {stem:<26} {}", refusal.reason);
+            let reason = if refusal.locked {
+                "password required"
+            } else {
+                "could not open document"
+            };
+            println!("[SKIP] {stem:<26} {reason}");
             return;
         }
     };
@@ -498,6 +502,7 @@ fn measure(
     for page in sampled(opened.page_count, pages_per_doc) {
         let page = page as u32;
         let Ok(text) = wait(|reply| service.text(opened.id, page, None, reply)) else {
+            tally.text_failures += 1;
             continue;
         };
         let words = ocr_gate::words_from(&text);
@@ -526,26 +531,14 @@ fn measure(
         let Ok(plans) =
             wait(|reply| service.redaction_plans(opened.id, page, regions.clone(), reply))
         else {
+            tally.plan_failures += 1;
             continue;
         };
 
-        // Everything the page's sampled regions would remove, merged the way
-        // `ask_redactions` merges them --- two regions over one line name the
-        // same operator, and removing it twice is removing it once.
-        let mut shows: Vec<usize> = Vec::new();
-        let mut show_cuts: Vec<tpdf_lib::redact::ShowCut> = Vec::new();
-        let mut form_shows: Vec<(usize, usize)> = Vec::new();
-        let mut images: Vec<usize> = Vec::new();
-        let mut areas: Vec<[f32; 4]> = Vec::new();
-        let mut taking: Vec<String> = Vec::new();
-        let mut text_objects = 0usize;
-        let mut image_objects = 0usize;
-        let mut paths: Vec<usize> = Vec::new();
-        let mut path_objects = 0usize;
-        let mut cuts: Vec<(usize, [f32; 4])> = Vec::new();
-        let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
-        let mut form_images: Vec<(usize, usize)> = Vec::new();
-        let mut form_image_objects: Vec<(usize, usize)> = Vec::new();
+        if plans.len() != regions.len() {
+            tally.plan_failures += 1;
+            continue;
+        }
         // Only the regions the removal reports taking whole. Handing the gate
         // an incomplete one would make its verdict unattributable: a reason
         // could be the carrier nobody removed rather than a leak.
@@ -553,12 +546,7 @@ fn measure(
 
         for (plan, region) in plans.iter().zip(regions.iter()) {
             here_regions += 1;
-            text_objects = plan.text_objects;
-            image_objects = plan.image_objects;
-            form_text_objects = plan.form_text_objects.clone();
-            form_image_objects = plan.form_image_objects.clone();
-            form_images.extend(plan.form_images.iter().copied());
-            if !plan.cuts.is_empty() {
+            if !plan.cuts.is_empty() || !plan.form_paths.cuts.is_empty() {
                 tally.cutting += 1;
                 if plan.is_complete() {
                     tally.cutting_complete += 1;
@@ -600,72 +588,14 @@ fn measure(
                     *here_kinds.entry(key).or_default() += 1;
                 }
             }
-            shows.extend(plan.shows.iter().copied());
-            show_cuts.extend(plan.show_cuts.iter().cloned());
-            form_shows.extend(plan.form_shows.iter().copied());
-            images.extend(plan.images.iter().copied());
-            paths.extend(plan.paths.iter().copied());
-            path_objects = plan.path_objects;
-            cuts.extend(plan.cuts.iter().map(|ordinal| (*ordinal, plan.area)));
-            areas.push(plan.area);
-            let what = plan.taking.trim();
-            if !what.is_empty() {
-                taking.push(what.to_string());
+        }
+        let aggregate = tpdf_lib::redact::aggregate(page, provable, plans, Some(&text));
+        if aggregate.shows > 0 {
+            if gate && !aggregate.gate.regions.is_empty() {
+                gate_pages.push(aggregate.gate);
             }
+            planned.push(aggregate.planned);
         }
-        shows.sort_unstable();
-        shows.dedup();
-        let show_cuts = tpdf_lib::redact::merge_cuts(show_cuts, &mut shows);
-        form_shows.sort_unstable();
-        form_shows.dedup();
-        images.sort_unstable();
-        images.dedup();
-        form_images.sort_unstable();
-        form_images.dedup();
-        paths.sort_unstable();
-        paths.dedup();
-        cuts.retain(|(ordinal, _)| paths.binary_search(ordinal).is_err());
-        if shows.is_empty()
-            && show_cuts.is_empty()
-            && form_shows.is_empty()
-            && images.is_empty()
-            && form_images.is_empty()
-            && paths.is_empty()
-            && cuts.is_empty()
-        {
-            continue;
-        }
-        if gate && !provable.is_empty() {
-            gate_pages.push(GatePage {
-                unit: 1.0,
-                page,
-                regions: provable,
-                words,
-                taking: taking.join(" "),
-                width_pt: text.width_pt,
-                height_pt: text.height_pt,
-            });
-        }
-        planned.push(PlannedRedaction {
-            lines: Vec::new(),
-            kept_spans: Vec::new(),
-            form_paths: Default::default(),
-            source: page,
-            shows,
-            show_cuts,
-            text_objects,
-            areas,
-            taking,
-            form_shows,
-            form_images,
-            form_image_objects,
-            form_text_objects,
-            images,
-            image_objects,
-            paths,
-            path_objects,
-            cuts,
-        });
     }
 
     tally.regions += here_regions;
@@ -747,7 +677,6 @@ fn control_shape(page: &GatePage) -> Option<Shape> {
         scale: geometry.scale,
         chars: choice.token.chars().count(),
         aspect: if h > 0.0 { w / h } else { 0.0 },
-        image_pt: (w, h),
     })
 }
 
@@ -785,9 +714,6 @@ struct Shape {
     chars: usize,
     /// The probe image's width against its height. Scale-invariant.
     aspect: f32,
-    /// The probe image's shape in points, kept so a measurement can ask what a
-    /// scale the gate did *not* choose would have cost.
-    image_pt: (f32, f32),
 }
 
 /// The buckets the control's height **in points** is reported in.
@@ -860,43 +786,6 @@ fn clamp_of(pt: f32, px: f32, scale: f32) -> &'static str {
                 CLAMPS[3]
             }
         }
-    }
-}
-
-/// What a higher [`ocr_gate::MAX_SCALE`] would do for a control the current
-/// ceiling cannot bring to the floor.
-///
-/// The one bucket every reading has agreed on is the control under
-/// `MIN_CONTROL_PX / MAX_SCALE`: unread 24 of 24 and 40 of 40, at every shape,
-/// before and after the padding that was built and reverted. Raising the ceiling
-/// is the obvious remedy and it has an obvious way of failing --- the scale such
-/// a control needs may cost more than `capacity`, in which case `scale_for`'s
-/// halving loop takes it straight back down and the refusal returns with a
-/// different cause. That is arithmetic, and this is it.
-const REACH: [&str; 3] = [
-    "the ceiling already serves it",
-    "a higher ceiling would fit",
-    "a higher ceiling would not fit",
-];
-
-/// Which of those this control is, and the scale it would have needed.
-fn reach_of(shape: &Shape) -> (&'static str, f32) {
-    let wanted = ocr_gate::scale_wanted(shape.pt);
-    // A control of zero or NaN points asks for a scale nobody can order, and
-    // `bytes_at` would answer 0 bytes for it -- which reads as "would fit", the
-    // one direction that claims the remedy works. Refuse to say so.
-    if !wanted.is_finite() {
-        return (REACH[2], wanted);
-    }
-    if wanted <= ocr_gate::MAX_SCALE {
-        return (REACH[0], wanted);
-    }
-    let (w, h) = shape.image_pt;
-    let capacity = tpdf_lib::ocr_worker::PIXELS_CAPACITY.min(tpdf_lib::worker::TILE_CAPACITY);
-    if ocr_gate::bytes_at(w, h, wanted) <= capacity {
-        (REACH[1], wanted)
-    } else {
-        (REACH[2], wanted)
     }
 }
 
@@ -987,11 +876,19 @@ fn run_gate(
         compress: Default::default(),
         new_fields: Vec::new(),
     };
+    let asked: Vec<_> = pages
+        .iter()
+        .flat_map(|page| page.regions.iter().copied())
+        .collect();
+    tally.gate_regions += asked.len();
+    tally.gate_pages += pages.len();
     if save::write_copy(file, &plan, &out, None, &save::Here).is_err() {
+        tally.write_failures += 1;
+        tally.gate_refused += asked.len();
+        tally.unanswered += asked.len();
         let _ = std::fs::remove_file(&out);
         return;
     }
-    tally.gate_pages += pages.len();
     let page_numbers = pages.iter().map(|page| page.page).collect();
     let geometry =
         wait(|reply| service.page_units(opened.id, page_numbers, reply)).and_then(|units| {
@@ -1003,8 +900,6 @@ fn run_gate(
                 .zip(units)
                 .try_for_each(|(page, unit)| page.apply_unit(unit))
         });
-    let asked: Vec<[f32; 4]> = pages.iter().flat_map(|p| p.regions.clone()).collect();
-    tally.gate_regions += asked.len();
 
     // The verdicts, not the sentences. `ocr_gate::reason` throws the engine's
     // own rectangles away, so a probe reading its output could not tell text
@@ -1127,14 +1022,6 @@ fn run_gate(
                                                 .unread_clamp
                                                 .entry(clamp_of(pt, px, scale))
                                                 .or_default() += 1;
-                                            if let Some(sh) = shape {
-                                                let (label, wanted) = reach_of(&sh);
-                                                *tally.unread_reach.entry(label).or_default() += 1;
-                                                if wanted.is_finite() && wanted > tally.worst_reach
-                                                {
-                                                    tally.worst_reach = wanted;
-                                                }
-                                            }
                                             *tally
                                                 .unread_chars
                                                 .entry(char_bucket(chars))
@@ -1202,7 +1089,7 @@ fn run_gate(
     let _ = std::fs::remove_file(&out);
 }
 
-fn report(t: &Tally, seconds: f32) {
+fn report(t: &Tally, seconds: f32, gate: bool) {
     let pct = |n: usize, d: usize| {
         if d == 0 {
             0.0
@@ -1212,6 +1099,10 @@ fn report(t: &Tally, seconds: f32) {
     };
     println!("\n---- what a removal can take -------------------------------------");
     println!("documents opened {}, refused {}", t.opened, t.refused);
+    println!(
+        "failed text reads {}, failed page plans {}, failed document writes {}",
+        t.text_failures, t.plan_failures, t.write_failures
+    );
     println!("regions asked about {}", t.regions);
     println!(
         "  taken whole                {:>6}  ({:.1}%)",
@@ -1239,11 +1130,13 @@ fn report(t: &Tally, seconds: f32) {
     }
 
     println!("\n---- what the gate caught ----------------------------------------");
-    if t.gate_regions == 0 {
-        println!("the gate was not run");
+    if !gate {
+        println!("the gate was disabled (--no-gate)");
+    } else if t.gate_regions == 0 {
+        println!("no eligible regions reached the gate");
     } else {
         println!(
-            "regions read back {} on {} page(s)",
+            "regions submitted for read-back {} on {} page(s)",
             t.gate_regions, t.gate_pages
         );
         println!(
@@ -1456,29 +1349,6 @@ fn report(t: &Tally, seconds: f32) {
                 println!(
                     "      {bucket:<36} {:>6}",
                     t.unread_clamp.get(bucket).copied().unwrap_or(0)
-                );
-            }
-            // Would a higher ceiling serve the one bucket every reading agrees
-            // on? Every row prints, including the empty ones.
-            println!("  and raising the scale ceiling would mean");
-            for bucket in REACH {
-                println!(
-                    "      {bucket:<36} {:>6}",
-                    t.unread_reach.get(bucket).copied().unwrap_or(0)
-                );
-            }
-            println!(
-                "      the largest scale any of them asked for: {:.1} (ceiling is {:.1})",
-                t.worst_reach,
-                ocr_gate::MAX_SCALE
-            );
-            // The reach rows partition the same regions the clamp rows do.
-            let reached: usize = t.unread_reach.values().sum();
-            let clamped_total: usize = t.unread_clamp.values().sum();
-            if reached != clamped_total {
-                println!(
-                    "[WARN] {reached} control(s) asked about the ceiling of {clamped_total} \
-                     attributed to a clamp"
                 );
             }
             // The same per-axis controls the height crossing gets, for the same

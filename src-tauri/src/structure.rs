@@ -106,6 +106,9 @@ pub struct TaggedRun {
     /// Carried because the type alone loses what the element is *inside*, and a
     /// `/P` in a `/TD` is a table cell's text rather than a paragraph.
     pub path: Vec<String>,
+    /// Page-local traversal ordinal of the nearest heading, shared by its spans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading: Option<usize>,
     /// First character of the run.
     pub start: u32,
     /// One past the last character of the run.
@@ -265,7 +268,7 @@ pub(crate) fn read_with_artifacts(
                 .FPDF_StructTree_GetChildAtIndex(tree.handle, index)
         };
         if !child.is_null() {
-            walk.element(child, &mut path, 0);
+            walk.element(child, &mut path, 0, None);
             if walk.found.truncated {
                 break;
             }
@@ -372,7 +375,7 @@ impl Found<'_> {
     /// hostile file would take: the run cap cannot fire on marks that claim no
     /// characters, and the loop asking for them is otherwise as long as the file
     /// says it is.
-    fn mark(&mut self, mcid: i32, tag: &str, path: &[String]) -> bool {
+    fn mark(&mut self, mcid: i32, tag: &str, path: &[String], heading: Option<usize>) -> bool {
         if self.marks >= MAX_MARKS {
             self.truncated = true;
             return false;
@@ -387,6 +390,7 @@ impl Found<'_> {
                 return false;
             }
             self.runs.push(TaggedRun {
+                heading,
                 tag: tag.to_owned(),
                 path: path.to_vec(),
                 start,
@@ -399,7 +403,13 @@ impl Found<'_> {
 
 impl Walk<'_> {
     /// Emits direct content and nested elements in their declared child order.
-    fn element(&mut self, element: FPDF_STRUCTELEMENT, path: &mut Vec<String>, depth: usize) {
+    fn element(
+        &mut self,
+        element: FPDF_STRUCTELEMENT,
+        path: &mut Vec<String>,
+        depth: usize,
+        heading: Option<usize>,
+    ) {
         if depth >= MAX_DEPTH || self.visited >= MAX_ELEMENTS {
             self.found.truncated = true;
             return;
@@ -407,6 +417,10 @@ impl Walk<'_> {
         self.visited += 1;
 
         let tag = self.type_of(element);
+        let heading = match tag.as_str() {
+            "H" | "H1" | "H2" | "H3" | "H4" | "H5" | "H6" => Some(self.visited),
+            _ => heading,
+        };
         path.push(tag.clone());
 
         // SAFETY: the tree owns this non-null element.
@@ -423,11 +437,11 @@ impl Walk<'_> {
                     self.bindings
                         .FPDF_StructElement_GetChildMarkedContentID(element, index)
                 };
-                if !self.found.mark(mcid, &tag, path) {
+                if !self.found.mark(mcid, &tag, path, heading) {
                     break;
                 }
             } else {
-                self.element(child, path, depth + 1);
+                self.element(child, path, depth + 1, heading);
                 if self.found.truncated {
                     break;
                 }
@@ -631,10 +645,10 @@ mod tests {
         let codes = ['x' as u32; 3];
         let mut found = found(&of_char, &codes);
         for spent in 0..MAX_MARKS {
-            assert!(found.mark(7, "P", &[]), "stopped after {spent}");
+            assert!(found.mark(7, "P", &[], None), "stopped after {spent}");
         }
         assert!(!found.truncated, "nothing has been cut yet");
-        assert!(!found.mark(7, "P", &[]), "the budget is spent");
+        assert!(!found.mark(7, "P", &[], None), "the budget is spent");
         assert!(found.truncated, "and spending it is a truncation");
     }
 
@@ -650,7 +664,10 @@ mod tests {
         let codes: Vec<u32> = of_char.iter().map(|_| 'x' as u32).collect();
         let mut found = found(&of_char, &codes);
         let path = vec!["Document".to_owned(), "P".to_owned()];
-        assert!(!found.mark(7, "P", &path), "the cap stops it mid-mark");
+        assert!(
+            !found.mark(7, "P", &path, None),
+            "the cap stops it mid-mark"
+        );
         assert_eq!(found.runs.len(), MAX_RUNS);
         assert!(found.truncated);
     }
@@ -662,7 +679,7 @@ mod tests {
         let of_char = [7, 7, 3, 7];
         let codes = ['x' as u32; 4];
         let mut found = found(&of_char, &codes);
-        assert!(found.mark(7, "P", &["P".to_owned()]));
+        assert!(found.mark(7, "P", &["P".to_owned()], None));
         assert_eq!(found.runs.len(), 2);
         assert!(!found.truncated);
     }
@@ -676,6 +693,7 @@ mod tests {
         // dangerous half, because it reports the page as *more* tagged than it
         // is, which removes text from a reading order without saying so.
         let run = |start, end| TaggedRun {
+            heading: None,
             tag: "P".to_owned(),
             path: Vec::new(),
             start,
@@ -691,6 +709,7 @@ mod tests {
         PageStructure {
             runs: (0..count)
                 .map(|at| TaggedRun {
+                    heading: None,
                     tag: "P".to_string(),
                     path: vec!["P".to_string()],
                     start: at as u32,

@@ -676,15 +676,8 @@ ROWS += [
         # tags agree about *which* block comes first there for two of three.
         "structure: order the tagged blocks geometrically after all",
         "src/lib/reading.ts",
-        # **`tagged` is a `const`, so the order goes into a new binding.** An
-        # earlier replacement assigned to it, which is a `TypeError` in a
-        # module's strict mode: the mutation threw before ordering anything and
-        # its test went red for that. The anchor reaches the `tag:` line so both
-        # the ownership and the label read the same array --- sorting only the
-        # first would be a third thing, and not the one the name claims.
-        # `check_mutation_types.py` found it.
-        "  if (tagged) {\n    return within(text, fragments, ownership(text, tagged)).map((parts, at) => ({\n      tag: tagged[at]?.tag ?? null,",
-        "  if (tagged) {\n    const ordered = [...tagged].sort((a, b) => a.start - b.start);\n    return within(text, fragments, ownership(text, ordered)).map((parts, at) => ({\n      tag: ordered[at]?.tag ?? null,",
+        "  const tagged = usableRuns(text);",
+        "  const tagged = usableRuns(text)?.slice().sort((a, b) => a.start - b.start);",
         "follows the tags even where they disagree with the geometry entirely",
     ),
     Mutation(
@@ -761,8 +754,8 @@ ROWS += [
     Mutation(
         "a11y: lose the run's type on the way to the consumer",
         "src/lib/reading.ts",
-        "      tag: tagged[at]?.tag ?? null,",
-        "      tag: null,",
+        "blocks.push({ tag: heading ?? run.tag, lines: linesOf(text, group, axes) });",
+        "blocks.push({ tag: null, lines: linesOf(text, group, axes) });",
         "carries each tagged run's type",
     ),
     Mutation(

@@ -365,7 +365,7 @@ export class AccessibleText {
     // producer emitted it in. `linesOf` groups by index adjacency, so on such a
     // page it reads one line from each column in turn --- which is what it did.
     const here = this.cropLinks(page, linksOnPage(this.links, page));
-    for (const block of readingBlocks(content)) {
+    for (const block of readingBlocks(content, true)) {
       for (const element of this.elementsFor(content, block, here)) {
         article.appendChild(element);
       }

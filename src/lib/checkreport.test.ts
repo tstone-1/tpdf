@@ -103,6 +103,22 @@ describe("the checks that depend on backend replies", () => {
     expect(clear.map(line => RESULT.exec(line)?.[1])).toEqual([reply === "cleared" ? "OK" : "FAIL"]);
   });
 
+  it.each([
+    { indices: [], expected: ["FAIL", "SKIP"] },
+    { indices: [0, 0], expected: ["FAIL", "SKIP"] },
+    { indices: [0, 1], expected: ["OK", "OK"] },
+  ])("checks manifest page coverage before comparing the columns ($indices)", async ({ indices, expected }) => {
+    const { readingChecks } = await import("./viewercheck/reading");
+    const pages = indices.map((page, index) => ({ page, name: index ? "interleaved" : "natural", lines: ["A"] }));
+    core.invoke.mockImplementation(async command => {
+      if (command === "reading_manifest") return JSON.stringify({ pages });
+      if (command === "page_text") return { codes: [65], boxes: [0, 0, 8, 10], width_pt: 100, height_pt: 100, quarter_turns: 0, extract_ms: 0 };
+    });
+    await readingChecks({ ...doc, page_count: 2 });
+    await drain();
+    expect(results().map(line => RESULT.exec(line)?.[1])).toEqual(expected);
+  });
+
   it.each([["absent", "SKIP"], ["rejected", "FAIL"], ["malformed", "FAIL"]])(
     "records a %s geometry manifest", async (reply, expected) => {
       const { geometryChecks } = await import("./viewercheck/geometry");
