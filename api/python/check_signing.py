@@ -106,6 +106,21 @@ def check_long_term(pdf: Tpdf, source: Path, directory: Path, identity: str,
     return checks
 
 
+def checked_approval(pdf: Tpdf, path: Path, original: bytes, identity: str) -> dict:
+    if not path.read_bytes().startswith(original):
+        raise RuntimeError(f'{path.name}: original revision was not preserved')
+    signatures = pdf.verify(path)['files'][0]['signatures']
+    if len(signatures) != 1:
+        raise RuntimeError(f'{path.name}: expected one approval')
+    signature = signatures[0]
+    if (signature.get('document_timestamp') or signature['integrity']['verdict'] != 'intact'
+            or not signature['covers_whole_file'] or signature['appended_bytes'] != 0):
+        raise RuntimeError(f'{path.name}: approval does not cover the complete intact revision')
+    if signature.get('signer_sha256') != identity:
+        raise RuntimeError(f'{path.name}: a different certificate signed the file')
+    return signature
+
+
 def check_signing(pdf: Tpdf, directory: Path, identity: str, *,
                   expect_untrusted: bool = False, timestamp: str | None = None,
                   long_term: bool = False) -> dict:
@@ -126,6 +141,13 @@ def check_signing(pdf: Tpdf, directory: Path, identity: str, *,
     source = directory / '-input.pdf'
     fixture(source)
     original = source.read_bytes()
+    def reopen_approval(path: Path) -> dict:
+        approval = checked_approval(pdf, path, original, selected)
+        message = f'{path.name}: selected approval covers the intact file and preserves the original revision'
+        checks.append(message)
+        print('[OK] ' + message, flush=True)
+        return approval
+
     invisible = directory / 'invisible.pdf'
     visible = directory / 'visible.pdf'
     for path, options in [
@@ -136,16 +158,11 @@ def check_signing(pdf: Tpdf, directory: Path, identity: str, *,
     ]:
         report = pdf.sign(source, path, identity=selected, **options)
         require(report['visible'] == bool(options), f'{path.name}: requested visibility is reported')
-        require(path.read_bytes().startswith(original), f'{path.name}: original revision is preserved')
-        verified = pdf.verify(path)
-        signatures = verified['files'][0]['signatures']
-        require(len(signatures) == 1 and signatures[0]['integrity']['verdict'] == 'intact'
-                and signatures[0]['covers_whole_file'], f'{path.name}: readback is intact and covers the file')
-        require(signatures[0].get('signer_sha256') == selected, f'{path.name}: selected certificate signed the reopened file')
+        approval = reopen_approval(path)
         strict = pdf.run('verify', '--strict', '--', path, check=False)
         if expect_untrusted:
             require(strict.exit_code == 1 and not strict.report['strict_passed']
-                    and signatures[0]['trust']['standing'] == 'untrusted',
+                    and approval['trust']['standing'] == 'untrusted',
                     f'{path.name}: self-signed identity remains untrusted')
         else:
             require(strict.exit_code == 0 and strict.report['strict_passed'],
@@ -178,8 +195,7 @@ def check_signing(pdf: Tpdf, directory: Path, identity: str, *,
     if timestamp is not None:
         stamped = directory / 'timestamped.pdf'
         pdf.sign(source, stamped, identity=selected, timestamp=timestamp)
-        signature = pdf.verify(stamped)['files'][0]['signatures'][0]
-        require(signature.get('signer_sha256') == selected, 'timestamped file uses the selected certificate')
+        signature = reopen_approval(stamped)
         stamp = signature['timestamp']
         require(stamp is not None and stamp['attested'] and stamp['integrity']['verdict'] == 'intact',
                 'requested timestamp is present and intact')

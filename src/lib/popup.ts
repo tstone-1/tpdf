@@ -9,8 +9,7 @@
  *
  * The two callers are `commentpopup.ts`, which shows what a stranger wrote in
  * the file, and `markpopup.ts`, which edits what the reader wrote themselves.
- * They share nothing else: one is a document with an editor a reader has to
- * arm, the other is a form that is a form from the moment it opens.
+ * Both wait for the document model to accept edits before replacing the editor.
  */
 
 /** Width of a popup, in CSS pixels. */
@@ -61,22 +60,66 @@ export function place(host: HTMLElement, element: HTMLElement, at: Anchor): void
   element.style.top = `${Math.round(top)}px`;
 }
 
-/** A file operation waits for the journal before closing the editor. A string
- * is the refusal to show. The attempted words stay in the editor for a retry. */
-export async function submitPopup(
-  field: { readOnly: boolean },
-  write: () => unknown,
-  refused: () => void,
-): Promise<void> {
-  const readOnly = field.readOnly;
-  field.readOnly = true;
-  try {
-    const result = await write();
-    if (typeof result === "string") throw new Error(result);
-  } catch (error) {
-    refused();
-    throw error;
-  } finally {
-    field.readOnly = readOnly;
+/** One in-flight journal edit per popup. Only the latest navigation request
+ * may replace its editor, and only once the journal accepts the edit. */
+export class PopupSubmission {
+  pending: Promise<void> | undefined;
+  private request = 0;
+  private rejected = false;
+
+  // Scrolling can request a close on every frame. Wait for an explicit retry
+  // after a refusal and never replace navigation already waiting on a write.
+  get canCloseOnScroll(): boolean { return !this.pending && !this.rejected; }
+
+  cancelNavigation(): void {
+    this.request++;
+    this.rejected = false;
+  }
+
+  after(save: () => void | Promise<void>, accepted: () => void, refused: () => void): void {
+    const request = ++this.request;
+    let pending: void | Promise<void>;
+    try {
+      pending = save();
+    } catch {
+      refused();
+      return;
+    }
+    if (pending) {
+      void pending.then(
+        () => { if (request === this.request) accepted(); },
+        () => { if (request === this.request) refused(); },
+      );
+    } else accepted();
+  }
+
+  write(field: { readOnly: boolean }, write: () => unknown, refused: () => void): void | Promise<void> {
+    this.rejected = false;
+    const readOnly = field.readOnly;
+    field.readOnly = true;
+    function check(answer: unknown): void {
+      if (typeof answer === "string") throw new Error(answer);
+    }
+    try {
+      const answer = write();
+      if (answer && typeof (answer as PromiseLike<unknown>).then === "function") {
+        this.pending = Promise.resolve(answer).then(check).catch(error => {
+          this.rejected = true;
+          refused();
+          throw error;
+        }).finally(() => {
+          field.readOnly = readOnly;
+          this.pending = undefined;
+        });
+        return this.pending;
+      }
+      check(answer);
+    } catch (error) {
+      this.rejected = true;
+      refused();
+      throw error;
+    } finally {
+      if (!this.pending) field.readOnly = readOnly;
+    }
   }
 }

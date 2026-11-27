@@ -1101,6 +1101,38 @@ fn a_self_issued_signer_publishes_nothing_and_says_so() {
 }
 
 #[test]
+fn one_list_verified_for_repeated_subjects_is_counted_and_stored_once() {
+    let pki = Pki::start(Plan {
+        signer_ocsp: None,
+        signer_crl: Some(Serve::Good),
+        ..good()
+    });
+    let (subjects, certificates) = planned_here(&sealed(&pki).cms).unwrap();
+    let signer = subjects
+        .into_iter()
+        .find(|s| matches!(s.whose, Whose::Signer))
+        .unwrap();
+    let mut list = None;
+    let mut requests = 0;
+    let result = gather(
+        &[signer.clone(), signer],
+        certificates,
+        now(),
+        TOTAL,
+        &mut |url, body, limits| {
+            requests += 1;
+            if list.is_none() {
+                list = Some(quick(url, body, limits)?);
+            }
+            Ok(list.as_ref().unwrap().clone())
+        },
+    )
+    .expect("shared list checked for both subjects");
+    assert_eq!(requests, 2);
+    assert_eq!(result.lists, vec![list.unwrap()]);
+}
+
+#[test]
 fn the_data_is_bounded_in_size_before_it_is_read() {
     // A list the body limit admits, which with the certificates is more
     // than tpdf adds.
@@ -1526,7 +1558,13 @@ fn a_certificate_injected_into_the_token_is_never_asked_about() {
     assert!(place(&twin) < place(&issuing.certificate), "{carried:?}");
     let authority = Certificate::from_der(&tampered.certificate).expect("the authority");
     let twin_parsed = Certificate::from_der(&twin).expect("the twin");
-    assert!(crate::revocation::issuer_of(&authority, &[&twin_parsed]).is_some());
+    assert!(crate::revocation::issuer_with_budget(
+        &authority,
+        &[&twin_parsed],
+        &mut u64::MAX.clone()
+    )
+    .unwrap()
+    .is_some());
     let chain = vouched(&signed.cms, at, &anchored).expect("vouched for");
     assert_eq!(
         chain,

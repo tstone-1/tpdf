@@ -79,7 +79,7 @@ const DOCUMENT_TIMESTAMP: &str = "ETSI.RFC3161";
 /// which chain, given the CMS that names it as its signer and the present:
 /// [`super::vouched_for`] over the system's store in the application and the
 /// tool, the same rule over a test's own roots in a test.
-pub type VouchFor<'a> = dyn Fn(&[u8], Purpose, u64) -> Vouched + 'a;
+pub type VouchFor<'a> = dyn Fn(&[u8], &[Vec<u8>], Purpose, u64) -> Vouched + 'a;
 
 /// Why no long-term validation data was added. Nothing is written for any
 /// of them.
@@ -176,8 +176,7 @@ impl Refusal {
                 )
             }
             Refusal::NoArchiveField => said!(
-                "this document already has {limit} signature fields, so tpdf could not read \
-                 back an added archive timestamp",
+                "adding the archive timestamp would exceed the limit of {limit} signature fields",
                 limit = crate::docinfo::MAX_SIGNATURES
             ),
             Refusal::Certified(Some(field)) => said!(
@@ -361,6 +360,15 @@ fn room(
     }
 }
 
+/// The archive timestamp adds one signature field after the approval.
+pub(crate) fn archive_room(existing: usize, adds_approval: bool) -> Result<(), Refusal> {
+    if existing < crate::docinfo::MAX_SIGNATURES - usize::from(adds_approval) {
+        Ok(())
+    } else {
+        Err(Refusal::NoArchiveField)
+    }
+}
+
 /// The signed fields of `survey` beside their values, once the document is
 /// one this can be done for.
 ///
@@ -384,9 +392,7 @@ fn held(survey: &crate::sign_dss::Survey) -> Result<Vec<(&Signature, &[u8])>, Re
     if signed.is_empty() {
         return Err(Refusal::Unsigned);
     }
-    if survey.signatures.len() >= crate::docinfo::MAX_SIGNATURES {
-        return Err(Refusal::NoArchiveField);
-    }
+    archive_room(survey.signatures.len(), false)?;
     // The catalog's own certification, which need not be one of the fields:
     // the level a further signature field is refused by when the document
     // timestamp's revision is built, asked here before anybody is.
@@ -432,6 +438,8 @@ fn held(survey: &crate::sign_dss::Survey) -> Result<Vec<(&Signature, &[u8])>, Re
         .collect())
 }
 
+type VouchValue<'a> = dyn Fn(&[u8], Purpose, u64) -> Vouched + 'a;
+
 /// The chain `vouch` vouches for the signer of `blob` by, for `purpose`, or
 /// who it is and why not.
 fn vouched_chain(
@@ -439,7 +447,7 @@ fn vouched_chain(
     purpose: Purpose,
     whose: &str,
     now: u64,
-    vouch: &VouchFor<'_>,
+    vouch: &VouchValue<'_>,
 ) -> Result<Vec<Vec<u8>>, (String, String)> {
     let Vouched { trust, chain } = vouch(blob, purpose, now);
     // Trusted, and nothing less, as [`super::vouched`] says of an authority.
@@ -469,7 +477,7 @@ fn plan_one(
     value: &[u8],
     store: &[(Vec<u8>, Certificate)],
     now: u64,
-    vouch: &VouchFor<'_>,
+    vouch: &VouchValue<'_>,
 ) -> Result<(Vec<Subject>, Vec<Vec<u8>>), Refusal> {
     let about = |why: super::Refusal| Refusal::About {
         field: Some(field.to_string()),
@@ -618,6 +626,7 @@ fn plan_within(
     vouch: &VouchFor<'_>,
     most: usize,
 ) -> Result<(Vec<FieldSubject>, Vec<Vec<u8>>), Refusal> {
+    let vouch_value = |blob: &[u8], purpose, now| vouch(blob, store, purpose, now);
     // The `/DSS`'s certificates, parsed once for every signature's walk.
     let store: Vec<(Vec<u8>, Certificate)> = store
         .iter()
@@ -626,8 +635,14 @@ fn plan_within(
     let mut subjects: Vec<FieldSubject> = Vec::new();
     let mut carried: Vec<Vec<u8>> = Vec::new();
     for (signature, value) in held {
-        let (asked, carry) =
-            plan_one(&signature.field, &signature.kind, value, &store, now, vouch)?;
+        let (asked, carry) = plan_one(
+            &signature.field,
+            &signature.kind,
+            value,
+            &store,
+            now,
+            &vouch_value,
+        )?;
         for subject in asked {
             if let Some(existing) = subjects
                 .iter_mut()
@@ -900,7 +915,13 @@ pub fn add(
     // sealed intact and attest nothing to the reader of the file.
     let bytes = archived(with_data, worker, &mut |pieces| {
         let token = archive(pieces)?;
-        match vouched_chain(&token, Purpose::Timestamping, "the authority's", now, vouch) {
+        match vouched_chain(
+            &token,
+            Purpose::Timestamping,
+            "the authority's",
+            now,
+            &|blob, purpose, time| vouch(blob, &survey.store, purpose, time),
+        ) {
             Ok(_) => Ok(token),
             Err((name, why)) => Err(super::untrusted_archive(&name, &why)),
         }

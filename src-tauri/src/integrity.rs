@@ -473,7 +473,7 @@ impl Signer {
         if info.content_type.to_string() != "1.2.840.113549.1.7.2" {
             return None;
         }
-        let signed: SignedData = info.content.decode_as().ok()?;
+        let signed: SignedData = crate::certificate::read_signed(&info).ok()?;
 
         let infos = signed.signer_infos.0.as_slice();
         let [info] = infos else {

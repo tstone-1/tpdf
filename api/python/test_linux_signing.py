@@ -12,6 +12,7 @@ from test_api import BINARY, fixture
 
 
 def sign_from_terminal(executable):
+    from concurrent.futures import ThreadPoolExecutor
     import fcntl
     import hashlib
     import ssl
@@ -29,13 +30,36 @@ def sign_from_terminal(executable):
     signer.sign('source.pdf', 'signed.pdf', identity=identity)
     signatures = signer.verify('signed.pdf')['files'][0]['signatures']
     assert len(signatures) == 1 and signatures[0]['integrity']['verdict'] == 'intact'
-    try:
-        Tpdf(executable, timeout=4).sign('source.pdf', 'cancelled.pdf', identity=identity)
-    except CommandTimeout:
-        assert termios.tcgetattr(0) == initial and not Path('cancelled.pdf').exists()
-        assert not Path(f'/proc/self/task/{os.getpid()}/children').read_text().strip()
-    else:
-        raise AssertionError('expected a timeout waiting for the password')
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(Tpdf(executable, timeout=4).sign, 'source.pdf', 'cancelled.pdf', identity=identity)
+        deadline = time.monotonic() + 3
+        while termios.tcgetattr(0)[3] & termios.ECHO and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not termios.tcgetattr(0)[3] & termios.ECHO, 'first prompt never took the terminal'
+        try:
+            signer.sign('source.pdf', 'overlap.pdf', identity=identity)
+        except RuntimeError as error:
+            assert 'using the terminal' in str(error)
+            assert not termios.tcgetattr(0)[3] & termios.ECHO
+        else:
+            raise AssertionError('two signers borrowed the same terminal')
+        competing = subprocess.run(
+            [sys.executable, '-c',
+             "from tpdf_client import Tpdf; import sys; "
+             "Tpdf(sys.argv[1]).sign('source.pdf', 'overlap.pdf', identity=sys.argv[2])",
+             executable, identity],
+            capture_output=True, timeout=2,
+        )
+        assert competing.returncode != 0 and b'using the terminal' in competing.stderr
+        try:
+            first.result(timeout=6)
+        except CommandTimeout:
+            assert termios.tcgetattr(0) == initial and not Path('cancelled.pdf').exists()
+            assert not Path('overlap.pdf').exists()
+            assert not Path(f'/proc/self/task/{os.getpid()}/children').read_text().strip()
+        else:
+            raise AssertionError('expected a timeout waiting for the password')
 
 
 @unittest.skipUnless(sys.platform == 'linux' and shutil.which('openssl'), 'Linux and OpenSSL required')

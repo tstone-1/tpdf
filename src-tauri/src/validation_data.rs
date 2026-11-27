@@ -36,8 +36,8 @@ pub(crate) fn asking_the_world<R>(
     authority: &url::Url,
     then: impl FnOnce(Asking<'_>) -> R,
 ) -> R {
-    let vouch = |blob: &[u8], purpose: crate::trust::Purpose, now: u64| {
-        crate::longterm::vouched_for(blob, purpose, now, anchors)
+    let vouch = |blob: &[u8], extra: &[Vec<u8>], purpose: crate::trust::Purpose, now: u64| {
+        crate::longterm::vouched_for_with(blob, extra, purpose, now, anchors)
     };
     let mut fetch = crate::longterm::fetch_blocking;
     let mut archive = |pieces: &[&[u8]]| {
@@ -296,8 +296,14 @@ mod tests {
         write: &dyn Fn(&[u8]) -> Result<(), String>,
     ) -> Result<Finished, Stopped> {
         let roots = [pki.root.certificate.clone(), pki.tsa.root.clone()];
-        let vouch = |blob: &[u8], purpose: crate::trust::Purpose, now: u64| {
-            crate::longterm::vouched_for(blob, purpose, now, crate::trust::Anchors::Only(&roots))
+        let vouch = |blob: &[u8], extra: &[Vec<u8>], purpose: crate::trust::Purpose, now: u64| {
+            crate::longterm::vouched_for_with(
+                blob,
+                extra,
+                purpose,
+                now,
+                crate::trust::Anchors::Only(&roots),
+            )
         };
         let mut fetch = crate::longterm::fetch_blocking;
         let mut archive = |pieces: &[&[u8]]| {

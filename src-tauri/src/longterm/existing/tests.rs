@@ -63,8 +63,14 @@ fn added_at(
     worker: &dyn crate::save::Verifier,
     at: u64,
 ) -> Result<Added, Refusal> {
-    let vouch = |blob: &[u8], purpose: Purpose, now: u64| {
-        super::super::vouched_for(blob, purpose, now, crate::trust::Anchors::Only(roots))
+    let vouch = |blob: &[u8], extra: &[Vec<u8>], purpose: Purpose, now: u64| {
+        super::super::vouched_for_with(
+            blob,
+            extra,
+            purpose,
+            now,
+            crate::trust::Anchors::Only(roots),
+        )
     };
     add(original, at, worker, &vouch, &mut quick, &mut |pieces| {
         Ok(mint(
@@ -531,6 +537,47 @@ fn an_archive_timestamp_from_an_authority_nobody_trusts_is_refused() {
     assert!(added(&original, &pki).is_ok());
 }
 
+#[test]
+fn the_last_two_fields_can_hold_the_approval_and_its_archive_timestamp() {
+    let limit = crate::docinfo::MAX_SIGNATURES;
+    assert_eq!(archive_room(limit - 2, true), Ok(()));
+    assert_eq!(archive_room(limit - 1, true), Err(Refusal::NoArchiveField));
+    assert_eq!(archive_room(limit - 1, false), Ok(()));
+    assert_eq!(archive_room(limit, false), Err(Refusal::NoArchiveField));
+}
+
+#[test]
+fn a_dss_intermediate_completes_the_chain_for_a_leaf_only_signature() {
+    let pki = Pki::start(Plan {
+        intermediate: true,
+        intermediate_ocsp: Some(Serve::Good),
+        ..good()
+    });
+    let original = signed_again(
+        plain_pdf(),
+        &pki.signer.certificate,
+        &[],
+        &Soft::p256(pki.signer.seed),
+    );
+    let survey = crate::sign_dss::survey(&original, 1);
+    let held = held(&survey).unwrap();
+    let trusted = roots(&pki);
+    let vouch = |blob: &[u8], extra: &[Vec<u8>], purpose, at| {
+        super::super::vouched_for_with(
+            blob,
+            extra,
+            purpose,
+            at,
+            crate::trust::Anchors::Only(&trusted),
+        )
+    };
+    assert!(plan(&held, &[], now(), &vouch).is_err());
+    let intermediate = &pki.intermediate.as_ref().unwrap().certificate;
+    let (_, chain) = plan(&held, std::slice::from_ref(intermediate), now(), &vouch)
+        .expect("DSS completes the trusted chain");
+    assert!(chain.contains(intermediate));
+}
+
 /// One run asks about a bounded number of certificates, however many
 /// signatures name them.
 #[test]
@@ -540,8 +587,14 @@ fn more_certificates_than_one_run_asks_about_is_a_refusal() {
     let survey = crate::sign_dss::survey(&original, 1);
     let held = held(&survey).expect("held");
     let trusted = roots(&pki);
-    let vouch = |blob: &[u8], purpose: Purpose, now: u64| {
-        super::super::vouched_for(blob, purpose, now, crate::trust::Anchors::Only(&trusted))
+    let vouch = |blob: &[u8], extra: &[Vec<u8>], purpose: Purpose, now: u64| {
+        super::super::vouched_for_with(
+            blob,
+            extra,
+            purpose,
+            now,
+            crate::trust::Anchors::Only(&trusted),
+        )
     };
     // The signer's certificate and the authority's: two to ask about.
     let (subjects, _) = plan_within(&held, &survey.store, now(), &vouch, 2).expect("planned");

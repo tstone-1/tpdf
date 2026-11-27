@@ -69,7 +69,7 @@ describe("CommentPopup", () => {
   let replies: { object: [number, number]; body: string }[] = [];
   let discards: [number, number][] = [];
 
-  function popup(refuse?: (body: string) => string | undefined): CommentPopup {
+  function popup(refuse?: (body: string) => unknown): CommentPopup {
     // A host with a size, since the placement clamps against it.
     dom.root.clientWidth = 900;
     dom.root.clientHeight = 700;
@@ -203,7 +203,7 @@ describe("CommentPopup", () => {
       dispatch: (type: string, event: object) => void;
     };
     expect(button.getAttribute("aria-label")).toBe("Close comment");
-    button.dispatch("pointerdown", {});
+    button.dispatch("click", {});
     expect(closed).toBe(1);
   });
 
@@ -402,6 +402,28 @@ describe("CommentPopup", () => {
     // The assertion that keeps the two apart, and it is the whole risk in this
     // feature: a reply must never arrive as an edit to the comment it answers.
     expect(rewrites).toEqual([]);
+  });
+
+  it.each(["edit", "reply"] as const)("retains a refused %s on close and switch", async mode => {
+    let refuse!: (reason: string) => void;
+    let answer: unknown = new Promise<string>(resolve => { refuse = resolve; });
+    const note = popup(() => answer);
+    const other = comment({id: 2, object: [13, 0]});
+    note.show(comment({id: 1, object: [12, 0]}), [], anchor(), false);
+    note[mode]();
+    const field = editorOf(note)!;
+    field.value = "draft";
+    note.hide();
+    note.show(other, [], anchor(), false);
+    expect(note.openId).toBe(1);
+    const saved = note.settleDraft();
+    refuse("refused");
+    await expect(saved).rejects.toThrow("refused");
+    expect(editorOf(note)).toBe(field);
+    expect(field.value).toBe("draft");
+    answer = undefined;
+    note.show(other, [], anchor(), false);
+    expect(note.openId).toBe(2);
   });
 
   it.each(["edit", "reply"] as const)("keeps the refused %s available to correct and retry", async (mode) => {

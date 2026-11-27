@@ -3266,7 +3266,9 @@ impl Doc {
         let known = self
             .sources
             .iter()
-            .find(|(_, held)| **held == source)
+            .find(|(_, held)| {
+                held.path == source.path && held.fingerprint.digest == source.fingerprint.digest
+            })
             .map(|(id, _)| *id);
         if let Some(id) = known {
             let edited = self.now.edited_pages_of(id);

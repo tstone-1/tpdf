@@ -117,6 +117,7 @@ pub(crate) fn scan_written_file(
 /// the rest to [`redact_copy_asked`] --- the window's write, verification and
 /// verdict, not a restatement of them.
 pub struct Asked {
+    widgets: RasterWidgets,
     /// The reader's plan with the redaction ordinals in it.
     pub plan: edits::Plan,
     /// The colour of the boxes drawn over what went. Black until a caller
@@ -261,7 +262,7 @@ pub async fn ask_redactions(
     let mut needles_short: Vec<String> = Vec::new();
     let (reply, rx) = reply_channel();
     service.form(doc, reply);
-    match await_reply("form", rx).await {
+    let form = match await_reply("form", rx).await {
         Ok(form) => {
             for redaction in &planned {
                 needles.extend(redact::covered_answers(
@@ -271,6 +272,7 @@ pub async fn ask_redactions(
                     &plan.forms,
                 ));
             }
+            Some(form)
         }
         Err(why) => {
             let unread = said!(
@@ -279,14 +281,16 @@ pub async fn ask_redactions(
             );
             needles_short.push(unread.clone());
             concerns.push((ReasonKind::Unchecked, unread));
+            None
         }
-    }
+    };
     plan.redactions = planned;
     // **After the plan, because the plan is what says where each page lands.**
     // Everything above addresses the file the reader opened; the gate reopens
     // what gets written and renders a page of it by number. See
     // [`redact::gate_at_output_slots`], which also records that a deletion was
     // already enough to part the two.
+    let widgets = RasterWidgets::collect(form, &plan, &gate);
     let gate = redact::gate_at_output_slots(&plan.pages, gate);
     // The same slots, kept: this is the reader's answer to "which pages did I
     // mark", in the space the verification answers in.
@@ -359,6 +363,7 @@ pub async fn ask_redactions(
         .filter(|page| matches!(page.source, PageSource::Imported { .. }))
         .count();
     Ok(Asked {
+        widgets,
         plan,
         fill: crate::redaction_fill::Fill::default(),
         needles,
@@ -701,13 +706,202 @@ pub(crate) fn text_elsewhere(
     why
 }
 
+/// A partly clipped widget may still show the sensitive text. Only an entirely
+/// cropped-away rectangle establishes that its appearance cannot be visible.
+fn visible_widget(rect: [f32; 4], crop: crate::render::CropGeometry) -> Result<bool, String> {
+    let [left, top, right, bottom] = rect;
+    if !rect.iter().all(|v| v.is_finite())
+        || left >= right
+        || top >= bottom
+        || ![crop.left, crop.top, crop.width_pt, crop.height_pt]
+            .iter()
+            .all(|v| v.is_finite())
+        || crop.width_pt <= 0.0
+        || crop.height_pt <= 0.0
+    {
+        return Err(said!(
+            "a form widget could not be located on the saved page"
+        ));
+    }
+    if right <= crop.left
+        || bottom <= crop.top
+        || left >= crop.left + crop.width_pt
+        || top >= crop.top + crop.height_pt
+    {
+        return Ok(false);
+    }
+    if left < crop.left
+        || top < crop.top
+        || right > crop.left + crop.width_pt
+        || bottom > crop.top + crop.height_pt
+    {
+        return Err(said!("a form answer is partly clipped on the saved page"));
+    }
+    Ok(true)
+}
+
+/// Form appearances in the same display coordinate system as the marks.
+#[derive(Default)]
+struct RasterWidgets {
+    pages: std::collections::HashMap<u32, Vec<RasterWidget>>,
+    covered: std::collections::BTreeSet<String>,
+}
+
+struct RasterWidget {
+    rect: [f32; 4],
+    answer: String,
+    partly_masked: bool,
+}
+
+impl RasterWidgets {
+    fn collect(
+        form: Option<crate::forms::Form>,
+        plan: &edits::Plan,
+        marked: &[ocr_gate::GatePage],
+    ) -> Self {
+        let regions: std::collections::HashMap<_, _> = marked
+            .iter()
+            .map(|page| (page.page, &page.regions))
+            .collect();
+        let mut widgets = Self::default();
+        let mut record = |page, rect, answer: &str| {
+            let answer = answer.trim();
+            if answer.is_empty() {
+                return;
+            }
+            let areas = regions
+                .get(&page)
+                .map_or(&[][..], |regions| regions.as_slice());
+            let overlaps = areas
+                .iter()
+                .any(|&area| crate::objects::overlaps(rect, area));
+            if overlaps {
+                widgets.covered.insert(answer.to_owned());
+                if areas.iter().any(|area| {
+                    area[0] <= rect[0]
+                        && area[1] <= rect[1]
+                        && area[2] >= rect[2]
+                        && area[3] >= rect[3]
+                }) {
+                    return;
+                }
+            }
+            widgets.pages.entry(page).or_default().push(RasterWidget {
+                rect,
+                answer: answer.to_owned(),
+                partly_masked: overlaps,
+            });
+        };
+        let edits: std::collections::HashMap<_, _> = plan
+            .field_edits
+            .iter()
+            .map(|edit| (edit.widget, edit))
+            .collect();
+        let values: std::collections::HashMap<_, _> = plan
+            .forms
+            .iter()
+            .map(|change| (change.object, &change.value))
+            .collect();
+        for widget in form.into_iter().flat_map(|form| form.widgets) {
+            let edit = edits.get(&widget.widget);
+            if edit.is_some_and(|edit| edit.remove) {
+                continue;
+            }
+            let rect = edit
+                .and_then(|edit| edit.rect)
+                .unwrap_or(widget.display_rect);
+            let value = values.get(&widget.object).copied().unwrap_or(&widget.value);
+            if let crate::forms::Value::Text(answer) = value {
+                record(widget.page, rect, answer);
+            }
+        }
+        for field in &plan.new_fields {
+            if let Some(value) = &field.default_value {
+                if matches!(
+                    field.kind,
+                    crate::formfields::Kind::Text | crate::formfields::Kind::Multiline
+                ) {
+                    let [left, top, width, height] = field.rect;
+                    record(
+                        field.page,
+                        [left, top, left + width, top + height].map(|v| v as f32),
+                        value,
+                    );
+                }
+            }
+        }
+        widgets
+    }
+
+    /// Check every surviving appearance, including other widgets on a marked page.
+    fn elsewhere(
+        &self,
+        plan: &edits::Plan,
+        needles: &[String],
+        service: &RenderService,
+        doc: u32,
+    ) -> Vec<(ReasonKind, String)> {
+        let mut why = Vec::new();
+        for (slot, page) in plan.pages.iter().enumerate() {
+            let PageSource::Baseline(source) = page.source else {
+                continue;
+            };
+            let Some(widgets) = self.pages.get(&source) else {
+                continue;
+            };
+            let mut crop = None;
+            let number = slot + 1;
+            for widget in widgets {
+                let needle = if self.covered.contains(&widget.answer) {
+                    widget.answer.as_str()
+                } else if let Some(needle) =
+                    needles.iter().find(|n| widget.answer.contains(n.as_str()))
+                {
+                    needle
+                } else {
+                    continue;
+                };
+                let geometry = crop.get_or_insert_with(|| {
+                    ocr_gate::wait(|reply| {
+                        service.geometry(doc, source, page.crop.map(|r| r.map(|v| v as f32)), reply)
+                    })
+                });
+                match geometry
+                    .as_ref()
+                    .map_err(Clone::clone)
+                    .and_then(|&bounds| visible_widget(widget.rect, bounds))
+                {
+                    Ok(false) => continue,
+                    Ok(true) if !widget.partly_masked => why.push((
+                        ReasonKind::Found,
+                        said!("a form field on page {number} still displays {needle}"),
+                    )),
+                    Ok(true) => why.push((
+                        ReasonKind::Unchecked,
+                        said!(
+                            "a form field on page {number} is only partly covered by the redaction"
+                        ),
+                    )),
+                    Err(detail) => why.push((
+                        ReasonKind::Unchecked,
+                        said!("a form field on page {number} could not be checked: {detail}"),
+                    )),
+                }
+                break;
+            }
+        }
+        why
+    }
+}
+
 /// [`text_elsewhere`] against the opened document `doc`, one search a page and
 /// a word, on a blocking thread.
-pub(crate) async fn text_elsewhere_in(
+async fn text_elsewhere_in(
     service: RenderService,
     doc: u32,
     plan: edits::Plan,
     needles: Vec<String>,
+    widgets: RasterWidgets,
 ) -> Vec<(ReasonKind, String)> {
     tauri::async_runtime::spawn_blocking(move || {
         let options = crate::search::Options {
@@ -716,33 +910,39 @@ pub(crate) async fn text_elsewhere_in(
             regex: false,
             bounds: None,
         };
+        let mut why = widgets.elsewhere(&plan, &needles, &service, doc);
         let mut measured: Option<(u32, crate::text::PageText)> = None;
-        text_elsewhere(&unmarked_slots(&plan), &needles, |slot, page, needle| {
-            let found = ocr_gate::wait(|reply| {
-                service.search(doc, vec![page], needle.to_string(), options, None, reply)
-            })?;
-            if let Some(problem) = found.problem {
-                return Err(problem);
-            }
-            if found.matches.is_empty() {
-                return Ok(false);
-            }
-            // Search indices are independent of the crop. Its visible bounds and
-            // glyph boxes come from the same extraction, including a file CropBox.
-            // A pending turn rotates both together and leaves visibility unchanged.
-            if let Some((at, text)) = &measured {
-                if *at == slot {
-                    return visible_occurrence(text, &found.matches);
+        why.extend(text_elsewhere(
+            &unmarked_slots(&plan),
+            &needles,
+            |slot, page, needle| {
+                let found = ocr_gate::wait(|reply| {
+                    service.search(doc, vec![page], needle.to_string(), options, None, reply)
+                })?;
+                if let Some(problem) = found.problem {
+                    return Err(problem);
                 }
-            }
-            let crop = plan.pages[slot as usize]
-                .crop
-                .map(|rect| rect.map(|v| v as f32));
-            let text = ocr_gate::wait(|reply| service.text(doc, page, crop, reply))?;
-            let visible = visible_occurrence(&text, &found.matches);
-            measured = Some((slot, text));
-            visible
-        })
+                if found.matches.is_empty() {
+                    return Ok(false);
+                }
+                // Search indices are independent of the crop. Its visible bounds and
+                // glyph boxes come from the same extraction, including a file CropBox.
+                // A pending turn rotates both together and leaves visibility unchanged.
+                if let Some((at, text)) = &measured {
+                    if *at == slot {
+                        return visible_occurrence(text, &found.matches);
+                    }
+                }
+                let crop = plan.pages[slot as usize]
+                    .crop
+                    .map(|rect| rect.map(|v| v as f32));
+                let text = ocr_gate::wait(|reply| service.text(doc, page, crop, reply))?;
+                let visible = visible_occurrence(&text, &found.matches);
+                measured = Some((slot, text));
+                visible
+            },
+        ));
+        why
     })
     .await
     .unwrap_or_else(|e| {
@@ -952,6 +1152,61 @@ impl Stopped {
             Stopped::Refused(message) | Stopped::Failed { message, .. } => message,
         }
     }
+}
+
+/// Write and verify the image-only copy requested by the window, using the
+/// same document snapshot to check surviving appearances and page text.
+///
+/// # Errors
+/// The raster writer or its independent read-back refused the document.
+pub async fn redact_raster_copy_asked(
+    service: &RenderService,
+    library: std::path::PathBuf,
+    doc: u32,
+    mut asked: Asked,
+    source: String,
+    path: String,
+) -> Result<redact::Applied, String> {
+    let password = password_for(service, doc, "redact_raster_copy").await;
+    // Kept for the code reader, which reopens the written file: a copy of an
+    // encrypted document is written encrypted.
+    let key = password.clone();
+    let fill = asked.fill;
+    let writing = outside_at(library, service.backend());
+    let from = std::path::PathBuf::from(source);
+    let out = std::path::PathBuf::from(&path);
+    let plan = asked.plan.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        save::write_raster_copy(&from, &plan, &out, password.as_deref(), &*writing, fill)
+    })
+    .await
+    .map_err(|e| said!("The image-only copy did not run: {e}"))?
+    .map_err(|why| why.message)?;
+    let elsewhere = text_elsewhere_in(
+        service.clone(),
+        doc,
+        asked.plan.clone(),
+        asked.needles.clone(),
+        std::mem::take(&mut asked.widgets),
+    )
+    .await;
+    let judged = read_back(
+        service.clone(),
+        path,
+        key,
+        &asked,
+        Written::Pictures { elsewhere },
+    )
+    .await;
+    Ok(redact::Applied {
+        regions: asked.regions,
+        shows: 0,
+        changed: false,
+        verified: judged.why.is_empty(),
+        notes: judged.notes,
+        why: judged.why,
+        kinds: judged.kinds,
+    })
 }
 
 /// One more reader of a written, unfilled redaction: handed its path and key,

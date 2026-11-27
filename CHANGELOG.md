@@ -19,7 +19,13 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- Image-only redaction checks repeated form answers on surviving pages, preserves password protection on AES-128 and AES-256 files, and refuses pages beyond the supported physical size.
+- Signature Properties reads standard embedded OCSP responses and reports incomplete revocation evidence. Historical checks distinguish temporary certificate holds from permanent revocation.
+- Long-term signing uses intermediate certificates already in the document, counts shared revocation data once and reserves room for the archive timestamp. Duplicating an open form field reserves its pending name and radio value.
 - Comments and replies support bold, italic, underline, strikethrough, subscript and superscript. Formatting survives saving and reopening the PDF.
+- Copy mark and Duplicate preserve edits to an open comment. Refused drafts stay available for correction, and soft line breaks and formatting from indented PDF rich text survive editing.
+- Print and Add Text refuse a source that changed while opening. Page imports reuse identical files after a timestamp change and reject a source over the save limit before copying it.
+- Signing checks the destination before requesting a key, and concurrent Linux Python signings cannot share a PIN prompt.
 - On macOS the main window reopens at its saved position and size and remembers when it was maximized.
 - The View menu can turn whole pages or facing pairs with the scroll wheel at any zoom. Each document remembers the choice.
 - Removing an annotation now requires a completed button activation and works from the keyboard. Finish becomes available when a polygon or polyline has enough corners.

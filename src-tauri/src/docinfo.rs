@@ -1770,9 +1770,9 @@ fn read_signature(
             authority_chain = vouched;
         }
     }
-    limits.revocation_unread += own.unread;
     limits.revocation_dropped += own.dropped;
     let own = crate::revocation::Pool::new(&own);
+    limits.revocation_unread += own.unread;
     let pools = [&judging.dss, &own];
 
     // Whose certificates each chain is judged over: the signer's, as its
@@ -1959,9 +1959,10 @@ impl<'a> Judging<'a> {
         now: u64,
     ) -> Self {
         let material = read_dss(document);
-        limits.revocation_unread += material.unread;
         limits.revocation_dropped += material.dropped;
-        Self::from_material(material, anchors, now)
+        let judging = Self::from_material(material, anchors, now);
+        limits.revocation_unread += judging.dss.unread;
+        judging
     }
 
     fn from_material(
@@ -2117,7 +2118,7 @@ fn identified(blob: &[u8]) -> Option<(x509_cert::Certificate, Vec<x509_cert::Cer
     use der::Decode;
 
     let info = ContentInfo::from_der(blob).ok()?;
-    let signed: SignedData = info.content.decode_as().ok()?;
+    let signed: SignedData = crate::certificate::read_signed(&info).ok()?;
     let (subject, matched) = signer_certificate(&signed)?;
     if !matched {
         return None;
@@ -2163,7 +2164,7 @@ fn attested_moment(timestamp: &Timestamp, token: &[u8], at: u64) -> Option<u64> 
         return None;
     }
     let info = ContentInfo::from_der(token).ok()?;
-    let signed: SignedData = info.content.decode_as().ok()?;
+    let signed: SignedData = crate::certificate::read_signed(&info).ok()?;
     let (authority, matched) = signer_certificate(&signed)?;
     let validity = &authority.tbs_certificate.validity;
     let from = validity.not_before.to_unix_duration().as_secs();
@@ -2414,7 +2415,7 @@ fn read_timestamp_token(
     use der::{Decode, Encode};
 
     let info = ContentInfo::from_der(blob).ok()?;
-    let signed: SignedData = info.content.decode_as().ok()?;
+    let signed: SignedData = crate::certificate::read_signed(&info).ok()?;
     let signer = signed.signer_infos.0.as_slice().first()?;
     let attribute = signer
         .unsigned_attrs
@@ -2510,7 +2511,7 @@ pub fn parse_timestamp_token(token: &[u8]) -> Option<Timestamp> {
     use der::Decode;
 
     let info = ContentInfo::from_der(token).ok()?;
-    let signed: SignedData = info.content.decode_as().ok()?;
+    let signed: SignedData = crate::certificate::read_signed(&info).ok()?;
     // 1.2.840.113549.1.9.16.1.4, id-ct-TSTInfo. Checked rather than assumed:
     // a CMS carrying something else is not a timestamp, and reading its content
     // as a TSTInfo would produce a time out of whatever bytes happened to sit
@@ -2570,7 +2571,7 @@ fn gen_time_seconds(token: &[u8]) -> Option<u64> {
     use der::Decode;
 
     let info = ContentInfo::from_der(token).ok()?;
-    let signed: SignedData = info.content.decode_as().ok()?;
+    let signed: SignedData = crate::certificate::read_signed(&info).ok()?;
     let content = signed.encap_content_info.econtent.as_ref()?;
     let wrapped = content.decode_as::<der::asn1::OctetString>().ok()?;
     Some(gen_time_of(wrapped.as_bytes())?.unix_duration().as_secs())

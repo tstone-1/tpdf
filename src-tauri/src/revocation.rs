@@ -372,7 +372,7 @@ impl Material {
         }
     }
 
-    /// Adds a `BasicOCSPResponse`, as the CMS `crls` set carries one.
+    /// Adds the DER of a basic response after the OCSP wrapper has been read.
     pub fn basic(&mut self, der: Vec<u8>) {
         if der.len() > MAX_RESPONSE_BYTES {
             self.unread += 1;
@@ -418,13 +418,9 @@ impl Material {
     #[must_use]
     pub fn of_cms(blob: &[u8]) -> Material {
         let mut out = Material::default();
-        let Some(signed) = cms::content_info::ContentInfo::from_der(blob)
+        let Some((signed, choices)) = cms::content_info::ContentInfo::from_der(blob)
             .ok()
-            .and_then(|info| {
-                info.content
-                    .decode_as::<cms::signed_data::SignedData>()
-                    .ok()
-            })
+            .and_then(|info| crate::certificate::signed_parts(&info).ok())
         else {
             return out;
         };
@@ -434,24 +430,22 @@ impl Material {
                 Err(_) => out.unread += 1,
             }
         }
-        if let Some(choices) = &signed.crls {
-            for choice in choices.0.iter() {
-                match choice {
-                    cms::revocation::RevocationInfoChoice::Crl(list) => match list.to_der() {
+        if let Some(choices) = choices {
+            use der::{Tag, Tagged};
+            for choice in choices.iter() {
+                if choice.tag() == Tag::Sequence {
+                    match choice.to_der() {
                         Ok(der) => out.list(der),
                         Err(_) => out.unread += 1,
-                    },
-                    cms::revocation::RevocationInfoChoice::Other(other) => {
-                        // id-ri-ocsp-response, RFC 5940 §4.1: a BasicOCSPResponse.
-                        if other.other_format.oid.to_string() == "1.3.6.1.5.5.7.16.2" {
-                            match other.other.to_der() {
-                                Ok(der) => out.basic(der),
-                                Err(_) => out.unread += 1,
-                            }
-                        } else {
-                            out.unread += 1;
-                        }
                     }
+                } else if let Some((format, payload)) = other_revocation_info(choice) {
+                    if format.to_string() == "1.3.6.1.5.5.7.16.2" {
+                        out.response(&payload);
+                    } else {
+                        out.unread += 1;
+                    }
+                } else {
+                    out.unread += 1;
                 }
             }
         }
@@ -477,6 +471,26 @@ impl Material {
         }
         out
     }
+}
+
+/// RFC 5940 section 3: [1] IMPLICIT SEQUENCE { format OID, complete response }.
+fn other_revocation_info(choice: &der::Any) -> Option<(der::asn1::ObjectIdentifier, Vec<u8>)> {
+    use der::{Reader, Tag, TagNumber, Tagged};
+    if choice.tag()
+        != (Tag::ContextSpecific {
+            constructed: true,
+            number: TagNumber::N1,
+        })
+    {
+        return None;
+    }
+    let mut fields = der::SliceReader::new(choice.value()).ok()?;
+    let format = fields.decode().ok()?;
+    let response: der::asn1::AnyRef<'_> = fields.decode().ok()?;
+    if !fields.is_finished() {
+        return None;
+    }
+    Some((format, response.to_der().ok()?))
 }
 
 /// `RevocationInfoArchival` (Adobe, PDF 32000-1 §12.8.3.3.2):
@@ -555,7 +569,7 @@ pub struct Pool {
     certificates: Vec<Certificate>,
     responses: Vec<Response>,
     lists: Vec<List>,
-    unread: usize,
+    pub(crate) unread: usize,
     dropped: usize,
     /// Whether a response or list at an index checked out under an issuer,
     /// by the issuer's DER: a list is hashed whole to check it, and eight
@@ -689,7 +703,10 @@ pub fn judge(
         .iter()
         .chain(pools.iter().flat_map(|pool| pool.candidates()))
         .collect();
-    let issuer = issuer_of(subject, &everything);
+    let issuer = match issuer_with_budget(subject, &everything, budget) {
+        Ok(issuer) => issuer,
+        Err(gap) => return Revocation::unchecked(moment, gap),
+    };
     judge_under(subject, issuer, &everything, pools, moment, now, budget)
 }
 
@@ -755,18 +772,28 @@ pub(crate) fn judge_under(
 /// verifies its signature. A name alone is not enough --- two certificates may
 /// share one, and the one whose key the subject's signature does not verify
 /// under did not issue it.
-pub(crate) fn issuer_of<'a>(
+pub(crate) fn issuer_with_budget<'a>(
     subject: &Certificate,
     candidates: &[&'a Certificate],
-) -> Option<&'a Certificate> {
-    let wanted = subject.tbs_certificate.issuer.to_der().ok()?;
-    let signed = subject.tbs_certificate.to_der().ok()?;
-    let value = subject.signature.as_bytes()?;
-    candidates.iter().copied().find(|candidate| {
-        candidate.tbs_certificate.subject.to_der().ok().as_ref() == Some(&wanted)
-            && crate::integrity::signed_by(candidate, &subject.signature_algorithm, &signed, value)
-                == Ok(true)
-    })
+    budget: &mut u64,
+) -> Result<Option<&'a Certificate>, Gap> {
+    let signed = subject
+        .tbs_certificate
+        .to_der()
+        .map_err(|_| Gap::Unreadable)?;
+    let value = subject.signature.as_bytes().ok_or(Gap::Signature)?;
+    for &candidate in candidates {
+        if candidate.tbs_certificate.subject != subject.tbs_certificate.issuer {
+            continue;
+        }
+        charge(budget, signed.len())?;
+        if crate::integrity::signed_by(candidate, &subject.signature_algorithm, &signed, value)
+            == Ok(true)
+        {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
 }
 
 /// Charges `cost` to the budget, or refuses before anything is hashed.
@@ -839,7 +866,7 @@ fn from_response(
             out.push(Finding::Gap(gap));
             continue;
         }
-        if critical_unknown(single.single_extensions.as_deref(), &[]) {
+        if critical_unknown(single.single_extensions.as_deref(), &[ARCHIVE_CUTOFF]) {
             out.push(Finding::Gap(Gap::Unsupported));
             continue;
         }
@@ -857,11 +884,7 @@ fn from_response(
             this_update: general_seconds(single.this_update.0),
             next_update: single.next_update.map(|t| general_seconds(t.0)),
             keeps_expired_since: extension_time(
-                response
-                    .basic
-                    .tbs_response_data
-                    .response_extensions
-                    .as_deref(),
+                single.single_extensions.as_deref(),
                 ARCHIVE_CUTOFF,
             ),
         }));
@@ -887,6 +910,7 @@ fn response_checks_out(
     budget: &mut u64,
 ) -> Result<(), Gap> {
     let key = (Source::Ocsp, index, issuer.to_der().unwrap_or_default());
+    let mut reusable = false;
     if let Some(known) = pool.checked.borrow().get(&key) {
         return *known;
     }
@@ -917,7 +941,10 @@ fn response_checks_out(
         let value = response.basic.signature.as_bytes().ok_or(Gap::Signature)?;
         let mut worst = Gap::Unauthorised;
         for responder in named {
-            let authorised = responder == issuer || delegated(responder, issuer, produced);
+            let authorised = responder == issuer || delegated(responder, issuer, produced, budget)?;
+            if !authorised {
+                continue;
+            }
             charge(budget, response.signed.len())?;
             let signed = crate::integrity::signed_by(
                 responder,
@@ -925,18 +952,26 @@ fn response_checks_out(
                 &response.signed,
                 value,
             );
-            match (authorised, signed) {
-                (true, Ok(true)) => return Ok(()),
-                (true, Ok(false)) => worst = Gap::Signature,
-                (true, Err(_)) => worst = Gap::Algorithm,
-                // Signed by somebody the issuer did not authorise: the
-                // arithmetic may hold, and it proves nothing about the issuer.
-                (false, _) => {}
+            match signed {
+                Ok(true) => {
+                    reusable = responder == issuer
+                        || response
+                            .basic
+                            .certs
+                            .iter()
+                            .flatten()
+                            .any(|cert| cert == responder);
+                    return Ok(());
+                }
+                Ok(false) => worst = Gap::Signature,
+                Err(_) => worst = Gap::Algorithm,
             }
         }
         Err(worst)
     })();
-    pool.checked.borrow_mut().insert(key, answer);
+    if reusable {
+        pool.checked.borrow_mut().insert(key, answer);
+    }
     answer
 }
 
@@ -951,7 +986,12 @@ fn response_checks_out(
 /// The responder's own revocation is not asked: real responders' certificates
 /// carry `id-pkix-ocsp-nocheck`, and tpdf checks no chain above the one
 /// certificate asked about (`docs/THREAT-MODEL.md` residual 31).
-fn delegated(responder: &Certificate, issuer: &Certificate, at: u64) -> bool {
+fn delegated(
+    responder: &Certificate,
+    issuer: &Certificate,
+    at: u64,
+    budget: &mut u64,
+) -> Result<bool, Gap> {
     let tbs = &responder.tbs_certificate;
     let from = seconds(tbs.validity.not_before);
     let until = seconds(tbs.validity.not_after);
@@ -966,12 +1006,17 @@ fn delegated(responder: &Certificate, issuer: &Certificate, at: u64) -> bool {
         })
         .is_some_and(|usage| usage.0.iter().any(|p| p.to_string() == OCSP_SIGNING));
     let signed = tbs.to_der().ok().zip(responder.signature.as_bytes());
-    purpose
-        && (from..=until).contains(&at)
-        && signed.is_some_and(|(tbs, value)| {
-            crate::integrity::signed_by(issuer, &responder.signature_algorithm, &tbs, value)
-                == Ok(true)
-        })
+    if !purpose || !(from..=until).contains(&at) {
+        return Ok(false);
+    }
+    let Some((signed, value)) = signed else {
+        return Ok(false);
+    };
+    charge(budget, signed.len())?;
+    Ok(
+        crate::integrity::signed_by(issuer, &responder.signature_algorithm, &signed, value)
+            == Ok(true),
+    )
 }
 
 /// What one revocation list says about `subject`.
@@ -990,11 +1035,11 @@ fn from_list(
     if tbs.issuer.to_der().ok().as_deref() != Some(issuer_name) {
         return None;
     }
-    match in_scope(subject, tbs.crl_extensions.as_deref()) {
-        Ok(true) => {}
-        Ok(false) => return None,
+    let scope = match in_scope(subject, tbs.crl_extensions.as_deref()) {
+        Ok(CrlScope::Other) => return None,
+        Ok(scope) => scope,
         Err(gap) => return Some(Finding::Gap(gap)),
-    }
+    };
     let Some(issuer) = issuer else {
         return Some(Finding::Gap(Gap::Issuer));
     };
@@ -1008,6 +1053,7 @@ fn from_list(
         .flatten()
         .find(|entry| &entry.serial_number == serial);
     let status = match entry {
+        None if scope == CrlScope::Partial => return Some(Finding::Gap(Gap::Unsupported)),
         None => Stated::Good,
         Some(entry) => {
             if critical_unknown(entry.crl_entry_extensions.as_deref(), &["2.5.29.21"]) {
@@ -1096,23 +1142,49 @@ fn signs_lists(issuer: &Certificate) -> bool {
         .is_ok_and(|usage| usage.crl_sign())
 }
 
-/// Whether a list's `issuingDistributionPoint` covers `subject`: RFC 5280
-/// §6.3.3 (b). `Ok(false)` for a list that is about other certificates of the
-/// same issuer --- a partition, or only its authorities --- so its silence
-/// about this one says nothing; `Err` for a scope this does not interpret.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CrlScope {
+    Other,
+    Partial,
+    Complete,
+}
+
+/// RFC 5280 section 6.3.3: combine the issuer's scope with the matching
+/// distribution point on the certificate. Partial coverage can establish a
+/// revocation but cannot establish a good standing from an absent serial.
 fn in_scope(
     subject: &Certificate,
     extensions: Option<&[x509_cert::ext::Extension]>,
-) -> Result<bool, Gap> {
+) -> Result<CrlScope, Gap> {
     use x509_cert::ext::pkix::crl::dp::IssuingDistributionPoint;
     use x509_cert::ext::pkix::name::DistributionPointName;
 
+    let points = subject
+        .tbs_certificate
+        .extensions
+        .iter()
+        .flatten()
+        .find(|e| e.extn_id.to_string() == "2.5.29.31")
+        .map(|e| x509_cert::ext::pkix::CrlDistributionPoints::from_der(e.extn_value.as_bytes()))
+        .transpose()
+        .map_err(|_| Gap::Unsupported)?;
+    let unrestricted = points.as_ref().is_none_or(|points| {
+        points
+            .0
+            .iter()
+            .all(|dp| dp.crl_issuer.is_none() && dp.reasons.is_none())
+    });
+    let unnamed = if unrestricted {
+        CrlScope::Complete
+    } else {
+        CrlScope::Partial
+    };
     let Some(extension) = extensions
         .unwrap_or(&[])
         .iter()
         .find(|e| e.extn_id.to_string() == ISSUING_DISTRIBUTION_POINT)
     else {
-        return Ok(true);
+        return Ok(unnamed);
     };
     let point = IssuingDistributionPoint::from_der(extension.extn_value.as_bytes())
         .map_err(|_| Gap::Unsupported)?;
@@ -1134,38 +1206,29 @@ fn in_scope(
         || (point.only_contains_user_certs && authority)
         || (point.only_contains_ca_certs && !authority)
     {
-        return Ok(false);
+        return Ok(CrlScope::Other);
     }
     match &point.distribution_point {
-        None => Ok(true),
+        None => Ok(unnamed),
         Some(DistributionPointName::NameRelativeToCRLIssuer(_)) => Err(Gap::Unsupported),
         Some(DistributionPointName::FullName(names)) => {
             // The certificate must name this list among its own distribution
             // points: a partitioned issuer's other lists do not cover it.
-            let theirs: Vec<Vec<u8>> = names.iter().filter_map(|n| n.to_der().ok()).collect();
-            let points = subject
-                .tbs_certificate
-                .extensions
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .find(|e| e.extn_id.to_string() == "2.5.29.31")
-                .and_then(|e| {
-                    x509_cert::ext::pkix::CrlDistributionPoints::from_der(e.extn_value.as_bytes())
-                        .ok()
-                });
-            Ok(points.is_some_and(|points| {
-                points
-                    .0
-                    .iter()
-                    .any(|point| match &point.distribution_point {
-                        Some(DistributionPointName::FullName(ours)) => ours
-                            .iter()
-                            .filter_map(|n| n.to_der().ok())
-                            .any(|n| theirs.contains(&n)),
-                        _ => false,
-                    })
-            }))
+            let mut matched = CrlScope::Other;
+            for dp in points.iter().flat_map(|points| &points.0) {
+                if dp.crl_issuer.is_some() {
+                    continue;
+                }
+                if let Some(DistributionPointName::FullName(ours)) = &dp.distribution_point {
+                    if ours.iter().any(|name| names.contains(name)) {
+                        if dp.reasons.is_none() {
+                            return Ok(CrlScope::Complete);
+                        }
+                        matched = CrlScope::Partial;
+                    }
+                }
+            }
+            Ok(matched)
         }
     }
 }
@@ -1207,8 +1270,8 @@ fn reason_of(reason: x509_cert::ext::pkix::CrlReason) -> Reason {
 /// Every finding about one certificate, read as one answer.
 ///
 /// A revocation any checked data states is the answer, the earliest if
-/// several: once revoked, a certificate stays revoked, so a later *good* does
-/// not outweigh it. Otherwise the latest-issued *good* is judged for
+/// several. A later good observation can establish release from certificate hold.
+/// In the absence of a hold or a budget gap, the latest *good* is judged for
 /// freshness --- EN 319 102-1 §5.2.6 takes the latest too --- then an
 /// *unknown*, then the first reason nothing could be checked, and only when
 /// nothing at all concerned the certificate, `none`.
@@ -1240,14 +1303,49 @@ fn combine(subject: &Certificate, findings: Vec<Finding>, moment: Moment, now: u
         ..Revocation::at(moment)
     };
 
+    let until = seconds(subject.tbs_certificate.validity.not_after);
+    let retained = |s: &Said| {
+        s.this_update <= until || s.keeps_expired_since.is_some_and(|since| since <= until)
+    };
+    let mut good_dates: Vec<_> = said
+        .iter()
+        .filter(|s| matches!(s.status, Stated::Good) && retained(s))
+        .map(|s| s.this_update)
+        .collect();
+    good_dates.sort_unstable();
+    let mut uncertain_hold = false;
     let revoked = said
         .iter()
-        .filter_map(|s| match s.status {
-            Stated::Revoked { at, reason } => Some((s, at, reason)),
-            _ => None,
+        .filter_map(|s| {
+            let Stated::Revoked { at, reason } = s.status else {
+                return None;
+            };
+            if reason == Some(Reason::CertificateHold) && at <= moment.at {
+                // A later authenticated good observation proves release by its issue
+                // time. Between the last hold and first good the release date is unknown.
+                let next = good_dates.partition_point(|date| *date <= s.this_update);
+                if let Some(&released) = good_dates.get(next) {
+                    if released <= moment.at {
+                        return None;
+                    }
+                    if s.this_update < moment.at {
+                        uncertain_hold = true;
+                        return None;
+                    }
+                }
+            }
+            Some((s, at, reason))
         })
         .min_by_key(|(_, at, _)| *at);
     if let Some((s, at, reason)) = revoked {
+        if moment.basis == Basis::Attested && at > moment.at {
+            if gaps.contains(&Gap::Budget) {
+                return Revocation::unchecked(moment, Gap::Budget);
+            }
+            if uncertain_hold {
+                return Revocation::unchecked(moment, Gap::Dates);
+            }
+        }
         return Revocation {
             revoked: format_time(at),
             reason,
@@ -1255,13 +1353,18 @@ fn combine(subject: &Certificate, findings: Vec<Finding>, moment: Moment, now: u
             ..answered(s, Status::Revoked)
         };
     }
+    if uncertain_hold {
+        return Revocation::unchecked(moment, Gap::Dates);
+    }
+    if gaps.contains(&Gap::Budget) {
+        return Revocation::unchecked(moment, Gap::Budget);
+    }
     let good = said
         .iter()
         .filter(|s| matches!(s.status, Stated::Good))
         .max_by_key(|s| s.this_update);
     if let Some(s) = good {
-        let until = seconds(subject.tbs_certificate.validity.not_after);
-        if s.this_update > until && !s.keeps_expired_since.is_some_and(|since| since <= until) {
+        if !retained(s) {
             return Revocation::unchecked(moment, Gap::Expired);
         }
         // EN 319 102-1 §5.2.5.4: fresh when issued after the moment minus

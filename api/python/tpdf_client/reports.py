@@ -194,7 +194,7 @@ RevocationReason = Literal[
 
 RevocationBasis = Literal["now", "claimed", "stated", "attested"]
 
-ChainEnd = Literal["root", "no_issuer", "loop"]
+ChainEnd = Literal["root", "no_issuer", "loop", "budget"]
 
 PadesLevel = Literal["B-B", "B-T", "B-LT", "B-LTA"]
 

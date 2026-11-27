@@ -392,7 +392,7 @@ fn declined(info: &PkiStatusInfo) -> String {
 /// The `TSTInfo` a token encapsulates, DER.
 fn tst_info(token: &[u8]) -> Option<Vec<u8>> {
     let info = cms::content_info::ContentInfo::from_der(token).ok()?;
-    let signed: cms::signed_data::SignedData = info.content.decode_as().ok()?;
+    let signed: cms::signed_data::SignedData = crate::certificate::read_signed(&info).ok()?;
     if signed.encap_content_info.econtent_type != TST_INFO {
         return None;
     }

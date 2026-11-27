@@ -35,16 +35,16 @@ ROWS += [
         # (`revocation/chain.rs`): a root no longer ends it, so it loops.
         "longterm: ask about a root",
         "src/revocation/chain.rs",
-        "        if let Some(anchor) = anchor_of(&current, candidates) {",
-        "        if let Some(anchor) = anchor_of(&current, candidates).filter(|_| false) {",
+        "if let Some(anchor) = anchor {",
+        "if let Some(anchor) = anchor.filter(|_| false) {",
         "a_b_lt_signature_is_written_and_reads_back_good_for_signer_and_authority",
     ),
     Mutation(
         # Found by the real run against DigiCert and Sectigo (docs/PLAN.md).
         "longterm: walk past a cross-certificate of a root the OS holds",
         "src/revocation/chain.rs",
-        "    candidates.iter().copied().find(|candidate| {",
-        "    candidates.iter().copied().filter(|_| false).find(|candidate| {",
+        "candidates.iter().copied().filter(|&c| c != certificate)",
+        "candidates.iter().copied().filter(|_| false)",
         "a_cross_certificate_of_a_root_the_os_holds_ends_the_chain",
     ),
     Mutation(
@@ -123,23 +123,23 @@ ROWS += [
         # The OCSP response kept whatever it says: revoked, unknown, forged.
         "longterm: keep an OCSP response without judging it",
         "src/longterm.rs",
-        "            room(&gathered, answer.len())?;\n            judged(subject, &name, &candidates, &material, &by, &host, now)?;\n            gathered.responses.push(answer);",
-        "            room(&gathered, answer.len())?;\n            gathered.responses.push(answer);",
+        "judged(subject, &name, &candidates, &material, &by, &host, now)?;\n            if new {\n                gathered.responses.push(answer);",
+        "if new {\n                gathered.responses.push(answer);",
         "a_revoked_signer_is_refused_and_no_list_is_shopped_for",
     ),
     Mutation(
         # Shopping: an answer that does not check out, and a list asked instead.
         "longterm: ask the list after an answer that does not check out",
         "src/longterm.rs",
-        "            room(&gathered, answer.len())?;\n            judged(subject, &name, &candidates, &material, &by, &host, now)?;\n            gathered.responses.push(answer);",
-        "            room(&gathered, answer.len())?;\n            if judged(subject, &name, &candidates, &material, &by, &host, now).is_err() {\n                continue;\n            }\n            gathered.responses.push(answer);",
+        "judged(subject, &name, &candidates, &material, &by, &host, now)?;\n            if new {\n                gathered.responses.push(answer);",
+        "if judged(subject, &name, &candidates, &material, &by, &host, now).is_err() { continue; }\n            if new {\n                gathered.responses.push(answer);",
         "an_answer_that_does_not_check_out_is_refused",
     ),
     Mutation(
         "longterm: keep a list without judging it",
         "src/longterm.rs",
-        "            room(&gathered, answer.len())?;\n            judged(subject, &name, &candidates, &material, &by, &host, now)?;\n            gathered.lists.push(answer);",
-        "            room(&gathered, answer.len())?;\n            gathered.lists.push(answer);",
+        "judged(subject, &name, &candidates, &material, &by, &host, now)?;\n            if new {\n                gathered.lists.push(answer);",
+        "if new {\n                gathered.lists.push(answer);",
         # Re-aimed after its first run: for the signer and the authority the
         # worker's reading refuses a revoked list anyway (the named test went
         # on passing), so only a certificate above them reaches this alone.
@@ -279,8 +279,8 @@ ROWS += [
     Mutation(
         "chain: past the bound a good chain stands",
         "src/revocation/chain.rs",
-        "    let (standing, after_moment, decided_by) = if dropped > 0 && reassures {",
-        "    let (standing, after_moment, decided_by) = if false && reassures {",
+        "if (dropped > 0 || end == End::Budget) && reassures {",
+        "if end == End::Budget && reassures {",
         "a_chain_longer_than_the_bound_is_counted_and_cannot_read_good",
     ),
     Mutation(

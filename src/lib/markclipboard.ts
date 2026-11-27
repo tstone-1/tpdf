@@ -16,11 +16,18 @@
 import type { CommentStyle } from "./commentformat";
 import { catalog } from "./i18n";
 import type { MarkKind, MarkView, PageId, StampName } from "./pages";
+
 import { hasStrokes } from "./markband";
 import { rotatePixels, type PicturePixels } from "./picture";
 import { rotateSignature } from "./signature";
 import { viewRect } from "./comments";
 import { intoCrop, type CropGeometry } from "./crop";
+
+export type OpenMarkDraft = Pick<MarkView, "id" | "note" | "styles">;
+
+export function withMarkDraft(mark: MarkView, draft: OpenMarkDraft | null): MarkView {
+  return draft?.id === mark.id ? { ...mark, ...draft } : mark;
+}
 
 const TEXT = catalog({
   "en-US": {

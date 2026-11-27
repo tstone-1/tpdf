@@ -364,6 +364,10 @@ pub fn chain_sentence(chain: &Chain, authority: bool) -> String {
             if chain.dropped == 1 { "was" } else { "were" }
         )
     };
+    if chain.end == End::Budget && chain.standing == Status::Unchecked {
+        return "not checked: the hashing budget ran out while verifying the certificate chain."
+            .into();
+    }
     match chain.decided_by {
         None if chain.standing == Status::Good => {
             let moment = chain
@@ -410,6 +414,10 @@ pub fn chain_sentence(chain: &Chain, authority: bool) -> String {
         Some(0) if above == 0 => {
             let why = match chain.end {
                 End::Root => format!("no certificate stands between {whose} and a root"),
+                End::Budget => {
+                    "the certificate chain could not be completed within the hashing budget"
+                        .to_owned()
+                }
                 End::NoIssuer | End::Loop => {
                     format!("the certificate that issued {whose} is not in the document")
                 }

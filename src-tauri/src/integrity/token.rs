@@ -242,7 +242,7 @@ pub fn check(token: &[u8], target: Target<'_>, budget: &mut u64) -> Integrity {
 /// The token's encapsulated content type, dotted.
 fn content_type(token: &[u8]) -> Option<String> {
     let info = cms::content_info::ContentInfo::from_der(token).ok()?;
-    let signed: cms::signed_data::SignedData = info.content.decode_as().ok()?;
+    let signed: cms::signed_data::SignedData = crate::certificate::read_signed(&info).ok()?;
     Some(signed.encap_content_info.econtent_type.to_string())
 }
 

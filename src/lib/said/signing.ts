@@ -451,6 +451,8 @@ export default {
   "whose certificate is not identified": "mit nicht bestimmtem Zertifikat",
   "its certificate is not identified": "ihr Zertifikat ist nicht bestimmt",
   "the timestamp's certificate is not identified": "das Zertifikat des Zeitstempels ist nicht bestimmt",
+  "the certificate chain exceeded the hashing budget":
+    "Die Prüfung der Zertifikatskette hat das Rechenlimit erreicht.",
   "would follow a chain of certificates that loops back on itself, which no verifier can end at a root":
     "würden einer Zertifikatskette folgen, die auf sich selbst zurückführt und die kein Prüfprogramm an einem Stammzertifikat beenden kann",
   "would cover more than {MAX_SUBJECTS} certificates, more than any real chain has":
@@ -522,8 +524,8 @@ export default {
     "die Signaturen dieses Dokuments nennen mehr als {MAX_SUBJECTS} Zertifikate, nach denen zu fragen wäre, mehr als tpdf in einem Durchgang fragt",
   "this document already carries as much validation data as tpdf reads, so tpdf could not read back what it would add":
     "dieses Dokument enthält schon so viele Validierungsdaten, wie tpdf liest, daher könnte tpdf nicht zurücklesen, was es hinzufügen würde",
-  "this document already has {limit} signature fields, so tpdf could not read back an added archive timestamp":
-    "dieses Dokument hat bereits {limit} Signaturfelder, daher könnte tpdf einen hinzugefügten Archivzeitstempel nicht zurücklesen",
+  "adding the archive timestamp would exceed the limit of {limit} signature fields":
+    "Mit dem Archivzeitstempel würde die Grenze von {limit} Signaturfeldern überschritten.",
   "{certificate} for signature field {field}": "{certificate} für das Signaturfeld {field}",
   "{certificate} for signature fields {fields}": "{certificate} für die Signaturfelder {fields}",
   "for the signature {field}: {why}": "für die Signatur {field}: {why}",

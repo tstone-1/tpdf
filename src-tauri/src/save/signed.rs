@@ -66,6 +66,17 @@ fn a_growing_source_is_read_only_one_byte_past_its_opening_length() {
     assert_eq!(file.position(), 11);
 }
 
+pub(crate) fn check_signed_destination(source: &Path, out: &Path) -> Result<(), Refusal> {
+    if same_file(source, out) {
+        return Err(said!(
+            "the signed document is written as a new file --- choose a name other than \
+             the original's"
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// Writes a signed document to `out`, atomically, and never over `source`.
 ///
 /// `bytes` is the whole file: the original followed by the signed revision.
@@ -77,13 +88,7 @@ fn a_growing_source_is_read_only_one_byte_past_its_opening_length() {
 pub fn write_signed(source: &Path, out: &Path, bytes: &[u8]) -> Result<(), Refusal> {
     use std::io::Write as _;
 
-    if same_file(source, out) {
-        return Err(said!(
-            "the signed document is written as a new file --- choose a name other than \
-             the original's"
-        )
-        .into());
-    }
+    check_signed_destination(source, out)?;
     let staged = stage(out, |file| {
         file.write_all(bytes)
             .and_then(|()| file.flush())

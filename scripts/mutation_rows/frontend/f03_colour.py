@@ -2310,8 +2310,8 @@ ROWS += [
         # nothing, and the document is reported dirty.
         "comments: send the body even when the reader changed nothing",
         "src/lib/commentpopup.ts",
-        "    if (now === this.was && !this.formatting?.changed) return;",
-        "    if (false) return;",
+        "if (field && mode && this.hasDraft) {",
+        "if (field && mode) {",
         "sends nothing when the editor closes with the text it opened with",
     ),
     Mutation(
@@ -2333,8 +2333,8 @@ ROWS += [
         # object nobody is looking at.
         "comments: commit the body even when the caller said not to",
         "src/lib/commentpopup.ts",
-        "  hide(commit = true): void {\n    if (commit) this.commit();",
-        "  hide(commit = true): void {\n    if (commit || true) this.commit();",
+        "if (commit) this.submission.after(",
+        "if (true) this.submission.after(",
         "sends nothing when the popup is hidden without committing",
     ),
     Mutation(
@@ -2343,8 +2343,8 @@ ROWS += [
         # gone -- silently, because the popup looks the same either way.
         "comments: let a second comment take the box without committing the first",
         "src/lib/commentpopup.ts",
-        "    this.commit();\n    this.shown = comment.id;",
-        "    this.shown = comment.id;",
+        "this.submission.after(() => this.writeDraft(), () => {",
+        "this.submission.after(() => {}, () => {",
         "commits the first comment when a second one takes the box over",
     ),
     Mutation(
@@ -2365,8 +2365,8 @@ ROWS += [
         # overwritten, which is the worst outcome this feature can produce.
         "comments: send a reply as an edit to the comment it answers",
         "src/lib/commentpopup.ts",
-        "    this.opts.onReply(comment, now, ...style);",
-        "    this.opts.onRewrite(comment, now, ...style);",
+        "const write = mode === \"body\" ? this.opts.onRewrite : this.opts.onReply;",
+        "const write = this.opts.onRewrite;",
         "arms an empty editor for a reply and sends it under the comment it answers",
     ),
     Mutation(
@@ -2384,7 +2384,7 @@ ROWS += [
         # for -- and it cannot be told from a deliberate blank.
         "comments: send a reply with nothing in it",
         "src/lib/commentpopup.ts",
-        "    if (!now.trim()) return;",
+        " && (this.mode === \"body\" || text.trim() !== \"\")",
         "",
         "sends no reply when the box is typed into and then emptied",
     ),
@@ -2394,8 +2394,8 @@ ROWS += [
         # deletes a comment's text has asked for an empty comment.
         "comments: refuse to clear a body because a reply may not be blank",
         "src/lib/commentpopup.ts",
-        '    if (mode === "body") {\n      this.opts.onRewrite(comment, now, ...style);\n      return;\n    }',
-        '    if (mode === "body") {\n      if (now.trim()) this.opts.onRewrite(comment, now, ...style);\n      return;\n    }',
+        "(this.mode === \"body\" || text.trim() !== \"\")",
+        "text.trim() !== \"\"",
         "clears a body of the same shape, because an empty rewrite is a real edit",
     ),
     Mutation(

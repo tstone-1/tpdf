@@ -1046,6 +1046,10 @@ pub fn sign(
 }
 
 impl Made {
+    pub(crate) fn original(&self) -> &[u8] {
+        &self.original
+    }
+
     /// The CMS as the key made it, with no timestamp: for a test that needs a
     /// signature without one.
     #[cfg(test)]

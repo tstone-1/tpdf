@@ -402,7 +402,17 @@ pub fn of_blob_with_chain(
     now: u64,
     anchors: Anchors<'_>,
 ) -> (Trust, Vec<Vec<u8>>) {
-    let (trust, mut chain) = of_blob_vouching(blob, &[], purpose, now, anchors);
+    of_blob_with_chain_and_extra(blob, &[], purpose, now, anchors)
+}
+
+pub(crate) fn of_blob_with_chain_and_extra(
+    blob: &[u8],
+    extra: &[Vec<u8>],
+    purpose: Purpose,
+    now: u64,
+    anchors: Anchors<'_>,
+) -> (Trust, Vec<Vec<u8>>) {
+    let (trust, mut chain) = of_blob_vouching(blob, extra, purpose, now, anchors);
     // `Trusted` is only ever the answer to the first evaluation, the one at
     // `now`, so the chain kept is that one's. Anything else --- a chain the
     // store refused, one that passed inside the certificate's dates and not
@@ -435,7 +445,7 @@ fn certificates_with(blob: &[u8], extra: &[Vec<u8>]) -> Option<(Vec<u8>, Vec<Vec
     use cms::signed_data::SignedData;
 
     let info = ContentInfo::from_der(blob).ok()?;
-    let signed: SignedData = info.content.decode_as().ok()?;
+    let signed: SignedData = crate::certificate::read_signed(&info).ok()?;
     let (signer, matched) = crate::certificate::signer_certificate(&signed)?;
     if !matched {
         return None;

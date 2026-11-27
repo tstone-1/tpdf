@@ -53,7 +53,7 @@ import { CommentFormatting, paintComment, type CommentField, type CommentStyle }
 import { bylineOf, labelFor, noCommentLabel, type Comment } from "./comments";
 import { catalog } from "./i18n";
 import { matches } from "./keys";
-import { place, POPUP_WIDTH, submitPopup, type Anchor } from "./popup";
+import { place, POPUP_WIDTH, PopupSubmission, type Anchor } from "./popup";
 
 const TEXT = catalog({
   "en-US": {
@@ -131,6 +131,7 @@ export class CommentPopup {
   private readonly host: HTMLElement;
   private readonly element: HTMLElement;
   private readonly opts: CommentPopupOptions;
+  private readonly submission = new PopupSubmission();
   private shown: number | null = null;
   /** The comment on show, kept so a commit knows what it is committing to. */
   private subject: Comment | null = null;
@@ -188,6 +189,8 @@ export class CommentPopup {
     return this.shown;
   }
 
+  get canCloseOnScroll(): boolean { return this.submission.canCloseOnScroll; }
+
   /** The popup element. For the check harness. */
   get node(): HTMLElement {
     return this.element;
@@ -206,11 +209,21 @@ export class CommentPopup {
    * wrong when they clicked the mark, where it would take focus off the page and
    * stop the arrow keys scrolling.
    */
-  show(comment: Comment, replies: readonly Comment[], at: Anchor, focus: boolean): void {
-    // Before anything is replaced. A reader who opens a second comment while
-    // the first is armed has finished with the first, and the words are already
-    // typed --- `markpopup.ts` makes the same call for the same reason.
-    this.commit();
+  show(comment: Comment, replies: readonly Comment[], at: Anchor, focus: boolean, opened?: () => void): void {
+    if (this.shown === comment.id && this.editing) {
+      if (opened) this.submission.cancelNavigation();
+      this.place(at);
+      if (focus) this.editor?.focus();
+      opened?.();
+      return;
+    }
+    this.submission.after(() => this.writeDraft(), () => {
+      this.display(comment, replies, at, focus);
+      opened?.();
+    }, () => this.editor?.focus());
+  }
+
+  private display(comment: Comment, replies: readonly Comment[], at: Anchor, focus: boolean): void {
     this.shown = comment.id;
     this.subject = comment;
     this.replies = replies;
@@ -294,8 +307,7 @@ export class CommentPopup {
     if (!this.deletable) return;
     const comment = this.subject;
     if (!comment) return;
-    this.hide();
-    this.opts.onDiscard?.(comment);
+    this.hide(true, () => this.opts.onDiscard?.(comment));
   }
 
   /**
@@ -356,8 +368,14 @@ export class CommentPopup {
   }
 
   /** Hides the popup, committing the body unless told not to. */
-  hide(commit = true): void {
-    if (commit) this.commit();
+  hide(commit = true, closed?: () => void): void {
+    const close = () => this.dismiss(closed);
+    if (commit) this.submission.after(() => this.writeDraft(), close, () => this.editor?.focus());
+    else close();
+  }
+
+  private dismiss(closed?: () => void): void {
+    this.submission.cancelNavigation();
     this.shown = null;
     this.subject = null;
     this.replies = [];
@@ -365,10 +383,19 @@ export class CommentPopup {
     this.mode = null;
     this.element.style.display = "none";
     this.element.replaceChildren();
+    closed?.();
   }
 
   /** Keeps a refused rewrite or reply in its own editor for correction. */
   async settleDraft(restoreFocus = true): Promise<void> {
+    const field = this.editor;
+    const comment = this.subject;
+    await this.writeDraft();
+    if (this.subject === comment && this.editor === field) this.opts.onClose(restoreFocus);
+  }
+
+  private writeDraft(): void | Promise<void> {
+    if (this.submission.pending) return this.submission.pending;
     const comment = this.subject;
     if (!comment) return;
     const field = this.editor;
@@ -381,41 +408,10 @@ export class CommentPopup {
       const words = field.value;
       this.was = words;
       const write = mode === "body" ? this.opts.onRewrite : this.opts.onReply;
-      await submitPopup(field, () => write(comment, words, ...(format?.args ?? [])), () => {
+      return this.submission.write(field, () => write(comment, words, ...(format?.args ?? [])), () => {
         if (this.editor === field) { this.was = before; if (format) format.baseline = previousStyles; }
       });
     }
-    if (this.subject === comment && this.editor === field) this.opts.onClose(restoreFocus);
-  }
-
-  /** Sends what the editor holds, to whichever destination armed it. */
-  private commit(): void {
-    const comment = this.subject;
-    const box = this.editor;
-    const mode = this.mode;
-    if (!comment || !box || !mode) return;
-    const now = box.value;
-    // Cleared first: `hide` calls this and then rebuilds, and a caller that
-    // committed twice would journal the same text twice.
-    this.editor = null;
-    this.mode = null;
-    if (now === this.was && !this.formatting?.changed) return;
-    const style = this.formatting?.args ?? [];
-    this.was = now;
-    if (mode === "body") {
-      this.opts.onRewrite(comment, now, ...style);
-      return;
-    }
-    // **An empty reply is not a reply, where an empty rewrite is a legitimate
-    // clearing of a body.** The two operations differ here and nowhere else,
-    // which is why the check is at the destination rather than in `arm`: a
-    // reader who opens a reply box, types, deletes it all and closes has
-    // decided not to answer, and adding an empty comment to somebody's thread
-    // is the one outcome they did not ask for. `was` is `""` for a reply, so
-    // the untouched case is already caught above; this is the touched-then-
-    // emptied one.
-    if (!now.trim()) return;
-    this.opts.onReply(comment, now, ...style);
   }
 
   /**
@@ -473,7 +469,7 @@ export class CommentPopup {
       "padding:0.1rem 0.4rem;" +
       "border:1px solid color-mix(in srgb, currentColor 30%, transparent);" +
       "border-radius:4px;";
-    button.addEventListener("pointerdown", (event) => {
+    button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       arm();
@@ -510,9 +506,7 @@ export class CommentPopup {
       "position:absolute;top:0.25rem;right:0.35rem;border:0;background:none;" +
       "color:inherit;opacity:0.55;font:inherit;font-size:1.1em;line-height:1;" +
       "cursor:default;padding:0.1rem 0.25rem;";
-    button.addEventListener("pointerdown", (event) => {
-      // Stops the popup's own handler from swallowing it, and the page's from
-      // seeing a press it would treat as a click-away *and* a selection start.
+    button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       this.opts.onClose();

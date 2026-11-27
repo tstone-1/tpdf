@@ -4180,6 +4180,36 @@ fn comment_formatting_survives_an_append_and_a_rewrite() {
 }
 
 #[test]
+fn edited_external_comment_preserves_compact_and_indented_formatting() {
+    use crate::comment_text::{Body, Style};
+    for xml in [
+        "<body><p><b>be</b>fore</p></body>",
+        "<body>\n  <p><b>be</b>fore</p>\n</body>",
+    ] {
+        let (bytes, annot, mut plan) = a_comment_with_a_key_and_its_edit("RC");
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        doc.get_dictionary_mut(annot)
+            .unwrap()
+            .set("RC", Object::string_literal(xml));
+        let mut original = Vec::new();
+        doc.save_to(&mut original).unwrap();
+        let comments = crate::annots::scan(&original, 1, None).unwrap();
+        let comment = &comments.items[0];
+        assert_eq!(comment.styles, vec![Style(0, 2, 1)]);
+        let edited = format!("{}!", comment.body);
+        plan.notes[0].body = Body::Formatted {
+            text: edited.clone(),
+            styles: comment.styles.clone(),
+        };
+        let update = append_update(original.clone(), &plan, None).unwrap();
+        original.extend(update.update);
+        let reopened = crate::annots::scan(&original, 1, None).unwrap();
+        assert_eq!(reopened.items[0].body, edited);
+        assert_eq!(reopened.items[0].styles, comment.styles);
+    }
+}
+
+#[test]
 fn dense_comment_formatting_survives_at_the_preview_limit() {
     use crate::comment_text::{Body, Style};
     let (original, _, mut plan) = a_comment_with_a_key_and_its_edit("RC");
@@ -6889,6 +6919,29 @@ fn a_checked_copy_that_fails_its_check_leaves_nothing_and_replaces_nothing() {
         b"AN EARLIER FILE"
     );
     assert!(leftovers_beside(&kept).is_empty());
+}
+
+#[test]
+fn a_known_move_without_a_digest_blocks_print_and_checked_copy() {
+    let scratch = Scratch::new("moved-before-digest");
+    let (source, mut plan) = staging_subject(&scratch, "source.pdf").unwrap();
+    plan.opened_as = None;
+    assert!(open_for_print(&source, Some(&plan)).is_ok());
+    plan.source_moved = true;
+    assert!(open_for_print(&source, Some(&plan)).err().unwrap().changed);
+    let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
+    let out = scratch.join("copy.pdf");
+    assert!(
+        write_checked_copy(&source, &plan, &out, None, &writer, &|_| Ok(()))
+            .unwrap_err()
+            .changed
+    );
+    assert!(!out.exists());
+    assert!(
+        write_copy(&source, &plan, &out, None, &writer)
+            .unwrap()
+            .changed
+    );
 }
 
 #[test]
@@ -12728,6 +12781,9 @@ fn a_hard_link_to_the_source_is_the_same_file_and_a_copy_is_not() {
     let copy = dir.join("copy.pdf");
     std::fs::copy(&source, &copy).expect("copy");
 
+    assert!(check_signed_destination(&source, &source).is_err());
+    assert!(check_signed_destination(&source, &link).is_err());
+    assert!(check_signed_destination(&source, &copy).is_ok());
     assert!(same_file(&source, &link), "a hard link names the same file");
     assert!(
         !same_file(&source, &copy),

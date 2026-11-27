@@ -394,8 +394,8 @@ ROWS += [
         # which reads as the deletion not having happened.
         "commentpopup: leave the popup open after deleting the comment it shows",
         "src/lib/commentpopup.ts",
-        "    this.hide();\n    this.opts.onDiscard?.(comment);",
-        "    this.opts.onDiscard?.(comment);",
+        "this.hide(true, () => this.opts.onDiscard?.(comment));",
+        "this.opts.onDiscard?.(comment);",
         "sends the comment on show to be deleted, and closes",
     ),
     Mutation(
@@ -1791,7 +1791,7 @@ ROWS += [
     Mutation(
         "chain: show a chain of the leaf alone",
         "src/lib/integrity.ts",
-        "  if (chain.certificates.length <= 1 && chain.dropped === 0) return null;",
+        "  if (chain.certificates.length <= 1 && chain.dropped === 0 && chain.end !== \"budget\") return null;",
         "",
         "is not shown when nothing stands above the leaf, which its own row then says",
     ),

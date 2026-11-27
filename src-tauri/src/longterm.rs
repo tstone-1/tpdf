@@ -434,9 +434,7 @@ fn lists(certificate: &Certificate) -> Vec<url::Url> {
 /// A CMS `SignedData` and its signer's certificate.
 fn signed_data(blob: &[u8]) -> Result<cms::signed_data::SignedData, String> {
     let info = cms::content_info::ContentInfo::from_der(blob).map_err(|e| e.to_string())?;
-    info.content
-        .decode_as::<cms::signed_data::SignedData>()
-        .map_err(|e| e.to_string())
+    crate::certificate::read_signed(&info).map_err(|e| e.to_string())
 }
 
 /// The signer's certificate of a `SignedData`, as `SignerInfo.sid` names it.
@@ -547,7 +545,19 @@ pub fn vouched_for(
     now: u64,
     anchors: crate::trust::Anchors<'_>,
 ) -> Vouched {
-    let (trust, chain) = crate::trust::of_blob_with_chain(blob, purpose, now, anchors);
+    vouched_for_with(blob, &[], purpose, now, anchors)
+}
+
+/// Supplies the document's intermediate certificates to the same trust evaluation.
+pub(crate) fn vouched_for_with(
+    blob: &[u8],
+    extra: &[Vec<u8>],
+    purpose: crate::trust::Purpose,
+    now: u64,
+    anchors: crate::trust::Anchors<'_>,
+) -> Vouched {
+    let (trust, chain) =
+        crate::trust::of_blob_with_chain_and_extra(blob, extra, purpose, now, anchors);
     Vouched { trust, chain }
 }
 
@@ -844,6 +854,11 @@ fn walked(
         }
         match (&walked.end, &walked.anchor) {
             (End::Root, Some(anchor)) => carry(anchor),
+            (End::Budget, _) => {
+                return Err(Refusal::Bound(said!(
+                    "the certificate chain exceeded the hashing budget"
+                )))
+            }
             (End::Loop, _) => {
                 return Err(Refusal::Bound(said!(
                     "would follow a chain of certificates that loops back on itself, which no \
@@ -1145,9 +1160,14 @@ fn gather_named<'a>(
             }
             material.response(&answer);
             let by = said!("the OCSP response from {host}");
-            room(&gathered, answer.len())?;
+            let new = !gathered.responses.contains(&answer);
+            if new {
+                room(&gathered, answer.len())?;
+            }
             judged(subject, &name, &candidates, &material, &by, &host, now)?;
-            gathered.responses.push(answer);
+            if new {
+                gathered.responses.push(answer);
+            }
             done = true;
             break;
         }
@@ -1168,9 +1188,14 @@ fn gather_named<'a>(
             material.list(answer.clone());
             let by = said!("the revocation list from {host}");
             // Measured before it is parsed: a list is the large half.
-            room(&gathered, answer.len())?;
+            let new = !gathered.lists.contains(&answer);
+            if new {
+                room(&gathered, answer.len())?;
+            }
             judged(subject, &name, &candidates, &material, &by, &host, now)?;
-            gathered.lists.push(answer);
+            if new {
+                gathered.lists.push(answer);
+            }
             done = true;
             break;
         }
@@ -1448,6 +1473,8 @@ pub fn extend(
             len = bytes.len()
         )));
     }
+    existing::archive_room(extended.signatures.len(), false)
+        .map_err(|why| Refusal::Written(why.sentence()))?;
     // The revision just built is all that follows the new signature's own.
     let ours = crate::sign_cms::ours(&extended.signatures, field, extended.update.len() as u64);
     check(ours.map(|at| &extended.signatures[at]))?;

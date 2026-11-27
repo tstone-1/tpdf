@@ -186,7 +186,7 @@ export interface Revocation {
 }
 
 /** How a chain's walk ended. Mirrors `revocation::chain::End`. */
-export type ChainEnd = "root" | "no_issuer" | "loop";
+export type ChainEnd = "root" | "no_issuer" | "loop" | "budget";
 
 /** One certificate on a chain. Mirrors `revocation::chain::Judged`. */
 export interface Judged {
@@ -646,6 +646,7 @@ const TEXT = catalog({
           return "not checked";
       }
     },
+    chainBudget: "not checked: the hashing budget ran out while verifying the certificate chain.",
     chainSameAbove: (head: string, authority: boolean, atRoot: boolean, unjudged: string): string => {
       const why = atRoot
         ? `no certificate stands between ${enLeaf(authority)} and a root`
@@ -1070,6 +1071,7 @@ const TEXT = catalog({
           return "nicht geprüft";
       }
     },
+    chainBudget: "Nicht geprüft: Das Hash-Budget war bei der Prüfung der Zertifikatskette erschöpft.",
     chainSameAbove: (head: string, authority: boolean, atRoot: boolean, unjudged: string): string => {
       const why = atRoot
         ? `Zwischen ${deLeafDat(authority)} und einem Stammzertifikat steht kein weiteres Zertifikat`
@@ -1439,7 +1441,7 @@ export function issuingCertificate(judged: Judged): string {
  */
 export function chainRow(chain: Chain | null, authority = false): Row | null {
   if (!chain) return null;
-  if (chain.certificates.length <= 1 && chain.dropped === 0) return null;
+  if (chain.certificates.length <= 1 && chain.dropped === 0 && chain.end !== "budget") return null;
   if (!isKnown(STATUSES, chain.standing)) return unknownRow(TEXT().chainName(authority), chain.standing);
   const warn = !(chain.standing === "good" || (chain.standing === "revoked" && chain.after_moment));
   return row(TEXT().chainName(authority), chainSentence(chain, authority), warn);
@@ -1454,6 +1456,7 @@ export function chainSentence(chain: Chain, authority = false): string {
   if (!isKnown(STATUSES, chain.standing)) return said.unknownAnswer(chain.standing);
   const above = Math.max(chain.certificates.length - 1, 0);
   const unjudged = chain.dropped === 0 ? "" : said.chainUnjudged(chain.dropped);
+  if (chain.end === "budget" && chain.standing === "unchecked") return said.chainBudget;
   const decided = chain.decided_by;
   if (decided === null) {
     if (chain.standing === "good") {

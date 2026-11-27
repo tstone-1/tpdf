@@ -114,6 +114,78 @@ fn pixel(
     Ok(pixels)
 }
 
+/// Independently encrypt both PDF key-derivation families and check the rewritten trailers.
+fn check_encrypted_ids(bindings: Bindings, room: &Path) -> Result<(), String> {
+    use std::process::Command;
+    let plain = room.join("plain.pdf");
+    let encrypted = room.join("encrypted.pdf");
+    let output = room.join("redacted.pdf");
+    source().save(&plain).map_err(|e| e.to_string())?;
+    let ids = |path: &Path| -> Result<Vec<Vec<u8>>, String> {
+        let doc = Document::load_with_options(
+            path,
+            lopdf::LoadOptions {
+                password: Some("synthetic".into()),
+                ..Default::default()
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        doc.trailer
+            .get(b"ID")
+            .and_then(Object::as_array)
+            .and_then(|items| {
+                items
+                    .iter()
+                    .map(|item| item.as_str().map(Vec::from))
+                    .collect()
+            })
+            .map_err(|e| e.to_string())
+    };
+    let checked = |command: &mut Command| -> Result<(), String> {
+        let result = command.output().map_err(|e| e.to_string())?;
+        if result.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&result.stderr).into_owned())
+        }
+    };
+    for bits in ["128", "256"] {
+        let mut encrypt = Command::new("qpdf");
+        encrypt.args(["--encrypt", "synthetic", "synthetic-owner", bits]);
+        if bits == "128" {
+            encrypt.arg("--use-aes=y");
+        }
+        checked(encrypt.arg("--").arg(&plain).arg(&encrypted))?;
+        let opened =
+            OpenDocument::open(bindings, &encrypted, Some("synthetic")).map_err(|e| e.reason)?;
+        let out = tpdf_lib::raster_redact::rewrite(&opened, &plan(1), Fill::default())
+            .map_err(|e| e.message)?;
+        std::fs::write(&output, out).map_err(|e| e.to_string())?;
+        checked(
+            Command::new("qpdf")
+                .args(["--password=synthetic", "--check"])
+                .arg(&output),
+        )?;
+        let before = ids(&encrypted)?;
+        let after = ids(&output)?;
+        if before.len() != 2
+            || after.len() != 2
+            || before[0] != after[0]
+            || after[1].len() != 16
+            || before[1] == after[1]
+        {
+            return Err(format!(
+                "AES-{bits} identifier pair was not preserved and refreshed"
+            ));
+        }
+        if OpenDocument::open(bindings, &output, Some("wrong")).is_ok() {
+            return Err(format!("AES-{bits} output accepted a wrong password"));
+        }
+        println!("[PASS] AES-{bits} password, trailer identifiers and independent qpdf check");
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -290,6 +362,13 @@ fn run() -> Result<(), String> {
         return Err("encrypted output lost pages".into());
     }
     println!("[PASS] password preserved and required, independently reopened by PDFium");
+    match std::process::Command::new("qpdf").arg("--version").output() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("[SKIP] independent encryption checks require qpdf")
+        }
+        Err(e) => return Err(e.to_string()),
+        Ok(_) => check_encrypted_ids(bindings, &room)?,
+    }
     Ok(())
 }
 

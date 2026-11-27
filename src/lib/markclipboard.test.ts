@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { describe as describeMark, MarkClipboard, notCopied, shapeOf } from "./markclipboard";
+import { describe as describeMark, MarkClipboard, notCopied, shapeOf, withMarkDraft } from "./markclipboard";
 import { pageId, type MarkKind, type MarkView } from "./pages";
 
 const frame = { turns: 0, width_pt: 600, height_pt: 800, crop: { width_pt: 600, height_pt: 800, left: 0, top: 0 } };
@@ -46,6 +46,18 @@ describe("a copied mark", () => {
     expect(result.refused[0]).toContain("reply");
     expect(clipboard.marks.map(m => m.kind)).toEqual(["stamp"]);
     expect(clipboard.copy([mark("note")], source).copied).toBe(1);
+  });
+
+  it("copies the open editor's text and formatting together", () => {
+    const clipboard = new MarkClipboard();
+    const original = mark("square");
+    const source = { frame, doc: 1, unit: 1, page: original.page };
+    for (const [note, start] of [["a note", 2], ["a longer note", 9]] as const) {
+      const draft = { id: original.id, note, styles: [[start, start + 4, 1] as [number, number, number]] };
+      clipboard.copy([withMarkDraft(original, draft)], source);
+      expect(clipboard.marks[0]).toMatchObject({ note, styles: draft.styles });
+    }
+    expect(withMarkDraft(original, { id: 99, note: "other mark" })).toBe(original);
   });
 
   it("carries the kind, the place, the note, the colour, the width and the stamp", () => {

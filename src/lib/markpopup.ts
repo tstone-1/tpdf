@@ -59,7 +59,7 @@ import { CommentFormatting, type CommentField, type CommentStyle } from "./comme
 import type { MarkKind, MarkView } from "./pages";
 import { catalog, message } from "./i18n";
 import { PointerDrag, type DragPoint } from "./drag";
-import { place, POPUP_WIDTH, submitPopup, type Anchor } from "./popup";
+import { place, POPUP_WIDTH, PopupSubmission, type Anchor } from "./popup";
 import {
   cssColor,
   PALETTE,
@@ -293,6 +293,7 @@ export class MarkPopup {
   private input: CommentField;
   private readonly plain: HTMLTextAreaElement;
   private readonly opts: MarkPopupOptions;
+  private readonly submission = new PopupSubmission();
   private shown: number | null = null;
   /**
    * How far the reader has dragged the box from where it is placed.
@@ -405,9 +406,15 @@ export class MarkPopup {
     return this.shown;
   }
 
+  get body() {
+    return { note: this.input.value, styles: this.formatting.styles };
+  }
+
   get hasDraft(): boolean {
     return this.shown !== null && (this.input.value !== this.was || this.formatting.changed);
   }
+
+  get canCloseOnScroll(): boolean { return this.submission.canCloseOnScroll; }
 
   /** The popup element. For the check harness. */
   get node(): HTMLElement {
@@ -446,7 +453,15 @@ export class MarkPopup {
   show(mark: MarkView, at: Anchor, focus: boolean, together = false): void {
     // A second mark clicked while the first is open is still a close, and its
     // note has to be committed before this one takes the box over.
-    if (this.shown !== null && this.shown !== mark.id) this.commit();
+    if (this.shown !== null && this.shown !== mark.id) {
+      this.submission.after(() => this.writeDraft(), () => this.display(mark, at, focus, together), () => this.input.focus());
+    } else {
+      this.submission.cancelNavigation();
+      this.display(mark, at, focus, together);
+    }
+  }
+
+  private display(mark: MarkView, at: Anchor, focus: boolean, together: boolean): void {
     const was = this.shown;
     this.shown = mark.id;
     if (was !== mark.id) this.moved = { x: 0, y: 0 };
@@ -538,13 +553,20 @@ export class MarkPopup {
    * for a mark the model no longer has is a refusal the reader would see as an
    * error, for doing nothing wrong.
    */
-  hide(commit = true): void {
+  hide(commit = true, closed?: () => void): void {
     if (this.shown === null) return;
-    if (commit) this.commit();
+    const close = () => this.dismiss(closed);
+    if (commit) this.submission.after(() => this.writeDraft(), close, () => this.input.focus());
+    else close();
+  }
+
+  private dismiss(closed?: () => void): void {
+    this.submission.cancelNavigation();
     this.shown = null;
     this.element.style.display = "none";
     this.input.value = "";
     this.opts.onOpen(null);
+    closed?.();
   }
 
   /** File operations close this box only after its words are in the journal. */
@@ -555,16 +577,10 @@ export class MarkPopup {
     if (this.shown === mark) this.opts.onClose(restoreFocus);
   }
 
-  private saving: Promise<void> | null = null;
+  async saveDraft(): Promise<void> { await this.writeDraft(); }
 
-  /** Submit once and keep this subject selected for a clipboard operation. */
-  saveDraft(): Promise<void> {
-    if (!this.hasDraft) return this.saving ?? Promise.resolve();
-    if (this.saving) return this.saving.then(() => this.saveDraft());
-    return this.saving = this.writeDraft().finally(() => { this.saving = null; });
-  }
-
-  private async writeDraft(): Promise<void> {
+  private writeDraft(): void | Promise<void> {
+    if (this.submission.pending) return this.submission.pending;
     const mark = this.shown;
     if (mark === null) return;
     const words = this.input.value;
@@ -574,7 +590,7 @@ export class MarkPopup {
       this.formatting.baseline = this.formatting.styles;
       // A click-away during the write must not submit the same edit twice.
       this.was = words;
-      await submitPopup(this.input, () => this.opts.onNote(mark, words, ...this.formatting.args), () => {
+      return this.submission.write(this.input, () => this.opts.onNote(mark, words, ...this.formatting.args), () => {
         if (this.shown === mark) {
           this.was = before;
           this.formatting.baseline = previousStyles;
@@ -669,9 +685,7 @@ export class MarkPopup {
         `width:18px;height:18px;border-radius:50%;background:${cssColor(rgb)};` +
         "border:1px solid color-mix(in srgb, CanvasText 30%, transparent);" +
         "padding:0;cursor:default;";
-      button.addEventListener("pointerdown", (event) => {
-        // The popup's own handler would otherwise swallow it, and the page's
-        // would read it as a press outside the mark.
+      button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         const id = this.shown;
@@ -686,17 +700,6 @@ export class MarkPopup {
       row.append(button);
     }
     return row;
-  }
-
-  /** Sends the note if it changed. */
-  private commit(): void {
-    const id = this.shown;
-    if (id === null) return;
-    const now = this.input.value;
-    if (!this.hasDraft) return;
-    this.formatting.baseline = this.formatting.styles;
-    this.was = now;
-    this.opts.onNote(id, now, ...this.formatting.args);
   }
 
   /** The kind, and a close affordance for a reader who will not guess Escape. */
@@ -742,7 +745,7 @@ export class MarkPopup {
     close.style.cssText =
       "border:0;background:none;color:inherit;opacity:0.55;font:inherit;" +
       "font-size:1.1em;line-height:1;cursor:default;padding:0 0.15rem;";
-    close.addEventListener("pointerdown", (event) => {
+    close.addEventListener("click", (event) => {
       // Stops the popup's own handler from swallowing it, and the page's from
       // seeing a press it would treat as a click-away *and* a selection start.
       event.preventDefault();

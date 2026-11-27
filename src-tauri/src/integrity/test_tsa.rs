@@ -1011,6 +1011,8 @@ pub struct OcspFaults {
     pub critical_extension: bool,
     /// `archiveCutoff` at this time: the responder keeps expired certificates.
     pub archive_cutoff: Option<u64>,
+    /// Put the cutoff on a different certificate in the same signed response.
+    pub cutoff_for_other_serial: bool,
 }
 
 /// An `OCSPResponse`, DER --- status successful, type basic --- saying
@@ -1105,8 +1107,9 @@ pub fn mint_ocsp(
             extn_value: OctetString::new(der::asn1::Null.to_der().expect("null")).expect("octets"),
         });
     }
+    let mut single_extensions = Vec::new();
     if let Some(cutoff) = faults.archive_cutoff {
-        extensions.push(Extension {
+        single_extensions.push(Extension {
             extn_id: oid("1.3.6.1.5.5.7.48.1.6"),
             critical: false,
             extn_value: OctetString::new(
@@ -1118,17 +1121,26 @@ pub fn mint_ocsp(
             .expect("octets"),
         });
     }
+    let mut answer = SingleResponse {
+        cert_id,
+        cert_status,
+        this_update: when(this_update),
+        next_update: next_update.map(when),
+        single_extensions: (!single_extensions.is_empty()).then_some(single_extensions),
+    };
+    let mut answers = Vec::new();
+    if faults.cutoff_for_other_serial {
+        let mut other = answer.clone();
+        other.cert_id.serial_number = SerialNumber::from(0xff_u16);
+        answer.single_extensions = None;
+        answers.push(other);
+    }
+    answers.push(answer);
     let data = ResponseData {
         version: x509_ocsp::Version::V1,
         responder_id,
         produced_at: when(this_update),
-        responses: vec![SingleResponse {
-            cert_id,
-            cert_status,
-            this_update: when(this_update),
-            next_update: next_update.map(when),
-            single_extensions: None,
-        }],
+        responses: answers,
         response_extensions: (!extensions.is_empty()).then_some(extensions),
     };
     let tbs = data.to_der().expect("response data");

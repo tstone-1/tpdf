@@ -524,7 +524,7 @@
   import { NewPasswordDialog } from "./lib/newpassworddialog";
   import { FieldPropertiesDialog, changeProperties, pickedField, type PropertiesDeps } from "./lib/fieldprops";
   import { duplicate, type DuplicateDeps } from "./lib/duplicate";
-  import { MarkClipboard, notCopied, shapeOf } from "./lib/markclipboard";
+  import { MarkClipboard, notCopied, shapeOf, withMarkDraft } from "./lib/markclipboard";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
   import { pastedBytes, pastedPicture, readPicture, type PicturePixels } from "./lib/picture";
   import { regionName, regionImageRequest, regionSaid } from "./lib/regionshot";
@@ -562,7 +562,6 @@
     redactionRows,
     slotOfIdIn,
     type MarkKind,
-    type MarkView,
     type FieldKind,
     type StampName,
     type PageId,
@@ -828,6 +827,7 @@
     if (!source || !model) return;
     const names = formNames, border = fieldBorder;
     const deps: DuplicateDeps = {
+      draft: source.openMarkDraft,
       copies: () => source.copiesOfPicked(),
       state: () => model.state,
       form: () => form,
@@ -2821,9 +2821,8 @@
     }
     // Copy belongs to the selection at command time, including the unsaved
     // note. Its worker reads may finish after the reader moves to another tab.
-    const withDraft = (mark: MarkView) => mark.id === mounted.markOpen
-      ? { ...mark, note: mounted.markNoteText } : mark;
-    let current = marks.map(withDraft);
+    const draft = mounted.openMarkDraft;
+    let current = marks.map(mark => withMarkDraft(mark, draft));
     // A picture's pixels are not in its view, so they are fetched first; one
     // that cannot be read is not copied, and says so.
     let unit: number;
@@ -2848,7 +2847,7 @@
         catch (error) { if (stillIn(view, model, mounted)) say(spokenError(error)); return; }
         if (!currentRequest() || !ownsSelection()) return;
       }
-      current = selected(model.state).map(withDraft);
+      current = selected(model.state);
       if (current.length !== named.length) return;
     }
     const { copied, refused: unread } = markClipboard.copy(current, { doc: model.doc, page, unit, frame }, pixels, cut);

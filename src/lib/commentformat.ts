@@ -63,9 +63,11 @@ export function readComment(root: HTMLElement): { text: string; styles: CommentS
     if (last && last[1] === start && last[2] === flags) last[1] = text.length;
     else styles.push([start, text.length, flags]);
   }
-  function visit(parent: HTMLElement, flags: number) {
+  function visit(parent: HTMLElement, flags: number, followedInline = false) {
     let previousBlock = false;
-    for (const node of parent.childNodes) {
+    const children = parent.childNodes;
+    for (let index = 0; index < children.length; index++) {
+      const node = children[index]!;
       const elem = node as HTMLElement;
       const tag = elem.tagName?.toLowerCase();
       const block = tag === "div" || tag === "p";
@@ -75,7 +77,7 @@ export function readComment(root: HTMLElement): { text: string; styles: CommentS
         append(node.textContent ?? "", flags);
       } else if (tag === "br") {
         // A trailing br in an editing block holds the caret on its empty line.
-        if (node !== parent.lastChild) append("\n", flags);
+        if (node !== parent.lastChild || followedInline) append("\n", flags);
       } else if (tag) {
         let style = flags;
         const css = elem.style;
@@ -89,7 +91,9 @@ export function readComment(root: HTMLElement): { text: string; styles: CommentS
         if (tag === "sub" || css.verticalAlign === "sub") style = (style & ~superscript) | subscript;
         if (tag === "sup" || css.verticalAlign === "super") style = (style & ~subscript) | superscript;
         if (css.verticalAlign === "baseline") style &= ~(subscript | superscript);
-        visit(elem, style);
+        const next = children[index + 1] as HTMLElement | undefined;
+        const followed = next ? !["DIV", "P"].includes(next.tagName) : followedInline;
+        visit(elem, style, !block && followed);
       }
     }
   }

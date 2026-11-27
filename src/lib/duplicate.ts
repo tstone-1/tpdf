@@ -18,6 +18,7 @@
 
 import type { CommentStyle } from "./commentformat";
 import type { EditState } from "./edits";
+import { withMarkDraft, type OpenMarkDraft } from "./markclipboard";
 import { placing } from "./fieldnames";
 import { catalog } from "./i18n";
 import type { Form } from "./forms";
@@ -108,7 +109,11 @@ export function copyOf(
   form: Form | null,
   formNames: readonly string[],
   border: boolean,
+  draft: OpenMarkDraft | null = null,
 ): Copy | string {
+  // Both the journal and an open rename must remain free to settle after duplication.
+  const pending = draft && state.marks.find(one => one.id === draft.id && one.kind === "field" && one.note !== draft.note);
+  const reserved = pending ? [...state.marks, withMarkDraft(pending, draft)] : state.marks;
   const base = { quads: [...rect], color: [0.1, 0.35, 0.75] as [number, number, number], width: 1 };
   if (isSaved(id)) {
     const found = form ? savedField(form, state, id) : null;
@@ -119,18 +124,19 @@ export function copyOf(
     const now = properties(form, state, id);
     const made = placing(
       { kind, options: kind === "dropdown" ? now?.options ?? [] : [], group: now?.name ?? found.widget.name },
-      border, formNames, state.marks, form, state.fields,
+      border, formNames, reserved, form, state.fields,
     );
     return { ...base, kind: "field", page: found.page, note: made.name, field: { ...made.field, ...carried(now) } };
   }
-  const mark = state.marks.find((one) => one.id === id);
-  if (!mark) return TEXT().markGone;
+  const saved = state.marks.find((one) => one.id === id);
+  if (!saved) return TEXT().markGone;
+  const mark = withMarkDraft(saved, draft);
   const copied = { ...base, page: mark.page, color: mark.color, width: mark.width };
   if (mark.kind === "square" || mark.kind === "ellipse") return { ...copied, kind: mark.kind, note: mark.note, ...(mark.styles?.length ? { styles: mark.styles } : {}) };
   if (mark.kind !== "field" || !mark.field) return TEXT().onlyThese;
   const made = placing(
     { kind: mark.field.kind, options: mark.field.kind === "dropdown" ? mark.field.options ?? [] : [], group: mark.note },
-    mark.field.border, formNames, state.marks, form, state.fields,
+    mark.field.border, formNames, reserved, form, state.fields,
   );
   const { kind: _kind, border: _border, options: _options, ...rest } = mark.field;
   return { ...copied, kind: "field", note: made.name, field: { ...made.field, ...rest } };
@@ -138,6 +144,7 @@ export function copyOf(
 
 /** What {@link duplicate} needs from the window around it. */
 export interface DuplicateDeps {
+  draft?: OpenMarkDraft | null;
   /** Where the copies of the picked marks go, and the gesture they are made under. */
   copies(): { rects: { mark: number; rect: Rect }[]; sweep: number } | null;
   state(): State | null;
@@ -165,7 +172,7 @@ export async function duplicate(deps: DuplicateDeps): Promise<number> {
   for (const { mark, rect } of asked.rects) {
     const state = deps.state();
     if (!state) break;
-    const copy = copyOf(mark, rect, state, deps.form(), deps.formNames(), deps.border());
+    const copy = copyOf(mark, rect, state, deps.form(), deps.formNames(), deps.border(), deps.draft);
     if (typeof copy === "string") {
       deps.say(copy);
       continue;

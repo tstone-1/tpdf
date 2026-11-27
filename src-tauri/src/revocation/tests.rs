@@ -407,6 +407,23 @@ fn a_good_issued_after_the_certificate_expired_counts_only_with_an_archive_cutof
         standing(&judged(late(None))),
         (Status::Unchecked, Some(Gap::Expired))
     );
+    let neighbour_only = mint_ocsp(
+        &pki.subject,
+        &pki.ca,
+        Says::Good,
+        UNTIL + DAY,
+        Some(UNTIL + 8 * DAY),
+        Responder::Issuer,
+        &OcspFaults {
+            archive_cutoff: Some(UNTIL),
+            cutoff_for_other_serial: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        standing(&judged(neighbour_only)),
+        (Status::Unchecked, Some(Gap::Expired))
+    );
     // A cutoff after the certificate's last day does not reach it.
     assert_eq!(
         standing(&judged(late(Some(UNTIL + 1)))),
@@ -461,6 +478,199 @@ fn the_budget_is_charged_before_a_signature_is_checked() {
         &mut 10,
     );
     assert_eq!(standing(&answer), (Status::Unchecked, Some(Gap::Budget)));
+}
+
+#[test]
+fn a_released_hold_is_dated_and_permanent_revocation_survives_a_good_answer() {
+    let pki = pki();
+    for reason in [6, 1] {
+        let response = |status, when| {
+            mint_ocsp(
+                &pki.subject,
+                &pki.ca,
+                status,
+                when,
+                Some(T + 7 * DAY),
+                Responder::Issuer,
+                &OcspFaults::default(),
+            )
+        };
+        let material = responses(&[
+            response(
+                Says::Revoked {
+                    at: T - 3 * DAY,
+                    reason: Some(reason),
+                },
+                T - DAY,
+            ),
+            response(Says::Good, T + DAY),
+        ]);
+        let at = |when| {
+            standing(&ask(
+                &pki,
+                &material,
+                Moment {
+                    at: when,
+                    ..attested()
+                },
+            ))
+        };
+        assert_eq!(at(T - 2 * DAY), (Status::Revoked, None));
+        if reason == 6 {
+            assert_eq!(at(T), (Status::Unchecked, Some(Gap::Dates)));
+            assert_eq!(at(T + 2 * DAY), (Status::Good, None));
+        } else {
+            assert_eq!(at(T + 2 * DAY), (Status::Revoked, None));
+        }
+    }
+}
+
+#[test]
+fn a_good_answer_needs_the_budget_to_check_the_other_applicable_list() {
+    let pki = pki();
+    let mut material = responses(&[good(&pki)]);
+    material.list(crl(
+        &pki,
+        &[Listed {
+            certificate: &pki.subject,
+            at: T - DAY,
+            reason: None,
+        }],
+        &CrlFaults::default(),
+    ));
+    let subject = parsed(&pki.subject);
+    let issuer = parsed(&pki.ca.certificate);
+    let check = |budget: &mut u64| {
+        judge_under(
+            &subject,
+            Some(&issuer),
+            &[],
+            &[&Pool::new(&material)],
+            attested(),
+            NOW,
+            budget,
+        )
+    };
+    let mut limited = Pool::new(&material).responses[0].signed.len() as u64;
+    assert_eq!(
+        standing(&check(&mut limited)),
+        (Status::Unchecked, Some(Gap::Budget))
+    );
+    assert_eq!(limited, 0);
+    assert_eq!(
+        standing(&check(&mut u64::MAX.clone())),
+        (Status::Revoked, None)
+    );
+}
+
+#[test]
+fn a_responder_supplied_by_one_signature_is_local_to_that_signature() {
+    let pki = pki();
+    let responder = pki.ca.responder(0x63);
+    let material = responses(&[ocsp(
+        &pki,
+        Says::Good,
+        Responder::Delegated(&responder),
+        &OcspFaults::default(),
+    )]);
+    let mut pool = Pool::new(&material);
+    pool.responses[0].basic.certs = None;
+    let issuer = parsed(&pki.ca.certificate);
+    let subject = parsed(&pki.subject);
+    let responder = parsed(&responder.certificate);
+    let check = |candidates: &[&Certificate], budget: &mut u64| {
+        standing(&judge_under(
+            &subject,
+            Some(&issuer),
+            candidates,
+            &[&pool],
+            attested(),
+            NOW,
+            budget,
+        ))
+    };
+    let mut budget = 1;
+    assert_eq!(
+        check(&[&responder], &mut budget),
+        (Status::Unchecked, Some(Gap::Budget))
+    );
+    assert_eq!(budget, 1);
+    for available in [false, true, false, true] {
+        let candidates = if available { vec![&responder] } else { vec![] };
+        let expected = if available {
+            (Status::Good, None)
+        } else {
+            (Status::Unchecked, Some(Gap::Unauthorised))
+        };
+        assert_eq!(check(&candidates, &mut u64::MAX.clone()), expected);
+    }
+}
+
+#[test]
+fn a_named_list_with_partial_reasons_can_establish_revocation_but_not_good_standing() {
+    use x509_cert::ext::pkix::{
+        crl::dp::{DistributionPoint, Reasons},
+        name::{DistributionPointName, GeneralName},
+        CrlDistributionPoints,
+    };
+    let pki = pki();
+    let issuer = parsed(&pki.ca.certificate);
+    for partial in [false, true] {
+        let mut subject = parsed(&pki.subject);
+        let point = DistributionPoint {
+            distribution_point: Some(DistributionPointName::FullName(vec![
+                GeneralName::UniformResourceIdentifier(
+                    der::asn1::Ia5String::new("http://crl.example/partition-2.crl").unwrap(),
+                ),
+            ])),
+            reasons: partial.then(|| Reasons::AffiliationChanged.into()),
+            crl_issuer: None,
+        };
+        subject
+            .tbs_certificate
+            .extensions
+            .get_or_insert_with(Vec::new)
+            .push(x509_cert::ext::Extension {
+                extn_id: der::asn1::ObjectIdentifier::new_unwrap("2.5.29.31"),
+                critical: false,
+                extn_value: der::asn1::OctetString::new(
+                    CrlDistributionPoints(vec![point]).to_der().unwrap(),
+                )
+                .unwrap(),
+            });
+        let listed = [Listed {
+            certificate: &pki.subject,
+            at: T - DAY,
+            reason: Some(3),
+        }];
+        for count in [0, 1] {
+            let material = lists(&[crl(
+                &pki,
+                &listed[..count],
+                &CrlFaults {
+                    partition: true,
+                    ..Default::default()
+                },
+            )]);
+            let result = judge_under(
+                &subject,
+                Some(&issuer),
+                &[],
+                &[&Pool::new(&material)],
+                attested(),
+                NOW,
+                &mut u64::MAX.clone(),
+            );
+            let expected = if count == 1 {
+                (Status::Revoked, None)
+            } else if partial {
+                (Status::Unchecked, Some(Gap::Unsupported))
+            } else {
+                (Status::Good, None)
+            };
+            assert_eq!(standing(&result), expected);
+        }
+    }
 }
 
 // ------------------------------------------------------------------ lists
@@ -1192,56 +1402,19 @@ fn a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute() {
     // in `id-ri-ocsp-response` form, and the Adobe archival attribute among
     // its signer's signed attributes. The signature over them no longer
     // holds, which `of_cms` does not ask: it only gathers.
-    use crate::integrity::test_tsa::{basic_of, mint, Imprint, TestTsa};
-    use cms::revocation::{OtherRevocationInfoFormat, RevocationInfoChoice, RevocationInfoChoices};
+    use crate::integrity::test_tsa::{mint, Imprint, TestTsa};
     let pki = pki();
     let list = crl(&pki, &[], &CrlFaults::default());
     let response = good(&pki);
-    let token = mint(Imprint::Sha256, &[0; 32], None, T, &TestTsa::new());
+    let token = mint(
+        Imprint::Sha256,
+        &Imprint::Sha256.digest(b"covered"),
+        None,
+        T,
+        &TestTsa::new(),
+    );
     let info = cms::content_info::ContentInfo::from_der(&token).expect("a CMS");
     let mut signed: cms::signed_data::SignedData = info.content.decode_as().expect("signed data");
-    let choices = vec![
-        RevocationInfoChoice::Crl(CertificateList::from_der(&list).expect("a list")),
-        RevocationInfoChoice::Other(OtherRevocationInfoFormat {
-            other_format: x509_cert::spki::AlgorithmIdentifierOwned {
-                oid: der::asn1::ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.16.2"),
-                parameters: None,
-            },
-            other: der::Any::from_der(&basic_of(&response)).expect("a response"),
-        }),
-        // A format tpdf does not read is counted, not taken for a response.
-        RevocationInfoChoice::Other(OtherRevocationInfoFormat {
-            other_format: x509_cert::spki::AlgorithmIdentifierOwned {
-                oid: der::asn1::ObjectIdentifier::new_unwrap("1.3.6.1.4.1.0.8"),
-                parameters: None,
-            },
-            other: der::asn1::Null.into(),
-        }),
-    ];
-    signed.crls = Some(RevocationInfoChoices(
-        der::asn1::SetOfVec::try_from(choices).expect("a set"),
-    ));
-    let rebuilt = |signed: &cms::signed_data::SignedData| {
-        cms::content_info::ContentInfo {
-            content_type: info.content_type,
-            content: der::Any::encode_from(signed).expect("signed data"),
-        }
-        .to_der()
-        .expect("a CMS")
-    };
-    let material = Material::of_cms(&rebuilt(&signed));
-    assert_eq!(
-        (
-            material.lists.len(),
-            material.responses.len(),
-            material.unread
-        ),
-        (1, 1, 1)
-    );
-    assert!(!material.certificates.is_empty(), "its certificates too");
-
-    // The Adobe attribute alone, with a second list inside it.
-    let other = mint_crl(&pki.ca, &[], T, Some(T + DAY), &CrlFaults::default());
     let tlv = |tag: u8, content: &[u8]| -> Vec<u8> {
         let mut out = vec![tag];
         let len = content.len();
@@ -1259,6 +1432,61 @@ fn a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute() {
         out.extend_from_slice(content);
         out
     };
+    // Construct the optional [1] directly from the RFC wire format, independently
+    // of the CMS crate's encoder. The signer info and its signed input stay intact.
+    let choice = |oid: &str, payload: &[u8]| {
+        let format = der::asn1::ObjectIdentifier::new(oid)
+            .unwrap()
+            .to_der()
+            .unwrap();
+        tlv(0xa1, &[format.as_slice(), payload].concat())
+    };
+    let mut choices = [
+        list.clone(),
+        choice("1.3.6.1.5.5.7.16.2", &response),
+        choice("1.3.6.1.4.1.0.8", &response),
+    ];
+    choices.sort();
+    let infos = signed.signer_infos.to_der().unwrap();
+    let prefix = info.content.value().strip_suffix(infos.as_slice()).unwrap();
+    let body = [prefix, &tlv(0xa1, &choices.concat()), &infos].concat();
+    let with_choices = cms::content_info::ContentInfo {
+        content_type: info.content_type,
+        content: der::Any::from_der(&tlv(0x30, &body)).unwrap(),
+    }
+    .to_der()
+    .unwrap();
+    assert!(crate::certificate::parse_certificate(&with_choices).is_some());
+    assert_eq!(
+        crate::integrity::token::check(
+            &with_choices,
+            crate::integrity::token::Target::Signature(b"covered"),
+            &mut u64::MAX.clone()
+        )
+        .verdict,
+        crate::integrity::Verdict::Intact
+    );
+    let rebuilt = |signed: &cms::signed_data::SignedData| {
+        cms::content_info::ContentInfo {
+            content_type: info.content_type,
+            content: der::Any::encode_from(signed).expect("signed data"),
+        }
+        .to_der()
+        .expect("a CMS")
+    };
+    let material = Material::of_cms(&with_choices);
+    assert_eq!(
+        (
+            material.lists.len(),
+            material.responses.len(),
+            material.unread
+        ),
+        (1, 1, 1)
+    );
+    assert!(!material.certificates.is_empty(), "its certificates too");
+
+    // The Adobe attribute alone, with a second list inside it.
+    let other = mint_crl(&pki.ca, &[], T, Some(T + DAY), &CrlFaults::default());
     let archival = tlv(0x30, &tlv(0xa0, &tlv(0x30, &other)));
     signed.crls = None;
     let mut infos: Vec<_> = signed.signer_infos.0.iter().cloned().collect();

@@ -11,6 +11,10 @@ const n = (count: string | undefined, one: string, many: string): string =>
   count === "1" ? one : many;
 
 export default {
+  "The original changed while it was opening. Reopen it before continuing.":
+    "Das Original wurde beim Öffnen geändert. Öffne es erneut, um fortzufahren.",
+  "This PDF is too large to insert pages from. The limit is {limit} MiB.":
+    "Diese PDF-Datei ist zu groß, um Seiten daraus einzufügen. Die Grenze liegt bei {limit} MiB.",
   "The formatting of this saved text box cannot be preserved when editing its text": "Die Formatierung dieses gespeicherten Textkastens kann bei einer Textänderung nicht beibehalten werden.",
   "Invalid text size in save plan": "Ungültige Schriftgröße im Speicherplan",
   "Cannot read the page attribute /{key}: {e}": "Das Seitenattribut /{key} kann nicht gelesen werden: {e}",
@@ -160,6 +164,8 @@ export default {
     "Das Rasterdokument konnte nicht gelesen werden: {e}",
   "raster redaction requires finite positive page dimensions":
     "Die Schwärzung als Bild braucht endliche, positive Seitenmaße",
+  "The page is too large for an image-only PDF in ordinary points.":
+    "Die Seite ist zu groß, um sie in Standardpunkten als reines Bild-PDF zu speichern.",
   "page exceeds the raster redaction pixel limit":
     "Die Seite überschreitet die Pixelgrenze der Schwärzung als Bild",
   "missing region corners": "Die Ecken des Bereichs fehlen",
@@ -683,6 +689,16 @@ export default {
     "Seite {n} hat mehr als {MAX_CODES} Codes; die übrigen wurden nicht mit dem Entfernten verglichen",
   "the codes on page {n} could not be read, so whether one still carries what was removed is not known: {e}":
     "Die Codes auf Seite {n} konnten nicht gelesen werden, daher ist unbekannt, ob einer noch Entferntes enthält: {e}",
+  "a form field on page {number} still displays {needle}":
+    "Ein Formularfeld auf Seite {number} zeigt weiterhin {needle} an",
+  "a form field on page {number} is only partly covered by the redaction":
+    "Ein Formularfeld auf Seite {number} ist nur teilweise von der Schwärzung bedeckt",
+  "a form field on page {number} could not be checked: {detail}":
+    "Ein Formularfeld auf Seite {number} konnte nicht geprüft werden: {detail}",
+  "a form widget could not be located on the saved page":
+    "Ein Formularfeld konnte auf der gespeicherten Seite nicht lokalisiert werden",
+  "a form answer is partly clipped on the saved page":
+    "Ein Formularwert ist auf der gespeicherten Seite teilweise abgeschnitten",
   "a text match is partly clipped or could not be located on the saved page":
     "Eine Textfundstelle ist teilweise abgeschnitten oder konnte auf der gespeicherten Seite nicht lokalisiert werden",
   "{needle} is also shown as text on {pages}, which no region marks; the image-only copy keeps it there as a picture":
@@ -707,6 +723,8 @@ export default {
 
 /** The entries above that say "du", addressing the reader with "Sie" instead. */
 export const sie = {
+  "The original changed while it was opening. Reopen it before continuing.":
+    "Das Original wurde beim Öffnen geändert. Öffnen Sie es erneut, um fortzufahren.",
   "the text you marked is inside a form that this document draws {times} time(s). Removing it would change every one of them, including places you did not mark, so nothing was removed.":
     "Der markierte Text liegt in einem Form-XObject, das dieses Dokument {times}-mal zeichnet. Ihn zu entfernen würde jede dieser Stellen ändern, auch solche, die Sie nicht markiert haben, daher wurde nichts entfernt.",
   "the picture you marked is inside a form that this document draws {times} time(s). Removing it would change every one of them, including places you did not mark, so nothing was removed.":

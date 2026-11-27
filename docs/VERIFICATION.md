@@ -4,6 +4,42 @@ What was run to verify each feature: the commands, the platform, the date and th
 The sections stood at the end of `BUILD.md`'s *Cutting a release* until 2026-10-05 and were moved here unchanged.
 Where a section says "this file", "above" or "the top of this file", it means [`BUILD.md`](../BUILD.md).
 
+### Image-only redaction and certificate validation (2026-11-27)
+
+The image-only command was run on a two-page form with the same text answer
+displayed twice. It reported the second page when its widget was visible and
+verified the copy when the crop excluded that widget. A two-character answer
+on a page with a separate redaction mark was also reported. The raster probe
+rewrote two independently encrypted inputs. For AES-128 and AES-256, qpdf
+accepted the new file with its password, the permanent trailer ID matched the
+source, the revision ID changed, and PDFium refused the wrong password.
+
+Synthetic signed evidence exercises a reason-limited distribution point, a
+temporary hold followed by a good answer, verification with too little work
+left for the second item, and a responder supplied by just one signature. A
+timestamp with RFC 5940 revocation data constructed independently of the CMS
+encoder passed its cryptographic integrity check. An isolated trust store
+accepted a leaf-only signature when the document supplied its intermediate.
+
+### Comment editing, full-screen quit and signing prompts (2026-11-27)
+
+With the viewer mounted in Chromium and WebKit, a focused More formatting button
+received one click for Enter and one for Space. Each key also removed one
+highlight. Right and middle clicks and a canceled primary press left the color
+unchanged. A completed primary click changed it once. Shift+Enter after a bold letter
+followed by a plain letter survived reading the editor in both engines. Chromium
+placed the break inside the bold span. WebKit started a new block.
+
+A macOS window at (125, 141), 780 x 560 points, was zoomed, taken full screen
+and quit. It reopened zoomed at 1512 x 900. Unzooming restored all four original
+values. AppKit reports intermediate rectangles during an animated zoom. The
+verification reads the settled window through Accessibility after relaunch.
+
+A Linux pseudo-terminal test signed a PDF with a synthetic certificate. With
+the next password prompt open, a second thread and a separate foreground Python
+process were each refused. Timing out the prompt restored the original terminal
+settings, including echo. Neither overlapping request wrote an output file.
+
 ### Formatting selected comment text (2026-11-27)
 
 Chromium and WebKit exercised the inline editor in new marks, saved comments

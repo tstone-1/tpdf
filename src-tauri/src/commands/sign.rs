@@ -467,6 +467,8 @@ pub async fn sign_document(
         use tauri::Manager as _;
         app.state::<Pending>().clear();
     }
+    save::check_signed_destination(Path::new(&source), Path::new(&path))
+        .map_err(|why| why.message)?;
     sign_cms::refuse_unsaved(edits.state(doc)?.dirty)?;
     let opened_as = edits.plan(doc)?.opened_as.ok_or_else(|| {
         said!(
@@ -1109,6 +1111,7 @@ mod tests {
         assert_eq!(
             window,
             [
+                "signatures surveyed (not written)",
                 "timestamp (not written)",
                 // Before the seal, and again by the long-term data before it
                 // fetches: the second answer plans the chain it fetches for.

@@ -232,13 +232,20 @@ pub fn finish(doc: &mut Document, protection: &Protection) -> Result<(), String>
         .and_then(lopdf::Object::as_array)
         .is_ok_and(|both| both.len() == 2 && both.iter().all(|one| one.as_str().is_ok()));
     if !identified {
-        let mut id = [0u8; 16];
-        getrandom::fill(&mut id)
-            .map_err(|e| said!("tpdf could not get random bytes for the file identifier: {e}"))?;
-        let one = || lopdf::Object::String(id.to_vec(), lopdf::StringFormat::Hexadecimal);
-        doc.trailer.set("ID", vec![one(), one()]);
+        let id = fresh_identifier()?;
+        doc.trailer.set("ID", vec![id.clone(), id]);
     }
     Ok(())
+}
+
+pub(crate) fn fresh_identifier() -> Result<lopdf::Object, String> {
+    let mut id = [0u8; 16];
+    getrandom::fill(&mut id)
+        .map_err(|e| said!("tpdf could not get random bytes for the file identifier: {e}"))?;
+    Ok(lopdf::Object::String(
+        id.to_vec(),
+        lopdf::StringFormat::Hexadecimal,
+    ))
 }
 
 /// Reads the bytes a rewrite produced and refuses any that are not protected

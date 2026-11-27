@@ -894,8 +894,8 @@ ROWS += [
         # steps over an edit nobody made, twice for every note they looked at.
         "marks: commit a note that nobody changed",
         "src/lib/markpopup.ts",
-        "    const now = this.input.value;\n    if (!this.hasDraft) return;",
-        "    const now = this.input.value;",
+        "    if (this.hasDraft) {",
+        "    {",
         "sends nothing for a note that was opened and not typed in",
     ),
     Mutation(
@@ -905,8 +905,8 @@ ROWS += [
         # a second undo and, for the undone one, a refusal from the model.
         "marks: commit the note of a mark that is going",
         "src/lib/markpopup.ts",
-        "    if (commit) this.commit();",
-        "    this.commit();",
+        "if (commit) this.submission.after(",
+        "if (true) this.submission.after(",
         "sends nothing when the mark is going",
     ),
     Mutation(
@@ -916,8 +916,8 @@ ROWS += [
         # there.
         "marks: let a second mark take the box without committing the first",
         "src/lib/markpopup.ts",
-        "    if (this.shown !== null && this.shown !== mark.id) this.commit();\n",
-        "",
+        "this.submission.after(() => this.writeDraft(), () => this.display(mark,",
+        "this.submission.after(() => {}, () => this.display(mark,",
         "commits the first mark's note when a second one takes the box",
     ),
     Mutation(

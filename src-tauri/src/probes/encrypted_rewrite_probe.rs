@@ -89,7 +89,9 @@ fn encryption_of(path: &Path, password: &str) -> Option<String> {
         .arg(path)
         .output()
         .ok()?;
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// How many pages `lopdf` finds **with the password**.
@@ -143,13 +145,18 @@ pub fn main() {
         .parent()
         .expect("a repository root")
         .join("testdata");
+    probe(&root, &FIXTURES).finish();
+}
+
+fn probe(root: &Path, fixtures: &[(&str, &str)]) -> Report {
     let mut r = Report::default();
     let have_qpdf = std::process::Command::new("qpdf")
         .arg("--version")
         .output()
         .is_ok();
 
-    for (name, password) in FIXTURES {
+    let mut rewrites = 0;
+    for &(name, password) in fixtures {
         let source = root.join(name);
         if !source.exists() {
             r.skip(
@@ -161,14 +168,18 @@ pub fn main() {
 
         let before = pages_with_password(&source, password);
         if before < 2 {
-            r.skip(name, format!("needs two pages to drop one, found {before}"));
+            r.check(
+                false,
+                name,
+                format!("needs two readable pages to drop one, found {before}"),
+            );
             continue;
         }
 
         let out = std::env::temp_dir().join(format!("tpdf-encrw-{}-{name}", std::process::id()));
         let key = (!password.is_empty()).then_some(password);
         match save::write_copy(&source, &dropping_last(before), &out, key, &save::Here) {
-            Ok(_) => {}
+            Ok(_) => rewrites += 1,
             Err(why) => {
                 r.check(false, &format!("{name}: rewrite"), why.message);
                 continue;
@@ -199,7 +210,8 @@ pub fn main() {
                         "qpdf reports different encryption".into()
                     },
                 ),
-                _ => r.skip(
+                _ => r.check(
+                    false,
                     &format!("{name}: the encryption is unchanged"),
                     "qpdf failed",
                 ),
@@ -248,5 +260,23 @@ pub fn main() {
         r.skip("a locked document is refused", "fixture not generated");
     }
 
-    r.finish();
+    r.check(
+        rewrites > 0,
+        "encrypted rewrite",
+        format!("{rewrites} completed"),
+    );
+    r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_locked_control_cannot_hide_a_failed_positive_read() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata");
+        assert!(root.join("incr-encrypted-pw.pdf").is_file());
+        let report = probe(&root, &[("incr-encrypted-pw.pdf", "different-password")]);
+        assert_eq!((report.passed, report.failed, report.skipped), (1, 2, 0));
+    }
 }

@@ -24,7 +24,7 @@
 //! one writes would be read by the other. The rules, each measured before it was
 //! written:
 //!
-//! - **The issuer is found by name and by key** ([`crate::revocation::issuer_of`]),
+//! - **The issuer is found by name and by key** (the issuer signature check),
 //!   among the candidates given --- never by name alone.
 //! - **A root ends the chain**: self-issued, and verified by its own key.
 //!   Nobody revokes a trust anchor through its own data.
@@ -74,7 +74,7 @@
 use der::Encode as _;
 use x509_cert::Certificate;
 
-use super::{issuer_of, judge, judge_under, Moment, Pool, Revocation, Status};
+use super::{issuer_with_budget, judge, judge_under, Gap, Moment, Pool, Revocation, Status};
 
 /// id-pkix-ocsp-nocheck, RFC 6960 §4.2.2.2.1.
 pub const OCSP_NO_CHECK: &str = "1.3.6.1.5.5.7.48.1.5";
@@ -98,6 +98,8 @@ pub enum End {
     NoIssuer,
     /// At a certificate already walked.
     Loop,
+    /// Issuer verification exceeded the document hashing budget.
+    Budget,
 }
 
 /// One certificate on a walk, with the one that issued it.
@@ -138,41 +140,69 @@ pub fn no_check(certificate: &Certificate) -> bool {
         .any(|e| e.extn_id.to_string() == OCSP_NO_CHECK)
 }
 
-/// Whether `certificate` is a root: self-issued, and verified by its own key.
+/// Whether the certificate verifies under its own key and issuer name.
 #[must_use]
 pub fn root(certificate: &Certificate) -> bool {
-    certificate.tbs_certificate.subject == certificate.tbs_certificate.issuer
-        && issuer_of(certificate, &[certificate]).is_some()
+    anchor_of(certificate, &[]).is_some()
 }
 
-/// The root `certificate` is the same authority as: itself when it is one,
-/// otherwise a self-issued certificate among `candidates` with its name and
-/// its key --- the twin of a cross-certificate.
+/// The self-signed certificate for this authority, if one is present.
 #[must_use]
 pub fn anchor_of<'a>(
     certificate: &'a Certificate,
     candidates: &[&'a Certificate],
 ) -> Option<&'a Certificate> {
-    if root(certificate) {
-        return Some(certificate);
+    anchor_with_budget(
+        certificate,
+        candidates,
+        &mut crate::integrity::MAX_HASHED.clone(),
+    )
+    .ok()
+    .flatten()
+}
+
+/// Locate a self-signed root, including the self-signed twin of a cross-certificate.
+fn anchor_with_budget<'a>(
+    certificate: &'a Certificate,
+    candidates: &[&'a Certificate],
+    budget: &mut u64,
+) -> Result<Option<&'a Certificate>, Gap> {
+    for candidate in
+        std::iter::once(certificate).chain(candidates.iter().copied().filter(|&c| c != certificate))
+    {
+        let tbs = &candidate.tbs_certificate;
+        if tbs.subject == tbs.issuer
+            && tbs.subject == certificate.tbs_certificate.subject
+            && tbs.subject_public_key_info == certificate.tbs_certificate.subject_public_key_info
+            && issuer_with_budget(candidate, &[candidate], budget)?.is_some()
+        {
+            return Ok(Some(candidate));
+        }
     }
-    candidates.iter().copied().find(|candidate| {
-        candidate.tbs_certificate.subject == certificate.tbs_certificate.subject
-            && candidate.tbs_certificate.subject_public_key_info
-                == certificate.tbs_certificate.subject_public_key_info
-            && root(candidate)
-    })
+    Ok(None)
 }
 
 /// The chain from `leaf` up, its issuers found among `candidates`.
 #[must_use]
 pub fn walk(leaf: &Certificate, candidates: &[&Certificate]) -> Walk {
+    walk_with_budget(leaf, candidates, &mut crate::integrity::MAX_HASHED.clone())
+}
+
+fn walk_with_budget(leaf: &Certificate, candidates: &[&Certificate], budget: &mut u64) -> Walk {
     let mut links = Vec::new();
     let mut seen: Vec<Vec<u8>> = Vec::new();
     let mut dropped = 0usize;
     let mut current = leaf.clone();
     loop {
-        if let Some(anchor) = anchor_of(&current, candidates) {
+        let Ok(anchor) = anchor_with_budget(&current, candidates, budget) else {
+            return Walk {
+                links,
+                anchor: None,
+                end: End::Budget,
+                dropped,
+            };
+        };
+        if let Some(anchor) = anchor {
             return Walk {
                 links,
                 anchor: Some(anchor.clone()),
@@ -190,7 +220,15 @@ pub fn walk(leaf: &Certificate, candidates: &[&Certificate]) -> Walk {
             };
         }
         seen.push(der);
-        let issuer = issuer_of(&current, candidates).cloned();
+        let Ok(issuer) = issuer_with_budget(&current, candidates, budget) else {
+            return Walk {
+                links,
+                anchor: None,
+                end: End::Budget,
+                dropped,
+            };
+        };
+        let issuer = issuer.cloned();
         if links.len() < MAX_CHAIN {
             links.push(Link {
                 no_check: no_check(&current),
@@ -316,7 +354,7 @@ pub fn combine(certificates: Vec<Judged>, dropped: usize, end: End) -> Chain {
         standing: Status::Unchecked,
         ..Revocation::default()
     });
-    let (standing, after_moment, decided_by) = if dropped > 0 && reassures {
+    let (standing, after_moment, decided_by) = if (dropped > 0 || end == End::Budget) && reassures {
         (Status::Unchecked, false, None)
     } else {
         (standing, after_moment, decided_by)
@@ -362,7 +400,7 @@ pub fn chain(
         .iter()
         .chain(pools.iter().flat_map(|pool| pool.candidates()))
         .collect();
-    let walked = walk(leaf, &everything);
+    let walked = walk_with_budget(leaf, &everything, budget);
     let mut certificates = vec![judged(leaf, own.clone())];
     for link in walked.links.iter().skip(1).filter(|link| !link.no_check) {
         let answer = judge(&link.certificate, candidates, pools, moment, now, budget);

@@ -143,6 +143,7 @@ def _command_stdin(command: str, payload: bytes | None):
     if sys.platform != 'linux' or command != 'sign' or payload is not None:
         yield subprocess.PIPE if payload is not None else subprocess.DEVNULL
         return
+    import fcntl
     import termios
 
     try:
@@ -154,13 +155,23 @@ def _command_stdin(command: str, payload: bytes | None):
         if os.tcgetpgrp(terminal.fileno()) != os.getpgrp():
             yield subprocess.DEVNULL
             return
-        saved = termios.tcgetattr(terminal)
+        # A controlling terminal belongs to one session. Independent opens of
+        # its proc directory contend even across clients in separate processes.
+        session = os.open(f'/proc/{os.getsid(0)}', os.O_RDONLY | os.O_DIRECTORY)
         try:
-            yield terminal
+            try:
+                fcntl.flock(session, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError('another signing request is using the terminal') from None
+            saved = termios.tcgetattr(terminal)
+            try:
+                yield terminal
+            finally:
+                # The CLI normally restores echo. A timeout can kill it mid-prompt.
+                if termios.tcgetattr(terminal) != saved:
+                    termios.tcsetattr(terminal, termios.TCSAFLUSH, saved)
         finally:
-            # The CLI normally restores echo. A timeout can kill it mid-prompt.
-            if termios.tcgetattr(terminal) != saved:
-                termios.tcsetattr(terminal, termios.TCSAFLUSH, saved)
+            os.close(session)
 
 
 def _search_options(

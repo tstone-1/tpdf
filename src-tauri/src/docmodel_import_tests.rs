@@ -373,8 +373,10 @@ fn inserting_a_page_that_already_has_edited_text_is_refused() {
     let placed = doc.import(None, file(2), vec![0]).expect("import")[0];
     doc.replace_text(placed, other_change(0, "EDITED")).unwrap();
     let depth = doc.depth();
+    let mut touched = file(2);
+    touched.fingerprint.modified_ns = Some(123);
     assert_eq!(
-        doc.import(None, file(2), vec![1, 0]),
+        doc.import(None, touched, vec![1, 0]),
         Err(Refusal::ImportOfEditedPage(0))
     );
     assert_eq!(doc.depth(), depth, "a refused import spends nothing");
@@ -530,7 +532,9 @@ fn a_foreign_comment_cannot_be_said_to_be_on_an_imported_page() {
 fn the_same_file_is_recorded_once_and_a_changed_one_again() {
     let mut doc = Doc::open(1);
     let a = doc.import(None, file(2), vec![0]).expect("first")[0];
-    let b = doc.import(None, file(2), vec![0]).expect("again")[0];
+    let mut touched = file(2);
+    touched.fingerprint.modified_ns = Some(12);
+    let b = doc.import(None, touched, vec![0]).expect("again")[0];
     let c = doc.import(None, file_with(2, 9), vec![0]).expect("changed")[0];
 
     let source = |id| match source_of(&doc, id) {

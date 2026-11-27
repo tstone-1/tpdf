@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-from check_signing import check_long_term, check_signing, long_term_checks
+from check_signing import checked_approval, check_long_term, check_signing, long_term_checks
 from tpdf_client import CommandError, Result
 
 
@@ -29,6 +29,29 @@ def good_report():
 
 
 class SigningCheckTests(unittest.TestCase):
+    def test_timestamp_does_not_mask_a_changed_or_incomplete_approval(self):
+        pdf = Mock()
+        original = b'SYNTHETIC ORIGINAL'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'stamped.pdf'
+            path.write_bytes(original + b' signature')
+            report = good_report()
+            approvals = report['files'][0]['signatures']
+            approvals.pop()
+            approval = approvals[0]
+            approval.update(covers_whole_file=True, appended_bytes=0)
+            pdf.verify.return_value = report
+            self.assertTrue(checked_approval(pdf, path, original, 'SYNTHETIC')['timestamp']['attested'])
+            for bad in [{'integrity': {'verdict': 'altered'}}, {'covers_whole_file': False},
+                        {'appended_bytes': 10}, {'document_timestamp': True}]:
+                with self.subTest(bad=bad):
+                    approvals[0] = {**approval, **bad}
+                    with self.assertRaises(RuntimeError):
+                        checked_approval(pdf, path, original, 'SYNTHETIC')
+            approvals[0] = approval
+            with self.assertRaises(RuntimeError):
+                checked_approval(pdf, path, b'different source', 'SYNTHETIC')
+
     def test_complete_report_passes(self):
         self.assertTrue(long_term_checks(good_report(), 'Signature1', 'SYNTHETIC'))
 

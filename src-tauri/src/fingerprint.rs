@@ -89,10 +89,20 @@ pub struct Fingerprint {
 /// Capture imported pages once. Hash the exact chunks written to the private
 /// render file, even when the source is being rewritten in place.
 pub(crate) fn capture_import(path: &Path) -> std::io::Result<(File, Fingerprint)> {
+    capture_import_within(path, crate::save::MAX_MERGE_BYTES)
+}
+
+fn capture_import_within(path: &Path, limit: u64) -> std::io::Result<(File, Fingerprint)> {
     use std::io::{Read, Write};
     let mut source = File::open(path)?;
     let meta = source.metadata()?;
     let mut remaining = meta.len();
+    if remaining > limit {
+        return Err(std::io::Error::other(said!(
+            "This PDF is too large to insert pages from. The limit is {limit} MiB.",
+            limit = limit >> 20
+        )));
+    }
     // On Unix the worker receives the descriptor itself. Give it a read-only
     // handle to the same file and remove the name before writing any PDF data.
     let (mut writer, name) = tempfile::NamedTempFile::new()?.into_parts();
@@ -685,7 +695,12 @@ mod tests {
         let a = b"original pages";
         let b = b"replaced pages";
         std::fs::write(&path, a).unwrap();
-        let (snapshot, fingerprint) = capture_import(&path).unwrap();
+        let len = a.len() as u64;
+        assert!(capture_import_within(&path, len - 1)
+            .unwrap_err()
+            .to_string()
+            .contains("too large"));
+        let (snapshot, fingerprint) = capture_import_within(&path, len).unwrap();
         fingerprint.agrees_with(&path).unwrap();
         std::fs::write(&path, b).unwrap();
         assert!(fingerprint.agrees_with(&path).is_err());

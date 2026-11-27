@@ -4037,6 +4037,8 @@ export class Viewer {
     // Space, Home, End, the arrows --- plus ⌘A and ⌘C, which mean *this field*
     // when a field has the keyboard.
     if (inTextField(event) || nativeCopy(event)) return;
+    // Let the browser turn native button activation into a click.
+    if ((event.key === "Enter" || event.key === " ") && (event.target as Element | null)?.closest?.("button")) return;
 
     const screen = this.viewportSize().height * PAGE_OVERLAP;
 
@@ -4671,6 +4673,11 @@ export class Viewer {
     const comment = this.commentItems.find((item) => item.id === id);
     if (!comment) return;
 
+    if (this.markNote.openId !== null) {
+      this.markNote.hide(true, () => this.showComment(id, focus));
+      return;
+    }
+
     // Whether the *mark* is on screen, not whether its page is: a page is
     // "visible" when any part of it is, so a note near the foot of the page a
     // reader is at the top of would otherwise open with its anchor below the
@@ -4684,8 +4691,7 @@ export class Viewer {
       this.scrollToDestination(comment.page, this.topPtOf(comment));
     }
     // Re-read after the scroll above, which moves it.
-    this.popup.show(comment, this.repliesTo(id), this.anchorFor(comment), focus);
-    this.opts.onComment?.(id);
+    this.popup.show(comment, this.repliesTo(id), this.anchorFor(comment), focus, () => this.opts.onComment?.(id));
     this.wake();
   }
 
@@ -4740,12 +4746,11 @@ export class Viewer {
   /** Closes the note, if one is open. */
   closeComment(restoreFocus = true): void {
     if (this.popup.openId === null) return;
-    this.popup.hide();
-    this.opts.onComment?.(null);
-    // The keyboard goes back to the page rather than nowhere: a `display:none`
-    // element keeps focus in Chromium until something else takes it, and the
-    // arrow keys would then scroll nothing.
-    if (restoreFocus) this.root.focus();
+    this.popup.hide(true, () => {
+      this.opts.onComment?.(null);
+      // A hidden editor must give the scrolling keys back to the page.
+      if (restoreFocus) this.root.focus();
+    });
   }
 
   /** The replies to one comment, in document order. */
@@ -5327,7 +5332,7 @@ export class Viewer {
     if (id === null) return;
     const comment = this.commentItems.find((item) => item.id === id);
     if (!comment || !visible.includes(comment.page)) {
-      this.closeComment();
+      if (this.popup.canCloseOnScroll) this.closeComment();
       return;
     }
     this.popup.place(this.anchorFor(comment));
@@ -6452,6 +6457,11 @@ export class Viewer {
     return this.markNote.text;
   }
 
+  get openMarkDraft() {
+    const id = this.markNote.openId;
+    return id === null ? null : { id, ...this.markNote.body };
+  }
+
   /** The note editor's text field, so a harness can ask what has the keyboard. */
   get markNoteField(): CommentField {
     return this.markNote.field;
@@ -6481,6 +6491,13 @@ export class Viewer {
    * means the next press of the walk key would go to the field and do nothing.
    */
   showMark(id: number, focus = true): void {
+    if (this.popup.openId !== null) {
+      this.popup.hide(true, () => {
+        this.opts.onComment?.(null);
+        this.showMark(id, focus);
+      });
+      return;
+    }
     const mark = this.markById(id);
     if (!mark) return;
     const where = this.anchorForMark(mark);
@@ -6699,11 +6716,7 @@ export class Viewer {
   /** Closes the note editor, committing what was typed in it. */
   closeMark(restoreFocus = true): void {
     if (this.markNote.openId === null) return;
-    this.markNote.hide();
-    // The keyboard goes back to the page rather than nowhere, for the reason
-    // `closeComment` gives: focus left in a `display:none` element stops the
-    // arrow keys scrolling anything.
-    if (restoreFocus) this.root.focus();
+    this.markNote.hide(true, () => { if (restoreFocus) this.root.focus(); });
   }
 
   /**
@@ -6729,7 +6742,7 @@ export class Viewer {
     }
     const at = this.anchorForMark(mark);
     if (!at || !visible.includes(this.pages.slotOfId(mark.page) ?? -1)) {
-      this.closeMark();
+      if (this.markNote.canCloseOnScroll) this.closeMark();
       return;
     }
     this.markNote.place(at);

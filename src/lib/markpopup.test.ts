@@ -81,6 +81,28 @@ describe("MarkPopup", () => {
     expect(note.hasDraft).toBe(false);
   });
 
+  it("keeps a pending draft and its formatting when dismissal or switching is refused", async () => {
+    let refuse!: (reason: string) => void;
+    let answer: unknown = new Promise<string>(resolve => { refuse = resolve; });
+    const note = popup(() => answer);
+    note.show(mark({id: 7, note: "old"}), anchor(), false);
+    const bold = document.createElement("b");
+    bold.append("new");
+    note.field.replaceChildren(bold);
+    (note.field as unknown as FakeElement).dispatch("input", {});
+    note.hide();
+    note.show(mark({id: 8}), anchor(), false);
+    expect(note.openId).toBe(7);
+    const saved = note.saveDraft();
+    refuse("refused");
+    await expect(saved).rejects.toThrow("refused");
+    expect(note.body).toEqual({note: "new", styles: [[0, 3, 1]]});
+    expect(note.hasDraft).toBe(true);
+    answer = undefined;
+    note.show(mark({id: 8}), anchor(), false);
+    expect(note.openId).toBe(8);
+  });
+
   it("keeps a refused clipboard draft open for retry", async () => {
     let answer: string | undefined = "note refused";
     const note = popup(() => answer);
@@ -193,14 +215,18 @@ describe("MarkPopup", () => {
     const note = popup();
     note.show(mark({ id: 7, color: [1, 0.9, 0.2] }), anchor(), false);
 
-    swatch(note, "green").dispatch("pointerdown", {});
+    swatch(note, "green").dispatch("pointerdown", {button: 2});
+    expect(sent).toEqual([]);
+    swatch(note, "green").dispatch("pointerdown", {button: 2});
+    expect(sent).toEqual([]);
+    swatch(note, "green").dispatch("click", {});
     expect(sent).toEqual(["color:7:0.35,0.8,0.35"]);
 
     // The comparison `edits.ts` says lives here. Without it a reader pressing
     // the swatch that is already ringed spends an undo step on nothing --- and
     // the row is exactly where that press happens, because the ring is what
     // invites it.
-    swatch(note, "green").dispatch("pointerdown", {});
+    swatch(note, "green").dispatch("click", {});
     expect(sent).toEqual(["color:7:0.35,0.8,0.35"]);
   });
 
@@ -210,7 +236,7 @@ describe("MarkPopup", () => {
     // looks ignored until the state reply comes back and the popup is redrawn.
     const note = popup();
     note.show(mark({ id: 7, color: [1, 0.9, 0.2] }), anchor(), false);
-    swatch(note, "blue").dispatch("pointerdown", {});
+    swatch(note, "blue").dispatch("click", {});
     expect(swatch(note, "blue").getAttribute("aria-pressed")).toBe("true");
     expect(swatch(note, "yellow").getAttribute("aria-pressed")).toBe("false");
   });
@@ -580,7 +606,7 @@ describe("MarkPopup", () => {
     expect(closed).toBe(1);
     expect(note.openId).toBe(7);
 
-    buttonEvent(note, "×", "pointerdown");
+    buttonEvent(note, "×", "click");
     expect(closed).toBe(2);
   });
 });

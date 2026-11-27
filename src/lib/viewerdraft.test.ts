@@ -256,7 +256,8 @@ describe("what the page draws while a note is typed", () => {
     asked[0]!.answer(["hello", "there"]);
     await painted();
     (viewer.markPopup as unknown as FakeElement).dispatch("keydown", { key: "Escape" });
-    expect(viewer.markOpen).toBe(-1);
+    expect(viewer.markOpen).toBe(1);
+    expect(viewer.markNoteField.readOnly).toBe(true);
     expect(notes).toEqual([{ mark: 1, note: "hello there" }]);
     // The model still has the old words, and they are not drawn.
     expect(await painted()).toEqual(["hello", "there", "Name"]);
@@ -265,6 +266,7 @@ describe("what the page draws while a note is typed", () => {
     expect(await painted()).toEqual(["hello", "there", "Name"]);
     settleEdit();
     expect(await painted()).toEqual(["hello there", "Name"]);
+    expect(viewer.markOpen).toBe(-1);
   });
 
   it("shows what the model has when the edit settles without taking the note", async () => {

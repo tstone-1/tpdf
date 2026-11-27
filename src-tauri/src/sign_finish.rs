@@ -275,6 +275,23 @@ pub(crate) fn finish(
 ) -> Result<Finished, Stopped> {
     let (bytes, cms, field, stamped_by, locked) = match stage {
         Stage::Made(made) => {
+            if long_term {
+                let survey = checking.survey(made.original()).map_err(Stopped::Refused)?;
+                if let Some(why) = survey.refused {
+                    return Err(Stopped::Refused(why));
+                }
+                if !survey.complete {
+                    return Err(Stopped::Refused(
+                        crate::longterm::existing::Refusal::Incomplete.sentence(),
+                    ));
+                }
+                let fills_existing = survey
+                    .signatures
+                    .iter()
+                    .any(|s| !s.signed && s.field == made.field);
+                crate::longterm::existing::archive_room(survey.signatures.len(), !fills_existing)
+                    .map_err(|why| Stopped::Refused(why.sentence()))?;
+            }
             let stamped = match crate::tsa::stamp(&made, authority, |url, value| {
                 (asking.stamp)(url, value)
             }) {

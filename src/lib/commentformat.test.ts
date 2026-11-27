@@ -26,6 +26,14 @@ describe("Comment formatting", () => {
     expect(box.querySelector("sup")).toBeTruthy();
   });
 
+  it("keeps a soft break at the end of a styled run before more text", () => {
+    const field = document.createElement("div");
+    const bold = document.createElement("b");
+    bold.append("A", document.createElement("br"));
+    field.append(bold, "B");
+    expect(readComment(field)).toEqual({text: "A\nB", styles: [[0, 2, 1]]});
+  });
+
   it("reads blank lines and the final editable line after Enter", () => {
     const field = document.createElement("div");
     field.append("A");

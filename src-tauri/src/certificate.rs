@@ -104,6 +104,53 @@ pub struct Certificate {
     pub extensions_unread: u32,
 }
 
+/// Read RFC 5652 SignedData while deferring its optional revocation choices.
+/// cms 0.2 models the OID in OtherRevocationInfoFormat as an AlgorithmIdentifier.
+/// Readers use the signed content and signer infos unchanged. Only the revocation
+/// reader interprets the separate unsigned CRLs field.
+pub(crate) fn signed_parts(
+    info: &cms::content_info::ContentInfo,
+) -> der::Result<(
+    cms::signed_data::SignedData,
+    Option<der::asn1::SetOfVec<der::Any>>,
+)> {
+    use cms::signed_data::{
+        CertificateSet, DigestAlgorithmIdentifiers, EncapsulatedContentInfo, SignedData,
+        SignerInfos,
+    };
+    use der::asn1::SetOfVec;
+    #[derive(der::Sequence)]
+    struct Envelope {
+        version: cms::content_info::CmsVersion,
+        digest_algorithms: DigestAlgorithmIdentifiers,
+        encap_content_info: EncapsulatedContentInfo,
+        #[asn1(context_specific = "0", tag_mode = "IMPLICIT", optional = "true")]
+        certificates: Option<CertificateSet>,
+        #[asn1(context_specific = "1", tag_mode = "IMPLICIT", optional = "true")]
+        crls: Option<SetOfVec<der::Any>>,
+        signer_infos: SignerInfos,
+    }
+    let value: Envelope = info.content.decode_as()?;
+    Ok((
+        SignedData {
+            version: value.version,
+            digest_algorithms: value.digest_algorithms,
+            encap_content_info: value.encap_content_info,
+            certificates: value.certificates,
+            crls: None,
+            signer_infos: value.signer_infos,
+        },
+        value.crls,
+    ))
+}
+
+/// Signed fields for inspection. Writers retain their original envelope.
+pub(crate) fn read_signed(
+    info: &cms::content_info::ContentInfo,
+) -> der::Result<cms::signed_data::SignedData> {
+    signed_parts(info).map(|(signed, _)| signed)
+}
+
 /// The DER half of `docinfo::read_certificate`, split out so a test can hand
 /// it bytes.
 ///
@@ -118,7 +165,7 @@ pub fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
     use der::{Decode, Encode};
 
     let info = ContentInfo::from_der(der_bytes).ok()?;
-    let signed: SignedData = info.content.decode_as().ok()?;
+    let signed: SignedData = crate::certificate::read_signed(&info).ok()?;
     let chain = certificates_of(&signed).len();
     let chain = u32::try_from(chain).unwrap_or(u32::MAX);
     let (certificate, matched_signer) = signer_certificate(&signed)?;

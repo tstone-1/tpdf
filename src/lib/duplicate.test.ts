@@ -68,6 +68,12 @@ const state = (marks: MarkView[] = MARKS, fields: FieldEdited[] = []) => ({ mark
 const copy = (id: number, marks: MarkView[] = MARKS, border = false) => copyOf(id, RECT, state(marks), FORM, NAMES, border);
 
 describe("the copy of a placed mark", () => {
+  it("duplicates the words and ranges from the open editor together", () => {
+    const state = {marks: MARKS, fields: [], pages: PAGES};
+    const styled = copyOf(4, RECT, state, null, [], false, {id: 4, note: "a new box", styles: [[6, 9, 1]]});
+    expect(styled).toMatchObject({note: "a new box", styles: [[6, 9, 1]]});
+  });
+
   it("is a field of the same kind and properties under the next free name, where it was told to go", () => {
     expect(copy(1)).toEqual({
       kind: "field", page: 5, quads: [32, 32, 132, 52], note: "Text 2", color: [0.2, 0.4, 0.6], width: 3,
@@ -76,6 +82,13 @@ describe("the copy of a placed mark", () => {
       },
     });
     expect(copy(7)).toMatchObject({ note: "Checkbox 2", field: { kind: "checkbox", border: false } });
+  });
+
+  it("reserves the pending name and radio value of the original", () => {
+    expect(copyOf(1, RECT, state(), FORM, NAMES, false, { id: 1, note: "Text 2" }))
+      .toMatchObject({ note: "Text 3" });
+    expect(copyOf(2, RECT, state(), FORM, NAMES, false, { id: 2, note: "New Group" }))
+      .toMatchObject({ note: "New Group", field: { options: ["Choice 2"] } });
   });
 
   it("keeps a dropdown's choices", () => {

@@ -66,46 +66,17 @@ pub async fn redact_raster_copy(
     path: String,
     fill: Option<crate::redaction_fill::Fill>,
 ) -> Result<redact::Applied, String> {
-    let asked = ask_redactions(&edits, &service, doc).await?;
-    let password = password_for(&service, doc, "redact_raster_copy").await;
-    // Kept for the code reader, which reopens the written file: a copy of an
-    // encrypted document is written encrypted.
-    let key = password.clone();
-    let fill = fill.unwrap_or_default();
-    let writing = outside_of(&app, service.backend());
-    let from = std::path::PathBuf::from(source);
-    let out = std::path::PathBuf::from(&path);
-    let plan = asked.plan.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        save::write_raster_copy(&from, &plan, &out, password.as_deref(), &*writing, fill)
-    })
-    .await
-    .map_err(|e| said!("The image-only copy did not run: {e}"))?
-    .map_err(|why| why.message)?;
-    let elsewhere = crate::redaction_steps::text_elsewhere_in(
-        service.inner().clone(),
+    let mut asked = ask_redactions(&edits, &service, doc).await?;
+    asked.fill = fill.unwrap_or_default();
+    crate::redaction_steps::redact_raster_copy_asked(
+        &service,
+        pdfium_library_dir(&app),
         doc,
-        asked.plan.clone(),
-        asked.needles.clone(),
-    )
-    .await;
-    let judged = read_back(
-        service.inner().clone(),
+        asked,
+        source,
         path,
-        key,
-        &asked,
-        Written::Pictures { elsewhere },
     )
-    .await;
-    Ok(redact::Applied {
-        regions: asked.regions,
-        shows: 0,
-        changed: false,
-        verified: judged.why.is_empty(),
-        notes: judged.notes,
-        why: judged.why,
-        kinds: judged.kinds,
-    })
+    .await
 }
 
 /// Writes a copy of the document with every marked region removed, and verifies it.

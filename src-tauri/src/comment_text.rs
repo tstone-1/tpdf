@@ -182,6 +182,10 @@ fn baseline_style(value: &str) -> Option<u8> {
 /// the independently read Contents agrees, so stale rich text cannot replace
 /// newer plain text. No XML or CSS crosses into the webview.
 pub fn read_styles(xml: &str, plain: &str) -> Option<Vec<Style>> {
+    parse_styles(xml, plain, false).or_else(|| parse_styles(xml, plain, true))
+}
+
+fn parse_styles(xml: &str, plain: &str, ignore_indentation: bool) -> Option<Vec<Style>> {
     use quick_xml::{events::Event, Reader};
     let mut reader = Reader::from_str(xml);
     let mut stack = Vec::new();
@@ -190,7 +194,7 @@ pub fn read_styles(xml: &str, plain: &str) -> Option<Vec<Style>> {
     let mut units = 0;
     let mut styles = Vec::new();
     loop {
-        let flags = stack.last().copied().unwrap_or(0);
+        let flags = stack.last().map_or(0, |&(style, _)| style);
         let piece = match reader.read_event().ok()? {
             Event::Start(tag) => {
                 if stack.len() >= 32 {
@@ -246,7 +250,7 @@ pub fn read_styles(xml: &str, plain: &str) -> Option<Vec<Style>> {
                         }
                     }
                 }
-                stack.push(style);
+                stack.push((style, tag.local_name().as_ref() == "body"));
                 continue;
             }
             Event::End(_) => {
@@ -254,6 +258,15 @@ pub fn read_styles(xml: &str, plain: &str) -> Option<Vec<Style>> {
                 continue;
             }
             Event::Empty(tag) if tag.local_name().as_ref() == "br" => "\n".into(),
+            Event::Text(chunk)
+                if ignore_indentation
+                    && stack.last().is_none_or(|&(_, body)| body)
+                    && chunk
+                        .bytes()
+                        .all(|c| matches!(c, b' ' | b'\t' | b'\n' | b'\r')) =>
+            {
+                continue
+            }
             Event::Text(chunk) => chunk.to_string(),
             Event::GeneralRef(entity) => quick_xml::escape::unescape(&format!("&{};", &*entity))
                 .ok()?
@@ -307,6 +320,9 @@ mod tests {
             read_styles(xml, "A & 𐐷\nB"),
             Some(vec![Style(0, 4, 1), Style(4, 6, 3)])
         );
+        let indented = "<?xml version=\"1.0\"?>\n<body>\n  <p><b> A </b></p>\n <p>B</p>\n</body>\n";
+        assert_eq!(read_styles(indented, " A \nB"), Some(vec![Style(0, 3, 1)]));
+        assert_eq!(read_styles(indented, "A\nB"), None);
         assert_eq!(read_styles(xml, "newer words"), None);
         assert_eq!(
             read_styles("<body><script>words</script></body>", "words"),

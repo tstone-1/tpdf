@@ -70,13 +70,17 @@ pub fn install(webview: &tauri::WebviewWindow, path: PathBuf) {
                 return;
             }
             let maximized = window.isZoomed();
-            if closing && maximized {
-                // The close has been accepted. AppKit still knows the exact
-                // normal frame, even after an animated zoom on another screen.
-                window.orderOut(None);
+            if maximized {
+                // AppKit retains the exact pre-zoom frame across an animated zoom.
+                if closing {
+                    window.orderOut(None);
+                }
                 window.zoom(None);
             }
             let frame = window.stringWithSavedFrame().to_string();
+            if maximized && !closing {
+                window.zoom(None);
+            }
             if let Err(error) = (Placement { frame, maximized }).save(&path) {
                 crate::diag::note(&format!("saving window position: {error}"));
             }

@@ -967,7 +967,8 @@ fn the_dss_counts_bound_the_decoding_and_what_they_drop_is_counted() {
     );
     assert_eq!(
         (limits.revocation_unread, limits.revocation_dropped),
-        (0, 40 - kept)
+        (kept, 40 - kept),
+        "all retained streams decode as bytes but none is a DER list"
     );
 }
 

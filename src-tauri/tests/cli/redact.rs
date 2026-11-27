@@ -677,7 +677,7 @@ pub(super) fn shared_form_pdf() -> Vec<u8> {
 /// survive. The region covers only the first widget and a printed label that
 /// gives the OCR gate a measurable font size. The field secret is never page
 /// text, so removing the label cannot supply the missing field-value needle.
-fn multi_widget_pdf() -> Vec<u8> {
+fn multi_widget_pdf(answer: &str) -> Vec<u8> {
     let mut doc = Document::with_version("1.7");
     let pages = doc.new_object_id();
     let field = doc.new_object_id();
@@ -696,7 +696,7 @@ fn multi_widget_pdf() -> Vec<u8> {
                 "BBox" => vec![0.into(), 0.into(), 250.into(), 24.into()],
                 "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
             },
-            b"BT /F1 12 Tf 4 6 Td (WIDGET-SECRET-4827) Tj ET".to_vec(),
+            format!("BT /F1 12 Tf 4 6 Td ({answer}) Tj ET").into_bytes(),
         ));
         let widget = doc.add_object(dictionary! {
             "Type" => "Annot", "Subtype" => "Widget", "Parent" => field, "P" => page,
@@ -743,8 +743,8 @@ fn multi_widget_pdf() -> Vec<u8> {
         field,
         dictionary! {
             "FT" => "Tx", "T" => Object::string_literal("Repeated"),
-            "V" => Object::string_literal("WIDGET-SECRET-4827"),
-            "DV" => Object::string_literal("WIDGET-SECRET-4827"), "Kids" => kids,
+            "V" => Object::string_literal(answer),
+            "DV" => Object::string_literal(answer), "Kids" => kids,
         }
         .into(),
     );
@@ -767,7 +767,7 @@ pub(super) fn widgets_are_removed(report: &mut Report) {
     let input = dir.join("multi-widget.pdf");
     let output = dir.join("multi-widget-redacted.pdf");
     let regions = dir.join("regions.json");
-    std::fs::write(&input, multi_widget_pdf()).expect("multi-widget input");
+    std::fs::write(&input, multi_widget_pdf("WIDGET-SECRET-4827")).expect("multi-widget input");
     std::fs::write(&regions, r#"[{"page":1,"rect":[72,50,250,44]}]"#).expect("regions");
     let before_fields = tool(&["fields", &s(&input), "--json"], &[]);
     let fields = parsed(&before_fields.1);
@@ -838,6 +838,65 @@ pub(super) fn widgets_are_removed(report: &mut Report) {
         )
         .expect("probe expectation");
     }
+    let raster = |cropped: bool,
+                  mark_second_page: bool|
+     -> Result<tpdf_lib::redact::Applied, String> {
+        let service = RenderService::start_with(library_dir(), Backend::Worker);
+        let file = std::fs::File::open(&input).map_err(|e| e.to_string())?;
+        let hashing = file.try_clone().map_err(|e| e.to_string())?;
+        let info = wait(|reply| service.open_handed(input.clone(), Some(file), true, None, reply))
+            .map_err(|e| e.reason)?;
+        let edits = tpdf_lib::edits::Edits::default();
+        edits.open(
+            info.id,
+            2,
+            Some(tpdf_lib::fingerprint::Opened::new(hashing, input.clone())),
+        );
+        edits.redact(info.id, 1, [72., 50., 322., 94.])?;
+        if mark_second_page {
+            edits.redact(info.id, 2, [70., 280., 200., 305.])?;
+        }
+        if cropped {
+            edits.crop(info.id, 2, Some([0., 0., 612., 680.]))?;
+        }
+        let asked = tauri::async_runtime::block_on(tpdf_lib::redaction::ask_redactions(
+            &edits, &service, info.id,
+        ))?;
+        tauri::async_runtime::block_on(tpdf_lib::redaction_steps::redact_raster_copy_asked(
+            &service,
+            library_dir(),
+            info.id,
+            asked,
+            s(&input),
+            s(&dir.join(format!("raster-{cropped}-{mark_second_page}.pdf"))),
+        ))
+    };
+    for cropped in [false, true] {
+        let result = raster(cropped, false);
+        report.check(
+            "image-only verdict follows the second widget's visibility",
+            result.as_ref().is_ok_and(|r| {
+                r.verified == cropped
+                    && (cropped
+                        || r.why
+                            .iter()
+                            .any(|why| why.contains("WIDGET-SECRET-4827") && why.contains('2')))
+            }),
+            &format!("cropped={cropped}: {result:?}"),
+        );
+    }
+    std::fs::write(&input, multi_widget_pdf("AB")).expect("short repeated field value");
+    let result = raster(false, true);
+    report.check(
+        "image-only verification finds a short widget answer outside a second page mark",
+        result.as_ref().is_ok_and(|r| {
+            !r.verified
+                && r.why
+                    .iter()
+                    .any(|why| why.contains("AB") && why.contains('2'))
+        }),
+        &format!("{result:?}"),
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 

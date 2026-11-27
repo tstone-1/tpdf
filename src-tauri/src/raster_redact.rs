@@ -55,6 +55,11 @@ fn dimensions(width: f64, height: f64) -> Result<(usize, usize), String> {
             "raster redaction requires finite positive page dimensions"
         ));
     }
+    if width.max(height) > crate::save::MAX_PAGE_POINTS {
+        return Err(said!(
+            "The page is too large for an image-only PDF in ordinary points."
+        ));
+    }
     let w = (width * DPI / 72.0).ceil();
     let h = (height * DPI / 72.0).ceil();
     if w > f64::from(u16::MAX) || h > f64::from(i32::MAX) || w * h > MAX_PIXELS as f64 {
@@ -370,6 +375,15 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
         ));
     }
     let encryption = source_graph.encryption_state.take();
+    // Legacy encryption derives the document key from the permanent ID.
+    let permanent_id = source_graph
+        .trailer
+        .get(b"ID")
+        .and_then(Object::as_array)
+        .ok()
+        .and_then(|ids| ids.first())
+        .and_then(|id| id.as_str().ok())
+        .map(|bytes| Object::String(bytes.to_vec(), lopdf::StringFormat::Hexadecimal));
     let page_geometry = crate::pagetree::pages_of(&source_graph, plan.pages.len())?
         .into_iter()
         .map(|id| {
@@ -480,6 +494,16 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan, colour: [u8; 3]) -> Resul
     );
     let catalog = out.add_object(dictionary! {"Type"=>"Catalog", "Pages"=>pages_id});
     out.trailer.set("Root", catalog);
+    if encryption.is_some() {
+        let revision_id = crate::protect::fresh_identifier()?;
+        out.trailer.set(
+            "ID",
+            vec![
+                permanent_id.unwrap_or_else(|| revision_id.clone()),
+                revision_id,
+            ],
+        );
+    }
     // Keep plaintext expected objects for comparison after decrypting output.
     let expected = out.clone();
     if let Some(state) = &encryption {
@@ -565,6 +589,10 @@ mod tests {
 
     #[test]
     fn dimensions_bound_allocations_and_reject_invalid_pages() {
+        assert!(dimensions(72.0, 15_000.0)
+            .unwrap_err()
+            .contains("ordinary points"));
+        assert!(dimensions(72.0, 14_400.0).is_ok());
         assert_eq!(dimensions(72.0, 144.0).unwrap(), (300, 600));
         for width in [0.0, -1.0, f64::NAN, f64::INFINITY, 14_400.0] {
             assert!(dimensions(width, 144.0).is_err());

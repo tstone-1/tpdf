@@ -124,7 +124,7 @@ const STAGING_ATTEMPTS: u32 = 16;
 /// saying so; and the quads of every mark on that page are mapped through those
 /// same dimensions, which is how a 2,937-byte plan reached 6.2 GB of
 /// allocation. Both of those are downstream of the number being accepted.
-const MAX_PAGE_POINTS: f64 = 14_400.0;
+pub(crate) const MAX_PAGE_POINTS: f64 = 14_400.0;
 
 /// Why a save was refused, and whether the file having changed is the reason.
 ///
@@ -377,11 +377,23 @@ pub fn print_ready(source: &Path, plan: &Plan) -> Result<(), Refusal> {
     open_for_print(source, Some(plan)).map(drop)
 }
 
+fn refuse_known_change(plan: &Plan) -> Result<(), Refusal> {
+    if plan.source_moved {
+        return Err(Refusal::changed(said!(
+            "The original changed while it was opening. Reopen it before continuing."
+        )));
+    }
+    Ok(())
+}
+
 /// Opens the source once for every print route. When the open document has a
 /// fingerprint, compare its contents on this handle before passing it on.
 /// A timestamp-only change is harmless. A mismatch offers reload or save a copy.
 /// A document without an opening fingerprint can still be printed.
 pub(crate) fn open_for_print(source: &Path, plan: Option<&Plan>) -> Result<PrintSource, Refusal> {
+    if let Some(plan) = plan {
+        refuse_known_change(plan)?;
+    }
     let expected = plan.and_then(|plan| plan.opened_as.as_ref());
     let changed = |reason: String| {
         Refusal::changed(said!(
@@ -1176,7 +1188,7 @@ pub fn write_merged(
 /// they can act on --- merge fewer files, or in two passes --- rather than the
 /// allocation failure or the swap storm that is the alternative. It bounds the
 /// *total*, not each file: ten 200 MB scans cost what two 1 GB ones do.
-const MAX_MERGE_BYTES: u64 = 1 << 30;
+pub(crate) const MAX_MERGE_BYTES: u64 = 1 << 30;
 
 /// What [`write_images`] reports: how many pages the document it made has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -3470,6 +3482,9 @@ fn rewrite_ready(
     // whose page count changed. Everything that keeps the count -- a re-export
     // over the top, a sync client landing a newer copy, a signing tool rewriting
     // in place -- was invisible to it. See `docs/PLAN.md` §5 and `fingerprint.rs`.
+    if matches!(on_change, OnChange::Refuse) {
+        refuse_known_change(plan)?;
+    }
     let mut changed = plan.source_moved;
     let verified = match (&plan.opened_as, on_change) {
         (Some(opened_as), OnChange::Refuse) => Some(
@@ -4982,6 +4997,7 @@ pub fn pdf_date(at: std::time::SystemTime) -> String {
 mod marks;
 
 mod signed;
+pub(crate) use signed::check_signed_destination;
 pub(crate) use signed::read_opened;
 pub use signed::{read_to_sign, write_signed};
 

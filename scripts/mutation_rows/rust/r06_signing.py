@@ -1998,36 +1998,36 @@ ROWS += [
     Mutation(
         "revocation: accept an OCSP response whose signature fails",
         "src/revocation.rs",
-        "                (true, Ok(true)) => return Ok(()),",
-        "                (true, Ok(_)) => return Ok(()),",
+        "match signed {\n                Ok(true) => {",
+        "match signed {\n                Ok(_) => {",
         "a_response_whose_signature_fails_is_not_believed",
     ),
     Mutation(
         "revocation: accept any responder as authorised",
         "src/revocation.rs",
-        "            let authorised = responder == issuer || delegated(responder, issuer, produced);",
-        "            let authorised = true || delegated(responder, issuer, produced);",
+        "responder == issuer || delegated(responder, issuer, produced, budget)?",
+        "true || delegated(responder, issuer, produced, budget)?",
         "a_responder_without_the_ocsp_signing_purpose_is_not_authorised",
     ),
     Mutation(
         "revocation: a delegated responder needs no OCSP-signing purpose",
         "src/revocation.rs",
-        "    purpose\n        && (from..=until).contains(&at)",
-        "    (purpose || true)\n        && (from..=until).contains(&at)",
+        "if !purpose || !(from..=until).contains(&at) {",
+        "if !(from..=until).contains(&at) {",
         "a_responder_without_the_ocsp_signing_purpose_is_not_authorised",
     ),
     Mutation(
         "revocation: a delegated responder need not be in force",
         "src/revocation.rs",
-        "    purpose\n        && (from..=until).contains(&at)",
-        "    purpose\n        && ((from..=until).contains(&at) || true)",
+        "if !purpose || !(from..=until).contains(&at) {",
+        "if !purpose {",
         "a_response_from_a_responder_out_of_its_dates_is_not_authorised",
     ),
     Mutation(
         "revocation: a delegated responder need not be issued by the issuer",
         "src/revocation.rs",
-        "            crate::integrity::signed_by(issuer, &responder.signature_algorithm, &tbs, value)\n                == Ok(true)",
-        "            crate::integrity::signed_by(issuer, &responder.signature_algorithm, &tbs, value)\n                != Ok(false) || true",
+        "crate::integrity::signed_by(issuer, &responder.signature_algorithm, &signed, value)\n            == Ok(true)",
+        "crate::integrity::signed_by(issuer, &responder.signature_algorithm, &signed, value)\n            == Ok(true) || true",
         "a_responder_another_authority_delegated_is_not_authorised",
     ),
     Mutation(
@@ -2054,8 +2054,8 @@ ROWS += [
     Mutation(
         "revocation: find an issuer by its name alone",
         "src/revocation.rs",
-        "            && crate::integrity::signed_by(candidate, &subject.signature_algorithm, &signed, value)\n                == Ok(true)",
-        "            && (crate::integrity::signed_by(candidate, &subject.signature_algorithm, &signed, value)\n                == Ok(true) || true)",
+        "if crate::integrity::signed_by(candidate, &subject.signature_algorithm, &signed, value)\n            == Ok(true)",
+        "if crate::integrity::signed_by(candidate, &subject.signature_algorithm, &signed, value)\n            == Ok(true) || true",
         "an_issuer_is_found_by_its_key_and_not_by_its_name_alone",
     ),
     Mutation(
@@ -2075,8 +2075,8 @@ ROWS += [
     Mutation(
         "revocation: a list's scope covers everything",
         "src/revocation.rs",
-        "    match in_scope(subject, tbs.crl_extensions.as_deref()) {",
-        "    match Ok::<bool, Gap>(true) {",
+        "let scope = match in_scope(subject, tbs.crl_extensions.as_deref()) {",
+        "let scope = match Ok::<_, Gap>(CrlScope::Complete) {",
         "a_list_whose_scope_leaves_the_certificate_out_says_nothing_about_it",
     ),
     Mutation(
@@ -2159,8 +2159,8 @@ ROWS += [
     Mutation(
         "revocation: a good issued after expiry counts",
         "src/revocation.rs",
-        "        if s.this_update > until && !s.keeps_expired_since.is_some_and(|since| since <= until) {",
-        "        if false {",
+        "if !retained(s) {",
+        "if false {",
         "a_good_issued_after_the_certificate_expired_counts_only_with_an_archive_cutoff",
     ),
     Mutation(
@@ -2224,8 +2224,8 @@ ROWS += [
     Mutation(
         "revocation: ignore the CMS crls set",
         "src/revocation.rs",
-        "        if let Some(choices) = &signed.crls {",
-        "        if let Some(choices) = None::<&cms::revocation::RevocationInfoChoices> {",
+        "if let Some(choices) = choices {",
+        "if let Some(choices) = choices.filter(|_| false) {",
         "a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute",
     ),
     Mutation(
@@ -2238,8 +2238,8 @@ ROWS += [
     Mutation(
         "revocation: read any other revocation format as a response",
         "src/revocation.rs",
-        "                        if other.other_format.oid.to_string() == \"1.3.6.1.5.5.7.16.2\" {",
-        "                        if !other.other_format.oid.to_string().is_empty() {",
+        "if format.to_string() == \"1.3.6.1.5.5.7.16.2\" {",
+        "if !format.to_string().is_empty() {",
         "a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute",
     ),
     Mutation(
