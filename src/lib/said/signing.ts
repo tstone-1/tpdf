@@ -251,6 +251,7 @@ export default {
     `der ${note(a.what!)} enthält ein Steuerzeichen, das eine Signatur nicht trägt`,
   "this document's form could not be read: {why}": "das Formular dieses Dokuments konnte nicht gelesen werden: {why}",
   "The selected signature field has no name.": "Das ausgewählte Signaturfeld hat keinen Namen.",
+  "The signature would be outside the form fields tpdf can verify.": "Die Signatur läge außerhalb der Formularfelder, die tpdf prüfen kann.",
   "this document has no field called `{name}`": "dieses Dokument hat kein Feld namens „{name}“",
   "`{name}` is shown in {count} places, and a signature goes in one":
     "„{name}“ wird an {count} Stellen angezeigt, und eine Signatur kommt an eine",

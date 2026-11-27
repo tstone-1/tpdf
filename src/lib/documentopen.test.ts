@@ -636,7 +636,7 @@ describe("the open's wiring in App.svelte", () => {
   // runs (`sourcetext.ts`), so these hold the hand-over and no decision.
   it("checks the settled original journal before replacing a reload and closes only the unused handle", () => {
     const open = functionIn(app, "async function openDocument(");
-    expect(open).toMatch(/await openOrAsk\(path, !resuming\)[\s\S]*await settleDocument\([\s\S]*if \(replacing && !afterWrite && !discard\)[\s\S]*beforeReload\(replacing.edits.state.dirty \|\| hasDraft\)[\s\S]*if \(prompt\)[\s\S]*await call\("close_document", \{ doc: doc.id \}\)[\s\S]*return prompt.message;[\s\S]*unmountDocument\(\)/);
+    expect(open).toMatch(/await openOrAsk\(path, !resuming\)[\s\S]*await settleDocument\([\s\S]*if \(replacing && !afterWrite && !discard\)[\s\S]*beforeReload\(replacing.edits.state.dirty \|\| hasDraft \|\| drawing\)[\s\S]*if \(prompt\)[\s\S]*await call\("close_document", \{ doc: doc.id \}\)[\s\S]*return prompt.message;[\s\S]*unmountDocument\(\)/);
   });
 
   it("resolves background restore by identity before opening a new handle", () => {

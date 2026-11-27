@@ -2269,7 +2269,7 @@ fn as_drawn(
     gap: f64,
 ) -> f64 {
     let fresh = |text: &str| metrics.gapped_layout(text, size, spacing, word_spacing, gap);
-    match (fresh(text), fresh(text.trim_end_matches(' '))) {
+    match (fresh(text), fresh(metrics.measured_text(text))) {
         (Ok((whole, _)), Ok((words, ink))) => {
             let advance = advance - (whole - words);
             advance.max(ink[1] + (advance - words) + (-ink[0]).max(0.))
@@ -2825,7 +2825,13 @@ impl Edit<'_> {
                 // break and keeps the advance, which the ink check then judges.
                 |text| {
                     metrics
-                        .gapped_layout(text.trim_end_matches(' '), size, spacing, word_spacing, gap)
+                        .gapped_layout(
+                            metrics.measured_text(text),
+                            size,
+                            spacing,
+                            word_spacing,
+                            gap,
+                        )
                         .map(|(width, ink)| {
                             if shape.wrap {
                                 width.max(ink[1] + (-ink[0]).max(0.))
@@ -2874,7 +2880,7 @@ impl Edit<'_> {
                 (shape.start, shape.rest)
             };
             // Ink is measured without that trailing space, as `line_breaks`
-            // measured the line: a space draws nothing, and counting its advance
+            // measured the line: a proven blank space draws nothing, and counting its advance
             // refused lines whose words fit the box exactly.
             // Kept items stay where the source put them: `source_items` has
             // already held their ink to the box and the source's own ink.
@@ -2884,7 +2890,7 @@ impl Edit<'_> {
                 (*ink, 0.)
             } else {
                 let (advance, ink) = metrics.gapped_layout(
-                    text.trim_end_matches(' '),
+                    metrics.measured_text(text),
                     size,
                     spacing,
                     word_spacing,

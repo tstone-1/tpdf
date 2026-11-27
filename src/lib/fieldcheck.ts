@@ -814,10 +814,11 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       await settle(() => chooser() !== null || noCertificate(), SETTLE_MS);
       const open = chooser();
       const visible = open?.querySelector<HTMLInputElement>('input[name="sign-appearance"][value="visible"]');
+      const hint = open?.querySelector("#sign-appearance-hint")?.textContent;
       check(
         "the sign-in-the-field command opens the signing for that field",
-        open ? visible?.checked === true && (visible.parentElement?.textContent ?? "").includes("the field Signature 1") : noCertificate(),
-        open ? `chooser: ${visible?.parentElement?.textContent}` : `no chooser: ${said()}`,
+        open ? visible?.checked === true && hint?.includes("the field Signature 1") === true : noCertificate(),
+        open ? `chooser: ${hint}` : `no chooser: ${said()}`,
       );
       if (open) {
         [...open.querySelectorAll("button")].find((one) => one.textContent === "Cancel")?.click();

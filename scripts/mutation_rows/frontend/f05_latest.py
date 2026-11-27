@@ -1190,10 +1190,10 @@ ROWS += [
         "  for (const radio of [visible, invisible]) radio.addEventListener(\"change\", syncAppearance);\n",
         "",
         "says under the appearance what the chosen one does, and names the field it goes in"),
-    Mutation("chooser: a self-signed certificate named twice", "src/lib/signing.ts",
-        "  const from = choice.issuer === choice.subject ? said.selfSigned : said.issuedBy(choice.issuer);",
+    Mutation("chooser: matching display names imply self-signing", "src/lib/signing.ts",
         "  const from = said.issuedBy(choice.issuer);",
-        "says under a certificate from whom, until when and how, and self-signed for its own issuer"),
+        '  const from = choice.subject === choice.issuer ? "Self-signed" : said.issuedBy(choice.issuer);',
+        "shows the issuer even when its display name matches the subject"),
 ]
 ROWS += [
     Mutation("validation data: the address shown with no other authority chosen", "src/lib/validationdata.ts",

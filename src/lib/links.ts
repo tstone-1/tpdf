@@ -4,10 +4,8 @@
  *
  * ## A link carries its hit regions and destination
  *
- * There is no title, no tooltip and no URL here, because there is none in the
- * backend's `Link` either --- see `links.rs` on why that is structural rather
- * than careful. Everything a reader is told about a link is composed from our
- * own words and the destination's *page number*, both of which are ours.
+ * A tooltip displays an internal page or the external host and path supplied
+ * by the backend. Web activation uses the target token to resolve the destination.
  *
  * ## Following one without a way back is a trap, not a feature
  *

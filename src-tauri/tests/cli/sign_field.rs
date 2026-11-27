@@ -131,6 +131,44 @@ pub fn signs_the_field(report: &mut Report) {
         args
     };
 
+    // --force authorizes replacing the destination on success. A signature
+    // the verifier cannot reach must leave the previous file byte-identical.
+    let full = dir.join("full.pdf");
+    let existing = dir.join("previous-output.pdf");
+    let fields: Vec<_> = (1..=32).map(|i| serde_json::json!({
+        "name": format!("Field{i}"), "kind": "signature", "page": 1, "rect": [40, 40, 200, 60]
+    })).collect();
+    let (code, _, detail) = tool_with_stdin(
+        &["form", &s(&plain), "-o", &s(&full), "--fields", "-"],
+        &[],
+        &serde_json::to_string(&fields).unwrap(),
+    );
+    report.check(
+        "control: form makes 32 signature fields",
+        code == 0 && signature_fields(&full).len() == 32,
+        &detail,
+    );
+    let previous = plain_pdf();
+    std::fs::write(&existing, &previous).unwrap();
+    let (code, _, detail) = signs(&line(&full, &existing, &["--force"]), &store, now);
+    report.check(
+        "refusing the 33rd signature field preserves the existing destination",
+        code != 0
+            && detail.contains("outside the form fields")
+            && std::fs::read(&existing).unwrap() == previous,
+        &detail,
+    );
+    let (code, _, detail) = signs(
+        &line(&full, &existing, &["--field", "Field32", "--force"]),
+        &store,
+        now,
+    );
+    report.check(
+        "signing the existing 32nd field still verifies",
+        code == 0 && signature_fields(&existing).contains(&("Field32".into(), true)),
+        &detail,
+    );
+
     // Into the first field, with an appearance: drawn in the field's rectangle.
     let was = drawn_in(&form, "Approved");
     let once = dir.join("once.pdf");

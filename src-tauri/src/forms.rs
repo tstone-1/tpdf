@@ -249,6 +249,7 @@ pub const XFA_REFUSAL: &str = "XFA forms are not supported";
 ///
 /// [`scan`] writes each of these with `said!`, the same words as a literal, so
 /// the window can translate them; a change to one is a change to both.
+pub const UNREADABLE_SIGNATURE: &str = "This signature field contains an unreadable value";
 pub const UNSUPPORTED: &str = "This field type is not supported yet";
 /// `/Ff` bit 1.
 pub const READ_ONLY: &str = "This field is read-only";
@@ -670,10 +671,12 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                     multiple: flags & (1 << 21) != 0,
                 }
             } else if kind == Some(b"Sig") {
-                Control::Signature {
-                    signed: inherited(doc, object, b"V")
-                        .and_then(|v| doc.dereference(v).ok())
-                        .is_some_and(|(_, v)| v.as_dict().is_ok()),
+                let field = doc.get_dictionary(object).map_err(|e| e.to_string())?;
+                match crate::docinfo::signature_value(doc, field) {
+                    Ok(value) => Control::Signature {
+                        signed: value.is_some(),
+                    },
+                    Err(()) => Control::Unsupported,
                 }
             } else {
                 Control::Unsupported
@@ -781,7 +784,9 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 .and_then(|r| r.as_i64().ok())
                 .filter(|r| r % 90 == 0)
                 .map_or(0, |r| r.rem_euclid(360) / 90) as u8;
-            let reason = if !text && !checkbox && !radio && !choice {
+            let reason = if kind == Some(b"Sig") && matches!(control, Control::Unsupported) {
+                Some(said!("This signature field contains an unreadable value"))
+            } else if !text && !checkbox && !radio && !choice {
                 Some(said!("This field type is not supported yet"))
             } else if flags & 1 != 0 {
                 Some(said!("This field is read-only"))
@@ -2457,11 +2462,8 @@ pub(crate) mod tests {
                 }
                 let form = result.unwrap();
                 let signature = form.widgets.iter().find(|w| w.object == check).unwrap();
-                // What it holds is a checkbox's answer and no signature.
-                assert!(matches!(
-                    signature.control,
-                    Control::Signature { signed: false }
-                ));
+                // A checkbox answer is an occupied, unreadable signature value.
+                assert!(matches!(signature.control, Control::Unsupported));
                 assert!(signature.reason.is_some());
                 write(
                     &mut doc,

@@ -110,7 +110,6 @@ const TEXT = catalog({
     unsaved:
       "Save your changes first: a signature covers the file as it is on disk, and this " +
       "document has edits that are not in it yet.",
-    selfSigned: "Self-signed",
     issuedBy: (issuer: string): string => `Issued by ${issuer}`,
     choiceDetail: (from: string, day: string, method: string): string =>
       `${from}, expires ${day} (${method})`,
@@ -211,7 +210,6 @@ const TEXT = catalog({
     unsaved:
       "Speichere zuerst deine Änderungen: Eine Signatur erfasst die Datei so, wie sie auf dem " +
       "Datenträger liegt, und dieses Dokument hat Änderungen, die noch nicht darin sind.",
-    selfSigned: "Selbst signiert",
     issuedBy: (issuer: string): string => `Ausgestellt von ${issuer}`,
     // The worker gives the day as YYYY-MM-DD; the window shows DD.MM.YYYY.
     choiceDetail: (from: string, day: string, method: string): string => {
@@ -484,13 +482,11 @@ function day(expires: string): string {
 
 /**
  * The smaller line under a certificate in the chooser: from whom, until when,
- * and how. The subject is the line above it. A certificate that names itself
- * as its issuer is called self-signed rather than having its name printed
- * twice in a row.
+ * and how. Display names alone cannot establish self-signing.
  */
 export function choiceDetail(choice: Choice): string {
   const said = TEXT();
-  const from = choice.issuer === choice.subject ? said.selfSigned : said.issuedBy(choice.issuer);
+  const from = said.issuedBy(choice.issuer);
   return said.choiceDetail(from, day(choice.expires), choice.method);
 }
 
@@ -822,6 +818,10 @@ export function askIdentity(
   visible.disabled = hidden;
   // In a signature field the field is where it shows and nothing is dragged.
   const appearanceHint = paragraph("tpdf-dialog-hint", "");
+  const hintId = "sign-appearance-hint";
+  appearanceHint.setAttribute("id", hintId);
+  visible.setAttribute("aria-describedby", hintId);
+  invisible.setAttribute("aria-describedby", hintId);
   const syncAppearance = () => {
     appearanceHint.textContent = invisible.checked
       ? said.invisibleHint

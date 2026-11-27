@@ -28,6 +28,7 @@
       closeTpdf: "Close tpdf",
       discardChanges: "Discard changes",
       keepOpen: "Keep open",
+      finishDrawingBeforeWrite: "Finish the drawing with Enter or cancel it with Esc before replacing this document.",
       lastInFolder: "This is the last PDF in its folder.",
       firstInFolder: "This is the first PDF in its folder.",
       // What the status line calls an armed tool.
@@ -214,6 +215,7 @@
       closeTpdf: "tpdf schließen",
       discardChanges: "Änderungen verwerfen",
       keepOpen: "Geöffnet lassen",
+      finishDrawingBeforeWrite: "Schließe die Zeichnung mit Enter ab oder verwirf sie mit Esc, bevor du dieses Dokument ersetzt.",
       lastInFolder: "Das ist das letzte PDF in diesem Ordner.",
       firstInFolder: "Das ist das erste PDF in diesem Ordner.",
       armedCrop: "Zuschneiden — zieh einen Rahmen um das, was bleiben soll",
@@ -377,6 +379,7 @@
       recentlyOpened: "Zuletzt geöffnet",
     },
     "de-DE-formal": {
+      finishDrawingBeforeWrite: "Schließen Sie die Zeichnung mit Enter ab oder verwerfen Sie sie mit Esc, bevor Sie dieses Dokument ersetzen.",
       armedCrop: "Zuschneiden — ziehen Sie einen Rahmen um das, was bleiben soll",
       armedSignature: "Signatur — ziehen Sie einen Rahmen dort auf, wo sie erscheinen soll; Esc bricht ab",
       armedRegion: "Bild — ziehen Sie einen Rahmen um den Bereich, den Sie kopieren oder speichern möchten; Esc bricht ab",
@@ -407,7 +410,7 @@
   } from "./lib/diskwatch";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
-    DocumentTabs, DocumentTasks, freshState, keepScope, keepState, oneEach, partnersOf, restore, restoredState,
+    DocumentTabs, DocumentTasks, tabForKey, freshState, keepScope, keepState, oneEach, partnersOf, restore, restoredState,
     restoredWith, scopeToRestore, twinsOf,
     type DocumentTab, type FreshState, type Restore,
   } from "./lib/documenttabs";
@@ -943,6 +946,7 @@
       findShown, searchOptions: viewer.searchOptionsNow,
       searchScope: keepScope(viewer.restorableSearchScope, edits.state.pages), sidebarTab: sidebar?.tab ?? "outline",
       error, messageTone, offers, notice, redactedCopyPath, measures: viewer.measurements,
+      interaction: viewer.interaction,
     });
     refreshTabs();
   }
@@ -969,6 +973,7 @@
     // The scope only while the pages are the ones it was kept with: the
     // document's other view may have deleted or moved one since.
     measures: (value) => viewer?.restoreMeasures(value),
+    interaction: (value) => viewer?.restoreInteraction(value),
     searchOptions: (value, kept) => viewer?.restoreSearch(kept.query, value,
       scopeToRestore(kept.searchScope, edits?.state.pages ?? [])),
     searchScope: restoredWith("searchOptions"),
@@ -1266,22 +1271,37 @@
     return tabsToClose(tabs.all.map((tab) => tab.view), stripOf(id), id, which);
   }
 
-  /**
-   * Closes several tabs, asking once about the unsaved work among them, then
-   * one at a time through {@link closeTab}, which knows the two sides and the
-   * two views of one document. Work is unsaved only where every view of the
-   * document is closing: one left open keeps it.
-   */
+  function hasDrawing(tab: DocumentTab): boolean {
+    const live = asDocument(tab.view, () => !!viewer?.hasDrawingDraft);
+    if (live !== undefined) return live;
+    const drawing = tab.interaction?.drawing;
+    return !!drawing && tab.edits.map.slotOfId(drawing.page) !== undefined;
+  }
+
+  function canReplaceDocument(model: Edits): boolean {
+    if (!tabs.all.some((tab) => tab.edits === model && hasDrawing(tab))) return true;
+    say(TEXT().finishDrawingBeforeWrite);
+    return false;
+  }
+
+  function unsavedTabs(): DocumentTab[] {
+    return oneEach(tabs.all.filter((tab) => tab.edits.state.dirty || hasDrawing(tab)));
+  }
+
+  /** Prompt once for per-view drawings and document edits whose last view is closing. */
   async function closeTabs(ids: ViewId[]): Promise<void> {
     if (!ids.length) return;
     const approved = new Set<EditState>();
     const go = await documentTasks.idle().then(() => opens.run(async () => {
       // A draft that cannot be committed is said, as `closeTab` says it, and
       // nothing closes: its words are not in the document yet.
-      try { await settleDocument(); } catch (e) { say(String(e)); return false; }
       const closing = new Set(ids);
-      const unsaved = oneEach(tabs.all.filter((tab) => closing.has(tab.view)))
-        .filter((tab) => tab.edits.state.dirty && twinsOf(tabs.all, tab).every((twin) => closing.has(twin.view)));
+      const selected = tabs.all.filter((tab) => closing.has(tab.view));
+      try {
+        for (const tab of oneEach(selected)) await settleDocument(tab.edits);
+      } catch (e) { say(String(e)); return false; }
+      const unsaved = oneEach(selected.filter((tab) => hasDrawing(tab) ||
+        (tab.edits.state.dirty && twinsOf(tabs.all, tab).every((twin) => closing.has(twin.view)))));
       for (const tab of unsaved) approved.add(tab.edits.state);
       if (!unsaved.length) return true;
       return confirmDialog(
@@ -1394,7 +1414,7 @@
       if (!tab) return;
       if (folderDestination !== undefined) {
         try { await settleDocument(tab.edits); } catch (e) { say(String(e)); return; }
-        if (openView !== folderDestination || tab.edits.state.dirty || twinsOf(tabs.all, tab).length) return;
+        if (openView !== folderDestination || hasDrawing(tab) || tab.edits.state.dirty || twinsOf(tabs.all, tab).length) return;
       }
       opening = true;
       try {
@@ -1403,7 +1423,9 @@
         // releasing anything: the document, and its unsaved work, stay open in
         // the other.
         const lastView = twinsOf(tabs.all, tab).length === 0;
-        if (lastView && needsDiscardApproval(tab.edits.state, approved) && !await confirmDialog(
+        const discard = (lastView && needsDiscardApproval(tab.edits.state, approved)) ||
+          (hasDrawing(tab) && !approved?.has(tab.edits.state));
+        if (discard && !await confirmDialog(
           TEXT().discardChangesTo(basename(tab.path)),
           { title: TEXT().closeTab, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
         )) return;
@@ -1439,7 +1461,7 @@
       opening = true;
       try {
         await settleDocument();
-        const unsaved = oneEach(tabs.all).filter((tab) => tab.edits.state.dirty).map((tab) => basename(tab.path));
+        const unsaved = unsavedTabs().map((tab) => basename(tab.path));
         if (unsaved.length && !await confirmDialog(
           unsaved.length === 1
             ? TEXT().discardChangesTo(unsaved[0]!)
@@ -1481,17 +1503,11 @@
   }
 
   function tabKey(event: KeyboardEvent, id: ViewId): void {
-    const index = tabRows.findIndex((tab) => tab.id === id);
-    let next: number;
-    if (event.key === "ArrowRight") next = (index + 1) % tabRows.length;
-    else if (event.key === "ArrowLeft") next = (index + tabRows.length - 1) % tabRows.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = tabRows.length - 1;
-    else return;
+    const target = tabForKey(stripOf(id), id, event.key);
+    if (target === undefined) return;
     event.preventDefault();
-    const target = tabRows[next];
-    if (target) void activateTab(target.id).then(() => {
-      document.getElementById(`document-tab-${target.id}`)?.focus();
+    void activateTab(target).then(() => {
+      document.getElementById(`document-tab-${target}`)?.focus();
     });
   }
   let copyTaskBusy = $state(false);
@@ -2191,7 +2207,7 @@
     setNib: (id) => chooseNib(id),
     markColor: () => markColor.id,
     saveDocument: () => void saveDocument(),
-    isDirty: () => dirty || !!(formLayer?.hasDraft || textEditor?.hasDraft || viewer?.hasNoteDraft),
+    isDirty: () => dirty || !!(formLayer?.hasDraft || textEditor?.hasDraft || viewer?.hasNoteDraft || viewer?.hasDrawingDraft),
     saveCopy: () => void saveCopy(),
     redactCopy: () => void redactCopy(),
     redactRasterCopy: () => void redactRasterCopy(),
@@ -3695,7 +3711,7 @@
       if (!edits || !openPathName || !viewer) return;
       try { await settleDrafts(edits); }
       catch (error) { say(spokenError(error)); return; }
-      if (!edits.dirty) return;
+      if (!canReplaceDocument(edits) || !edits.dirty) return;
       const path = openPathName;
       const place = currentPlace(false);
       const model = edits;
@@ -4390,6 +4406,7 @@
     return documentTasks.run(async () => {
       if (!edits || !openPathName || !viewer) return;
       await settleDrafts(edits);
+      if (!canReplaceDocument(edits)) return;
       const path = openPathName;
       const place = currentPlace(false);
       const model = edits;
@@ -5917,7 +5934,7 @@
           const release = documentTasks.hold();
           try {
             await settled;
-            const unsaved = oneEach(tabs.all).filter((tab) => tab.edits.state.dirty);
+            const unsaved = unsavedTabs();
             if (unsaved.length && !await confirmDialog(
               TEXT().discardChangesOnQuit(unsaved.length),
               { title: TEXT().closeTpdf, kind: "warning", okLabel: TEXT().discardChanges, cancelLabel: TEXT().keepOpen },
@@ -6210,8 +6227,7 @@
         await documentTasks.idle();
         await settleDocument();
         // One name for each document: one on both sides is two tabs.
-        return oneEach(tabs.all)
-          .filter((tab) => tab.edits.state.dirty)
+        return unsavedTabs()
           .map((tab) => basename(tab.path));
       },
       confirm: (prompt) => confirmDialog(prompt.message, {
@@ -7272,7 +7288,8 @@
         // also have appeared while the previous edits were settling.
         const hasDraft = [openView, ...stage.parked].some((id) => asDocument(id, () =>
           edits === replacing.edits && (formLayer?.hasDraft || textEditor?.hasDraft || viewer?.hasNoteDraft)));
-        const prompt = beforeReload(replacing.edits.state.dirty || hasDraft);
+        const drawing = tabs.all.some((tab) => tab.edits === replacing.edits && hasDrawing(tab));
+        const prompt = beforeReload(replacing.edits.state.dirty || hasDraft || drawing);
         if (prompt) {
           await call("close_document", { doc: doc.id });
           say(prompt.message, prompt.offers);

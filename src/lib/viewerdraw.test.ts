@@ -2340,3 +2340,54 @@ it("draws to the release point even when the last move was short of it", async (
   expect(drawn[1]!.shape.quads).toEqual(expected);
   viewer.destroy();
 });
+
+it("restores both released strokes and navigation in a remounted tab", async () => {
+  const first = build(turnedPage(0));
+  await settle();
+  first.goToDestination(0, 120);
+  first.armDraw("ink");
+  scribble([{ x: 100, y: 100 }, { x: 300, y: 120 }]);
+  scribble([{ x: 100, y: 300 }, { x: 300, y: 320 }]);
+  const kept = first.interaction;
+  first.destroy();
+  const other = build(turnedPage(0));
+  expect(other.interaction).toBeNull();
+  expect(other.drawnStrokes).toBeNull();
+  expect(other.canGoBack).toBe(false);
+  other.destroy();
+  const resumed = build(turnedPage(0));
+  resumed.restoreInteraction(kept);
+  expect(resumed.drawnStrokes).toBe(2);
+  expect(resumed.goBack()).toBe(true);
+  expect(resumed.goForward()).toBe(true);
+  resumed.finishDrawing();
+  expect(drawn).toHaveLength(1);
+  expect(drawn[0]!.shape.strokes).toHaveLength(2);
+  resumed.destroy();
+
+  const changed = build([{ ...turnedPage(0)[0]!, id: pageId(9) }]);
+  changed.restoreInteraction(kept);
+  expect(changed.canGoBack).toBe(false);
+  expect(changed.drawnStrokes).toBeNull();
+  changed.destroy();
+});
+
+it("keeps an unfinished polygon editable after switching away", async () => {
+  const first = build(turnedPage(0));
+  await settle();
+  first.armDraw("polygon");
+  click({ x: 100, y: 100 });
+  click({ x: 280, y: 120 });
+  const kept = first.interaction;
+  first.destroy();
+  const resumed = build(turnedPage(0));
+  await settle();
+  resumed.restoreInteraction(kept);
+  expect(resumed.placedCorners).toBe(2);
+  resumed.finishDrawing();
+  expect(drawn).toHaveLength(0);
+  click({ x: 200, y: 240 });
+  resumed.finishDrawing();
+  expect(drawn[0]?.kind).toBe("polygon");
+  resumed.destroy();
+});

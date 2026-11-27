@@ -1,5 +1,6 @@
 import { pathKey } from "./paths";
 import { CoveredWords } from "./coveredwords";
+import type { RetainedInteraction } from "./viewer";
 import { Measurements } from "./measure";
 import type { DocumentInfo } from "./ipc";
 import type { Edits } from "./edits";
@@ -11,6 +12,19 @@ import type { Offer } from "./recovery";
 import type { MessageTone } from "./messagelines";
 import type { PageId } from "./pages";
 import type { ViewId } from "./views";
+
+/** Keyboard movement stays inside the row the reader is navigating. */
+export function tabForKey<T>(strip: readonly T[], current: T, key: string): T | undefined {
+  const index = strip.indexOf(current);
+  if (index < 0) return undefined;
+  switch (key) {
+    case "ArrowRight": return strip[(index + 1) % strip.length];
+    case "ArrowLeft": return strip[(index + strip.length - 1) % strip.length];
+    case "Home": return strip[0];
+    case "End": return strip.at(-1);
+    default: return undefined;
+  }
+}
 
 /** State kept while a document has no mounted viewer. Backend handles stay open. */
 export interface DocumentTab {
@@ -36,6 +50,7 @@ export interface DocumentTab {
   redactedCopyPath: string | null;
   /** The lines and scales drawn on this document, which outlive its viewer. */
   measures: Measurements;
+  interaction: RetainedInteraction | null;
 }
 
 /**
@@ -117,6 +132,7 @@ export function freshState(): FreshState {
     notice: null,
     redactedCopyPath: null,
     measures: new Measurements(),
+    interaction: null,
   };
 }
 
@@ -141,9 +157,9 @@ export function keepState(tab: DocumentTab, state: TabState): void {
 export function restoredState(tab: DocumentTab | undefined): FreshState {
   if (!tab) return freshState();
   const { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageTone, offers, notice,
-    redactedCopyPath, measures } = tab;
+    redactedCopyPath, measures, interaction } = tab;
   return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, messageTone, offers, notice,
-    redactedCopyPath, measures };
+    redactedCopyPath, measures, interaction };
 }
 
 /**
@@ -175,6 +191,7 @@ const RESTORED_AT: { readonly [K in keyof FreshState]: RestorePoint } = {
   searchScope: "mounted",
   sidebarTab: "mounted",
   measures: "mounted",
+  interaction: "mounted",
 };
 
 /**

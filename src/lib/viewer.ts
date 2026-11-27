@@ -94,6 +94,13 @@ import { Picked, arrange, differs, together, type Arrangement } from "./arrange"
 import { PointerDrag, type DragPoint } from "./drag";
 import { distance, endTicks, keepOnPage, Measurements, straighten, type KnownLength, type MeasurePoint } from "./measure";
 
+/** View state to restore after a tab switch. The history uses slots in this page order. */
+export interface RetainedInteraction {
+  pages: PageMap;
+  history: History;
+  drawing: { page: PageId; kind: MarkKind; strokes: Point[][] } | null;
+}
+
 /**
  * A point on a page, in that page's laid-out space, in points.
  *
@@ -1518,7 +1525,7 @@ export class Viewer {
    * rectangle. `false` whenever another tool, or none, is armed.
    */
   private overRedactText = false;
-  private readonly history = new History();
+  private history = new History();
   /** True while the history is driving a jump, so it is not re-recorded. */
   private replaying = false;
   /**
@@ -5909,6 +5916,35 @@ export class Viewer {
     if (!line || !this.measures.setScale(line, known)) return false;
     this.wake();
     return true;
+  }
+
+  get hasDrawingDraft(): boolean {
+    return this.inking !== null;
+  }
+
+  /** Keep the page order only for a view with a drawing or navigation history. */
+  get interaction(): RetainedInteraction | null {
+    if (!this.inking && !this.history.canGoBack && !this.history.canGoForward) return null;
+    const page = this.inking && this.pages.idOf(this.inking.slot);
+    const kind = this.drawArmed;
+    const drawing = this.inking && page != null && kind
+      ? { page, kind, strokes: this.inking.strokes } : null;
+    return { pages: this.pages, history: this.history, drawing };
+  }
+
+  restoreInteraction(kept: RetainedInteraction | null): void {
+    if (!kept) return;
+    if (this.pages.sameOrder(kept.pages)) this.history = kept.history;
+    const drawing = kept.drawing;
+    if (drawing) {
+      const slot = this.pages.slotOfId(drawing.page);
+      if (slot !== undefined) {
+        this.armDraw(drawing.kind);
+        this.inking = { slot, strokes: drawing.strokes };
+        this.wake();
+      }
+    }
+    this.opts.onNavigate?.();
   }
 
   /** The measurements themselves, which the tab keeps while this viewer is gone. */

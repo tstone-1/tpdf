@@ -2942,7 +2942,14 @@ fn a_visible_template_must_leave_ink_after_substitution() {
 
 #[test]
 fn visible_signing_requires_a_visible_field_on_the_displayed_page() {
-    for (flags, outside) in [(0, false), (1, false), (2, false), (32, false), (0, true)] {
+    for (flags, outside) in [
+        (0, false),
+        (4, false),
+        (1, false),
+        (2, false),
+        (32, false),
+        (0, true),
+    ] {
         let mut doc = Document::load_mem(&with_fields(0)).unwrap();
         let id = scanned(&doc, "Witness").widget;
         let flags_ref = doc.add_object(Object::Integer(flags));
@@ -2958,8 +2965,18 @@ fn visible_signing_requires_a_visible_field_on_the_displayed_page() {
         doc.save_to(&mut input).unwrap();
         let request = visible(0, [0., 0., 30., 30.], None);
         let result = prepare_noted(input.clone(), NOW, None, Some(&request), &into("Witness"));
-        if flags == 0 && !outside {
-            assert!(result.is_ok());
+        if !crate::forms::hidden(flags) && !outside {
+            let after = reread(&input, &result.unwrap());
+            assert_eq!(
+                after
+                    .get_dictionary(id)
+                    .unwrap()
+                    .get(b"F")
+                    .unwrap()
+                    .as_i64()
+                    .unwrap(),
+                flags | 132
+            );
         } else {
             assert!(result.unwrap_err().contains(if outside {
                 "not on its page"
@@ -2977,7 +2994,7 @@ fn visible_signing_requires_a_visible_field_on_the_displayed_page() {
                 .unwrap()
                 .as_i64()
                 .unwrap(),
-            flags | 132
+            flags | 128
         );
     }
 }
@@ -3033,6 +3050,75 @@ fn implicit_certification_level_two_controls_properties_and_visible_signing() {
             assert!(result.unwrap_err().contains("is certified"));
         } else {
             result.unwrap();
+        }
+    }
+}
+
+#[test]
+fn only_absent_and_null_signature_values_can_be_filled() {
+    for (value, empty) in [
+        (None, true),
+        (Some(Object::Null), true),
+        (Some(Object::string_literal("existing value")), false),
+        (Some(Object::Reference((9999, 0))), false),
+    ] {
+        let mut doc = Document::load_mem(&with_fields(0)).unwrap();
+        let id = scanned(&doc, "Witness").object;
+        if let Some(value) = value {
+            doc.get_dictionary_mut(id).unwrap().set("V", value);
+        }
+        assert_eq!(
+            matches!(
+                scanned(&doc, "Witness").control,
+                crate::forms::Control::Signature { signed: false }
+            ),
+            empty
+        );
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let result = prepare_noted(bytes, NOW, None, None, &into("Witness"));
+        if empty {
+            result.unwrap();
+        } else {
+            assert!(result.unwrap_err().contains("unreadable value"));
+        }
+    }
+}
+
+#[test]
+fn signing_prepares_only_fields_its_readback_can_reach() {
+    use crate::formfields::{add, Kind, NewField};
+    for count in [31, 32, 33] {
+        let mut doc = Document::load_mem(&two_pages(0)).unwrap();
+        let fields = (1..=count)
+            .map(|i| NewField {
+                name: format!("Field{i}"),
+                kind: Kind::Signature,
+                page: 0,
+                rect: [20., 30., 150., 60.],
+                tooltip: None,
+                required: false,
+                max_length: None,
+                border: false,
+                options: Vec::new(),
+                text_size: None,
+                default_value: None,
+            })
+            .collect::<Vec<_>>();
+        add(&mut doc, &fields).unwrap();
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        for (name, fits) in [
+            ("", count < 32),
+            ("Field1", true),
+            (&*format!("Field{count}"), count <= 32),
+        ] {
+            let result = prepare_noted(bytes.clone(), NOW, None, None, &into(name));
+            if fits {
+                result.unwrap();
+            } else {
+                assert!(result.unwrap_err().contains("outside the form fields"));
+            }
         }
     }
 }

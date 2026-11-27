@@ -3896,15 +3896,68 @@ fn inherited<'a>(
     None
 }
 
+/// The same traversal and limits that Properties will use on the signed revision.
+pub(crate) fn check_signature_room(
+    document: &Document,
+    target: Option<lopdf::ObjectId>,
+) -> Result<(), String> {
+    let bounds = signature_bounds();
+    let mut nodes = 0;
+    let mut count = 0;
+    let mut in_range = false;
+    let cut = fields::walk(document, &bounds, |node| {
+        nodes += 1;
+        if node
+            .dict
+            .is_some_and(|field| terminal_signature(document, field))
+        {
+            if target.is_some() && target == node.id && count < MAX_SIGNATURES {
+                in_range = true;
+            }
+            count += 1;
+        }
+        fields::Flow::Descend
+    });
+    if target.is_none() {
+        // A new top-level field is appended after all the existing entries.
+        in_range = !cut.unreadable_root
+            && cut.dropped == 0
+            && nodes < bounds.nodes
+            && count < MAX_SIGNATURES;
+    }
+    if in_range {
+        Ok(())
+    } else {
+        Err(said!(
+            "The signature would be outside the form fields tpdf can verify."
+        ))
+    }
+}
+
 /// Absent and null values are unsigned. An unreadable value leaves the inventory incomplete.
-fn signature_value<'a>(
+pub(crate) fn signature_value<'a>(
     document: &'a Document,
     field: &'a Dictionary,
 ) -> Result<Option<&'a Dictionary>, ()> {
-    match inherited(document, field, b"V").map(|value| resolve(document, value)) {
-        None | Some(Object::Null) => Ok(None),
-        Some(value) => value.as_dict().map(Some).map_err(|_| ()),
+    let mut field = field;
+    for _ in 0..=32 {
+        if let Ok(value) = field.get(b"V") {
+            return match document.dereference(value).map_err(|_| ())?.1 {
+                Object::Null => Ok(None),
+                value => value.as_dict().map(Some).map_err(|_| ()),
+            };
+        }
+        let Ok(parent) = field.get(b"Parent") else {
+            return Ok(None);
+        };
+        field = document
+            .dereference(parent)
+            .map_err(|_| ())?
+            .1
+            .as_dict()
+            .map_err(|_| ())?;
     }
+    Err(())
 }
 
 /// Whether a widget belongs to a signature field.

@@ -142,7 +142,7 @@ pub(super) struct Metrics {
     pub(super) vertical_bounds: Option<[f64; 2]>,
     widths: Box<[Option<f64>; 256]>,
     // Measured excursions beyond each advance, in thousandths of an em.
-    // Embedded fonts admit them; standard Helvetica retains zero slack.
+    // Embedded outlines or the individual standard-font AFM boxes supply them.
     horizontal_overhangs: Option<Box<[[f64; 2]; 256]>>,
     // Single-byte codes whose glyph is validated (advance and ink) but whose
     // text the editor cannot write: math symbols, letters outside Latin-1.
@@ -275,11 +275,17 @@ impl Metrics {
     /// Every reader is required to have the font. It has no outlines here, so
     /// read-only text in it reserves the font's FontBBox (`standard_box`).
     pub(super) fn standard(base: &[u8]) -> Option<Self> {
-        let (_, table) = standard::FONTS.iter().find(|(name, _)| *name == base)?;
+        let index = standard::FONTS.iter().position(|(name, _)| *name == base)?;
+        let (_, table) = &standard::FONTS[index];
         let mut metrics = Self::helvetica();
         for (slot, width) in (32..=126).chain(160..=255).zip(table) {
             metrics.widths[slot] = Some(f64::from(*width));
         }
+        let mut overhangs = Box::new([[0.; 2]; 256]);
+        for &(code, left, right) in standard::OVERHANGS[index] {
+            overhangs[usize::from(code)] = [f64::from(left), f64::from(right)];
+        }
+        metrics.horizontal_overhangs = Some(overhangs);
         Some(metrics)
     }
 
@@ -457,6 +463,15 @@ impl Metrics {
         Ok(items)
     }
 
+    /// Ignore a trailing advance only when the space itself cannot paint.
+    pub(super) fn measured_text<'a>(&self, text: &'a str) -> &'a str {
+        if self.painted_space && self.writes_space() {
+            text
+        } else {
+            text.trim_end_matches(' ')
+        }
+    }
+
     /// Advance and ink of `text` as `items` shows it, in text space units.
     pub(super) fn gapped_layout(
         &self,
@@ -504,9 +519,14 @@ impl Metrics {
         self.codes_for(text)
     }
 
-    // The codes that would show `text`, whatever the font's rights: what the
-    // font can write, as `writes_space` asks, rather than what it may.
+    // The codes that would show `text`, independent of embedding rights.
     fn codes_for(&self, text: &str) -> Result<Vec<u8>, String> {
+        if self.codes.is_none() && self.unicode.is_none() && text.contains('\u{a0}') {
+            // WinAnsi A0 names the ordinary space glyph. Only an explicit
+            // Unicode mapping can preserve a newly requested nonbreaking space.
+            return Err(missing_glyph());
+        }
+
         if let Some(metrics) = &self.unicode {
             return metrics.encode(text);
         }

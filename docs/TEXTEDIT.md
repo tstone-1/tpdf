@@ -713,8 +713,9 @@ unembedded Times-Roman. Symbol and ZapfDingbats can be measured, but their origi
 holds each font's FontBBox, the union of pdfminer.six's and the AFM files
 matplotlib ships (they differ for oblique Helvetica and every Courier). It is used
 only for read-only text, which reserves the box, widened by its larger side at
-both ends of the advance; editable text keeps the width-only checks, because a
-box edge past every narrow glyph would refuse ordinary edits.
+both ends of the advance. Editable text uses per-glyph horizontal overhangs from the
+AFM tables. WinAnsi without a Unicode mapping cannot preserve a newly inserted
+nonbreaking space on extraction. Automatic layout uses a font that can encode it.
 
 Shapes from the second producer sample (Chrome, PowerPoint, XeLaTeX, ConTeXt,
 Typst, ReportLab, afp2pdf, Microsoft Print to PDF; `BUILD.md` *Producer sample,

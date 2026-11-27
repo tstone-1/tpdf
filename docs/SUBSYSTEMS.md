@@ -6,6 +6,14 @@ documents that say "`AGENTS.md` records ..." about these subsystems mean this fi
 
 ## Signatures, forms and tabs
 
+Ordinary signing checks that the intended field fits the Properties reader's traversal
+and signature count before preparing a revision. An absent or null value is empty.
+An unreadable value cannot be replaced by signing. An invisible approval preserves
+the print setting and appearance of an existing widget.
+
+Tabs retain unfinished strokes and polygon corners by page identity while their viewer
+is unmounted. Navigation history is restored only if the page order still matches.
+
 Visual signatures use a bounded RGBA raster (`signature.rs`, `signature.ts`) on
 `MarkKind::Signature`; PNG/JPEG decoding stays in the webview. Pixels are shared by
 `Arc` in the journal, limited to 512x256 pixels (including rotated equivalents)

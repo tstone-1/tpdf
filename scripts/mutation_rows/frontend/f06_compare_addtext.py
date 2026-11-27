@@ -156,6 +156,6 @@ ROWS = [
         "if (!Number.isFinite(value) || value <= 0) return null;", "if (!Number.isFinite(value)) return null;",
         "is refused"),
     Mutation("measure: the tab forgets its measurements", "src/lib/documenttabs.ts",
-        "    redactedCopyPath, measures };\n", "    redactedCopyPath, measures: new Measurements() };\n",
+        "    redactedCopyPath, measures, interaction };\n", "    redactedCopyPath, measures: new Measurements(), interaction };\n",
         "keeps a tab's measurements"),
 ]

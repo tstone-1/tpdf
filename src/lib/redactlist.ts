@@ -16,15 +16,9 @@
  * it is written in the panel rather than left to be inferred from the tab being
  * called *Redactions*.
  *
- * **A row with no words under it is a finding, not a quiet row.** For a mark it
- * means nothing much --- a square drawn on a photograph covers no text and that
- * is what a reader wanted. For a region it means the removal will take no text
- * out of that rectangle, so whatever is under it is a picture, a vector drawing,
- * or nothing, and `redact.rs` reports every one of those as *unhandled* rather
- * than removing it. The row therefore distinguishes three states where
- * `marklist.ts` has two --- four, counting a page that could not be read at all
- * --- because an empty answer that might still be arriving is the reading a
- * review panel must never offer.
+ * An empty text selection can still cover an image, a drawing or a form.
+ * Each row distinguishes pending, unreadable, empty and readable text.
+ * The removal plan reports which objects it can remove.
  *
  * ## What the words are, and what they are not
  *

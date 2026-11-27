@@ -28,22 +28,11 @@
 //! `links-probe` can put PDFium's answer beside this one and a disagreement is a
 //! finding rather than something nobody would notice.
 //!
-//! ## A link carries no text, and that is structural rather than careful
+//! ## Displaying a destination
 //!
-//! [`Link`] has a rectangle, a page and a [`Target`]. There is no field a string
-//! from the document could occupy --- not the URL, not a title, not the action's
-//! name, which is one of five literals chosen in `outline.rs`. So
-//! `docs/THREAT-MODEL.md` T8 holds here by the shape of the type rather than by
-//! a rule someone has to keep following, and `no_link_field_may_carry_a_url`
-//! below is what says so.
-//!
-//! **A refused link deliberately does not show where it pointed.** That is a
-//! decision, not an omission: a URL is text a stranger wrote, and a refusal
-//! reading *"open https://your-bank.example/verify?"* is a better phishing
-//! surface than no refusal at all. The reader is told what kind of action it was
-//! and that tpdf declines it. Whether tpdf should ever open a web link --- and
-//! how it would have to display one to do that safely --- is an open product
-//! decision recorded in `docs/PLAN.md` §10.
+//! A web target carries a punycode host and a shortened path for display.
+//! The full URL stays in the scan, indexed by the token used on confirmation.
+//! Refused actions expose only their category.
 //!
 //! ## Every bound reports what it cut
 //!
@@ -95,7 +84,7 @@ const MAX_OUTLINE_ITEMS: usize = 10_000;
 
 /// One clickable rectangle, and where it goes.
 ///
-/// No field here can hold a string from the file --- see the module note on T8.
+/// The target may include display text and a token for a confirmed web link.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Link {
     /// Index in [`Links::items`], stable for as long as the document is open.

@@ -1,11 +1,12 @@
 import { Measurements } from "./measure";
 import { describe, expect, it } from "vitest";
 import {
-  DocumentTabs, DocumentTasks, RESTORE_POINTS, freshState, keepScope, keepState, oneEach, partnersOf, restore,
+  DocumentTabs, DocumentTasks, tabForKey, RESTORE_POINTS, freshState, keepScope, keepState, oneEach, partnersOf, restore,
   restoredState, restoredWith, scopeToRestore, twinsOf,
   type DocumentTab, type FreshState, type Restore, type TabState,
 } from "./documenttabs";
-import { pageId } from "./pages";
+import { History } from "./links";
+import { pageId, unedited } from "./pages";
 import app from "../App.svelte?raw";
 import { functionIn, missingFrom, withoutComments as withoutCommentsOf } from "./sourcetext";
 import { pickPartner } from "./panes";
@@ -342,7 +343,8 @@ describe("a close whose drafts cannot be committed", () => {
     // says it. Read as text: `App.svelte` is imported by no test.
     // Mutation: drop either catch -> red.
     expect(missingFrom(functionIn(app, "async function closeTabs(ids: ViewId[]): Promise<void> {"), [
-      "try { await settleDocument(); } catch (e) { say(String(e)); return false; }",
+      "for (const tab of oneEach(selected)) await settleDocument(tab.edits);",
+      "catch (e) { say(String(e)); return false; }",
       "approved.add(tab.edits.state)", "await closeTab(id, approved)",
     ])).toEqual([]);
     for (const command of ["session_set_invert_pages", "session_set_restore_tabs", "session_set_ocr_language"]) {
@@ -445,6 +447,7 @@ describe("what a tab keeps across a switch", () => {
     notice: "saved",
     redactedCopyPath: "/fixture/1-redacted.pdf",
     measures: new Measurements(),
+    interaction: { drawing: null, pages: unedited(5), history: new History() },
   });
   const blank = () => ({ doc: { id: 1 }, path: "/fixture/1.pdf" }) as unknown as DocumentTab;
 
@@ -496,7 +499,7 @@ describe("what a tab keeps across a switch", () => {
       sidebarTab: note("sidebarTab"), error: note("error"), offers: note("offers"),
       messageTone: note("messageTone"),
       notice: note("notice"), redactedCopyPath: note("redactedCopyPath"),
-      measures: note("measures"),
+      measures: note("measures"), interaction: note("interaction"),
     };
     return { applied, seen, apply };
   }
@@ -524,7 +527,7 @@ describe("what a tab keeps across a switch", () => {
     // The message before the copy it clears the offer of: `say` resets it.
     expect(at("unmounted")).toEqual(["query", "findShown", "error", "messageTone", "offers", "notice", "redactedCopyPath"]);
     expect(at("model")).toEqual(["covered"]);
-    expect(at("mounted")).toEqual(["searchOptions", "searchScope", "sidebarTab", "measures"]);
+    expect(at("mounted")).toEqual(["searchOptions", "searchScope", "sidebarTab", "measures", "interaction"]);
   });
 
   it("names the field another is applied with, and does nothing for it", () => {
@@ -534,4 +537,21 @@ describe("what a tab keeps across a switch", () => {
     expect(applied.map(([key]) => key)).not.toContain("offers");
     expect(applied.map(([key]) => key)).toContain("error");
   });
+});
+
+it("moves keyboard focus within the rendered strip", () => {
+  expect(tabForKey(["A", "C"], "A", "ArrowRight")).toBe("C");
+  expect(tabForKey(["A", "C"], "A", "ArrowLeft")).toBe("C");
+  expect(tabForKey(["A", "C"], "C", "Home")).toBe("A");
+  for (const key of ["End", "Home", "ArrowRight", "ArrowLeft"])
+    expect(tabForKey(["B"], "B", key)).toBe("B");
+  expect(tabForKey(["A", "C"], "B", "End")).toBeUndefined();
+  expect(functionIn(app, "function tabKey(")).toContain("tabForKey(stripOf(id), id, event.key)");
+});
+
+it("checks drawing drafts before closing their view or replacing their document", () => {
+  expect(functionIn(app, "function closeTab(")).toContain("hasDrawing(tab) && !approved?.has(tab.edits.state)");
+  expect(functionIn(app, "function unsavedTabs(")).toContain("tab.edits.state.dirty || hasDrawing(tab)");
+  for (const operation of ["saveDocument", "redactAnyway"])
+    expect(functionIn(app, `async function ${operation}(`)).toContain("!canReplaceDocument(edits)");
 });

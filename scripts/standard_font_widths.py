@@ -152,16 +152,29 @@ def render():
             lines.append(f"        {chunk},")
         lines.append(f"    ], [{', '.join(str(v) for v in box(font))}]),")
     lines.append("];")
-    # Ink extents of each printable WinAnsi glyph used by page labels.
-    afm_boxes = {}
-    for row in (AFM / "Helvetica.afm").read_text(encoding="latin-1").splitlines():
-        if row.startswith("C "):
-            fields = dict(part.strip().split(" ", 1) for part in row.split(";") if part.strip())
-            afm_boxes[fields["N"]] = [int(v) for v in fields["B"].split()]
+    # Keep only horizontal excursions beyond the advance. The page-label
+    # renderer also needs all four edges of Helvetica's glyphs.
+    lines.append("type Overhangs = &'static [(u8, i16, i16)];")
+    lines.append("pub(super) const OVERHANGS: [Overhangs; 12] = [")
+    for font in FONTS:
+        boxes = {}
+        for row in (AFM / f"{font}.afm").read_text(encoding="latin-1").splitlines():
+            if row.startswith("C "):
+                fields = dict(part.strip().split(" ", 1) for part in row.split(";") if part.strip())
+                boxes[fields["N"]] = [int(v) for v in fields["B"].split()]
+        glyphs = [boxes[_fontdata.encodings["WinAnsiEncoding"][code]] for code in CODES]
+        if font == "Helvetica":
+            helvetica_ink = glyphs
+        lines.append("    &[")
+        for code, bounds, advance in zip(CODES, glyphs, widths(font), strict=True):
+            left, right = min(0, bounds[0]), max(0, bounds[2] - advance)
+            if left or right:
+                lines.append(f"        ({code}, {left}, {right}),")
+        lines.append("    ],")
+    lines.append("];")
     lines.append("pub(crate) const HELVETICA_INK: [[i16; 4]; 191] = [")
-    for code in CODES:
-        name = _fontdata.encodings["WinAnsiEncoding"][code]
-        lines.append(f"    {afm_boxes[name]},")
+    for bounds in helvetica_ink:
+        lines.append(f"    {bounds},")
     lines.append("];")
     source = "\n".join(lines) + "\n"
     formatted = subprocess.run(

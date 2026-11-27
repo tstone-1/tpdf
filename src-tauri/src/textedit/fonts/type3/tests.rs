@@ -301,3 +301,33 @@ fn type3_rejects_program_side_effects_bad_metrics_maps_and_limits_atomically() {
         assert_eq!(doc.objects, before);
     }
 }
+
+#[test]
+fn a_painted_trailing_space_counts_toward_the_box_width() {
+    let (mut doc, _, _, cmap) = fixture();
+    doc.get_object_mut(cmap)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .set_plain_content(MAP.replace("<20> <0042>", "<20> <0020>").into_bytes());
+    let before = textedit::scan(&doc, 0).unwrap();
+    let mut change = Change {
+        page: 0,
+        revision: before.revision,
+        operator: before.runs[0].operator,
+        original: before.runs[0].text.clone(),
+        replacement: "A ".into(),
+        layout: Some(Layout {
+            width: 6.1,
+            height: 20.,
+            size: 10.,
+            wrap: false,
+            font: EditFont::Original,
+            grow: false,
+            installed: None,
+        }),
+    };
+    assert!(textedit::write(&mut doc.clone(), std::slice::from_ref(&change)).is_err());
+    change.replacement = "A".into();
+    textedit::write(&mut doc, &[change]).unwrap();
+}

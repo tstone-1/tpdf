@@ -374,6 +374,13 @@ fn empty_field(document: &Document, pages: &[ObjectId], name: &str) -> Result<Ta
         crate::forms::Control::Signature { signed: true } => {
             return Err(said!("`{name}` already holds a signature"))
         }
+        crate::forms::Control::Unsupported
+            if crate::forms::inherited(document, widget.object, b"FT")
+                .and_then(|value| value.as_name().ok())
+                == Some(b"Sig") =>
+        {
+            return Err(said!("This signature field contains an unreadable value"));
+        }
         _ => return Err(said!("`{name}` is not a signature field")),
     }
     if crate::forms::integer(document, widget.object, b"Ff") & 1 != 0 {
@@ -812,6 +819,7 @@ fn build(
         Some(name) => Some(empty_field(&prev, &pages, name)?),
         None => None,
     };
+    crate::docinfo::check_signature_room(&prev, target.as_ref().map(|field| field.field))?;
     // The lock the field's author asked for, repeated in the signature. A
     // lock asked of the signer (`details.lock`) is every field at level 1,
     // which covers whatever the field asks, and is written instead.
@@ -934,9 +942,12 @@ fn build(
             .new_document
             .get_dictionary_mut(target.widget)
             .map_err(|e| e.to_string())?;
-        // Print and Locked, as a field of the signature's own has, over
-        // whatever else the widget says.
-        widget.set("F", Object::Integer(target.flags | 132));
+        // An invisible approval keeps the print behavior of the existing appearance.
+        let flags = target.flags | 128;
+        widget.set(
+            "F",
+            Object::Integer(if drawn.is_some() { flags | 4 } else { flags }),
+        );
         if let Some((_, form)) = drawn {
             widget.set("AP", dictionary! { "N" => form });
         }

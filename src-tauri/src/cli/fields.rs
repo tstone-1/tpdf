@@ -334,7 +334,7 @@ pub fn not_editable(reason: &str) -> NotEditable {
         forms::COMB => NotEditable::Comb,
         forms::RICH_TEXT => NotEditable::RichText,
         forms::HIDDEN => NotEditable::Hidden,
-        forms::UNSUPPORTED => NotEditable::Unsupported,
+        forms::UNSUPPORTED | forms::UNREADABLE_SIGNATURE => NotEditable::Unsupported,
         _ => NotEditable::Other,
     }
 }

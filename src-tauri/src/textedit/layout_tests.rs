@@ -1248,3 +1248,19 @@ fn a_kerned_run_grown_into_the_free_space_keeps_the_kerns_it_had() {
     );
     assert_eq!(scan(&doc, 0).unwrap().runs[0].text, "KERNEDRUNNING");
 }
+
+#[test]
+fn new_nonbreaking_spaces_require_a_unicode_mapping() {
+    let source = tests::with_content(b"BT /F1 12 Tf 40 180 Td (10 kg) Tj ET");
+    let mut change = edit(&source, "11\u{a0}kg", 110., 25., false);
+    let mut automatic = source.clone();
+    write(&mut automatic, std::slice::from_ref(&change)).unwrap();
+    assert_eq!(
+        scan(&automatic, 0).unwrap().runs[0].text,
+        change.replacement
+    );
+    change.layout = None;
+    assert!(write(&mut source.clone(), std::slice::from_ref(&change)).is_err());
+    change.replacement = "11 kg".into();
+    write(&mut source.clone(), &[change]).unwrap();
+}

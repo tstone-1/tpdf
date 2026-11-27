@@ -398,12 +398,11 @@ describe("the words", () => {
     expect(signedName("/docs/notes")).toBe("/docs/notes-signed.pdf");
   });
 
-  it("says under a certificate from whom, until when and how, and self-signed for its own issuer", () => {
+  it("shows the issuer even when its display name matches the subject", () => {
     expect(choiceDetail(choice)).toBe("Issued by Example CA, expires 2026-01-01 (ECDSA P-256)");
     expect(choiceDetail({ ...choice, issuer: "A. Signer" })).toBe(
-      "Self-signed, expires 2026-01-01 (ECDSA P-256)",
+      "Issued by A. Signer, expires 2026-01-01 (ECDSA P-256)",
     );
-    // Only for the same name: one that merely contains it is another issuer.
     expect(choiceDetail({ ...choice, issuer: "A. Signer CA" })).toContain("Issued by A. Signer CA");
   });
 
@@ -660,7 +659,12 @@ describe("the chooser", () => {
 
   it("offers a visible signature first when a signature field is being signed", async () => {
     const pressed = open([choice], undefined, "Approved");
-    expect(pressed.radio("sign-appearance", "visible").checked).toBe(true);
+    const visible = pressed.radio("sign-appearance", "visible");
+    expect(visible.checked).toBe(true);
+    const hintId = visible.attributes.get("aria-describedby");
+    expect(hintId).toBe("sign-appearance-hint");
+    expect(pressed.all.find(node => node.attributes.get("id") === hintId)?.textContent)
+      .toContain("the field Approved.");
     expect(pressed.radio("sign-appearance", "invisible").checked).toBe(false);
     pressed.answerLock("last");
     pressed.button("Sign…").dispatch("click", {});

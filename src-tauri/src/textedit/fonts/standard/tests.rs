@@ -217,3 +217,19 @@ fn stroked_helvetica_bounds_include_the_rendered_v_corners() {
         assert!(rect[0] <= left && rect[2] >= right, "join {join}: {rect:?}");
     }
 }
+
+#[test]
+fn equal_advance_does_not_let_a_slash_overhang_the_page_edge() {
+    let mut doc = with_font(
+        "Helvetica",
+        Some("WinAnsiEncoding"),
+        b"BT /F1 72 Tf 279.98 75 Td (!) Tj ET",
+    );
+    let mut change = textedit::tests::change(&doc);
+    change.replacement = "/".into();
+    assert!(textedit::write(&mut doc, std::slice::from_ref(&change))
+        .unwrap_err()
+        .contains("ink"));
+    change.replacement = ".".into();
+    textedit::write(&mut doc, &[change]).unwrap();
+}

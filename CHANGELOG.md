@@ -19,6 +19,10 @@ have the binary.)
 
 ## [26.11.16] - Unreleased
 
+- Switching tabs keeps unfinished drawings and navigation history. Keyboard navigation stays within its split pane, and closing other documents leaves the current document's form draft alone.
+- Signing checks the intended field is readable before writing. Invisible signatures preserve a field's print setting, and the chooser identifies certificates by their issuer.
+- Text editing checks standard-font glyph overhangs, keeps visible trailing-space glyphs inside the text box, and preserves inserted nonbreaking spaces when using automatic font selection.
+
 - Signature cards identify the signer only when the certificate matches. Signing respects certifications that omit the permission level, and Remember saves an appearance only after its preview succeeds.
 - Properties distinguishes unreadable signature fields from empty ones, reports linearized PDFs and subsequent signing changes more accurately, and shows effective form-fill permissions. Long metadata alone no longer triggers a signature warning on save.
 - Links follow moved text before saving. Screen readers pick up text edits and undo immediately and announce headings whose text is split across inline spans.

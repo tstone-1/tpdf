@@ -121,6 +121,7 @@ export default {
   "Unreadable form field": "Unlesbares Formularfeld",
   "This form contains an oversized field name": "Dieses Formular enthält einen zu langen Feldnamen",
   "This form exceeds the text limit": "Dieses Formular hat mehr Text, als tpdf liest",
+  "This signature field contains an unreadable value": "Dieses Signaturfeld enthält einen unlesbaren Wert",
   "This field type is not supported yet": "Diese Feldart wird noch nicht unterstützt",
   "This field is read-only": "Dieses Feld ist schreibgeschützt",
   "Password fields are not supported yet": "Passwortfelder werden noch nicht unterstützt",
