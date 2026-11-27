@@ -857,7 +857,7 @@ ROWS += [
         "a_document_that_could_not_be_read_outranks_every_verdict",
     ),
     Mutation(
-        "cli: replace an existing output without --force",
+        "cli: defer refusing an existing signing output until after key lookup",
         "src/cli/sign.rs",
         '&sign.output,\n        sign.force,\n    )?;',
         '&sign.output,\n        true,\n    )?;',
@@ -2186,7 +2186,7 @@ ROWS += [
         "src/revocation.rs",
         "            charge(budget, response.signed.len())?;",
         "",
-        "the_budget_is_charged_before_a_signature_is_checked",
+        "a_known_issuer_still_costs_the_signed_response_length_to_verify",
     ),
     Mutation(
         "revocation: no count bound on responses",

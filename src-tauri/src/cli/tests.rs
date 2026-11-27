@@ -1614,10 +1614,10 @@ fn signing_refusals_that_need_no_worker_exit_before_one_is_asked_for() {
     assert!(err.contains("\"Bob\""), "{err}");
     assert!(stdout.is_empty() && !out.exists());
 
-    // An output that exists: 3, and it is left alone.
+    // Refuse the existing output before looking up even an unknown identity.
     std::fs::write(&out, b"keep me").expect("existing");
     let (code, _, err) = ran(
-        &line(&["sign", &s(&input), "-o", &s(&out), "--identity", "Alice"]),
+        &line(&["sign", &s(&input), "-o", &s(&out), "--identity", "Bob"]),
         &store,
     );
     assert_eq!(code, 3, "{err}");

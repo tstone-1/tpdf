@@ -375,7 +375,11 @@ fn check_angled_redaction(
 fn check_separate_shows(dir: &Path, report: &mut Report) {
     let mut doc = Document::load_mem(&multi_widget_pdf("London Bridge", false)).unwrap();
     let page = doc.get_pages()[&1];
-    let body = b"BT /F1 16 Tf 110 642 Td (123456 London) Tj ET BT /F1 16 Tf 60 602 Td (Bridge 876543) Tj ET";
+    // A smaller, untouched word provides an OCR control even when the font
+    // backend measures the surviving letters taller than the removed digits.
+    let body = b"BT /F1 16 Tf 110 642 Td (123456 London) Tj ET \
+                 BT /F1 16 Tf 60 602 Td (Bridge 876543) Tj ET \
+                 BT /F1 10 Tf 60 520 Td (control) Tj ET";
     let stream = doc.add_object(Stream::new(dictionary! {}, body.to_vec()));
     doc.get_dictionary_mut(page)
         .unwrap()

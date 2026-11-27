@@ -38,7 +38,19 @@ Two eraser and drag checks still named earlier tests. The link check changed
 a general text predicate after link hit testing had moved to the link index.
 After correction, each of the three mutations failed its intended test.
 The Python table caught all 41 mutations. Linux caught both selected token
-mutations and the mutation that duplicates a directly trusted signer.
+mutations and the mutation that duplicates a directly trusted signer. The CLI signing
+test uses an existing output and an unknown identity together. Allowing
+key lookup before refusing that output now fails the test. For OCSP with an already
+known issuer, the signed response costs its full byte length to verify. A
+budget one byte short yields an unchecked verdict. Both controls caught
+their respective mutations. The document-chain test caught substitution of a
+cross-certificate for its self-issued anchor. The store-chain test caught use
+of a document twin with different key usage in place of the selected issuer.
+The certificate reader's own truncation flag is checked before the survey
+combines it with the scanner's drop count. Matching passing results by name,
+all 685 Rust mutations selected on the final tree were caught across macOS,
+Windows and Linux. All 23 selected viewer mutations were caught, and the clean
+viewer was rebuilt.
 
 The local Windows installer passed 26/26 checks. Its packaged Python client
 passed all 70 tests, as did the macOS package. The Windows print probe spooled
@@ -47,7 +59,17 @@ three pages each from the scanned Apollo 11 press kit (NASA 19690022248) and
 mission report (NASA 19700008096). The planner accepted all 468 regions for full removal. OCR
 could not prove any of the 468 unreadable: 86 covered every word, 142 had
 only larger surviving words, 120 lacked a legible control scale, and 120
-failed to read the control. The survey reported zero clean verdicts.
+failed to read the control. The survey reported zero clean verdicts. A second
+run sampled one region per page and used the wide-text fixture as a control.
+It proved four of 13 regions unreadable and reported the other nine as
+unverified.
+
+The first Ubuntu CI run caught two fixture problems. The redaction example
+now includes a smaller surviving word so font metrics allow a valid OCR
+control. The competing terminal-signing process loads the client from the
+same checkout as its parent. On Ubuntu the ten redaction checks passed and
+the signing test confirmed that concurrent requests refused the same terminal
+and timeout restored echo.
 
 The tracked review ledger reproduced in a separate checkout. Of 757 application
 and client files, 710 (93.8%) had a full read and 322 (42.5%) still matched

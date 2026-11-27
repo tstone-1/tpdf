@@ -490,6 +490,33 @@ fn the_budget_is_charged_before_a_signature_is_checked() {
 }
 
 #[test]
+fn a_known_issuer_still_costs_the_signed_response_length_to_verify() {
+    let pki = pki();
+    let material = responses(&[good(&pki)]);
+    let subject = parsed(&pki.subject);
+    let issuer = parsed(&pki.ca.certificate);
+    let cost = Pool::new(&material).responses[0].signed.len() as u64;
+    assert!(cost > 0);
+    let check = |budget: &mut u64| {
+        let pool = Pool::new(&material);
+        standing(&judge_under(
+            &subject,
+            Some(&issuer),
+            &[],
+            &[&pool],
+            attested(),
+            NOW,
+            budget,
+        ))
+    };
+    let mut short = cost - 1;
+    assert_eq!(check(&mut short), (Status::Unchecked, Some(Gap::Budget)));
+    let mut exact = cost;
+    assert_eq!(check(&mut exact), (Status::Good, None));
+    assert_eq!(exact, 0);
+}
+
+#[test]
 fn a_released_hold_is_dated_and_permanent_revocation_survives_a_good_answer() {
     let pki = pki();
     for reason in [6, 1] {

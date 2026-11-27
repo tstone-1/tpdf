@@ -48,11 +48,11 @@ ROWS += [
         "a_cross_certificate_of_a_root_the_os_holds_ends_the_chain",
     ),
     Mutation(
-        "longterm: carry a cross-certificate in place of its anchor",
+        "revocation: return the cross-certificate instead of its self-issued anchor",
         "src/revocation/chain.rs",
         "                anchor: Some(anchor.clone()),",
         "                anchor: Some(current.clone()),",
-        "a_cross_certificate_of_a_root_the_os_holds_ends_the_chain",
+        "a_cross_certificate_of_a_root_in_the_document_ends_the_chain",
     ),
     Mutation(
         "longterm: let a self-issued signer pass with nothing asked",
@@ -413,11 +413,16 @@ ROWS += [
         "a_twin_added_to_a_token_does_not_hide_a_revoked_issuer_above_the_authority",
     ),
     Mutation(
-        # A stand-in's own key usage could then refuse the real issuer's list.
-        "along: prefer no certificate that is the store's own",
+        # A document can carry a same-key certificate with different key usage.
+        # Judging through that certificate can hide the real issuer's list.
+        "along: use the first document twin instead of the store-selected issuer",
         "src/revocation/chain.rs",
-        ".find(|candidate| *candidate == wanted)",
-        ".find(|candidate| *candidate == wanted && file.len() == 0)",
+        "        let issuer = carried(selected, &everything).map(|_| selected);",
+        """        let issuer = everything.iter().copied().find(|candidate| {
+            candidate.tbs_certificate.subject == selected.tbs_certificate.subject
+                && candidate.tbs_certificate.subject_public_key_info
+                    == selected.tbs_certificate.subject_public_key_info
+        });""",
         "a_twin_that_may_not_sign_lists_does_not_stop_the_real_issuers_list_being_read",
     ),
     Mutation(

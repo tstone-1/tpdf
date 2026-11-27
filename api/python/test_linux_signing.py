@@ -54,13 +54,10 @@ def sign_from_terminal(executable):
         else:
             raise AssertionError('two signers borrowed the same terminal')
         competing = subprocess.run(
-            [sys.executable, '-c',
-             "from tpdf_client import Tpdf; import sys; "
-             "Tpdf(sys.argv[1]).sign('source.pdf', 'overlap.pdf', identity=sys.argv[2])",
-             executable, identity],
+            [sys.executable, __file__, '--compete', executable, identity],
             capture_output=True, timeout=2,
         )
-        assert competing.returncode != 0 and b'using the terminal' in competing.stderr
+        assert competing.returncode != 0 and b'using the terminal' in competing.stderr, competing.stderr
         try:
             first.result(timeout=6)
         except CommandTimeout:
@@ -116,4 +113,8 @@ class LinuxSigningTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    sign_from_terminal(sys.argv[1])
+    if sys.argv[1] == '--compete':
+        from tpdf_client import Tpdf
+        Tpdf(sys.argv[2]).sign('source.pdf', 'overlap.pdf', identity=sys.argv[3])
+    else:
+        sign_from_terminal(sys.argv[1])

@@ -453,6 +453,7 @@ fn a_dss_that_cannot_be_extended_or_read_whole_is_said_in_the_survey() {
     assert_eq!(why, "this document's /DSS /OCSPs is not an array");
 
     // More certificates than the reader takes: read, counted, and cut.
+    let most = crate::revocation::MAX_DSS_CERTIFICATES;
     let certificates = |count: usize, valid: bool| {
         let issuer = TestCa::new("tpdf test survey issuer", 0x4a);
         let mut document = Document::load_mem(&plain_pdf()).expect("parses");
@@ -480,11 +481,16 @@ fn a_dss_that_cannot_be_extended_or_read_whole_is_said_in_the_survey() {
             .get_dictionary_mut(root)
             .expect("the catalog")
             .set("DSS", dictionary! { "Certs" => streams });
+        // The survey also has the scanner's drop count. Check independently
+        // that the certificate reader marked its own store as incomplete.
+        assert_eq!(
+            crate::docinfo::signature_values(&document).store_cut,
+            count > most
+        );
         let mut bytes = Vec::new();
         document.save_to(&mut bytes).expect("saved");
         survey(&bytes, 1)
     };
-    let most = crate::revocation::MAX_DSS_CERTIFICATES;
     assert_eq!(
         certificates(1, false).refused.as_deref(),
         Some("the document carries validation data that could not be decoded")
