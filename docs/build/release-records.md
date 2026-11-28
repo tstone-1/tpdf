@@ -2,7 +2,32 @@
 
 What was run for each release, what passed, and what was not run. The record of a new release goes at the top. Moved here verbatim from `BUILD.md` on 2026-10-23, which indexes this file.
 
-**26.11.16 release preparation.** On macOS, pressing Cmd+V on the page after
+**26.11.16 verification and publication, 2026-11-28.** The stable tag points to `3e176a0f`.
+All three CI jobs in run 46084360432 passed, as did Audit run 46084360355.
+Gatekeeper accepted the application from the macOS updater archive as notarized,
+and its bundled CLI reported 26.11.16.
+
+Release run 46128067045 passed the packaged CLI and Python checks on macOS,
+Windows and Linux. All eight draft downloads matched their SHA-256 digests.
+Both updater signatures verified against the release key. The macOS disk
+image passed stapling and Gatekeeper checks. The Windows installer carried a
+valid Certum timestamp and passed all 26 installation, launch and uninstall
+checks. After publication all eight downloads returned HTTP 200 without
+credentials, and the public updater manifest matched the draft byte for byte.
+
+On first launch, 26.11.15 offered 26.11.16 on both macOS and Windows.
+Both installed the update and reopened the original document. The macOS
+check passed 12/12 and Windows passed 18/18. When the Windows test
+interrupted the download with edits pending, the edits survived and the
+second attempt installed 26.11.16. All 33 checks passed. The control added
+another rotation and correctly detected the altered page before and after
+the update. All its other checks passed.
+
+The Homebrew cask at `979d289` passed the online audit and livecheck reported
+26.11.16. Windows validated all three WinGet manifests before submission in
+[pull request 491728](https://github.com/microsoft/winget-pkgs/pull/491728).
+
+On macOS, pressing Cmd+V on the page after
 editing a comment sent the native paste to the old comment selection. This
 failed on all three mark fixtures. Clearing the editor's DOM selection on
 blur, after saving the range for the formatting toolbar, restored picture
@@ -71,9 +96,24 @@ same checkout as its parent. On Ubuntu the ten redaction checks passed and
 the signing test confirmed that concurrent requests refused the same terminal
 and timeout restored echo.
 
+LibreOffice Impress 26.8.2.2 on Windows pasted the enhanced metafile from
+the application's *Copy page for PowerPoint* command. On the hidden-words
+fixture, *Break* produced six shapes. Saving and reopening the PPTX in
+Impress preserved all six shapes and the three editable strings. The 26.11.16
+candidate and the published 26.11.15 build produced byte-identical clipboard
+metafiles on the same machine. The 26.11.4 control produced 35 shapes
+before and after reopening, with the same three strings. Counting the
+shapes catches the old hidden-outline regression in Impress. The earlier
+PowerPoint measurements were seven and 36 respectively. These counts are
+specific to each importer. The Impress result was accepted for this release.
+
 The tracked review ledger reproduced in a separate checkout. Of 757 application
 and client files, 710 (93.8%) had a full read and 322 (42.5%) still matched
 the contents reviewed. The remaining 47 had been skimmed.
+
+After publication the broader `--since v26.11.15 --resume` runs selected
+2,734 Rust, 1,261 frontend and 74 viewer mutations. All three runs started
+on the tagged source. Their results were pending when this record was written.
 
 **26.11.15 verification and publication, 2026-11-26.** The stable tag points to
 `b61e295f`. All three CI jobs (45767493008) and Audit (45767493019) passed.
